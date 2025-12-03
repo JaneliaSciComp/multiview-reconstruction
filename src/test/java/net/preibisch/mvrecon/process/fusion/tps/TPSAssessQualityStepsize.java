@@ -15,12 +15,18 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.Localizable;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.basictypeaccess.array.DoubleArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.multithreading.SimpleMultiThreading;
+import net.imglib2.realtransform.DisplacementFieldTransform;
+import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
+import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.imglib2.view.composite.GenericComposite;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -55,6 +61,8 @@ public class TPSAssessQualityStepsize
 
 		final RandomAccessibleInterval<DoubleType> fullField =
 				fullDeformationField( transform, boundingBox );
+
+		interpolateTransform( transform, boundingBox );
 
 		if ( sourceImageInterval != null )
 		{
@@ -104,8 +112,38 @@ public class TPSAssessQualityStepsize
 		ImageJFunctions.show( fullField ).setTitle( "full_"+sourceImageInterval );
 	}
 
-	public static RandomAccessibleInterval<DoubleType> fullDeformationField(
+	public static DisplacementFieldTransform interpolateTransform(
 			final ThinplateSplineTransform transform,
+			final Interval blockInterval )
+	{
+		System.out.println( Util.printInterval( blockInterval ) );
+		final RandomAccessibleInterval<DoubleType> df =
+				DisplacementFieldTransform.createDisplacementField( transform, blockInterval, new double[] { 10, 10, 10 } );
+
+		System.out.println( Util.printInterval( df ) );
+
+		final RandomAccessibleInterval<DoubleType> copy =
+				Views.translate( ArrayImgs.doubles( df.dimensionsAsLongArray() ), df.minAsLongArray() );
+
+		System.out.println( Util.printInterval( copy ) );
+
+		//SimpleMultiThreading.threadHaltUnClean();
+		final Cursor<DoubleType> c = Views.flatIterable( df ).cursor();
+
+		copy.forEach( t -> t.set( c.next() ));
+
+		ImageJFunctions.show( copy );
+
+		final DisplacementFieldTransform t =
+				new DisplacementFieldTransform(
+						df//, //Views.interval( Views.extendBorder( copy ), blockInterval ),
+						);//new double[] { 10, 10, 10 } );
+
+		return t;
+	}
+
+	public static RandomAccessibleInterval<DoubleType> fullDeformationField(
+			final RealTransform transform,
 			final Interval blockInterval )
 	{
 		final Cursor<Localizable> cursor = Views.flatIterable( Intervals.positions( blockInterval ) ).cursor();
@@ -175,8 +213,8 @@ public class TPSAssessQualityStepsize
 				new long[] { boundingBox.max( 0 ), boundingBox.max( 1 ), (boundingBox.min( 2 )+ boundingBox.max( 2 ))/2 } );
 
 		visualize( slice, coeff.get( v ).getA(), coeff.get( v ).getB(), new long[] { 10, 10, 10 } );
-		visualize(
+		/*visualize(
 				new FinalInterval( underlyingSD.getViewDescription( v ).getViewSetup().getSize() ),
-				slice, coeff.get( v ).getA(), coeff.get( v ).getB(), new long[] { 10, 10, 10 } );
+				slice, coeff.get( v ).getA(), coeff.get( v ).getB(), new long[] { 10, 10, 10 } );*/
 	}
 }
