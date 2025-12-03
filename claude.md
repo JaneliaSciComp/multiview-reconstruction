@@ -362,3 +362,94 @@ A complete help system was added to the InterestPointExplorer:
 - Added mouse listeners to auto-request focus on mouse enter/press
 - F1 key listener attached to both panel and table
 **Commits**: `8994af77`, `34bff636`
+
+## Registration and Subset Detection
+
+### PairwiseSetup and Subset Detection
+
+The `PairwiseSetup` class handles the setup of pairwise view comparisons for registration:
+- Located in `net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup`
+- Main workflow:
+  1. `definePairs()` - Creates all pairs that need to be compared
+  2. `removeNonOverlappingPairs()` - Filters out non-overlapping pairs (optional)
+  3. `reorderPairs()` - Orders pairs consistently (optional)
+  4. `detectSubsets()` - Identifies disconnected subsets for independent registration
+  5. `sortSubsets()` - Sorts subsets and pairs within them (optional)
+
+#### detectSubsets Algorithm
+
+The `detectSubsets()` static method (lines 320-415) groups views into subsets based on pairwise comparisons:
+
+**Input**:
+- `views`: All views to be registered
+- `pairs`: List of view pairs that need to be compared
+- `groups`: Groups of views that should be transformed together
+
+**Algorithm**:
+1. **Build subset-precursors** (lines 332-375): Iterate through pairs and group views:
+   - If neither view is in any set: create new set with both views and the pair
+   - If one view is in a set: add the other view and the pair to that set
+   - If both views are in the same set: add the pair to that set
+   - If both views are in different sets: merge the sets
+2. **Add singleton views** (lines 377-397): Views not in any pair get their own subset
+3. **Merge by groups** (lines 399-401): If groups exist, merge subsets containing grouped views
+4. **Create final subsets** (lines 403-412): Convert precursors to `Subset` objects
+
+**Critical Implementation Details**:
+- Uses two parallel ArrayLists: `vSets` (HashSets of views) and `pairSets` (lists of pairs)
+- `setId()` method finds which set contains a given view (returns -1 if not found)
+- When merging sets, the merged set is **always added at the end** (index `pairSets.size() - 1`)
+
+### detectSubsets Merge Bug and Fix (2025-12-03)
+
+**Problem**: A pair of ViewIds was present in the main pairs list but missing from the subset's pair list, even when only one subset existed. Specifically, pair (tpId=0, setupId=265) <=> (tpId=0, setupId=278) was being dropped.
+
+**Root Cause**: In the `detectSubsets()` method at line 372-374, when both views of a pair were already present in different sets, the code would merge those sets but **never add the pair that triggered the merge**:
+
+```java
+else // both are present in different sets, the sets need to be merged
+{
+    mergeSets( vSets, pairSets, i1, i2 );
+    // BUG: The pair that caused this merge was never added!
+}
+```
+
+All other branches of the conditional properly added the current pair:
+- Line 347: New set creation → adds pair
+- Line 358: One view exists → adds pair
+- Line 364: Other view exists → adds pair
+- Line 369: Both in same set → adds pair
+- Line 373: Both in different sets → **MISSING: forgot to add pair!**
+
+**The Fix** (PairwiseSetup.java:376-377):
+```java
+else // both are present in different sets, the sets need to be merged
+{
+    mergeSets( vSets, pairSets, i1, i2 );
+    // The merged set is now at the end, add the current pair to it
+    pairSets.get( pairSets.size() - 1 ).add( pair );
+}
+```
+
+**Why `pairSets.size() - 1`?**
+The `mergeSets()` method (lines 522-553):
+1. Collects all pairs and views from sets being merged
+2. Removes the old sets from the lists
+3. **Adds the merged set at the END** of both vSets and pairSets
+
+Therefore, after merging, the new merged set is always at index `pairSets.size() - 1`.
+
+**Additional Documentation**:
+- Enhanced Javadoc for `mergeSets()` (lines 510-521) to document that merged sets end at the end
+- Added inline comments explaining each section of the merge operation
+- Added comment at the fix location explaining why the pair is added there
+
+**Impact**: This bug could cause registration to fail or produce incorrect results when:
+- Multiple disconnected view groups existed initially
+- A pair connected two previously separate groups (triggering a merge)
+- That connecting pair would be lost, potentially leaving the subsets disconnected in the registration graph
+
+**Testing**: User had comprehensive debug output in `Interest_Point_Registration.identifySubsets()` that traced pairs through each step and confirmed the pair was present before `detectSubsets()` but missing from the resulting subset.
+
+**Files Modified**:
+- `src/main/java/net/preibisch/mvrecon/process/interestpointregistration/pairwise/constellation/PairwiseSetup.java`
