@@ -123,8 +123,10 @@ public class BlkThinPlateSplineFusion
 		// build the overlap for the underlying views so they can be used later
 		//
 
-		// first we need a transform for every underlying view, which we base off the coefficients
+		// we need an approximate transform for every underlying view composed from the split views
 		final HashMap< ViewId, AffineTransform3D > underlyingViewIdToTransform = new HashMap<>();
+
+		// the coefficients (source > target) for each underlying view, used to construct the TPS
 		final HashMap< ViewId, Pair<double[][], double[][]> > underlyingViewIdToCoefficients = new HashMap<>();
 
 		for ( final ViewId underlyingViewId : sortedUnderlyingViewIds )
@@ -132,6 +134,8 @@ public class BlkThinPlateSplineFusion
 			// ignore downsampling for now
 			final Pair<double[][], double[][]> coeff =
 					getCoefficients(splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewId, Double.NaN, Double.NaN );
+
+			// TODO: we may want to put extra coefficients in the overlapping areas based on "real correspondences"
 
 			// approx affine transform for adjusting blending weights
 			final AffineTransform3D t = getTransform( coeff.getA(), coeff.getB() );
