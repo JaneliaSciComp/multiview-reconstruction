@@ -164,10 +164,10 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 	{
 		final RealInterval interval = getBoundingBoxReal( dims, transform );
 
-		final int[] minInt = new int[ 3 ];
-		final int[] maxInt = new int[ 3 ];
+		final int[] minInt = new int[ interval.numDimensions() ];
+		final int[] maxInt = new int[ interval.numDimensions() ];
 
-		for ( int d = 0; d < dims.numDimensions(); ++d )
+		for ( int d = 0; d < interval.numDimensions(); ++d )
 		{
 			minInt[ d ] = (int)Math.round( interval.realMin( d ) ) - 1;
 			maxInt[ d ] = (int)Math.round( interval.realMax( d ) ) + 1;
