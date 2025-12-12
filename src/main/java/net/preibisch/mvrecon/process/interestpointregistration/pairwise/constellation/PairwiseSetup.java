@@ -371,6 +371,9 @@ public abstract class PairwiseSetup< V extends Comparable< V > >
 			else // both are present in different sets, the sets need to be merged
 			{
 				mergeSets( vSets, pairSets, i1, i2 );
+
+				// The merged set is now at the end, add the current pair to it
+				pairSets.get( pairSets.size() - 1 ).add( pair );
 			}
 		}
 
@@ -506,6 +509,10 @@ public abstract class PairwiseSetup< V extends Comparable< V > >
 	/**
 	 * Merge N sets with indices
 	 *
+	 * Note: This method collects all views and pairs from the sets being merged,
+	 * removes the old sets from vSets and pairSets, and adds the merged set at the END.
+	 * After this method completes, the merged set will be at index (pairSets.size() - 1).
+	 *
 	 * @param vSets - subset precursors
 	 * @param pairSets - sets of pairs to compare
 	 * @param mergeIndicies - indices to merge
@@ -526,19 +533,21 @@ public abstract class PairwiseSetup< V extends Comparable< V > >
 		final ArrayList< Pair< V, V > > pairSet = new ArrayList<>();
 		final HashSet< V > vSet = new HashSet<>();
 
+		// Collect all pairs and views from the sets being merged
 		for ( int i = 0; i < list.size(); ++i )
 		{
 			pairSet.addAll( pairSets.get( list.get( i ) ) );
 			vSet.addAll( vSets.get( list.get( i ) ) );
 		}
 
-		// remove indicies from large down to small
+		// remove indicies from large down to small (to avoid index shifting issues)
 		for ( int i = list.size() - 1; i >= 0; --i )
 		{
 			pairSets.remove( (int)list.get( i ) );
 			vSets.remove( (int)list.get( i ) );
 		}
 
+		// Add the merged set at the END of the lists
 		pairSets.add( pairSet );
 		vSets.add( vSet );
 	}
