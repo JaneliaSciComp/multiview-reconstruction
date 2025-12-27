@@ -123,6 +123,11 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	public static int defaultBlocksizeFactorY_H5 = 4;
 	public static int defaultBlocksizeFactorZ_H5 = 4;
 
+	public static boolean defaultUseSharding = false;
+	public static int defaultShardSizeX = 512;
+	public static int defaultShardSizeY = 512;
+	public static int defaultShardSizeZ = 256;
+
 	String unit = "px";
 	double[] cal = new double[] { 1.0, 1.0, 1.0 };
 
@@ -151,6 +156,9 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	int bsFactorX = defaultBlocksizeFactorX_N5;
 	int bsFactorY = defaultBlocksizeFactorY_N5;
 	int bsFactorZ = defaultBlocksizeFactorZ_N5;
+
+	boolean useSharding = false;
+	int[] shardSize = new int[] { 512, 512, 256 };
 
 	Compression compression = null;
 	N5Writer driverVolumeWriter = null;
@@ -240,7 +248,9 @@ public class ExportN5Api implements ImgExport, Calibrateable
 								dim, //5d
 								compression,
 								blockSize, //5d
-								ds ); // 5d
+								ds, // 5d
+						this.useSharding,
+						this.shardSize );
 
 						final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 								(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfoZarr[level].absoluteDownsamplingDouble() );
@@ -357,7 +367,9 @@ public class ExportN5Api implements ImgExport, Calibrateable
 					bb.dimensionsAsLongArray(), //3d
 					compression,
 					blocksize(), //3d
-					this.downsampling ); // 3d
+					this.downsampling, // 3d
+				this.useSharding,
+				this.shardSize );
 
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
@@ -407,7 +419,9 @@ public class ExportN5Api implements ImgExport, Calibrateable
 					bb.dimensionsAsLongArray(),
 					compression,
 					blocksize(),
-					this.downsampling );
+					this.downsampling,
+				this.useSharding,
+				this.shardSize );
 
 			currentChannelIndex = -1;
 			currentTPIndex = -1;
@@ -764,6 +778,38 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			{
 				omeZarrOneContainer = false;
 			}
+		}
+
+		//
+		// Zarr v3 sharding dialog
+		//
+		if ( storageType == StorageFormat.ZARR )
+		{
+			final GenericDialog gdShard = new GenericDialog( "Zarr v3 Sharding Options" );
+
+			gdShard.addCheckbox( "Enable_sharding", defaultUseSharding );
+			gdShard.addMessage(
+					"Sharding groups multiple chunks into larger files, reducing metadata overhead\n" +
+					"for cloud storage. Recommended for large datasets (>1TB) or cloud export.",
+					GUIHelper.smallStatusFont );
+
+			gdShard.addNumericField( "Shard_size_X", defaultShardSizeX, 0 );
+			gdShard.addNumericField( "Shard_size_Y", defaultShardSizeY, 0 );
+			gdShard.addNumericField( "Shard_size_Z", defaultShardSizeZ, 0 );
+
+			gdShard.addMessage(
+					"Note: Chunk size within shards will be the same as block size.\n" +
+					"Shard size should be a multiple of block size.",
+					GUIHelper.smallStatusFont );
+
+			gdShard.showDialog();
+			if ( gdShard.wasCanceled() )
+				return false;
+
+			this.useSharding = defaultUseSharding = gdShard.getNextBoolean();
+			this.shardSize[0] = defaultShardSizeX = (int)Math.round( gdShard.getNextNumber() );
+			this.shardSize[1] = defaultShardSizeY = (int)Math.round( gdShard.getNextNumber() );
+			this.shardSize[2] = defaultShardSizeZ = (int)Math.round( gdShard.getNextNumber() );
 		}
 
 		//

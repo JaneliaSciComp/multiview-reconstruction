@@ -48,6 +48,8 @@ import org.janelia.saalfeldlab.n5.RawCompression;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3Compressor;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 
 import bdv.export.ExportMipmapInfo;
 import bdv.util.MipmapTransforms;
@@ -238,7 +240,33 @@ public class N5ApiTools
 				dimensionsS0,
 				compression,
 				blockSize,
-				downsamplings);
+				downsamplings,
+				false,  // useSharding
+				null ); // shardSize
+	}
+
+	public static MultiResolutionLevelInfo[] setupMultiResolutionPyramid(
+			final N5Writer driverVolumeWriter,
+			final Function<Integer, String> levelToDataset,
+			final DataType dataType,
+			final long[] dimensionsS0,
+			final Compression compression,
+			final int[] blockSize,
+			final int[][] downsamplings,
+			final boolean useSharding,
+			final int[] shardSize )
+	{
+		return setupMultiResolutionPyramid(
+				driverVolumeWriter,
+				null,
+				(viewId, level) -> levelToDataset.apply( level ),
+				dataType,
+				dimensionsS0,
+				compression,
+				blockSize,
+				downsamplings,
+				useSharding,
+				shardSize );
 	}
 
 	public static MultiResolutionLevelInfo[] setupMultiResolutionPyramid(
@@ -249,7 +277,9 @@ public class N5ApiTools
 			final long[] dimensionsS0, // 3d by default, can be up to 5d for ome-zarr
 			final Compression compression,
 			final int[] blockSize, // 3d by default, can be up to 5d for ome-zarr
-			final int[][] downsamplings ) // TODO:  3d by default, can be up to 5d for ome-zarr
+			final int[][] downsamplings, // TODO:  3d by default, can be up to 5d for ome-zarr
+			final boolean useSharding,
+			final int[] shardSize )
 	{
 		final MultiResolutionLevelInfo[] mrInfo = new MultiResolutionLevelInfo[ downsamplings.length];
 
@@ -260,12 +290,29 @@ public class N5ApiTools
 		mrInfo[ 0 ] = new MultiResolutionLevelInfo(
 				viewIdToDataset.apply( viewId, 0 ), dimensionsS0.clone(), dataType, relativeDownsampling, downsamplings[ 0 ], blockSize );
 
-		driverVolumeWriter.createDataset(
-				viewIdToDataset.apply( viewId, 0 ),
-				dimensionsS0,
-				blockSize,
-				dataType,
-				compression );
+		if ( useSharding )
+		{
+			// Use Zarr v3 sharding via ZarrV3DatasetAttributes constructor
+			// Convert Compression to DataCodecInfo (only Blosc and Zstandard officially supported)
+			final ZarrV3Compressor codec = ZarrV3Compressor.fromCompression( compression );
+			final DatasetAttributes attributes = new ZarrV3DatasetAttributes(
+					dimensionsS0,  // shape
+					shardSize,     // shard dimensions
+					blockSize,     // inner chunk size within shards
+					dataType,
+					codec );       // compression codec (can be null for no compression)
+
+			driverVolumeWriter.createDataset( viewIdToDataset.apply( viewId, 0 ), attributes );
+		}
+		else
+		{
+			driverVolumeWriter.createDataset(
+					viewIdToDataset.apply( viewId, 0 ),
+					dimensionsS0,
+					blockSize,
+					dataType,
+					compression );
+		}
 
 		long[] previousDim = dimensionsS0.clone();
 
@@ -283,12 +330,27 @@ public class N5ApiTools
 			mrInfo[ level ] = new MultiResolutionLevelInfo(
 					datasetLevel, dim.clone(), dataType, relativeDownsampling, downsamplings[ level ], blockSize );
 
-			driverVolumeWriter.createDataset(
-					datasetLevel,
-					dim,
-					blockSize,
-					dataType,
-					compression );
+			if ( useSharding )
+			{
+				final ZarrV3Compressor codec = ZarrV3Compressor.fromCompression( compression );
+				final DatasetAttributes attributes = new ZarrV3DatasetAttributes(
+						dim,           // shape
+						shardSize,     // shard dimensions
+						blockSize,     // inner chunk size within shards
+						dataType,
+						codec );       // compression codec
+
+				driverVolumeWriter.createDataset( datasetLevel, attributes );
+			}
+			else
+			{
+				driverVolumeWriter.createDataset(
+						datasetLevel,
+						dim,
+						blockSize,
+						dataType,
+						compression );
+			}
 
 			driverVolumeWriter.setAttribute( datasetLevel, "downsamplingFactors", downsamplings[ level ] );
 
@@ -300,8 +362,12 @@ public class N5ApiTools
 
 	public static String[] exportOptions()
 	{
-		return Arrays.asList(StorageFormat.values()).stream().map(s -> s.name().equals("ZARR") ? "OME-ZARR" : s.name())
-				.toArray(String[]::new);
+		return Arrays.asList(StorageFormat.values()).stream().map(s -> {
+			if (s.name().equals("ZARR"))
+				return "OME-ZARR";
+			else
+				return s.name();
+		}).toArray(String[]::new);
 	}
 
 	public static MultiResolutionLevelInfo[] setupBdvDatasetsHDF5(
@@ -321,7 +387,9 @@ public class N5ApiTools
 				dimensions,
 				compression,
 				blockSize,
-				downsamplings);
+				downsamplings,
+				false,  // useSharding (not applicable for HDF5)
+				null ); // shardSize
 
 		final String subdivisionsDatasets = "s" + String.format("%02d", viewId.getViewSetupId()) + "/subdivisions";
 		final String resolutionsDatasets = "s" + String.format("%02d", viewId.getViewSetupId()) + "/resolutions";
@@ -409,7 +477,9 @@ public class N5ApiTools
 				dim5d, //5d
 				compression,
 				blockSize5d, //5d
-				ds5d ); // 5d
+				ds5d, // 5d
+			false,  // useSharding (not applicable for BDV format)
+			null ); // shardSize
 
 		final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 				(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
@@ -455,7 +525,9 @@ public class N5ApiTools
 				dimensions,
 				compression,
 				blockSize,
-				downsamplings);
+				downsamplings,
+				false,  // useSharding (not applicable for N5/HDF5)
+				null ); // shardSize
 
 		final String s0Dataset = createBDVPath( viewId, 0, StorageFormat.N5 );
 		final String setupDataset = s0Dataset.substring(0, s0Dataset.indexOf( "/timepoint" ));
