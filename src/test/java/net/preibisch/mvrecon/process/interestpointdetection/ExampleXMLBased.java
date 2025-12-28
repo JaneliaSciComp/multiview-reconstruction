@@ -20,7 +20,7 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
+package net.preibisch.mvrecon.process.interestpointdetection;
 
 import java.net.URI;
 import java.util.Arrays;
@@ -41,6 +41,10 @@ import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class ExampleXMLBased

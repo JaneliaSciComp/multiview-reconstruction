@@ -9,25 +9,22 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.headless.fusion;
+package net.preibisch.mvrecon.process.fusion;
 
-import java.awt.Color;
-import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -36,26 +33,23 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.WindowConstants;
 
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+
 import gov.nist.isg.archiver.DirectoryArchiver;
 import gov.nist.isg.archiver.FilesArchiver;
-import gov.nist.isg.pyramidio.BufferedImageReader;
-import gov.nist.isg.pyramidio.DeepZoomImageReader;
 import gov.nist.isg.pyramidio.PartialImageReader;
 import gov.nist.isg.pyramidio.ScalablePyramidBuilder;
 import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Cursor;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.converter.ColorChannelOrder;
 import net.imglib2.converter.Converters;
-import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -67,11 +61,19 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.export.OpenSeaDragon.OpenSeaDragonImgLib2;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
-import net.preibisch.mvrecon.process.fusion.transformed.FusedRandomAccessibleInterval.Fusion;
 import util.URITools;
 
-public class OpenSeaDragonExport
+public class OpenSeaDragonExportExample
 {
+	@Test
+	@Disabled("Requires specific dataset file that may not exist on all systems")
+	public void testOpenSeaDragonExport()
+	{
+		System.out.println( "Test requires manual setup - see main() method" );
+	}
+
+	// ==================== Original main() method for manual testing ====================
+
 	public static void displayImage(final String windowTitle, final BufferedImage image) {
 		new JFrame(windowTitle) {
 			private static final long serialVersionUID = 1L;

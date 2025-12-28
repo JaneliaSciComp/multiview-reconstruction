@@ -59,7 +59,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
-import net.preibisch.mvrecon.headless.boundingbox.TestBoundingBox;
+import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
 import net.preibisch.mvrecon.process.deconvolution.DeconViews;
 import net.preibisch.mvrecon.process.export.DisplayImage;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
@@ -250,7 +250,7 @@ public class LazyNonRigidFusion <T extends RealType<T> & NativeType<T>> implemen
 
 		final SpimData2 spimData = new XmlIoSpimData2().load( URITools.toURI("/Users/preibischs/Documents/Microscopy/SPIM/HisYFP-SPIM/dataset.xml") );
 
-		Interval boundingBox = TestBoundingBox.getBoundingBox( spimData, "My Bounding Box" );
+		Interval boundingBox = BoundingBoxTools.getBoundingBox( spimData, "My Bounding Box" );
 		IOFunctions.println( BoundingBox.getBoundingBoxDescription( (BoundingBox)boundingBox ) );
 
 		// select views to process

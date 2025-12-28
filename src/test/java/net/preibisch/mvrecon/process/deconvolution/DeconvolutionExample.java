@@ -20,14 +20,16 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.headless.deconvolution;
+package net.preibisch.mvrecon.process.deconvolution;
 
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.concurrent.ExecutorService;
+
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 import ij.IJ;
 import ij.ImageJ;
@@ -46,11 +48,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.process.deconvolution.DeconView;
 import net.preibisch.mvrecon.process.deconvolution.DeconViewPSF.PSFTYPE;
-import net.preibisch.mvrecon.process.deconvolution.DeconViews;
-import net.preibisch.mvrecon.process.deconvolution.MultiViewDeconvolution;
-import net.preibisch.mvrecon.process.deconvolution.MultiViewDeconvolutionSeq;
 import net.preibisch.mvrecon.process.deconvolution.init.PsiInit.PsiInitType;
 import net.preibisch.mvrecon.process.deconvolution.init.PsiInitAvgApproxFactory;
 import net.preibisch.mvrecon.process.deconvolution.init.PsiInitAvgPreciseFactory;
@@ -71,7 +69,7 @@ import net.preibisch.mvrecon.process.psf.PSFCombination;
 import net.preibisch.simulation.imgloader.SimulatedBeadsImgLoader;
 import util.URITools;
 
-public class TestDeconvolution
+public class DeconvolutionExample
 {
 	public static void main( String[] args ) throws SpimDataException
 	{
@@ -80,8 +78,14 @@ public class TestDeconvolution
 		SpimData2 spimData;
 		Collection< Group< ViewDescription > > groups = new ArrayList<>();
 
-		// generate 4 views with 1000 corresponding beads, single timepoint
-		spimData = SpimData2.convert( SimulatedBeadsImgLoader.spimdataExample( new int[]{ 0, 90, 135 } ) );
+		// Generate 2 views with 200 beads, smaller image size for faster tests
+		final int[] angles = new int[]{ 0, 90 };
+		final int axis = 0;
+		final int numPoints = 200;
+		final double[] sigma = new double[]{ 1, 1, 3 };
+		final FinalInterval range = new FinalInterval( 128, 128, 50 );
+
+		spimData = SpimData2.convert( SimulatedBeadsImgLoader.spimdataExample( angles, axis, numPoints, sigma, range ) );
 		groups = Group.toGroups( spimData.getSequenceDescription().getViewDescriptions().values() );
 
 		// load drosophila

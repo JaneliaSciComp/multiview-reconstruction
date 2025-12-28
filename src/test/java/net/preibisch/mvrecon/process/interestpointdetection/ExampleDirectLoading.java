@@ -20,13 +20,15 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
+package net.preibisch.mvrecon.process.interestpointdetection;
 
 import java.net.URI;
 import java.util.Arrays;
 import java.util.Map;
 
 import mpicbg.spim.data.SpimDataException;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 
 public class ExampleDirectLoading
 {
@@ -37,11 +39,11 @@ public class ExampleDirectLoading
 		//
 		// works without the XML, just loads the N5 directly
 		//
-		InterestPointsN5 ip = new InterestPointsN5(
+		final InterestPointsN5 ip = new InterestPointsN5(
 				URI.create("/nrs/saalfeld/john/for/keller/danio_1_488/dataset-orig-tifs/3/"),
 				"tpId_0_viewSetupId_" + viewSetupId  + "/beads8v2" );
 
-		Map< Integer, InterestPoint> points = ip.getInterestPointsCopy();
+		final Map< Integer, InterestPoint> points = ip.getInterestPointsCopy();
 
 		for ( final InterestPoint p : points.values() )
 		{

@@ -166,6 +166,7 @@ public class FusionTools
 		return numpixels;
 	}
 
+	// TODO: remove / mark as deprecated
 	/**
 	 * Virtually fuses views using a maximal bounding box around all views
 	 *

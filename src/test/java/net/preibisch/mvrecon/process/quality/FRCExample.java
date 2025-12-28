@@ -9,23 +9,26 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.headless.quality;
+package net.preibisch.mvrecon.process.quality;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 import ij.ImageJ;
 import ij.ImagePlus;
@@ -53,8 +56,17 @@ import net.preibisch.mvrecon.process.quality.FRC.ThresholdMethod;
 import net.preibisch.mvrecon.process.quality.FRCRealRandomAccessible;
 import net.preibisch.mvrecon.process.quality.FRCTools;
 
-public class TestFRC
+public class FRCExample
 {
+	@Test
+	@Disabled("Requires specific dataset file that may not exist on all systems")
+	public void testFRC()
+	{
+		System.out.println( "Test requires manual setup - see main() method" );
+	}
+
+	// ==================== Original main() method for manual testing ====================
+
 	public static void main( String[] args ) throws SpimDataException
 	{
 		new ImageJ();
@@ -86,13 +98,13 @@ public class TestFRC
 
 		final HashMap<Integer, Double> zLocations = new HashMap<Integer, Double>();
 		final HashMap<Integer, Integer> zLocationsCount = new HashMap<Integer, Integer>();
-	
+
 		final Cursor< FloatType > cursor = qualityList.localizingCursor();
 		while (cursor.hasNext())
 		{
 			cursor.fwd();
 			final int z = cursor.getIntPosition(2);
-			
+
 			if ( zLocations.containsKey(z) )
 			{
 				double v = zLocations.get(z);
@@ -112,7 +124,7 @@ public class TestFRC
 		Collections.sort(z );
 		for ( final int zl : z )
 		{
-			
+
 			System.out.println( zl + "\t" + zLocations.get(zl) / (double)zLocationsCount.get(zl));
 		}
 
@@ -152,15 +164,15 @@ public class TestFRC
 			{
 				if ( !Double.isFinite( frcCurveDist[ i ][ 1 ] ) || !Double.isFinite( frcCurve[ i ][ 1 ] ) )
 					fail = true;
- 
+
 				frcCurve[ i ][ 1 ] = frcCurve[ i ][ 1 ] - frcCurveDist[ i ][ 1 ];
 			}
-	
+
 			final double relintegral = fail ? 0 : FRCRealRandomAccessible.integral( frcCurve );
 
 			System.out.println( z + "\t" + integral+ "\t" + relintegral );
 		}*/
-	
+
 		final ImagePlus imp = FusionTools.getImagePlusInstance( img, true, "brain", Double.NaN, Double.NaN, DisplayImage.service );
 		imp.show();
 	}
@@ -211,7 +223,7 @@ public class TestFRC
 			//new ImagePlus( "a", fps.getA() ).show();
 			//new ImagePlus( "b", fps.getB() ).show();
 			//SimpleMultiThreading.threadHaltUnClean();
-	
+
 			final FRC frc = new FRC();
 
 			// Get FIRE Number, assumes you have access to the two image processors.
@@ -227,7 +239,7 @@ public class TestFRC
 
 			double fire = frc.calculateFireNumber( frcCurve, tm );
 			System.out.println( z + ": " + fire + " " + integral);
-	
+
 			//if ( z== 41 || z== 42 )
 			{
 			Plot p = frc.doPlot( frcCurve, frc.getSmoothedCurve( frcCurve ), tm, fire, "" + z );
@@ -238,11 +250,11 @@ public class TestFRC
 			//p.show();
 			}
 
-			
-			
+
+
 			//break;
 		}
-		
+
 		new ImagePlus( "fd", stack ).show();
 	}
 

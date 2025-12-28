@@ -20,9 +20,8 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.headless.deconvolution;
+package net.preibisch.mvrecon.process.deconvolution;
 
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
@@ -48,12 +47,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
-import net.preibisch.mvrecon.process.deconvolution.DeconView;
 import net.preibisch.mvrecon.process.deconvolution.DeconViewPSF.PSFTYPE;
-import net.preibisch.mvrecon.process.deconvolution.DeconViews;
-import net.preibisch.mvrecon.process.deconvolution.MultiViewDeconvolution;
-import net.preibisch.mvrecon.process.deconvolution.MultiViewDeconvolutionMul;
-import net.preibisch.mvrecon.process.deconvolution.MultiViewDeconvolutionSeq;
 import net.preibisch.mvrecon.process.deconvolution.init.PsiInit.PsiInitType;
 import net.preibisch.mvrecon.process.deconvolution.init.PsiInitAvgApproxFactory;
 import net.preibisch.mvrecon.process.deconvolution.init.PsiInitAvgPreciseFactory;
@@ -74,7 +68,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.psf.PSFCombination;
 import util.URITools;
 
-public class TestDeconvolutionMul
+public class DeconvolutionMulExample
 {
 	public static void main( String[] args ) throws SpimDataException
 	{

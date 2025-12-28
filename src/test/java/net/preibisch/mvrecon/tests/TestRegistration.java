@@ -9,18 +9,20 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.headless.registration;
+package net.preibisch.mvrecon.tests;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -32,19 +34,22 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
 import mpicbg.models.AffineModel3D;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
+import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
-import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.headless.interestpointdetection.TestSegmentation;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOpt;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.ConvergenceStrategy;
@@ -63,47 +68,84 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.ransac.RANSACParameters;
-import net.preibisch.simulation.imgloader.SimulatedBeadsImgLoader;
 
 public class TestRegistration
 {
-	public static void main( String[] args )
-	{
-		// generate 4 views with 1000 corresponding beads, single timepoint
-		SpimData2 spimData = SpimData2.convert( SimulatedBeadsImgLoader.spimdataExample( new int[]{ 0, 90, 135 } ) );
+	private SpimData2 spimData;
 
-		System.out.println( "Views present:" );
+	@BeforeEach
+	public void setUp()
+	{
+		System.out.println( "SETTING UP ..." );
+		spimData = SimulateUtil.setUp();
+
+		// run DoG
+		TestInterestPointDetection.testDoG( spimData, "beads" );
+	}
+
+	@Test
+	public void testRegistrationUngrouped()
+	{
+		System.out.println( "\nUNGROUPED - views present:" );
 
 		for ( final ViewId viewId : spimData.getSequenceDescription().getViewDescriptions().values() )
 			System.out.println( Group.pvid( viewId ) );
 
-		testRegistration( spimData, false );
+		final HashMap<ViewId, AffineModel3D> models = testRegistration( spimData, "beads", false );
+
+		final double[] t0 = new double[ 12 ];
+		final double[] t1 = new double[ 12 ];
+		final double[] t2 = new double[ 12 ];
+
+		TransformationTools.getAffineTransform( models.get( new ViewId( 0, 0 ) ) ).toArray( t0 );
+		TransformationTools.getAffineTransform( models.get( new ViewId( 0, 1 ) ) ).toArray( t1 );
+		TransformationTools.getAffineTransform( models.get( new ViewId( 0, 2 ) ) ).toArray( t2 );
+
+		final double[] t0Expected = new double[] { 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0 };
+		final double[] t1Expected = new double[] { 1.0005356080585022, 2.49323474194707E-4, 0.0011220806217312473, -0.08259295862724232, 3.707245398563569E-4, 0.7072946129789373, 0.7076828581581442, 1.404856820272709, -2.63984069522126E-4, -0.7068158048729596, 0.7066541400023975, 51.581476626562484 };
+		final double[] t2Expected = new double[] { 0.9998575301003715, 5.069732655624262E-4, -0.0010818832033704928, -0.020219824841918498, 4.6017605438656434E-4, 0.001134937523741015, 1.0023411774701763, 38.829895250234046, -1.7586056994376082E-4, -0.9980690338273157, 9.698915385629309E-4, 86.85082710148747 };
+
+		assertArrayEquals( t0Expected, t0, SimulateUtil.delta, "matrix after global opt should have specific values." );
+		assertArrayEquals( t1Expected, t1, SimulateUtil.delta, "matrix after global opt should have specific values." );
+		assertArrayEquals( t2Expected, t2, SimulateUtil.delta, "matrix after global opt should have specific values." );
 	}
 
-	public static void testRegistration( final SpimData2 spimData, final boolean grouped )
+	@Test
+	public void testRegistrationGrouped()
 	{
-		// run DoG
-		TestSegmentation.testDoG( spimData );
+		System.out.println( "\nGROUPED - views present:" );
 
+		for ( final ViewId viewId : spimData.getSequenceDescription().getViewDescriptions().values() )
+			System.out.println( Group.pvid( viewId ) );
+
+		final HashMap<ViewId, AffineModel3D> models = testRegistration( spimData, "beads", true );
+
+		final double[] t0 = new double[ 12 ];
+		final double[] t1 = new double[ 12 ];
+		final double[] t2 = new double[ 12 ];
+
+		TransformationTools.getAffineTransform( models.get( new ViewId( 0, 0 ) ) ).toArray( t0 );
+		TransformationTools.getAffineTransform( models.get( new ViewId( 0, 1 ) ) ).toArray( t1 );
+		TransformationTools.getAffineTransform( models.get( new ViewId( 0, 2 ) ) ).toArray( t2 );
+
+		final double[] t0Expected = new double[] { 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0 };
+		final double[] t1Expected = new double[] { 1.0005356080585022, 2.49323474194707E-4, 0.0011220806217312473, -0.08259295862724232, 3.707245398563569E-4, 0.7072946129789373, 0.7076828581581442, 1.404856820272709, -2.63984069522126E-4, -0.7068158048729596, 0.7066541400023975, 51.581476626562484 };
+		final double[] t2Expected = new double[] { 0.9998575301003715, 5.069732655624262E-4, -0.0010818832033704928, -0.020219824841918498, 4.6017605438656434E-4, 0.001134937523741015, 1.0023411774701763, 38.829895250234046, -1.7586056994376082E-4, -0.9980690338273157, 9.698915385629309E-4, 86.85082710148747 };
+
+		assertArrayEquals( t0Expected, t0, SimulateUtil.delta, "matrix after grouped global opt should have specific values." );
+		assertArrayEquals( t1Expected, t1, SimulateUtil.delta, "matrix after grouped global opt should have specific values." );
+		assertArrayEquals( t2Expected, t2, SimulateUtil.delta, "matrix after grouped global opt should have specific values." );
+	}
+
+	public static HashMap< ViewId, AffineModel3D > testRegistration( final SpimData2 spimData, final String label, final boolean grouped )
+	{
 		// select views to process
 		final List< ViewId > viewIds = new ArrayList< ViewId >();
 		viewIds.addAll( spimData.getSequenceDescription().getViewDescriptions().values() );
 
 		// filter not present ViewIds
 		final List< ViewId > removed = SpimData2.filterMissingViews( spimData, viewIds );
-		IOFunctions.println( new Date( System.currentTimeMillis() ) + ": Removed " +  removed.size() + " views because they are not present." );
-
-		//
-		// get interest point lists for "beads" and store a map ViewId >> InterestPointLabel
-		//
-		final String label = "beads"; // this could be different for each ViewId
-
-		/*
-		final Map< ViewId, String > labelMap = new HashMap<>();
-
-		for ( final ViewId viewId : viewIds )
-			labelMap.put( viewId, label );
-		*/
+		System.out.println( new Date( System.currentTimeMillis() ) + ": Removed " +  removed.size() + " views because they are not present." );
 
 		final Map< ViewId, HashMap< String, Double > > labelMap = new HashMap<>();
 
@@ -126,15 +168,19 @@ public class TestRegistration
 		final Set< Group< ViewId > > groups = new HashSet<>();
 
 		// only keep those interestpoints that currently overlap with a view to register against
+		System.out.println( "before filtering:" );
+
 		for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
 			for ( final Entry< String, Collection< InterestPoint > > subelement: element.getValue().entrySet() )
 				System.out.println( element.getKey() + ", " + subelement.getKey() + ": " + subelement.getValue().size() );
 
 		TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, spimData.getViewRegistrations().getViewRegistrations(), spimData.getSequenceDescription().getViewDescriptions() );
 
+		System.out.println( "after filtering:" );
+
 		for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
 			for ( final Entry< String, Collection< InterestPoint > > subelement: element.getValue().entrySet() )
-			System.out.println( element.getKey() + ", " + subelement.getKey() + ": " + subelement.getValue().size() );
+				System.out.println( element.getKey() + ", " + subelement.getKey() + ": " + subelement.getValue().size() );
 
 		// setup pairwise registration
 		final PairwiseSetup< ViewId > setup = new AllToAll<>( viewIds, groups );
@@ -146,6 +192,8 @@ public class TestRegistration
 		setup.sortSubsets();
 		final ArrayList< Subset< ViewId > > subsets = setup.getSubsets();
 		System.out.println( "Identified " + subsets.size() + " subsets " );
+
+		final HashMap< ViewId, AffineModel3D > modelsReturn = new HashMap<>();
 
 		for ( final Subset< ViewId > subset : subsets )
 		{
@@ -179,9 +227,12 @@ public class TestRegistration
 				final Tile< AffineModel3D > tile = models.get( viewId );
 				final ViewRegistration vr = spimData.getViewRegistrations().getViewRegistrations().get( viewId );
 
+				modelsReturn.put( viewId, tile.getModel().copy() );
 				TransformationTools.storeTransformation( vr, viewId, tile, mapBack, "Scripted AffineModel3D" );
 			}
 		}
+
+		return modelsReturn;
 	}
 
 	public static final HashMap< ViewId, Tile< AffineModel3D > > pairSubsetTest(
@@ -212,13 +263,6 @@ public class TestRegistration
 			final ViewId vA = p.getA().getA();
 			final ViewId vB = p.getA().getB();
 
-			/*
-			final InterestPoints listA = spimData.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelMap.get( vA ) );
-			final InterestPoints listB = spimData.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelMap.get( vB ) );
-
-			MatcherPairwiseTools.addCorrespondences( p.getB().getInliers(), vA, vB, labelMap.get( vA ), labelMap.get( vB ), listA, listB );
-			*/
-
 			final String labelA = p.getB().getLabelA();
 			final String labelB = p.getB().getLabelB();
 
@@ -227,7 +271,7 @@ public class TestRegistration
 
 			MatcherPairwiseTools.addCorrespondences( p.getB().getInliers(), vA, vB, labelA, labelB, listA, listB );
 
-			System.out.println( p.getB().getFullDesc() );
+			//System.out.println( p.getB().getFullDesc() );
 		}
 
 		final ConvergenceStrategy cs = new ConvergenceStrategy( 10.0 );
@@ -294,5 +338,27 @@ public class TestRegistration
 		final PointMatchCreator pmc = new InterestPointMatchCreator( resultG, labelMap );
 
 		return GlobalOpt.computeTiles( new AffineModel3D(), true, pmc, cs, fixedViews, groups );
+	}
+
+	// ==================== Original main() method for manual testing ====================
+	public static void main( String[] args ) throws SpimDataException
+	{
+		final SpimData2 spimData = SimulateUtil.setUpLarge();
+
+		System.out.println( "Views present:" );
+
+		for ( final ViewId viewId : spimData.getSequenceDescription().getViewDescriptions().values() )
+			System.out.println( Group.pvid( viewId ) );
+
+		// run DoG
+		TestInterestPointDetection.testDoG( spimData, "beads" );
+
+		HashMap< ViewId, AffineModel3D > models = testRegistration( spimData, "beads", false );
+
+		System.out.println( "\nFINAL RESULTS: " );
+
+		models.forEach( ( k, v ) -> {
+			System.out.println( k + ": " + v );
+		});
 	}
 }

@@ -99,4 +99,32 @@ public class BoundingBoxTools
 		return out;
 	}
 
+	/**
+	 * Finds a bounding box by title in the SpimData2 bounding box collection.
+	 *
+	 * @param spimData the SpimData2 containing bounding boxes
+	 * @param bbTitle the title of the bounding box to find
+	 * @return the BoundingBox with the specified title, or null if not found
+	 */
+	public static BoundingBox getBoundingBox( final SpimData2 spimData, final String bbTitle )
+	{
+		BoundingBox boundingBox = null;
+
+		for ( final BoundingBox bb : spimData.getBoundingBoxes().getBoundingBoxes() )
+		{
+			System.out.println( "Bounding box: " + bb.getTitle() );
+
+			if ( bb.getTitle().equals( bbTitle ) )
+				boundingBox = bb;
+		}
+
+		if ( boundingBox == null )
+		{
+			System.out.println( "Bounding box '" + bbTitle + "' not found." );
+			return null;
+		}
+
+		return boundingBox;
+	}
+
 }

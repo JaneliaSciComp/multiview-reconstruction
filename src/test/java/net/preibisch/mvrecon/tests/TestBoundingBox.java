@@ -20,43 +20,71 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.headless.boundingbox;
+package net.preibisch.mvrecon.tests;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.headless.registration.TestRegistration;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxBigDataViewer;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxEstimation;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
+import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
-import net.preibisch.simulation.imgloader.SimulatedBeadsImgLoader;
 
+/**
+ * Hybrid test class for bounding box functionality.
+ * Contains both JUnit @Test methods and a main() method for manual testing.
+ */
 public class TestBoundingBox
 {
-	public static void main( String[] args )
+	private SpimData2 spimData;
+
+	@BeforeEach
+	public void setUp()
 	{
-		// generate 4 views with 1000 corresponding beads, single timepoint
-		SpimData2 spimData = SpimData2.convert( SimulatedBeadsImgLoader.spimdataExample( new int[]{ 0, 90, 135 } ) );
+		spimData = SimulateUtil.setUp();
+		TestInterestPointDetection.testDoG( spimData, "beads" );
+		TestRegistration.testRegistration( spimData, "beads", false );
+	}
 
-		System.out.println( "Views present:" );
+	@Test
+	public void testBoundingBoxMaximal()
+	{
+		final BoundingBox bb = testBoundingBox( spimData, false );
 
-		for ( final ViewId viewId : spimData.getSequenceDescription().getViewDescriptions().values() )
-			System.out.println( Group.pvid( viewId ) );
+		assertNotNull( bb, "Bounding box should not be null" );
 
-		testBoundingBox( spimData, true );
+		// Verify bounding box has reasonable dimensions
+		assertTrue( bb.dimension( 0 ) > 0, "Bounding box X dimension should be positive" );
+		assertTrue( bb.dimension( 1 ) > 0, "Bounding box Y dimension should be positive" );
+		assertTrue( bb.dimension( 2 ) > 0, "Bounding box Z dimension should be positive" );
+
+		assertEquals( -1, bb.min( 0 ), "Bounding box should have a min X." );
+		assertEquals( 0, bb.min( 1 ), "Bounding box should have a min Y." );
+		assertEquals( -39, bb.min( 2 ), "Bounding box should have a min Z." );
+
+		assertEquals( 127, bb.max( 0 ), "Bounding box should have a max X." );
+		assertEquals( 126, bb.max( 1 ), "Bounding box should have a max Y." );
+		assertEquals( 87, bb.max( 2 ), "Bounding box should have a max Z." );
+
+		System.out.println( "✓ Maximal bounding box test passed: " + bb );
 	}
 
 	public static BoundingBox testBoundingBox( final SpimData2 spimData, final boolean bdv )
 	{
-		// run the whole pipeline
-		TestRegistration.testRegistration( spimData, false );
-
 		// select views to process
 		final List< ViewId > viewIds = new ArrayList< ViewId >();
 		viewIds.addAll( spimData.getSequenceDescription().getViewDescriptions().values() );
@@ -74,29 +102,28 @@ public class TestBoundingBox
 
 		final BoundingBox bb = estimation.estimate( "Full Bounding Box" );
 
-		System.out.println( bb );
-
 		return bb;
 	}
 
 	public static BoundingBox getBoundingBox( final SpimData2 spimData, final String bbTitle )
 	{
-		BoundingBox boundingBox = null;
+		return BoundingBoxTools.getBoundingBox( spimData, bbTitle );
+	}
 
-		for ( final BoundingBox bb : spimData.getBoundingBoxes().getBoundingBoxes() )
-		{
-			System.out.println( "Bounding box: " + bb.getTitle() );
+	// ========== Manual Testing Method ==========
+	public static void main( String[] args )
+	{
+		SpimData2 spimData = SimulateUtil.setUpLarge();
 
-			if ( bb.getTitle().equals( bbTitle ) )
-				boundingBox = bb;
-		}
+		System.out.println( "Views present:" );
 
-		if ( boundingBox == null )
-		{
-			System.out.println( "Bounding box '" + bbTitle + "' not found." );
-			return null;
-		}
+		for ( final ViewId viewId : spimData.getSequenceDescription().getViewDescriptions().values() )
+			System.out.println( Group.pvid( viewId ) );
 
-		return boundingBox;
+		TestInterestPointDetection.testDoG( spimData, "beads" );
+		TestRegistration.testRegistration( spimData, "beads", false );
+
+		final BoundingBox bb = testBoundingBox( spimData, true );
+		System.out.println( bb );
 	}
 }

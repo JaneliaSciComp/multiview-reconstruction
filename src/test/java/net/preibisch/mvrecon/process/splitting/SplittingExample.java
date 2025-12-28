@@ -20,7 +20,10 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.headless.splitting;
+package net.preibisch.mvrecon.process.splitting;
+
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 import java.net.URI;
 
@@ -34,8 +37,17 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
 import util.URITools;
 
-public class TestSplitting
+public class SplittingExample
 {
+	@Test
+	@Disabled("Requires specific dataset file that may not exist on all systems")
+	public void testTestSplitting()
+	{
+		System.out.println( "Test requires manual setup - see main() method" );
+	}
+
+	// ==================== Original main() method for manual testing ====================
+
 	public static void main( String[] args ) throws SpimDataException
 	{
 		new ImageJ();

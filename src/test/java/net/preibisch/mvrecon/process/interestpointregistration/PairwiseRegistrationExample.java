@@ -48,10 +48,11 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.ransac.RANSAC;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMMatcher;
 
-public class ExamplePairwiseRegistration
+public class PairwiseRegistrationExample
 {
 	public static void main( String[] args ) throws SpimDataException
 	{

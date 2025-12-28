@@ -338,11 +338,35 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 
 		<!-- Test dependencies -->
 		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter-api</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter-engine</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
 			<groupId>ch.qos.logback</groupId>
 			<artifactId>logback-classic</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<!-- Configure Surefire with more memory for tests -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<argLine>-Xmx4g -Xms512m</argLine>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
 	<profiles>
 	<profile>
 			<id>fatjar</id>

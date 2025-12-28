@@ -20,7 +20,7 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.headless.interestpointdetection;
+package net.preibisch.mvrecon.process.interestpointdetection;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,6 +46,7 @@ import util.URITools;
 
 public class VerifyDownsamplingCorrection
 {
+	// ==================== Original main() method for manual testing ====================
 	public static void main( String[] args ) throws SpimDataException
 	{
 		new ImageJ();

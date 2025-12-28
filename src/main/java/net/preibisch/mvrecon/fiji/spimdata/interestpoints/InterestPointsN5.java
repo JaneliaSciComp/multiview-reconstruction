@@ -65,7 +65,7 @@ public class InterestPointsN5 extends InterestPoints
 
 	ArrayList< CorrespondingInterestPoints > correspondingInterestPoints;
 
-	protected InterestPointsN5( final URI baseDir, final String n5path )
+	public InterestPointsN5( final URI baseDir, final String n5path )
 	{
 		super(baseDir);
 		this.n5path = n5path;

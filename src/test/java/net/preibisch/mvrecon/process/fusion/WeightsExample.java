@@ -9,20 +9,19 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.headless.fusion;
+package net.preibisch.mvrecon.process.fusion;
 
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -44,7 +43,6 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.export.DisplayImage;
-import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformView;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformWeight;
@@ -54,7 +52,7 @@ import net.preibisch.mvrecon.process.fusion.transformed.weights.ContentBasedReal
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 import util.URITools;
 
-public class TestWeights
+public class WeightsExample
 {
 	public static void main( String[] args ) throws SpimDataException
 	{
@@ -92,13 +90,13 @@ public class TestWeights
 			final ViewRegistration vr = spimData.getViewRegistrations().getViewRegistration( viewId );
 			vr.updateModel();
 			AffineTransform3D model = vr.getModel();
-	
+
 			if ( !Double.isNaN( downsampling ) )
 			{
 				model = model.copy();
 				TransformVirtual.scaleTransform( model, 1.0 / downsampling );
 			}
-	
+
 			// this modifies the model so it maps from a smaller image to the global coordinate space,
 			// which applies for the image itself as well as the weights since they also use the smaller
 			// input image as reference
@@ -131,13 +129,13 @@ public class TestWeights
 					DoGImgLib2.blockSize, ContentBasedRealRandomAccessible.defaultScale,
 					model, bb );
 
-			final RandomAccessibleInterval< FloatType > combinedWeights = 
+			final RandomAccessibleInterval< FloatType > combinedWeights =
 					new CombineWeightsRandomAccessibleInterval(
 							new FinalInterval( transformedBlending ),
 							transformedBlending,
 							transformedContentBased,
 							CombineType.MUL );
-			
+
 			FusionTools.getImagePlusInstance( transformedInput, true, "inputImg", 0, 255, DisplayImage.service ).show();
 			FusionTools.getImagePlusInstance( transformedBlending, true, "blending", 0, 1, DisplayImage.service ).show();
 			FusionTools.getImagePlusInstance( transformedContentBased, true, "content", 0, 1, DisplayImage.service ).show();
