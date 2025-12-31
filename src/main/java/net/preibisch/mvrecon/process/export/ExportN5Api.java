@@ -234,6 +234,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 
 						final long[] dim = new long[] { dim3d[ 0 ], dim3d[ 1 ], dim3d[ 2 ], channels.size(), timepoints.size() };
 						final int[] blockSize = new int[] { blocksize()[ 0 ], blocksize()[ 1 ], blocksize()[ 2 ], 1, 1 };
+						final int[] shardSize = (useSharding) ? new int[] { this.shardSize[ 0 ], this.shardSize[ 1 ], this.shardSize[ 2 ], 1, 1 } : null;
 						final int[][] ds = new int[ this.downsampling.length ][];
 						for ( int d = 0; d < ds.length; ++d )
 							ds[ d ] = new int[] { this.downsampling[ d ][ 0 ], this.downsampling[ d ][ 1 ], this.downsampling[ d ][ 2 ], 1, 1 };
@@ -249,8 +250,8 @@ public class ExportN5Api implements ImgExport, Calibrateable
 								compression,
 								blockSize, //5d
 								ds, // 5d
-						this.useSharding,
-						this.shardSize );
+								this.useSharding,
+								shardSize ); // 5d
 
 						final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 								(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfoZarr[level].absoluteDownsamplingDouble() );
@@ -368,8 +369,8 @@ public class ExportN5Api implements ImgExport, Calibrateable
 					compression,
 					blocksize(), //3d
 					this.downsampling, // 3d
-				this.useSharding,
-				this.shardSize );
+					this.useSharding,
+					this.shardSize ); // 3d
 
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
