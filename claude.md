@@ -453,3 +453,105 @@ Therefore, after merging, the new merged set is always at index `pairSets.size()
 
 **Files Modified**:
 - `src/main/java/net/preibisch/mvrecon/process/interestpointregistration/pairwise/constellation/PairwiseSetup.java`
+
+## N5/Zarr Export and Multi-Resolution Pyramids
+
+### Zarr v3 Sharding Support
+
+**Sharding Concept**: Zarr v3 introduces sharding to group multiple small blocks (e.g., 32³) into larger shards (e.g., 128³). This reduces metadata overhead for cloud storage by storing multiple blocks in a single file.
+
+**Critical Requirement**: Shards must be written as complete units. When sharding is enabled, the write granularity (computeBlockSize) must equal the shard size, not the block size.
+
+#### Grid.create() Pattern
+
+The N5 API uses `Grid.create(dimensions, computeBlockSize, blockSize)` where:
+- **computeBlockSize**: Controls write granularity (how large each write operation is)
+- **blockSize**: Inner chunk size stored in metadata
+- **When sharding**: `computeBlockSize = shardSize`, `blockSize` = inner chunk size
+- **Without sharding**: `computeBlockSize = blockSize`
+
+#### N5Writer Initialization
+
+**Critical**: N5ZarrWriter must be initialized via `URITools.instantiateN5Writer()`, not direct instantiation:
+
+```java
+// CORRECT:
+N5Writer writer = util.URITools.instantiateN5Writer(
+    org.janelia.saalfeldlab.n5.universe.StorageFormat.ZARR,
+    outputPath.toURI()
+);
+
+// WRONG (causes issues):
+N5Writer writer = new N5ZarrWriter(outputPath.getAbsolutePath());
+```
+
+The proper initialization includes:
+- GsonBuilder with CoordinateTransformationAdapter
+- Correct boolean flags for Zarr compatibility
+- Proper URI path handling
+
+**Implementation**: util/URITools.java:271
+
+#### Multi-Resolution Pyramid Structure
+
+**MultiResolutionLevelInfo Class** (N5ApiTools.java:195+):
+- Contains all metadata for one pyramid level
+- **Key fields**: dimensions, blockSize, downsampling factors, dataset path, dataType
+- **Added field**: `shardSize` (null if sharding not used)
+
+**Shard Size Policy**:
+- Shard size remains **constant across all resolution levels** (s0, s1, s2...)
+- Does not scale with downsampling factors
+- Applied to all levels when enabled
+
+#### Export Implementation
+
+**setupMultiResolutionPyramid()** (N5ApiTools.java:227-335):
+- Creates datasets for all resolution levels
+- Passes shardSize to each MultiResolutionLevelInfo
+- For Zarr with sharding: uses ZarrDatasetAttributes with proper codec chain
+
+**writeDownsampledBlock()** (N5ApiTools.java:585-610):
+- Reads from previous level, downsamples, writes to current level
+- Must handle shard-aware writing when sharding is enabled
+
+#### Known Issues
+
+**5D OME-ZARR Sharding Bug** (Fixed):
+- **Location**: ExportN5Api.java:237
+- **Problem**: Inverted ternary operator `(useSharding) ? null : shardSize5D`
+- **Fix**: Corrected to `(useSharding) ? shardSize5D : null`
+- OME-ZARR uses 5D format: `[x, y, z, channels, timepoints]`
+
+**Test NullPointerException** (Ongoing):
+- **Symptom**: TestN5Zarr multi-resolution tests fail with NPE at `PaddedRawBlockCodec.encode()`
+- **Location**: Triggered from N5ApiTools.writeDownsampledBlock() → N5Utils.saveNonEmptyBlock()
+- **Status**: GUI export (ExportN5Api) works correctly; issue appears test-specific
+- **Hypothesis**: Incorrect parameter initialization in test setup
+
+#### Key Files
+
+**TestN5Zarr.java** (src/test/java/):
+- Tests N5/Zarr export with real fusion data
+- Tests multi-resolution pyramids with/without sharding
+- Uses TestFusion.testFusion() to generate BlockSupplier test data
+- **Test methods**: testZarrV2NoSharding, testZarrV3WithSharding, testVariousShardSizes, testN5IgnoresSharding
+
+**N5ApiTools.java** (src/main/java/):
+- MultiResolutionLevelInfo class with shardSize field
+- setupMultiResolutionPyramid() creates pyramid datasets
+- assembleJobs() generates grid blocks for parallel writing
+- writeDownsampledBlock() handles downsampling between levels
+
+**ExportN5Api.java** (src/main/java/):
+- Production export code used by GUI
+- exportImage() method handles full export pipeline
+- Uses mrInfo.shardSize for shard-aware writing
+
+#### Technical Gotchas
+
+1. **N5Utils.saveBlock() doesn't buffer**: We must write complete shard-sized chunks ourselves
+2. **Proper initialization required**: Direct N5ZarrWriter instantiation lacks proper GsonBuilder setup
+3. **5D expansion for OME-ZARR**: Sharding metadata must be expanded from 3D to 5D format
+4. **Constant shard size**: Don't scale shardSize with downsampling factors across pyramid levels
+5. **computeBlockSize = shardSize**: Critical for correct shard-aware writing
