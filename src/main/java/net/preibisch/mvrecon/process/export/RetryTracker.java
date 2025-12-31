@@ -156,7 +156,8 @@ public class RetryTracker<T>
 			}
 			catch ( Exception e )
 			{
-				IOFunctions.println( "block error s0 (will be re-tried): " + e );
+				IOFunctions.println( "block error (will be re-tried): " + e );
+				e.printStackTrace();
 			}
 		}
 
