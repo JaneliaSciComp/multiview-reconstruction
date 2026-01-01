@@ -192,6 +192,7 @@ public class N5ApiTools
 		private static final long serialVersionUID = 5392269335394869108L;
 
 		final public int[] relativeDownsampling, absoluteDownsampling, blockSize;
+		final public int[] shardSize; // null if sharding not used
 		final public long[] dimensions;
 		final public String dataset;
 		final public DataType dataType;
@@ -202,7 +203,8 @@ public class N5ApiTools
 				final DataType dataType,
 				final int[] relativeDownsampling,
 				final int[] absoluteDownsampling,
-				final int[] blockSize )
+				final int[] blockSize,
+				final int[] shardSize )
 		{
 			this.dataset = dataset;
 			this.dimensions = dimensions;
@@ -210,6 +212,7 @@ public class N5ApiTools
 			this.relativeDownsampling = relativeDownsampling;
 			this.absoluteDownsampling = absoluteDownsampling;
 			this.blockSize = blockSize;
+			this.shardSize = shardSize;
 		}
 
 		public double[] absoluteDownsamplingDouble()
@@ -288,7 +291,8 @@ public class N5ApiTools
 		Arrays.setAll( relativeDownsampling, i -> 1 );
 
 		mrInfo[ 0 ] = new MultiResolutionLevelInfo(
-				viewIdToDataset.apply( viewId, 0 ), dimensionsS0.clone(), dataType, relativeDownsampling, downsamplings[ 0 ], blockSize );
+				viewIdToDataset.apply( viewId, 0 ), dimensionsS0.clone(), dataType, relativeDownsampling, downsamplings[ 0 ], blockSize,
+				useSharding ? shardSize : null );
 
 		if ( useSharding )
 		{
@@ -328,7 +332,8 @@ public class N5ApiTools
 				dim[ d ] = previousDim[ d ] / relativeDownsampling[ d ];
 
 			mrInfo[ level ] = new MultiResolutionLevelInfo(
-					datasetLevel, dim.clone(), dataType, relativeDownsampling, downsamplings[ level ], blockSize );
+					datasetLevel, dim.clone(), dataType, relativeDownsampling, downsamplings[ level ], blockSize,
+					useSharding ? shardSize : null );
 
 			if ( useSharding )
 			{
@@ -590,21 +595,43 @@ public class N5ApiTools
 
 		final DataType dataType = mrInfo.dataType;
 
+		System.out.println("[writeDownsampledBlock] dataset=" + dataset);
+		System.out.println("[writeDownsampledBlock] datasetPreviousScale=" + datasetPreviousScale);
+		System.out.println("[writeDownsampledBlock] dimensions=" + java.util.Arrays.toString(mrInfo.dimensions));
+		System.out.println("[writeDownsampledBlock] blockSize=" + java.util.Arrays.toString(mrInfo.blockSize));
+		System.out.println("[writeDownsampledBlock] gridBlock offset=" + java.util.Arrays.toString(gridBlock[0]) +
+				" size=" + java.util.Arrays.toString(gridBlock[1]) + " gridPos=" + java.util.Arrays.toString(gridBlock[2]));
+
 		if ( !supportedDataTypes.contains( dataType ) )
 		{
 			n5.close();
 			throw new RuntimeException("Unsupported pixel type: " + dataType );
 		}
 
+		System.out.println("[writeDownsampledBlock] Opening previous scale...");
 		final RandomAccessibleInterval<T> previousScale = N5Utils.open(n5, datasetPreviousScale);
-		final T type = previousScale.getType().createVariable();
+		System.out.println("[writeDownsampledBlock] previousScale dimensions: " + java.util.Arrays.toString(previousScale.dimensionsAsLongArray()));
 
+		final T type = previousScale.getType().createVariable();
+		System.out.println("[writeDownsampledBlock] type=" + type + " (null? " + (type == null) + ")");
+
+		System.out.println("[writeDownsampledBlock] Creating downsampled BlockSupplier...");
 		final BlockSupplier< T > blocks = BlockSupplier.of( previousScale ).andThen( Downsample.downsample( mrInfo.relativeDownsampling ) );
+
+		System.out.println("[writeDownsampledBlock] Getting dataset dimensions...");
 		final long[] dimensions = n5.getAttribute( dataset, DatasetAttributes.DIMENSIONS_KEY, long[].class );
+		System.out.println("[writeDownsampledBlock] Retrieved dimensions=" + java.util.Arrays.toString(dimensions));
+
+		System.out.println("[writeDownsampledBlock] Creating cell image...");
 		final RandomAccessibleInterval< T > downsampled = BlockAlgoUtils.cellImg( blocks, dimensions, new int[] { 64 } );
 
+		System.out.println("[writeDownsampledBlock] Creating source grid block...");
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
+		System.out.println("[writeDownsampledBlock] sourceGridBlock dimensions: " + java.util.Arrays.toString(sourceGridBlock.dimensionsAsLongArray()));
+
+		System.out.println("[writeDownsampledBlock] Calling N5Utils.saveNonEmptyBlock...");
 		N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], type);
+		System.out.println("[writeDownsampledBlock] Successfully saved block");
 	}
 
 	public static < T extends NativeType< T > & RealType< T > > void writeDownsampledBlock5dOMEZARR(
