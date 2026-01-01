@@ -33,7 +33,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
@@ -42,14 +41,13 @@ import java.util.function.Function;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
-import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.RawCompression;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
-//import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3Compressor;
-//import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3Compressor;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 
 import bdv.export.ExportMipmapInfo;
 import bdv.util.MipmapTransforms;
@@ -61,7 +59,6 @@ import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
-import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
@@ -295,7 +292,7 @@ public class N5ApiTools
 				useSharding ? shardSize : null );
 
 		if ( useSharding )
-		{/*
+		{
 			// Use Zarr v3 sharding via ZarrV3DatasetAttributes constructor
 			// Convert Compression to DataCodecInfo (only Blosc and Zstandard officially supported)
 			final ZarrV3Compressor codec = ZarrV3Compressor.fromCompression( compression );
@@ -306,7 +303,7 @@ public class N5ApiTools
 					dataType,
 					codec );       // compression codec (can be null for no compression)
 
-			driverVolumeWriter.createDataset( viewIdToDataset.apply( viewId, 0 ), attributes );*/
+			driverVolumeWriter.createDataset( viewIdToDataset.apply( viewId, 0 ), attributes );
 		}
 		else
 		{
@@ -336,7 +333,7 @@ public class N5ApiTools
 					useSharding ? shardSize : null );
 
 			if ( useSharding )
-			{/*
+			{
 				final ZarrV3Compressor codec = ZarrV3Compressor.fromCompression( compression );
 				final DatasetAttributes attributes = new ZarrV3DatasetAttributes(
 						dim,           // shape
@@ -345,7 +342,7 @@ public class N5ApiTools
 						dataType,
 						codec );       // compression codec
 
-				driverVolumeWriter.createDataset( datasetLevel, attributes );*/
+				driverVolumeWriter.createDataset( datasetLevel, attributes );
 			}
 			else
 			{
