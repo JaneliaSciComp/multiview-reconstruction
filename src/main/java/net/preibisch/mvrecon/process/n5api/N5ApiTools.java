@@ -48,8 +48,8 @@ import org.janelia.saalfeldlab.n5.RawCompression;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
-import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3Compressor;
-import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
+//import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3Compressor;
+//import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 
 import bdv.export.ExportMipmapInfo;
 import bdv.util.MipmapTransforms;
@@ -295,7 +295,7 @@ public class N5ApiTools
 				useSharding ? shardSize : null );
 
 		if ( useSharding )
-		{
+		{/*
 			// Use Zarr v3 sharding via ZarrV3DatasetAttributes constructor
 			// Convert Compression to DataCodecInfo (only Blosc and Zstandard officially supported)
 			final ZarrV3Compressor codec = ZarrV3Compressor.fromCompression( compression );
@@ -306,7 +306,7 @@ public class N5ApiTools
 					dataType,
 					codec );       // compression codec (can be null for no compression)
 
-			driverVolumeWriter.createDataset( viewIdToDataset.apply( viewId, 0 ), attributes );
+			driverVolumeWriter.createDataset( viewIdToDataset.apply( viewId, 0 ), attributes );*/
 		}
 		else
 		{
@@ -336,7 +336,7 @@ public class N5ApiTools
 					useSharding ? shardSize : null );
 
 			if ( useSharding )
-			{
+			{/*
 				final ZarrV3Compressor codec = ZarrV3Compressor.fromCompression( compression );
 				final DatasetAttributes attributes = new ZarrV3DatasetAttributes(
 						dim,           // shape
@@ -345,7 +345,7 @@ public class N5ApiTools
 						dataType,
 						codec );       // compression codec
 
-				driverVolumeWriter.createDataset( datasetLevel, attributes );
+				driverVolumeWriter.createDataset( datasetLevel, attributes );*/
 			}
 			else
 			{
