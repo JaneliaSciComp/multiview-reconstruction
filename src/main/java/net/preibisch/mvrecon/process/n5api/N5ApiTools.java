@@ -599,7 +599,6 @@ public class N5ApiTools
 		}
 
 		final RandomAccessibleInterval<T> previousScale = N5Utils.open(n5, datasetPreviousScale);
-		final T type = previousScale.getType().createVariable();
 		final BlockSupplier< T > blocks = BlockSupplier.of( previousScale ).andThen( Downsample.downsample( mrInfo.relativeDownsampling ) );
 		// Get dimensions from DatasetAttributes directly (works for both N5 and Zarr v2/v3)
 		final DatasetAttributes attrs = n5.getDatasetAttributes(dataset);
@@ -609,11 +608,8 @@ public class N5ApiTools
 
 		// For sharded datasets, we must write complete shards including empty blocks
 		// because sparse shard reading is not fully supported yet
-		if (mrInfo.shardSize != null) {
-			N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridBlock[2]);
-		} else {
-			N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], type);
-		}
+		//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], previousScale.getType().createVariable() );
+		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridBlock[2]);
 	}
 
 	public static < T extends NativeType< T > & RealType< T > > void writeDownsampledBlock5dOMEZARR(
@@ -645,7 +641,6 @@ public class N5ApiTools
 		// cut out the relevant 3D block
 		final RandomAccessibleInterval<T> previousScaleRaw = N5Utils.open(n5, datasetPreviousScale);
 		final RandomAccessibleInterval<T> previousScale = Views.hyperSlice( Views.hyperSlice( previousScaleRaw, 4, currentTPIndex ), 3, currentChannelIndex );
-		final T type = previousScale.getType().createVariable();
 
 		final BlockSupplier< T > blocks = BlockSupplier.of( previousScale ).andThen( Downsample.downsample( mrInfo.relativeDownsampling ) );
 
@@ -659,7 +654,9 @@ public class N5ApiTools
 		final RandomAccessible< T > downsampled5d = Views.addDimension( Views.addDimension( downsampled3d ) );
 
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled5d, blockOffset, blockSize);
-		N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridOffset, type);
+
+		//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridOffset, previousScale.getType().createVariable());
+		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridOffset );
 	}
 
 	public static List<long[][]> assembleJobs( final MultiResolutionLevelInfo mrInfo )
@@ -799,7 +796,8 @@ public class N5ApiTools
 		}
 
 		final RandomAccessibleInterval< T > sourceGridBlock = Views.offsetInterval( image, blockOffset, blockSize );
-		N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, image.getType().createVariable() );
+		//N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, image.getType().createVariable() );
+		N5Utils.saveBlock( sourceGridBlock, n5, dataset, gridOffset );
 
 		System.out.println( "ViewId " + Group.pvid( viewId ) + ", written block: offset=" + Util.printCoordinates( blockOffset ) + ", dimension=" + Util.printCoordinates( blockSize ) );
 	}
