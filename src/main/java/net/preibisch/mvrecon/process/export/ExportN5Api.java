@@ -26,6 +26,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -123,10 +124,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	public static int defaultBlocksizeFactorY_H5 = 4;
 	public static int defaultBlocksizeFactorZ_H5 = 4;
 
-	public static boolean defaultUseSharding = false;
-	public static int defaultShardSizeX = 512;
-	public static int defaultShardSizeY = 512;
-	public static int defaultShardSizeZ = 256;
+	public static boolean defaultUseSharding = true;
 
 	String unit = "px";
 	double[] cal = new double[] { 1.0, 1.0, 1.0 };
@@ -157,8 +155,8 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	int bsFactorY = defaultBlocksizeFactorY_N5;
 	int bsFactorZ = defaultBlocksizeFactorZ_N5;
 
-	boolean useSharding = false;
-	int[] shardSize = new int[] { 512, 512, 256 };
+	boolean useSharding = defaultUseSharding;
+	int[] shardSize = null;
 
 	Compression compression = null;
 	N5Writer driverVolumeWriter = null;
@@ -747,8 +745,10 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		//
 		// OME-ZARR dialog
 		//
-		if ( storageType == StorageFormat.ZARR )
+		if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 		{
+			final GenericDialog gdZarr1 = new GenericDialog( (storageType == StorageFormat.ZARR) ? "OME-Zarr v3 & Sharding Options" : "OME-Zarr v2 Options" );
+
 			if ( fusion.getSplittingType() == 0 )
 			{
 				this.channels = N5ApiTools.channels( fusion.getFusionGroups() );
@@ -762,55 +762,40 @@ public class ExportN5Api implements ImgExport, Calibrateable
 				for ( final TimePoint t : this.timepoints )
 					IOFunctions.println( "\tTimepoint " + t.getId() );
 
-				final GenericDialog gdZarr1 = new GenericDialog( "OME-Zarr options" );
-
 				gdZarr1.addCheckbox( "Store channels and timepoints into a single OME-ZARR container", defaultOmeZarrOneContainer );
 				gdZarr1.addMessage(
 						"Note: " + this.channels.size() + " channels and " + this.timepoints.size() + " timepoints selected for fusion.\n" + 
 						"If you do not select a single OME-ZARR, a 3D OME-ZARR will be created for each fused volume.", GUIHelper.smallStatusFont );
-
-				gdZarr1.showDialog();
-				if ( gdZarr1.wasCanceled() )
-					return false;
-
-				omeZarrOneContainer = defaultOmeZarrOneContainer = gdZarr1.getNextBoolean();
 			}
-			else
+
+			// Zarr v3 sharding dialog
+			if ( storageType == StorageFormat.ZARR ) // v3
 			{
-				omeZarrOneContainer = false;
+				gdZarr1.addCheckbox( "Enable_sharding", defaultUseSharding );
+				gdZarr1.addMessage(
+						"Sharding groups multiple blocks [a.k.a. chunks] into larger files, reducing the\n" +
+						"number of files significantly. Recommended for large datasets (>1TB) or cloud export.",
+						GUIHelper.smallStatusFont );
+
+				gdZarr1.addMessage(
+						"Note: Shard size is a multiple of block size and defined by the\n" +
+						"Compute block size factor in the advanced block size options dialog.",
+						GUIHelper.smallStatusFont );
 			}
-		}
 
-		//
-		// Zarr v3 sharding dialog
-		//
-		if ( storageType == StorageFormat.ZARR )
-		{
-			final GenericDialog gdShard = new GenericDialog( "Zarr v3 Sharding Options" );
-
-			gdShard.addCheckbox( "Enable_sharding", defaultUseSharding );
-			gdShard.addMessage(
-					"Sharding groups multiple chunks into larger files, reducing metadata overhead\n" +
-					"for cloud storage. Recommended for large datasets (>1TB) or cloud export.",
-					GUIHelper.smallStatusFont );
-
-			gdShard.addNumericField( "Shard_size_X", defaultShardSizeX, 0 );
-			gdShard.addNumericField( "Shard_size_Y", defaultShardSizeY, 0 );
-			gdShard.addNumericField( "Shard_size_Z", defaultShardSizeZ, 0 );
-
-			gdShard.addMessage(
-					"Note: Chunk size within shards will be the same as block size.\n" +
-					"Shard size should be a multiple of block size.",
-					GUIHelper.smallStatusFont );
-
-			gdShard.showDialog();
-			if ( gdShard.wasCanceled() )
+			gdZarr1.showDialog();
+			if ( gdZarr1.wasCanceled() )
 				return false;
 
-			this.useSharding = defaultUseSharding = gdShard.getNextBoolean();
-			this.shardSize[0] = defaultShardSizeX = (int)Math.round( gdShard.getNextNumber() );
-			this.shardSize[1] = defaultShardSizeY = (int)Math.round( gdShard.getNextNumber() );
-			this.shardSize[2] = defaultShardSizeZ = (int)Math.round( gdShard.getNextNumber() );
+			if ( fusion.getSplittingType() == 0 )
+				omeZarrOneContainer = defaultOmeZarrOneContainer = gdZarr1.getNextBoolean();
+			else
+				omeZarrOneContainer = false;
+
+			if ( storageType == StorageFormat.ZARR ) // v3
+				this.useSharding = defaultUseSharding = gdZarr1.getNextBoolean();
+			else
+				this.useSharding = false;
 		}
 
 		//
@@ -844,62 +829,26 @@ public class ExportN5Api implements ImgExport, Calibrateable
 				gd.addMessage( "" );
 			}
 		}
-		else if ( storageType == StorageFormat.ZARR ) //&& omeZarrOneContainer )
-		{
-			// nothing else to ask for OME-ZARR's
-		}
-		else if ( storageType == StorageFormat.N5 )
-		{
-			// nothing else to ask for N5's
-			/*
-			gd.addStringField( name + "_base_dataset", defaultBaseDataset );
-			gd.addStringField( name + "_dataset_extension", defaultDatasetExtension );
-	
-			gd.addMessage(
-					"Note: Data inside the HDF5/N5/ZARR container are stored in datasets (similar to a filesystem).\n"
-					+ "Each fused volume will be named according to its content (e.g. fused_tp0_ch2) and become a\n"
-					+ "dataset inside the 'base dataset'. You can add a dataset extension for each volume,\n"
-					+ "e.g. /base/fused_tp0_ch2/s0, where 's0' suggests it is full resolution. If you select multi-resolution\n"
-					+ "output the dataset extension MUST end with /s0 since it will also create /s1, /s2, ...", GUIHelper.smallStatusFont, GUIHelper.neutral );
-					*/
-		}
 
-		// export type changed or undefined
-		/*
-		if ( defaultBlocksizeX <= 0 || storageType.ordinal() != previousExportOption )
-		{
-			if ( storageType == StorageType.HDF5 )
-			{
-				defaultBlocksizeX = defaultBlocksizeX_H5;
-				defaultBlocksizeY = defaultBlocksizeY_H5;
-				defaultBlocksizeZ = defaultBlocksizeZ_H5;
-				defaultBlocksizeFactorX = defaultBlocksizeFactorX_H5;
-				defaultBlocksizeFactorY = defaultBlocksizeFactorY_H5;
-				defaultBlocksizeFactorZ = defaultBlocksizeFactorZ_H5;
-			}
-			else
-			{
-				defaultBlocksizeX = defaultBlocksizeX_N5;
-				defaultBlocksizeY = defaultBlocksizeY_N5;
-				defaultBlocksizeZ = defaultBlocksizeZ_N5;
-				defaultBlocksizeFactorX = defaultBlocksizeFactorX_N5;
-				defaultBlocksizeFactorY = defaultBlocksizeFactorY_N5;
-				defaultBlocksizeFactorZ = defaultBlocksizeFactorZ_N5;
-			}
-		}
-		*/
 		if ( storageType == StorageFormat.HDF5 )
 		{
 			gd.addMessage(
 					"Default blocksize for HDF5: "+defaultBlocksizeX_H5+"x"+defaultBlocksizeY_H5+"x"+defaultBlocksizeZ_H5+"\n" +
-					"Default compute blocksize for " + storageType + ": " +(defaultBlocksizeX_H5*defaultBlocksizeFactorX_H5)+"x"+(defaultBlocksizeY_H5*defaultBlocksizeFactorY_H5)+"x"+(defaultBlocksizeZ_H5*defaultBlocksizeFactorZ_H5) +
+					"Default compute blocksize for HDF5: " +(defaultBlocksizeX_H5*defaultBlocksizeFactorX_H5)+"x"+(defaultBlocksizeY_H5*defaultBlocksizeFactorY_H5)+"x"+(defaultBlocksizeZ_H5*defaultBlocksizeFactorZ_H5) +
 					" (factor: "+defaultBlocksizeFactorX_H5+"x"+defaultBlocksizeFactorY_H5+"x"+defaultBlocksizeFactorZ_H5+")", GUIHelper.mediumstatusNonItalicfont, GUIHelper.neutral );
+		}
+		else if ( storageType == StorageFormat.ZARR && useSharding )
+		{
+			gd.addMessage(
+					"Default blocksize for ZARR v3: "+defaultBlocksizeX_N5+"x"+defaultBlocksizeY_N5+"x"+defaultBlocksizeZ_N5+"\n" +
+					"Default compute blocksize & shardsize for ZARR v3: " +(defaultBlocksizeX_N5*defaultBlocksizeFactorX_N5)+"x"+(defaultBlocksizeY_N5*defaultBlocksizeFactorY_N5)+"x"+(defaultBlocksizeZ_N5*defaultBlocksizeFactorZ_N5) +
+					" (factor: "+defaultBlocksizeFactorX_N5+"x"+defaultBlocksizeFactorY_N5+"x"+defaultBlocksizeFactorZ_N5+")", GUIHelper.mediumstatusNonItalicfont, GUIHelper.neutral );
 		}
 		else
 		{
 			gd.addMessage(
-					"Default blocksize for N5/ZARR: "+defaultBlocksizeX_N5+"x"+defaultBlocksizeY_N5+"x"+defaultBlocksizeZ_N5+"\n" +
-					"Default compute blocksize for " + storageType + ": " +(defaultBlocksizeX_N5*defaultBlocksizeFactorX_N5)+"x"+(defaultBlocksizeY_N5*defaultBlocksizeFactorY_N5)+"x"+(defaultBlocksizeZ_N5*defaultBlocksizeFactorZ_N5) +
+					"Default blocksize for ZARR/N5: "+defaultBlocksizeX_N5+"x"+defaultBlocksizeY_N5+"x"+defaultBlocksizeZ_N5+"\n" +
+					"Default compute blocksize for " + options[ defaultOption ] + ": " +(defaultBlocksizeX_N5*defaultBlocksizeFactorX_N5)+"x"+(defaultBlocksizeY_N5*defaultBlocksizeFactorY_N5)+"x"+(defaultBlocksizeZ_N5*defaultBlocksizeFactorZ_N5) +
 					" (factor: "+defaultBlocksizeFactorX_N5+"x"+defaultBlocksizeFactorY_N5+"x"+defaultBlocksizeFactorZ_N5+")", GUIHelper.mediumstatusNonItalicfont, GUIHelper.neutral );
 		}
 
@@ -1033,16 +982,18 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			}
 		}
 
+		if ( useSharding )
+		{
+			this.shardSize = new int[] { bsX * bsFactorX, bsY * bsFactorY, bsZ * bsFactorZ };
+			IOFunctions.println( "ZARR v3 shard size: " + Arrays.toString( this.shardSize ));
+		}
+		else if ( storageType == StorageFormat.ZARR ) // v3
+		{
+			IOFunctions.println( "ZARR v3 sharding: DISABLED." );
+		}
+
 		if ( multiRes )
 		{
-			/*
-			if ( !bdv && !this.datasetExtension.endsWith("/s0") )
-			{
-				IOFunctions.println( "The selected dataset extension does not end with '/s0'. Cannot continue since it is unclear how to store multi-resolution levels '/s1', '/s2', ..." );
-				return false;
-			}
-			*/
-
 			final double aniso = fusion.getAnisotropyFactor();
 			final Interval bb = fusion.getDownsampledBoundingBox();
 			final int[][] proposedDownsampling = estimateMultiResPyramid( new FinalDimensions( bb.dimensionsAsLongArray() ), aniso );
