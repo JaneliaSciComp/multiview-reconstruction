@@ -113,10 +113,10 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 
 		<!-- N5 alpha versions for Zarr v3 shard support -->
 		<!-- See: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/ -->
-		<n5.version>4.0.0-alpha-6</n5.version>
+		<n5.version>4.0.0-alpha-7-SNAPSHOT</n5.version>
 		<n5-imglib2.version>7.1.0-alpha-6</n5-imglib2.version>
 		<n5-universe.version>2.4.0-alpha-6</n5-universe.version>
-		<n5-zarr.version>2.0.0-alpha-4</n5-zarr.version>
+		<n5-zarr.version>2.0.0-alpha-5-SNAPSHOT</n5-zarr.version>
 		<n5-zstandard.version>2.0.0-alpha-4</n5-zstandard.version>
 		<n5-blosc.version>2.0.0-alpha-4</n5-blosc.version>
 	</properties>
