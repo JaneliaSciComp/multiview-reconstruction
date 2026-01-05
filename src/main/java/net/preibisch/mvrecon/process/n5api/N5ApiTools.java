@@ -366,7 +366,9 @@ public class N5ApiTools
 	{
 		return Arrays.asList(StorageFormat.values()).stream().map(s -> {
 			if (s.name().equals("ZARR"))
-				return "OME-ZARR";
+				return "OME-ZARR v3";
+			else if (s.name().equals("ZARR2"))
+				return "OME-ZARR v2 (deprecated)";
 			else
 				return s.name();
 		}).toArray(String[]::new);
