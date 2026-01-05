@@ -98,7 +98,7 @@ public class TestN5Zarr
 	public void testZarrV2NoSharding() throws Exception
 	{
 		File outputPath = tempDir.resolve( "zarr_v2.zarr" ).toFile();
-		N5Writer writer = util.URITools.instantiateN5Writer( org.janelia.saalfeldlab.n5.universe.StorageFormat.ZARR, outputPath.toURI() );
+		N5Writer writer = util.URITools.instantiateN5Writer( org.janelia.saalfeldlab.n5.universe.StorageFormat.ZARR2, outputPath.toURI() );
 
 		try
 		{
