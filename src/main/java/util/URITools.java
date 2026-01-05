@@ -56,6 +56,8 @@ import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTrans
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformationAdapter;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueReader;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueWriter;
 import org.jdom2.Document;
 import org.jdom2.Element;
 import org.jdom2.input.SAXBuilder;
@@ -270,8 +272,8 @@ public class URITools
 			else if ( format.equals( StorageFormat.ZARR ))
 			{
 				// Create Zarr v3 writer
-				return new org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueWriter(
-						new org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess(java.nio.file.FileSystems.getDefault()),
+				return new ZarrV3KeyValueWriter(
+						new FileSystemKeyValueAccess(FileSystems.getDefault()),
 						URITools.fromURI( uri ),
 						builder,
 						true,  // mapN5DatasetAttributes
@@ -329,8 +331,8 @@ public class URITools
 			else if ( format.equals( StorageFormat.ZARR ))
 			{
 				// Create Zarr v3 reader
-				return new org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueReader(
-						new org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess(java.nio.file.FileSystems.getDefault()),
+				return new ZarrV3KeyValueReader(
+						new FileSystemKeyValueAccess(FileSystems.getDefault()),
 						URITools.fromURI( uri ),
 						builder,
 						true,  // mapN5DatasetAttributes
