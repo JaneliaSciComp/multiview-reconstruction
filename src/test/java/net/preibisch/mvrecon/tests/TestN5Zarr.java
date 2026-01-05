@@ -165,6 +165,81 @@ public class TestN5Zarr
 	}
 
 	@Test
+	public void testZarrV3NoSharding() throws Exception
+	{
+		File outputPath = tempDir.resolve( "zarr_v3_no_sharding.zarr" ).toFile();
+		N5Writer writer = util.URITools.instantiateN5Writer( org.janelia.saalfeldlab.n5.universe.StorageFormat.ZARR, outputPath.toURI() );
+
+		try
+		{
+			// Get fusion BlockSupplier from TestFusion
+			final Pair<BlockSupplier<UnsignedShortType>, Interval> fusionResult =
+					TestFusion.testFusion( spimData, bb, FusionType.AVG_BLEND, downsampling, anisotropyFactor );
+
+			final BlockSupplier<UnsignedShortType> blockSupplier = fusionResult.getA();
+			final Interval boundingBox = fusionResult.getB();
+			final int[] blockSize = new int[] { 32, 32, 32 };
+
+			MultiResolutionLevelInfo[] mrInfo = N5ApiTools.setupMultiResolutionPyramid(
+				writer,
+				( level ) -> "test/s" + level,
+				DataType.UINT16,
+				boundingBox.dimensionsAsLongArray(),
+				new ZstandardCompression(),
+				blockSize,
+				new int[][] {
+					{ 1, 1, 1 },
+					{ 2, 2, 1 },
+					{ 4, 4, 2 }
+				},
+				false,  // useSharding
+				null    // shardSize
+			);
+
+			// Write fusion data and multi-resolution pyramid
+			writeFusionData( writer, mrInfo, blockSupplier );
+
+			assertEquals( 3, mrInfo.length, "Should have 3 resolution levels" );
+			assertTrue( writer.exists( "test/s0" ), "s0 should exist" );
+			assertTrue( writer.exists( "test/s1" ), "s1 should exist" );
+			assertTrue( writer.exists( "test/s2" ), "s2 should exist" );
+
+			// Verify data can be read back from all levels
+			assertTrue( writer.readBlock( "test/s0", writer.getDatasetAttributes( "test/s0" ), new long[] { 0, 0, 0 } ) != null );
+			assertTrue( writer.readBlock( "test/s1", writer.getDatasetAttributes( "test/s1" ), new long[] { 0, 0, 0 } ) != null );
+			assertTrue( writer.readBlock( "test/s2", writer.getDatasetAttributes( "test/s2" ), new long[] { 0, 0, 0 } ) != null );
+
+			// Debug: Check dataset attributes
+			DatasetAttributes s0Attrs = writer.getDatasetAttributes("test/s0");
+			System.out.println("[testZarrV3NoSharding] s0 dataset attributes:");
+			System.out.println("  Class: " + s0Attrs.getClass().getName());
+			System.out.println("  Dimensions: " + java.util.Arrays.toString(s0Attrs.getDimensions()));
+			System.out.println("  Block size: " + java.util.Arrays.toString(s0Attrs.getBlockSize()));
+			if (s0Attrs instanceof org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes) {
+				org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes zarrAttrs =
+					(org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes) s0Attrs;
+				System.out.println("  Chunk grid shape: " + java.util.Arrays.toString(zarrAttrs.getChunkAttributes().getGrid().getShape()));
+				System.out.println("  Is sharded: " + (zarrAttrs.getBlockCodecInfo() instanceof org.janelia.saalfeldlab.n5.shard.ShardCodecInfo));
+			}
+
+			// Count files created
+			long totalFiles = Files.walk(outputPath.toPath()).filter(p -> p.toFile().isFile()).count();
+			long s0Files = Files.walk(new File(outputPath, "test/s0").toPath()).filter(p -> p.toFile().isFile()).count();
+			long s1Files = Files.walk(new File(outputPath, "test/s1").toPath()).filter(p -> p.toFile().isFile()).count();
+			long s2Files = Files.walk(new File(outputPath, "test/s2").toPath()).filter(p -> p.toFile().isFile()).count();
+			System.out.println("[testZarrV3NoSharding] File counts:");
+			System.out.println("  Total files: " + totalFiles);
+			System.out.println("  s0 files: " + s0Files);
+			System.out.println("  s1 files: " + s1Files);
+			System.out.println("  s2 files: " + s2Files);
+		}
+		finally
+		{
+			writer.close();
+		}
+	}
+
+	@Test
 	public void testZarrV3WithSharding() throws Exception
 	{
 		File outputPath = tempDir.resolve( "zarr_v3.zarr" ).toFile();
