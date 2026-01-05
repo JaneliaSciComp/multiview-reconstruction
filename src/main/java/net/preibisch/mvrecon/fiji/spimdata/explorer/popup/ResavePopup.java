@@ -282,20 +282,23 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 						final URI n5DatasetURI = (index <= 5) ? 
 								ParametersResaveN5Api.createN5URIfromXMLURI( panel.xml() ) : ParametersResaveN5Api.createOMEZARRURIfromXMLURI( panel.xml() ) ;
 
+						StorageFormat format;
+
+						// TODO: add ZARR v2
+						if (index <= 5)
+							format = StorageFormat.N5;
+						else
+							format = StorageFormat.ZARR;
+
 						final ParametersResaveN5Api n5params = ParametersResaveN5Api.getParamtersIJ(
 								panel.xml(),
 								n5DatasetURI,
 								viewIds.stream().map( vid -> data.getSequenceDescription().getViewSetups().get( vid.getViewSetupId() ) ).collect( Collectors.toSet() ),
-								false, // do not ask for format (for now)
+								format, // do not ask for format (for now)
 								index == 5 || index == 7 );
 
 						if ( n5params == null )
 							return;
-
-						if (index <= 5)
-							n5params.format = StorageFormat.N5;
-						else
-							n5params.format = StorageFormat.ZARR;
 
 						final URI basePathURI;
 

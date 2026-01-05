@@ -32,7 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -80,7 +79,7 @@ public class Resave_N5Api implements PlugIn
 			return;
 
 		final ParametersResaveN5Api n5params =
-				ParametersResaveN5Api.getParamtersIJ( xml.getXMLURI(), xml.getViewSetupsToProcess(), true, true );
+				ParametersResaveN5Api.getParamtersIJ( xml.getXMLURI(), xml.getViewSetupsToProcess(), null, true );
 
 		if ( n5params == null )
 			return;
@@ -125,6 +124,7 @@ public class Resave_N5Api implements PlugIn
 		}
 
 		// save to cloud or file
+		// TODO: if (n5Params.format == StorageFormat.ZARR && n5Params.useSharding) >>> USE SHARDING
 		final N5Writer n5Writer = URITools.instantiateN5Writer( n5Params.format, n5Params.n5URI );
 
 		final int[] blockSize = n5Params.subdivisions[ 0 ];

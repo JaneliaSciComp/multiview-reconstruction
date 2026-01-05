@@ -49,6 +49,8 @@ public class ParametersResaveN5Api
 	public static int defaultBlockSize = 64;
 	public static int defaultBlockSizeXY = 128;
 
+	public static boolean defaultUseSharding = true;
+
 	public static int defaultFormat = 0; // ZARR
 	public static int defaultNumThreads = Math.max( 1, Runtime.getRuntime().availableProcessors() - 1 );
 
@@ -57,6 +59,7 @@ public class ParametersResaveN5Api
 	public int[] blockSizeFactor;
 	public int[][] resolutions, subdivisions;
 	public Map< Integer, ExportMipmapInfo > proposedMipmaps;
+	public boolean useSharding = false;
 
 	public Compression compression;
 	public StorageFormat format = StorageFormat.ZARR;
@@ -75,27 +78,21 @@ public class ParametersResaveN5Api
 	}
 
 	public static ParametersResaveN5Api getParamtersIJ(
-			final Collection< ViewSetup > setupsToProcess )
-	{
-		return getParamtersIJ( null, null, setupsToProcess, false, false );
-	}
-
-	public static ParametersResaveN5Api getParamtersIJ(
 			final URI xmlURI,
 			final Collection< ViewSetup > setupsToProcess,
-			final boolean askForFormat,
+			final StorageFormat format, // if null, ask for format
 			final boolean askForPaths )
 	{
 		final URI n5URI = createN5URIfromXMLURI( xmlURI );
 
-		return getParamtersIJ( xmlURI, n5URI, setupsToProcess, askForFormat, askForPaths );
+		return getParamtersIJ( xmlURI, n5URI, setupsToProcess, format, askForPaths );
 	}
 
 	public static ParametersResaveN5Api getParamtersIJ(
 			final URI xmlURI,
 			final URI n5URI,
 			final Collection< ViewSetup > setupsToProcess,
-			final boolean askForFormat,
+			final StorageFormat format, // if null, ask for format
 			final boolean askForPaths )
 	{
 		final ParametersResaveN5Api n5params = new ParametersResaveN5Api();
@@ -132,25 +129,47 @@ public class ParametersResaveN5Api
 			blockSizeFactor[ d ] = (int)( dim / bs + Math.min( 1, dim%bs ) );
 		}
 
+		// we need to ask for the format first, because the parameters depend on it
+		if ( format == null )
+		{
+			final GenericDialogPlus gdFormat = new GenericDialogPlus( "Choose Format" );
+
+			final String[] options = N5ApiTools.exportOptions();
+			gdFormat.addChoice( "Format for raw data", options, options[ defaultFormat ] );
+
+			n5params.format = StorageFormat.values()[ defaultFormat = gdFormat.getNextChoiceIndex() ];
+		}
+		else
+		{
+			n5params.format = format;
+		}
+
 		final GenericDialogPlus gdp = new GenericDialogPlus( "Options" );
 
 		gdp.addMessage( "N5 API saving options", new Font( Font.SANS_SERIF, Font.BOLD, 13 ) );
 
-		if ( askForFormat )
+		// Zarr v3 sharding dialog
+		if ( n5params.format == StorageFormat.ZARR ) // v3
 		{
-			//final String[] options = new String[] { "N5", "HDF5" };
-			final String[] options = N5ApiTools.exportOptions();
-			gdp.addChoice( "Format for raw data", options, options[ defaultFormat ] );
+			gdp.addCheckbox( "Enable_sharding", defaultUseSharding );
+			gdp.addMessage(
+					"Sharding groups multiple blocks [a.k.a. chunks] into larger files, reducing the\n" +
+					"number of files significantly. Recommended for large datasets (>1TB) or cloud storage.\n" +
+					"Note: Shard size is a multiple of block size and defined by the compute block size factor.",
+					GUIHelper.smallStatusFont );
 		}
 
 		PluginHelper.addCompression( gdp, true );
+
 		gdp.addStringField( "Downsampling_factors", ProposeMipmaps.getArrayString( autoMipmapSettings.getExportResolutions() ), 40 );
-		gdp.addStringField( "Block_size (all the same)", ProposeMipmaps.getArrayString( autoMipmapSettings.getSubdivisions() ), 40 );
+		gdp.addStringField( "Block_size (for all images)", ProposeMipmaps.getArrayString( autoMipmapSettings.getSubdivisions() ), 40 );
+
 		gdp.addSlider( "Compute_block_size_factor_X", 1, 128, blockSizeFactor[ 0 ] );
 		gdp.addSlider( "Compute_block_size_factor_Y", 1, 128, blockSizeFactor[ 1 ] );
 		gdp.addSlider( "Compute_block_size_factor_Z", 1, 128, blockSizeFactor[ 2 ] );
-		gdp.addMessage( "Defines how many blocks are written at once; e.g. 4,4,1 & blockSize 128,128,32 means each thread writes 512,512,32 chunks.\n"
-				+ "For optimal performance, the size in XY is as large as each XY plane, as usually entire planes must be read.", GUIHelper.smallStatusFont );
+		gdp.addMessage(
+				"Defines how many blocks are written at once; e.g. for 4,4,1 & blockSize 128,128,64 threads write 512,512,64 chunks (optionally as shards).\n" +
+				"For optimal performance, the size in XY is as large as each XY plane, as usually entire planes must be read.", GUIHelper.smallStatusFont );
 		gdp.addMessage( "Max dimensions of the images that will be re-saved: " + Arrays.toString( maxDimensions ), GUIHelper.smallStatusFont, Color.red );
 		gdp.addNumericField( "Number_of_threads (CPUs:" + Runtime.getRuntime().availableProcessors() + ")", defaultNumThreads, 0 );
 
@@ -166,8 +185,11 @@ public class ParametersResaveN5Api
 		if (gdp.wasCanceled())
 			return null;
 
-		if ( askForFormat )
-			n5params.format = StorageFormat.values()[ defaultFormat = gdp.getNextChoiceIndex() ];
+		// Zarr v3 sharding dialog
+		if ( n5params.format == StorageFormat.ZARR ) // v3
+			n5params.useSharding = defaultUseSharding = gdp.getNextBoolean();
+		else
+			n5params.useSharding = false;
 
 		n5params.compression = PluginHelper.parseCompression( gdp );
 
