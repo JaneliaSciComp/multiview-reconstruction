@@ -268,6 +268,19 @@ public class URITools
 			if ( format.equals( StorageFormat.N5 ))
 				return new N5FSWriter( URITools.fromURI( uri ) );
 			else if ( format.equals( StorageFormat.ZARR ))
+			{
+				// Create Zarr v3 writer
+				return new org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueWriter(
+						new org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess(java.nio.file.FileSystems.getDefault()),
+						URITools.fromURI( uri ),
+						builder,
+						true,  // mapN5DatasetAttributes
+						true,  // mergeAttributes
+						"/",   // dimensionSeparator
+						true   // cacheAttributes
+				);
+			}
+			else if ( format.equals( StorageFormat.ZARR2 ))
 				return new N5ZarrWriter( URITools.fromURI( uri ), builder, "/", true, true );
 			else if ( format.equals( StorageFormat.HDF5 ))
 				return new N5HDF5Writer( URITools.fromURI( uri ) );
@@ -314,6 +327,18 @@ public class URITools
 			if ( format.equals( StorageFormat.N5 ))
 				return new N5FSReader( URITools.fromURI( uri ) );
 			else if ( format.equals( StorageFormat.ZARR ))
+			{
+				// Create Zarr v3 reader
+				return new org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueReader(
+						new org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess(java.nio.file.FileSystems.getDefault()),
+						URITools.fromURI( uri ),
+						builder,
+						true,  // mapN5DatasetAttributes
+						true,  // mergeAttributes
+						true   // cacheAttributes
+				);
+			}
+			else if ( format.equals( StorageFormat.ZARR2 ))
 				return new N5ZarrReader( URITools.fromURI( uri ), builder );
 			else if ( format.equals( StorageFormat.HDF5 ))
 				return new N5HDF5Reader( URITools.fromURI( uri ) );

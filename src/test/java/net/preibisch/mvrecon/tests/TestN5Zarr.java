@@ -32,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
@@ -145,6 +146,17 @@ public class TestN5Zarr
 			assertTrue( writer.readBlock( "test/s0", writer.getDatasetAttributes( "test/s0" ), new long[] { 0, 0, 0 } ) != null );
 			assertTrue( writer.readBlock( "test/s1", writer.getDatasetAttributes( "test/s1" ), new long[] { 0, 0, 0 } ) != null );
 			assertTrue( writer.readBlock( "test/s2", writer.getDatasetAttributes( "test/s2" ), new long[] { 0, 0, 0 } ) != null );
+
+			// Count files created
+			long totalFiles = Files.walk(outputPath.toPath()).filter(p -> p.toFile().isFile()).count();
+			long s0Files = Files.walk(new File(outputPath, "test/s0").toPath()).filter(p -> p.toFile().isFile()).count();
+			long s1Files = Files.walk(new File(outputPath, "test/s1").toPath()).filter(p -> p.toFile().isFile()).count();
+			long s2Files = Files.walk(new File(outputPath, "test/s2").toPath()).filter(p -> p.toFile().isFile()).count();
+			System.out.println("[testZarrV2NoSharding] File counts:");
+			System.out.println("  Total files: " + totalFiles);
+			System.out.println("  s0 files: " + s0Files);
+			System.out.println("  s1 files: " + s1Files);
+			System.out.println("  s2 files: " + s2Files);
 		}
 		finally
 		{
@@ -204,6 +216,30 @@ public class TestN5Zarr
 			assertTrue( writer.readBlock( "test/s0", writer.getDatasetAttributes( "test/s0" ), new long[] { 0, 0, 0 } ) != null );
 			assertTrue( writer.readBlock( "test/s1", writer.getDatasetAttributes( "test/s1" ), new long[] { 0, 0, 0 } ) != null );
 			assertTrue( writer.readBlock( "test/s2", writer.getDatasetAttributes( "test/s2" ), new long[] { 0, 0, 0 } ) != null );
+
+			// Debug: Check dataset attributes
+			DatasetAttributes s0Attrs = writer.getDatasetAttributes("test/s0");
+			System.out.println("[testZarrV3WithSharding] s0 dataset attributes:");
+			System.out.println("  Class: " + s0Attrs.getClass().getName());
+			System.out.println("  Dimensions: " + java.util.Arrays.toString(s0Attrs.getDimensions()));
+			System.out.println("  Block size (inner chunk): " + java.util.Arrays.toString(s0Attrs.getBlockSize()));
+			if (s0Attrs instanceof org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes) {
+				org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes zarrAttrs =
+					(org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes) s0Attrs;
+				System.out.println("  Chunk grid shape (shard size): " + java.util.Arrays.toString(zarrAttrs.getChunkAttributes().getGrid().getShape()));
+				System.out.println("  Is sharded: " + (zarrAttrs.getBlockCodecInfo() instanceof org.janelia.saalfeldlab.n5.shard.ShardCodecInfo));
+			}
+
+			// Count files created
+			long totalFiles = Files.walk(outputPath.toPath()).filter(p -> p.toFile().isFile()).count();
+			long s0Files = Files.walk(new File(outputPath, "test/s0").toPath()).filter(p -> p.toFile().isFile()).count();
+			long s1Files = Files.walk(new File(outputPath, "test/s1").toPath()).filter(p -> p.toFile().isFile()).count();
+			long s2Files = Files.walk(new File(outputPath, "test/s2").toPath()).filter(p -> p.toFile().isFile()).count();
+			System.out.println("[testZarrV3WithSharding] File counts:");
+			System.out.println("  Total files: " + totalFiles);
+			System.out.println("  s0 files: " + s0Files);
+			System.out.println("  s1 files: " + s1Files);
+			System.out.println("  s2 files: " + s2Files);
 		}
 		finally
 		{

@@ -601,7 +601,9 @@ public class N5ApiTools
 		final RandomAccessibleInterval<T> previousScale = N5Utils.open(n5, datasetPreviousScale);
 		final T type = previousScale.getType().createVariable();
 		final BlockSupplier< T > blocks = BlockSupplier.of( previousScale ).andThen( Downsample.downsample( mrInfo.relativeDownsampling ) );
-		final long[] dimensions = n5.getAttribute( dataset, DatasetAttributes.DIMENSIONS_KEY, long[].class );
+		// Get dimensions from DatasetAttributes directly (works for both N5 and Zarr v2/v3)
+		final DatasetAttributes attrs = n5.getDatasetAttributes(dataset);
+		final long[] dimensions = attrs.getDimensions();
 		final RandomAccessibleInterval< T > downsampled = BlockAlgoUtils.cellImg( blocks, dimensions, new int[] { 64 } );
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
 
