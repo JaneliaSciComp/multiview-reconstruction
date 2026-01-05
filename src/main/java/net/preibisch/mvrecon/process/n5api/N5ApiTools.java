@@ -592,43 +592,26 @@ public class N5ApiTools
 
 		final DataType dataType = mrInfo.dataType;
 
-		System.out.println("[writeDownsampledBlock] dataset=" + dataset);
-		System.out.println("[writeDownsampledBlock] datasetPreviousScale=" + datasetPreviousScale);
-		System.out.println("[writeDownsampledBlock] dimensions=" + java.util.Arrays.toString(mrInfo.dimensions));
-		System.out.println("[writeDownsampledBlock] blockSize=" + java.util.Arrays.toString(mrInfo.blockSize));
-		System.out.println("[writeDownsampledBlock] gridBlock offset=" + java.util.Arrays.toString(gridBlock[0]) +
-				" size=" + java.util.Arrays.toString(gridBlock[1]) + " gridPos=" + java.util.Arrays.toString(gridBlock[2]));
-
 		if ( !supportedDataTypes.contains( dataType ) )
 		{
 			n5.close();
 			throw new RuntimeException("Unsupported pixel type: " + dataType );
 		}
 
-		System.out.println("[writeDownsampledBlock] Opening previous scale...");
 		final RandomAccessibleInterval<T> previousScale = N5Utils.open(n5, datasetPreviousScale);
-		System.out.println("[writeDownsampledBlock] previousScale dimensions: " + java.util.Arrays.toString(previousScale.dimensionsAsLongArray()));
-
 		final T type = previousScale.getType().createVariable();
-		System.out.println("[writeDownsampledBlock] type=" + type + " (null? " + (type == null) + ")");
-
-		System.out.println("[writeDownsampledBlock] Creating downsampled BlockSupplier...");
 		final BlockSupplier< T > blocks = BlockSupplier.of( previousScale ).andThen( Downsample.downsample( mrInfo.relativeDownsampling ) );
-
-		System.out.println("[writeDownsampledBlock] Getting dataset dimensions...");
 		final long[] dimensions = n5.getAttribute( dataset, DatasetAttributes.DIMENSIONS_KEY, long[].class );
-		System.out.println("[writeDownsampledBlock] Retrieved dimensions=" + java.util.Arrays.toString(dimensions));
-
-		System.out.println("[writeDownsampledBlock] Creating cell image...");
 		final RandomAccessibleInterval< T > downsampled = BlockAlgoUtils.cellImg( blocks, dimensions, new int[] { 64 } );
-
-		System.out.println("[writeDownsampledBlock] Creating source grid block...");
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
-		System.out.println("[writeDownsampledBlock] sourceGridBlock dimensions: " + java.util.Arrays.toString(sourceGridBlock.dimensionsAsLongArray()));
 
-		System.out.println("[writeDownsampledBlock] Calling N5Utils.saveNonEmptyBlock...");
-		N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], type);
-		System.out.println("[writeDownsampledBlock] Successfully saved block");
+		// For sharded datasets, we must write complete shards including empty blocks
+		// because sparse shard reading is not fully supported yet
+		if (mrInfo.shardSize != null) {
+			N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridBlock[2]);
+		} else {
+			N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], type);
+		}
 	}
 
 	public static < T extends NativeType< T > & RealType< T > > void writeDownsampledBlock5dOMEZARR(

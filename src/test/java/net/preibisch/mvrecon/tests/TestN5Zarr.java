@@ -152,7 +152,7 @@ public class TestN5Zarr
 		}
 	}
 
-	//@Test
+	@Test
 	public void testZarrV3WithSharding() throws Exception
 	{
 		File outputPath = tempDir.resolve( "zarr_v3.zarr" ).toFile();
