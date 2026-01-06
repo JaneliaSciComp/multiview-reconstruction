@@ -33,6 +33,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.jdom2.Attribute;
 import org.jdom2.Element;
 
@@ -47,6 +48,9 @@ import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARR
 @ImgLoaderIo( format = "bdv.multimg.zarr", type = AllenOMEZarrLoader.class )
 public class XmlIoAllenOMEZarrLoader implements XmlIoBasicImgLoader< AllenOMEZarrLoader >
 {
+	public static final String ZARR_V2_TAG = "ZarrV2";
+	public static final String ZARR_V3_TAG = "ZarrV3";
+
 	@Override
 	public Element toXml( final AllenOMEZarrLoader imgLoader, final File basePath )
 	{
@@ -58,10 +62,11 @@ public class XmlIoAllenOMEZarrLoader implements XmlIoBasicImgLoader< AllenOMEZar
 	{
 		final Element imgLoaderElement = new Element( "ImageLoader" );
 		imgLoaderElement.setAttribute( IMGLOADER_FORMAT_ATTRIBUTE_NAME, "bdv.multimg.zarr" );
-		imgLoaderElement.setAttribute( "version", "3.0" );
+		imgLoaderElement.setAttribute( "version", "3.1" );
+		imgLoaderElement.setAttribute( "zarr.version", (imgLoader.getFormat() == StorageFormat.ZARR) ? ZARR_V3_TAG : ZARR_V2_TAG );
 
 		imgLoaderElement.addContent( XmlHelpers.pathElementURI( "zarr", imgLoader.getN5URI(), basePathURI ));
-
+		
 		final Element zgroupsElement = new Element( "zgroups" );
 
 		for ( final Entry<ViewId, OMEZARREntry > entry : imgLoader.getViewIdToPath().entrySet() )
@@ -107,6 +112,14 @@ public class XmlIoAllenOMEZarrLoader implements XmlIoBasicImgLoader< AllenOMEZar
 			version = ver.getValue();
 		else
 			version = "";
+
+		final Attribute zarrVer = elem.getAttribute( "zarr.version" );
+
+		final StorageFormat format;
+		if ( zarrVer != null && ver.getValue().equals( ZARR_V3_TAG ) )
+			format = StorageFormat.ZARR; //v3
+		else
+			format = StorageFormat.ZARR2; // v2
 
 		final URI uri;
 
@@ -201,7 +214,7 @@ public class XmlIoAllenOMEZarrLoader implements XmlIoBasicImgLoader< AllenOMEZar
 		{
 			try
 			{
-				return new AllenOMEZarrLoader( uri, sequenceDescription, zgroups );
+				return new AllenOMEZarrLoader( uri, format, sequenceDescription, zgroups );
 			}
 			catch ( Exception e )
 			{

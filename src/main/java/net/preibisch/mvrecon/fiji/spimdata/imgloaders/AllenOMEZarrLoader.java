@@ -45,7 +45,6 @@ import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import util.URITools;
 
 public class AllenOMEZarrLoader extends N5ImageLoader
@@ -54,16 +53,20 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 
 	private final Map< ViewId, OMEZARREntry > viewIdToPath;
 
+	/**
+	 * either StorageFormat.ZARR (v3) or StorageFormat.ZARR2 (v2)
+	 */
+	private final StorageFormat format;
+
 	public AllenOMEZarrLoader(
 			final URI n5URI,
-			//final String bucket,
-			//final String folder,
+			final StorageFormat format,
 			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
 			final Map< ViewId, OMEZARREntry > viewIdToPath )
 	{
-		super( URITools.instantiateN5Reader( StorageFormat.ZARR, n5URI ), n5URI, sequenceDescription );
+		super( URITools.instantiateN5Reader( format, n5URI ), n5URI, sequenceDescription );
 		this.sequenceDescription = sequenceDescription;
-
+		this.format = format;
 		this.viewIdToPath = viewIdToPath;
 	}
 
@@ -77,6 +80,8 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 	{
 		return new AllenOMEZarrProperties( sequenceDescription, viewIdToPath );
 	}
+
+	public StorageFormat getFormat() { return format; }
 
 	public static class OMEZARREntry implements Serializable
 	{

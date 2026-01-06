@@ -104,7 +104,12 @@ public class OMEZARR implements MultiViewDatasetDefinition
 {
 	public static String defaultDirectory = "";
 	public static String defaultDir = "/";
+
+	private static String[] zarrChoices = { "OME-ZARR v2", "OME-ZARR v3" };
+	public static int defaultZarrChoice = 0;
+
 	private static ArrayList<URIListChooser> uriListChoosers = new ArrayList<>();
+	public static int defaultURIListChoice = 0;
 
 	static
 	{
@@ -130,28 +135,24 @@ public class OMEZARR implements MultiViewDatasetDefinition
 	@Override
 	public SpimData2 createDataset( final String xmlFileName )
 	{
-		final URIListChooser chooser;
+		final String[] uriListChooserChoices = new String[uriListChoosers.size()];
+		for (int i = 0; i< uriListChoosers.size(); i++)
+			uriListChooserChoices[i] = uriListChoosers.get( i ).getDescription();
 
-		// only ask how we want to choose files if there are multiple ways
-		if (uriListChoosers.size() > 1)
-		{
-			final String[] uriListChooserChoices = new String[uriListChoosers.size()];
-			for (int i = 0; i< uriListChoosers.size(); i++)
-				uriListChooserChoices[i] = uriListChoosers.get( i ).getDescription();
+		final GenericDialog gd1 = new GenericDialog( "How to select OME-ZARRs" );
+		gd1.addChoice( "OME-ZARR chooser", uriListChooserChoices, uriListChooserChoices[ defaultURIListChoice ] );
+		gd1.addChoice( "OME-ZARR format", zarrChoices, zarrChoices[ defaultZarrChoice ]);
+		gd1.showDialog();
 
-			final GenericDialog gd1 = new GenericDialog( "How to select OME-ZARRs" );
-			gd1.addChoice( "OME-ZARR chooser", uriListChooserChoices, uriListChooserChoices[0] );
-			gd1.showDialog();
+		if (gd1.wasCanceled())
+			return null;
 
-			if (gd1.wasCanceled())
-				return null;
-
-			chooser = uriListChoosers.get( gd1.getNextChoiceIndex() );
-		}
+		final URIListChooser chooser = uriListChoosers.get( defaultURIListChoice = gd1.getNextChoiceIndex() );
+		final StorageFormat format;
+		if ( (defaultZarrChoice = gd1.getNextChoiceIndex()) == 0 )
+			format = StorageFormat.ZARR2;
 		else
-		{
-			chooser = uriListChoosers.get( 0 );
-		}
+			format = StorageFormat.ZARR;
 
 		final Pair<URI, List<String>> list = chooser.getDatasetList();
 		final URI baseDir = list.getA();
@@ -732,7 +733,7 @@ public class OMEZARR implements MultiViewDatasetDefinition
 		final MissingViews missingViews = new MissingViews( missing );
 
 		final SequenceDescription sequenceDescription = new SequenceDescription( timepoints, viewSetups, null, missingViews );
-		final ImgLoader imgLoader = new AllenOMEZarrLoader(baseDir, sequenceDescription, viewIdToPath );
+		final ImgLoader imgLoader = new AllenOMEZarrLoader(baseDir, format, sequenceDescription, viewIdToPath );
 		sequenceDescription.setImgLoader( imgLoader );
 
 		// get the minimal resolution of all calibrations

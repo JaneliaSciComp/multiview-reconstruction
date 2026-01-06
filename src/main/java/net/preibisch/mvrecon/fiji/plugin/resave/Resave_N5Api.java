@@ -424,7 +424,7 @@ public class Resave_N5Api implements PlugIn
 			sdReduced.getSequenceDescription().setImgLoader(
 					new N5CloudImageLoader( n5Writer, n5Params.n5URI, sdReduced.getSequenceDescription() ) );
 		}
-		else if ( n5Params.format == StorageFormat.ZARR )
+		else if ( n5Params.format == StorageFormat.ZARR || n5Params.format == StorageFormat.ZARR2 )
 		{
 			final Map< ViewId, OMEZARREntry > viewIdToPath = new HashMap<>();
 
@@ -437,7 +437,7 @@ public class Resave_N5Api implements PlugIn
 			);
 
 			sdReduced.getSequenceDescription().setImgLoader(
-					new AllenOMEZarrLoader( n5Params.n5URI, sdReduced.getSequenceDescription(), viewIdToPath ) );
+					new AllenOMEZarrLoader( n5Params.n5URI, n5Params.format, sdReduced.getSequenceDescription(), viewIdToPath ) );
 		}
 		else if ( n5Params.format == StorageFormat.HDF5 )
 		{
