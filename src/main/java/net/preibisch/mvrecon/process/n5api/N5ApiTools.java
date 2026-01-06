@@ -653,8 +653,10 @@ public class N5ApiTools
 
 		final BlockSupplier< T > blocks = BlockSupplier.of( previousScale ).andThen( Downsample.downsample( mrInfo.relativeDownsampling ) );
 
-		// make dimensions 3d
-		final long[] dimensionsRaw = n5.getAttribute( dataset, DatasetAttributes.DIMENSIONS_KEY, long[].class );
+		// Get dimensions from DatasetAttributes directly (works for both N5 and Zarr v2/v3)
+		// Extract first 3 dimensions from 5D array [x, y, z, c, t]
+		final DatasetAttributes attrs = n5.getDatasetAttributes(dataset);
+		final long[] dimensionsRaw = attrs.getDimensions();
 		final long[] dimensions = new long[] { dimensionsRaw[ 0 ], dimensionsRaw[ 1 ], dimensionsRaw[ 2 ] };
 
 		final RandomAccessibleInterval< T > downsampled3d = BlockAlgoUtils.cellImg( blocks, dimensions, new int[] { 64 } );
