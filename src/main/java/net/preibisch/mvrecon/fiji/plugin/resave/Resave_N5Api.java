@@ -329,7 +329,7 @@ public class Resave_N5Api implements PlugIn
 						tasks.add( () ->
 						{
 							// 5D OME-ZARR CONTAINER
-							if ( n5Params.format == StorageFormat.ZARR )
+							if ( n5Params.format == StorageFormat.ZARR || n5Params.format == StorageFormat.ZARR2 )
 							{
 								N5ApiTools.writeDownsampledBlock5dOMEZARR(
 										n5Writer,
@@ -378,7 +378,7 @@ public class Resave_N5Api implements PlugIn
 						gridBlock -> 
 						{
 							// 5D OME-ZARR CONTAINER
-							if ( n5Params.format == StorageFormat.ZARR )
+							if ( n5Params.format == StorageFormat.ZARR || n5Params.format == StorageFormat.ZARR2 )
 							{
 								N5ApiTools.writeDownsampledBlock5dOMEZARR(
 										n5Writer,

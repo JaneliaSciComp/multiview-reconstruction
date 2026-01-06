@@ -217,13 +217,13 @@ public class ExportN5Api implements ImgExport, Calibrateable
 						dir.mkdirs();
 					driverVolumeWriter = new N5HDF5Writer( URITools.fromURI( path ) );
 				}
-				else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
+				else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 				{
 					driverVolumeWriter = URITools.instantiateN5Writer( storageType, path );
 
 					// OME-ZARR single container:
 					// if we store all fused data in one container, we create the dataset here
-					if ( storageType == StorageFormat.ZARR && omeZarrOneContainer )
+					if ( (storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2) && omeZarrOneContainer )
 					{
 						// TODO: this code is very similar to N5APITools.setupBdvDatasetsOMEZARR
 						IOFunctions.println( "Creating 5D OME-ZARR metadata for '" + path + "' ... " );
@@ -340,7 +340,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			currentChannelIndex = -1;
 			currentTPIndex = -1;
 		}
-		else if ( storageType == StorageFormat.ZARR && omeZarrOneContainer ) // OME-Zarr export into a single container
+		else if ( (storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2) && omeZarrOneContainer ) // OME-Zarr export into a single container
 		{
 			currentChannelIndex = N5ApiTools.channelIndex( fusionGroup, channels );
 			currentTPIndex = N5ApiTools.timepointIndex( fusionGroup, timepoints );
@@ -353,7 +353,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 
 			mrInfo = mrInfoZarr;
 		}
-		else if ( storageType == StorageFormat.ZARR ) // OME-Zarr export
+		else if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 ) // OME-Zarr export
 		{
 			final String omeZarrSubContainer = title + ".zarr";
 			IOFunctions.println( "Creating 3D OME-ZARR sub-container '" + omeZarrSubContainer + "' and metadata in '" + path + "' ... " );
@@ -426,7 +426,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			currentTPIndex = -1;
 		}
 
-		if ( bdv && storageType == StorageFormat.ZARR )
+		if ( bdv && (storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2) )
 		{
 			// TODO: create/update the XML
 			try
@@ -502,7 +502,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 						final RandomAccessibleInterval< T > img = BlockSupplierUtils.arrayImg( blockSupplier, new FinalInterval( blockMin, blockMax ) );
 
 						// 5D OME-ZARR CONTAINER
-						if ( storageType == StorageFormat.ZARR && omeZarrOneContainer )
+						if ( (storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2) && omeZarrOneContainer )
 						{
 							// gridBlock is 3d, make it 5d
 							//blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], currentChannelIndex, currentTPIndex };
@@ -622,7 +622,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 						tasks.add( () -> 
 						{
 							// 5D OME-ZARR CONTAINER
-							if ( storageType == StorageFormat.ZARR && omeZarrOneContainer )
+							if ( (storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2) && omeZarrOneContainer )
 							{
 								N5ApiTools.writeDownsampledBlock5dOMEZARR(
 										driverVolumeWriter,
@@ -920,7 +920,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 				// later calling getViewIdForGroup( fusionGroup, splittingType );
 			}
 		}
-		else if ( storageType == StorageFormat.ZARR )// && omeZarrOneContainer )
+		else if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )// && omeZarrOneContainer )
 		{
 			// nothing to get for OME-ZARR's
 		}

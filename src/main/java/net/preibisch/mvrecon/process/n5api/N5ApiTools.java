@@ -786,7 +786,7 @@ public class N5ApiTools
 		final RandomAccessible< T >image;
 
 		// 5D OME-ZARR CONTAINER
-		if ( storageType == StorageFormat.ZARR )
+		if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 		{
 			// gridBlock is 3d, make it 5d
 			blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], 0, 0 };
