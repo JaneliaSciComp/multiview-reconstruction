@@ -91,6 +91,7 @@ public class DisplayRawImagesPopup extends JMenu implements ExplorerWindowSetabl
 					HashMap< Integer, long[] > levelToSize = null;
 
 					boolean consistent = true;
+					boolean consistentSizes = true;
 
 					for ( final ViewId v : views )
 					{
@@ -113,8 +114,8 @@ public class DisplayRawImagesPopup extends JMenu implements ExplorerWindowSetabl
 								consistent = false;
 							else
 								for ( int level = 0; level < levels; ++level )
-									if ( !Arrays.equals( levelToSize.get( level ), il.getImageSize( v.getTimePointId() ).dimensionsAsLongArray() ) )
-										consistent = false;
+									if ( !Arrays.equals( levelToSize.get( level ), il.getImageSize( v.getTimePointId(), level ).dimensionsAsLongArray() ) )
+										consistentSizes = false;
 						}
 					}
 
@@ -122,14 +123,14 @@ public class DisplayRawImagesPopup extends JMenu implements ExplorerWindowSetabl
 					{
 						for ( int level = 0; level < levelToSize.size(); ++level )
 						{
-							JMenuItem item = new JMenuItem( "Level " + level + " " + Arrays.toString( levelToSize.get( level ) ) );
+							JMenuItem item = new JMenuItem( "Level " + level + (consistentSizes ? " " + Arrays.toString( levelToSize.get( level ) ) : " [image sizes vary]" ) );
 							item.addActionListener( new MyActionListener( level ) );
 							asStack.add( item );
 						}
 					}
 					else
 					{
-						JMenuItem item = new JMenuItem( "MultiResolution levels not consistent for selection" );
+						JMenuItem item = new JMenuItem( "MultiResolution levels vary across selected views" );
 						item.setForeground( Color.GRAY );
 						asStack.add( item );
 					}
