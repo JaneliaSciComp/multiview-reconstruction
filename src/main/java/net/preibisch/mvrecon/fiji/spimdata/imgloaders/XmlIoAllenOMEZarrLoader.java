@@ -116,7 +116,7 @@ public class XmlIoAllenOMEZarrLoader implements XmlIoBasicImgLoader< AllenOMEZar
 		final Attribute zarrVer = elem.getAttribute( "zarr.version" );
 
 		final StorageFormat format;
-		if ( zarrVer != null && ver.getValue().equals( ZARR_V3_TAG ) )
+		if ( zarrVer != null && zarrVer.getValue().equals( ZARR_V3_TAG ) )
 			format = StorageFormat.ZARR; //v3
 		else
 			format = StorageFormat.ZARR2; // v2
