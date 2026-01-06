@@ -456,6 +456,27 @@ Therefore, after merging, the new merged set is always at index `pairSets.size()
 
 ## N5/Zarr Export and Multi-Resolution Pyramids
 
+### Fusion vs Resaving
+
+The project supports two distinct export workflows:
+
+**Fusion Export** (ExportN5Api.java):
+- Combines multiple views into a single fused image volume
+- Creates new image data by blending/averaging overlapping views
+- Output: Single volume per timepoint/channel or combined 5D OME-ZARR container
+- Used for final visualization and downstream analysis
+- Supports 3D separate containers or 5D single container OME-ZARR export
+
+**Resaving** (Resave_N5Api.java):
+- Re-exports raw multi-view data to different format (N5/HDF5/Zarr)
+- Preserves original view structure - each view stays separate
+- Creates multi-resolution pyramids for each view
+- Output: BDV-compatible format with XML metadata
+- Always uses 5D OME-ZARR format when exporting to Zarr (expanding 3D to [x,y,z,c=1,t=1])
+- Used for converting legacy formats or creating cloud-compatible versions
+
+**Key difference**: Fusion creates one fused volume, resaving creates separate per-view volumes.
+
 ### Zarr v3 Sharding Support
 
 **Sharding Concept**: Zarr v3 introduces sharding to group multiple small blocks (e.g., 32³) into larger shards (e.g., 128³). This reduces metadata overhead for cloud storage by storing multiple blocks in a single file.
@@ -555,3 +576,26 @@ The proper initialization includes:
 3. **5D expansion for OME-ZARR**: Sharding metadata must be expanded from 3D to 5D format
 4. **Constant shard size**: Don't scale shardSize with downsampling factors across pyramid levels
 5. **computeBlockSize = shardSize**: Critical for correct shard-aware writing
+
+#### Recent Fixes (2026-01-06)
+
+**Zarr v3 Dimensions Reading Fix**:
+- **Problem**: `writeDownsampledBlock5dOMEZARR()` used `getAttribute(DIMENSIONS_KEY)` which returns null for Zarr v3
+- **Fix**: Use `getDatasetAttributes(dataset).getDimensions()` instead (N5ApiTools.java:658)
+- **Reason**: Zarr v3 stores dimensions as "shape" in zarr.json, not as a separate attribute
+- **Commit**: 977cb9f3
+
+**Shard Size for Downsampled Levels Fix**:
+- **Problem**: Downsampled levels (s1+) used `blockSize` instead of `shardSize` for `computeBlockSize` when calling `assembleJobs()`
+- **Impact**: Grid.create() created multiple small blocks instead of shard-sized blocks, causing data written to wrong positions within shards
+- **Symptom**: "Wild" visualization - top-left quadrant for z<64, bottom-right for z≥64
+- **Fix**: Pass `mrInfo.shardSize` (resave) or `this.shardSize` (fusion) as computeBlockSize when sharding enabled
+  - Resave_N5Api.java:304
+  - ExportN5Api.java:588
+- **Commit**: 977cb9f3
+
+**ZARR2 (v2) Support**:
+- **Added**: Comprehensive `|| StorageFormat.ZARR2` checks alongside all ZARR (v3) format checks
+- **Locations**: 11 total - Resave_N5Api.java (2), ExportN5Api.java (8), N5ApiTools.java (1)
+- **Intentionally excluded**: Zarr v3-specific features (sharding dialogs/code)
+- **Commit**: dfbf31aa
