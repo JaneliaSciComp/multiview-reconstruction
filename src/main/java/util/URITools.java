@@ -324,6 +324,9 @@ public class URITools
 				CoordinateTransformation.class,
 				new CoordinateTransformationAdapter() );
 
+		// TODO: maybe use
+		//StorageFormat.guessStorageFromKeys(uri, null);
+
 		if ( URITools.isFile( uri ) )
 		{
 			if ( format.equals( StorageFormat.N5 ))
