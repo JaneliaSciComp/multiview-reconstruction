@@ -298,10 +298,15 @@ public class Resave_N5Api implements PlugIn
 			IOFunctions.println( "Downsampling level s" + s + "... " );
 
 			final List<long[][]> allBlocks =
-					vidsToResave.stream().map( viewId ->
-							N5ApiTools.assembleJobs(
+					vidsToResave.stream().map( viewId -> {
+						final MultiResolutionLevelInfo mrInfo = viewIdToMrInfo.get(viewId)[s];
+						// For sharded datasets, use shard size as computeBlockSize
+						final int[] downsampleComputeBlockSize = (mrInfo.shardSize != null) ? mrInfo.shardSize : mrInfo.blockSize;
+						return N5ApiTools.assembleJobs(
 									viewId,
-									viewIdToMrInfo.get(viewId)[s] )).flatMap(List::stream).collect( Collectors.toList() );
+									mrInfo,
+									downsampleComputeBlockSize );
+					}).flatMap(List::stream).collect( Collectors.toList() );
 
 			time = System.currentTimeMillis();
 

@@ -584,16 +584,20 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			final int s = level;
 
 			// we need to run explicitly in 3D because for OME-ZARR, dimensions are 5D
-			final List<long[][]> allBlocks = 
+			// For sharded datasets, use shard size as computeBlockSize
+			final int[] fusionComputeBlockSize = (useSharding && shardSize != null)
+					? shardSize
+					: new int[] {
+							blocksize()[0] * computeBlocksizeFactor()[ 0 ],
+							blocksize()[1] * computeBlocksizeFactor()[ 1 ],
+							blocksize()[2] * computeBlocksizeFactor()[ 2 ] };
+
+			final List<long[][]> allBlocks =
 					N5ApiTools.assembleJobs(
 							null, // no need to go across ViewIds (for now)
 							new long[] { mrInfo[ level ].dimensions[ 0 ], mrInfo[ level ].dimensions[ 1 ], mrInfo[ level ].dimensions[ 2 ] },
 							blocksize(),
-							new int[] {
-									blocksize()[0] * computeBlocksizeFactor()[ 0 ],
-									blocksize()[1] * computeBlocksizeFactor()[ 1 ],
-									blocksize()[2] * computeBlocksizeFactor()[ 2 ] }
-							);
+							fusionComputeBlockSize );
 
 			IOFunctions.println( new Date( System.currentTimeMillis() ) + ": Downsampling: " + Util.printCoordinates( mrInfo[ level ].absoluteDownsampling ) + " with relative downsampling of " + Util.printCoordinates( mrInfo[ level ].relativeDownsampling ));
 			IOFunctions.println( new Date( System.currentTimeMillis() ) + ": s" + level + " num blocks=" + allBlocks.size() );
