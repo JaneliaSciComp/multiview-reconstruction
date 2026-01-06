@@ -449,7 +449,7 @@ public class N5ApiTools
 		return mrInfo;
 	}
 
-	public static MultiResolutionLevelInfo[] setupBdvDatasetsOMEZARR(
+	public static MultiResolutionLevelInfo[] setupBdvDatasetsOMEZARR_ResaveRaw(
 			final N5Writer driverVolumeWriter,
 			final ViewId viewId,
 			final DataType dataType,
@@ -457,7 +457,9 @@ public class N5ApiTools
 			//final double[] resolutionS0, // TODO: this is a hack (uses 1,1,1) so the export downsampling pyramid is working
 			final Compression compression,
 			final int[] blockSize,
-			int[][] downsamplings )
+			int[][] downsamplings,
+			final boolean useSharding,
+			final int[] shardSize )
 	{
 		final String s0Dataset = viewIdToDatasetBdv( StorageFormat.ZARR ).apply( viewId, 0 );
 		final String baseDataset = s0Dataset.substring(0, s0Dataset.lastIndexOf( "/" ) + 1);
@@ -469,6 +471,11 @@ public class N5ApiTools
 		final int[][] ds5d = new int[ downsamplings.length ][];
 		for ( int d = 0; d < ds5d.length; ++d )
 			ds5d[ d ] = new int[] { downsamplings[ d ][ 0 ], downsamplings[ d ][ 1 ], downsamplings[ d ][ 2 ], 1, 1 };
+
+		// Convert shardSize to 5D if sharding is enabled
+		final int[] shardSize5d = useSharding && shardSize != null
+			? new int[] { shardSize[ 0 ], shardSize[ 1 ], shardSize[ 2 ], 1, 1 }
+			: null;
 
 		final Function<Integer, String> levelToName = (level) -> "/" + level;
 
@@ -482,8 +489,8 @@ public class N5ApiTools
 				compression,
 				blockSize5d, //5d
 				ds5d, // 5d
-			false,  // useSharding (not applicable for BDV format)
-			null ); // shardSize
+				useSharding,
+				shardSize5d ); // 5d
 
 		final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 				(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );

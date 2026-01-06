@@ -189,7 +189,7 @@ public class Resave_N5Api implements PlugIn
 							else
 							{
 								// 5d OME-ZARR with dimension=1 in c and t
-								mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR(
+								mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR_ResaveRaw(
 										n5Writer,
 										viewId,
 										dataTypes.get( viewId.getViewSetupId() ),
@@ -197,7 +197,9 @@ public class Resave_N5Api implements PlugIn
 										//data.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(),
 										compression,
 										blockSize,
-										downsamplings);
+										downsamplings,
+										n5Params.useSharding,
+										n5Params.useSharding ? computeBlockSize : null );
 							}
 
 							return new ValuePair<>( viewId, mrInfo );
