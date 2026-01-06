@@ -686,6 +686,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		}
 	}
 
+	@Override
 	public ArrayList< ExplorerWindowSetable > initPopups()
 	{
 		final ArrayList< ExplorerWindowSetable > popups = new ArrayList< ExplorerWindowSetable >();
