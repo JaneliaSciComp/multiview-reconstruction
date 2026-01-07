@@ -115,13 +115,15 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 
 			if ( higherDimensionIndicies == null || higherDimensionIndicies.length == 0 )
 			{
-				if ( omeZarrVolume.numDimensions() == 4 && omeZarrVolume.dimension( 3 ) == 1 ) // 4d volume with size 1, return 3d volume
-					return Views.hyperSlice( omeZarrVolume, 4, 0 );
-				else if ( omeZarrVolume.numDimensions() == 5 && omeZarrVolume.dimension( 4 ) == 1 && omeZarrVolume.dimension( 3 ) == 1 )  // 5d volume with size 1 in c and t, return 3d volume
+				// Smart fallback for data with size 1 in higher dimensions
+			if ( omeZarrVolume.numDimensions() == 4 && omeZarrVolume.dimension( 3 ) == 1 ) // 4d volume (xyzc) with size 1 in c, return 3d volume
+					return Views.hyperSlice( omeZarrVolume, 3, 0 );
+				else if ( omeZarrVolume.numDimensions() == 5 && omeZarrVolume.dimension( 4 ) == 1 && omeZarrVolume.dimension( 3 ) == 1 )  // 5d volume (xyzct) with size 1 in both c and t, return 3d volume
 					return Views.hyperSlice( Views.hyperSlice( omeZarrVolume, 4, 0 ), 3, 0 );
 				else
 				{
-					throw new RuntimeException( "Cannot handle OME-ZARR with dimensionality " + omeZarrVolume.numDimensions() + " without specifying which hyperslice to extract." );
+					throw new RuntimeException( "Cannot handle OME-ZARR with dimensionality " + omeZarrVolume.numDimensions() +
+					" without specifying which hyperslice to extract. Use higherDimensionIndicies parameter." );
 				}
 			}
 			else
@@ -131,7 +133,7 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 				for ( int d = 3 + higherDimensionIndicies.length - 1; d >= 3; --d )
 					out = Views.hyperSlice( out, d, higherDimensionIndicies[ d - 3 ] );
 
-				return out; //Views.hyperSlice( Views.hyperSlice( omeZarrVolume, 4, 0 ), 3, 0 );
+				return out;
 			}
 		}
 

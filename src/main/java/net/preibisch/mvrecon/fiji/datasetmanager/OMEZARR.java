@@ -280,7 +280,11 @@ public class OMEZARR implements MultiViewDatasetDefinition
 				if ( numDimensions >=4 )
 				{
 					sizeC = fullScaleAttributes.getDimensions()[ 3 ];
-					sizeT = fullScaleAttributes.getDimensions()[ 4 ];
+				}
+
+			if ( numDimensions >=5 )
+			{
+				sizeT = fullScaleAttributes.getDimensions()[ 4 ];
 				}
 			}
 			else
@@ -304,13 +308,20 @@ public class OMEZARR implements MultiViewDatasetDefinition
 				}
 			}
 
-			if ( numDimensions != 3 && numDimensions != 5 )
+			if ( numDimensions != 3 && numDimensions != 4 && numDimensions != 5 )
 			{
-				IOFunctions.println( "Only 3D (xyz) and 5D (xyztc) OME-ZARRs are allowed right now. stopping" );
+				IOFunctions.println( "Only 3D (xyz), 4D (xyzc), and 5D (xyzct) OME-ZARRs are allowed. stopping" );
 				return null;
 			}
 
-			attrMap.put( dataset, new ValuePair<>( fullScaleAttributes, new ValuePair<>(new FinalVoxelDimensions(unit, scale), translation ) ) );
+			// Smart fallback: 4D with sizeC=1 can be treated as 3D
+		if ( numDimensions == 4 && sizeC == 1 )
+		{
+			IOFunctions.println( "\nNOTE: 4D OME-ZARR has only one channel (sizeC=1), treating as 3D (xyz)\n" );
+			numDimensions = 3; // Treat as 3D for UI purposes
+		}
+
+		attrMap.put( dataset, new ValuePair<>( fullScaleAttributes, new ValuePair<>(new FinalVoxelDimensions(unit, scale), translation ) ) );
 		}
 
 		IOFunctions.println( "\nnumDimensions in OME-ZARR's: " + numDimensions );
@@ -337,13 +348,25 @@ public class OMEZARR implements MultiViewDatasetDefinition
 		
 		if ( numDimensions > 3 )
 		{
-			if ( sizeC == 1 && sizeT == 1 )
+			if ( numDimensions == 5 && sizeC == 1 && sizeT == 1 )
 			{
-				inDirSummarySB.append( "<html> <h3> OME-ZARR(s) are 5D, but c=z=1 thus we assume 3D (xyz) </h3></html>" );
+				inDirSummarySB.append( "<html> <h3> OME-ZARR(s) are 5D, but c=t=1 thus we assume 3D (xyz) </h3></html>" );
 				choices.add( "TimePoints" );
 				choices.add( "Channels" );
 			}
-			else
+			else if ( numDimensions == 4 && sizeC == 1 )
+			{
+				inDirSummarySB.append( "<html> <h3> OME-ZARR(s) are 4D, but c=1 thus we assume 3D (xyz) </h3></html>" );
+				choices.add( "TimePoints" );
+				choices.add( "Channels" );
+			}
+			else if ( numDimensions == 4 )
+			{
+				inDirSummarySB.append( "<html> <h3> Views detected within 4D (xyzc) OME-ZARR(s) </h3>" );
+				inDirSummarySB.append( "<p style=\"color:green\">" + sizeC+ " channels detected </p>" );
+				inDirSummarySB.append( "<p style=\"color:orange\">No timepoints (single timepoint data)</p>" );
+			}
+			else // numDimensions == 5
 			{
 				inDirSummarySB.append( "<html> <h3> Views detected within 5D (xyzct) OME-ZARR(s) </h3>" );
 				inDirSummarySB.append( "<p style=\"color:green\">" + sizeC+ " channels detected </p>" );
@@ -577,8 +600,9 @@ public class OMEZARR implements MultiViewDatasetDefinition
 		final ArrayList< TimePoint > tps = new ArrayList< TimePoint >();
 		if ( timepointStrings.size() == 0 )
 		{
-			// timepoints within the 5D OME-ZARR
-			for ( int i = 0; i < sizeT; ++i )
+			// timepoints within the 4D/5D OME-ZARR (for 4D, there is only 1 timepoint)
+			final long numTimepoints = (numDimensions == 4) ? 1 : sizeT;
+			for ( int i = 0; i < numTimepoints; ++i )
 				tps.add( new TimePoint( i ) );
 		}
 		else
@@ -710,13 +734,13 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			if ( chId >= 0 )
 			{
 				// channel had a pattern, so it's a single channel for this dataset, still possibly multiple timepoints
-				viewIdToPath.putAll( updateViewSetup(dataset, viewSetups, meta, angleId, chId, illumId, tileId, tpId, sizeT ) );
+				viewIdToPath.putAll( updateViewSetup(dataset, viewSetups, meta, angleId, chId, illumId, tileId, tpId, sizeT, numDimensions ) );
 			}
 			else
 			{
 				// if the channels are inside the 5D OME-ZARR, this dataset could contain more than one ViewSetup
 				for ( int c = 0; c < sizeC; ++c )
-					viewIdToPath.putAll( updateViewSetup( dataset, viewSetups, meta, angleId, c, illumId, tileId, tpId, sizeT ) );
+					viewIdToPath.putAll( updateViewSetup( dataset, viewSetups, meta, angleId, c, illumId, tileId, tpId, sizeT, numDimensions ) );
 			}
 		}
 
@@ -766,7 +790,8 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			final int illumId,
 			final int tileId,
 			final int tpId,
-			final long sizeT )
+			final long sizeT,
+			final int numDimensions )
 	{
 		final HashMap< ViewId, OMEZARREntry > entries = new HashMap<>();
 
@@ -782,18 +807,25 @@ public class OMEZARR implements MultiViewDatasetDefinition
 				if ( tpId >= 0 )
 				{
 					final ViewId viewId = new ViewId( tpId, vs.getId() );
-					final OMEZARREntry entry = new OMEZARREntry( dataset, new int[] { channelId, 0 } );
+					// For 4D: indices = [channelId] (single element)
+					// For 5D with pattern tp: indices = [channelId, 0]
+					final int[] indices = (numDimensions == 4) ? new int[] { channelId } : new int[] { channelId, 0 };
+					final OMEZARREntry entry = new OMEZARREntry( dataset, indices );
 
 					IOFunctions.println( "ViewId: " + Group.pvid( viewId ) + " @ " + entry );
 					entries.put( viewId, entry );
 				}
 				else
 				{
-					// if the timepoints are inside the 5D OME-ZARR, this dataset could contain more than one ViewId
-					for ( int t = 0; t < sizeT; ++t )
+					// if the timepoints are inside the 4D/5D OME-ZARR, this dataset could contain more than one ViewId
+					final long numTimepoints = (numDimensions == 4) ? 1 : sizeT;
+					for ( int t = 0; t < numTimepoints; ++t )
 					{
 						final ViewId viewId = new ViewId( t, vs.getId() );
-						final OMEZARREntry entry = new OMEZARREntry( dataset, new int[] { channelId, t } );
+						// For 4D: indices = [channelId] (single element)
+						// For 5D: indices = [channelId, t]
+						final int[] indices = (numDimensions == 4) ? new int[] { channelId } : new int[] { channelId, t };
+						final OMEZARREntry entry = new OMEZARREntry( dataset, indices );
 
 						IOFunctions.println( "ViewId: " + Group.pvid( viewId ) + " @ " + entry );
 						entries.put( viewId, entry );
