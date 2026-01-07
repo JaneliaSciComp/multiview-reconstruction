@@ -599,3 +599,76 @@ The proper initialization includes:
 - **Locations**: 11 total - Resave_N5Api.java (2), ExportN5Api.java (8), N5ApiTools.java (1)
 - **Intentionally excluded**: Zarr v3-specific features (sharding dialogs/code)
 - **Commit**: dfbf31aa
+**4D (XYZC) OME-ZARR Support** (2026-01-06):
+- **Added**: Full import support for 4D OME-ZARR (spatial dimensions + channels, no time)
+- **Key Changes**:
+  1. **AllenOMEZarrLoader.java:119** - Fixed critical bug: slice dimension 3 (not 4) for 4D data
+  2. **OMEZARR.java** - Multiple changes to enable 4D import:
+     - Lines 280-288: Split sizeC and sizeT initialization (4D has only sizeC)
+     - Lines 311-322: Allow 4D in dimension check, add smart 4D→3D fallback for sizeC=1
+     - Lines 349-374: Updated UI messages to handle 4D with specific branches
+     - Lines 603-604: Timepoints initialization - for 4D, only 1 timepoint
+     - Lines 784-830: OMEZARREntry creation with proper indices:
+       - 4D: single-element array `[channelId]`
+       - 5D: two-element array `[channelId, timepointId]`
+- **Dimension Mapping**: [0,1,2]=XYZ (spatial), [3]=C (channels), [4]=T (time, 5D only)
+- **Smart Fallbacks**:
+  - 4D with sizeC=1 → treated as 3D with pattern-based channels
+  - 5D with sizeC=1 and sizeT=1 → treated as 3D with pattern-based views
+- **Use Cases**: Multi-channel single-timepoint microscopy data (e.g., multi-color fluorescence)
+- **Export**: Not implemented - import only. Fusion export creates 5D with `[x,y,z,c=1,t=1]` which works.
+- **Files Modified**:
+  - `src/main/java/net/preibisch/mvrecon/fiji/spimdata/imgloaders/AllenOMEZarrLoader.java`
+  - `src/main/java/net/preibisch/mvrecon/fiji/datasetmanager/OMEZARR.java`
+
+### 4D OME-ZARR Technical Details
+
+**Axis Order**: TCZYX (metadata) or XYZCT (data dimensions, reversed)
+
+**higherDimensionIndicies Behavior**:
+- **3D data**: `null` or `[]` (empty array)
+- **4D data**: `[channelId]` (single element)
+- **5D data**: `[channelId, timepointId]` (two elements)
+
+**extract3DVolume() Method** (AllenOMEZarrLoader.java:111-136):
+```java
+// For 4D with indices=[c]: extracts dimension 3 at index c
+// For 5D with indices=[c,t]: extracts dimensions 3 and 4 at indices c and t
+RandomAccessibleInterval< T > out = omeZarrVolume;
+for ( int d = 3 + higherDimensionIndicies.length - 1; d >= 3; --d )
+    out = Views.hyperSlice( out, d, higherDimensionIndicies[ d - 3 ] );
+```
+
+This loop automatically handles variable-length indices:
+- Length 1 (4D): Slices dimension 3 once
+- Length 2 (5D): Slices dimensions 4 then 3
+
+**Import Workflow for 4D**:
+1. OMEZARR class scans directories and detects 4D OME-ZARR files
+2. Reads sizeC from dimension[3] (no sizeT for 4D)
+3. Creates ViewSetups - one per channel
+4. Creates single timepoint (t=0) automatically
+5. For each ViewSetup, creates OMEZARREntry with `indices=[channelId]`
+6. AllenOMEZarrLoader uses indices to extract channel slice when loading
+
+**Example 4D Structure**:
+```
+dataset.zarr/
+  ├── zarr.json       # 4D metadata: axes = [C, Z, Y, X], shape = [3, 100, 512, 512]
+  ├── 0/              # Level 0 (full resolution)
+  └── 1/              # Level 1 (downsampled)
+```
+
+**Example XML Entry for 4D**:
+```xml
+<zgroup setup="0" tp="0" path="dataset.zarr" indicies="[0]"/>  <!-- Channel 0 -->
+<zgroup setup="1" tp="0" path="dataset.zarr" indicies="[1]"/>  <!-- Channel 1 -->
+<zgroup setup="2" tp="0" path="dataset.zarr" indicies="[2]"/>  <!-- Channel 2 -->
+```
+
+**Comparison with 5D**:
+```xml
+<zgroup setup="0" tp="0" path="dataset.zarr" indicies="[0 0]"/>  <!-- Channel 0, Time 0 -->
+<zgroup setup="1" tp="1" path="dataset.zarr" indicies="[0 1]"/>  <!-- Channel 0, Time 1 -->
+```
+
