@@ -56,10 +56,8 @@ import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLo
  * - Volatile image support
  * - Multi-resolution mipmap levels
  */
-public class TestViewerFlatfieldCorrection
-{
-	public static void main( String[] args ) throws SpimDataException
-	{
+public class TestViewerFlatfieldCorrection {
+	public static void main(String[] args) throws SpimDataException {
 		// Paths
 		final String basePath = "/Users/innerbergerm/Projects/janelia/multiview-reconstruction/";
 		final String correctedXmlPath = basePath + "data/dataset_corrected_viewer.xml";
@@ -70,80 +68,78 @@ public class TestViewerFlatfieldCorrection
 		final int timepoint = 0;
 
 		// ========== STEP 1: Load CORRECTED dataset (from XML with flatfield config) ==========
-		System.out.println( "=== STEP 1: Loading CORRECTED dataset ===");
-		System.out.println( "XML path: " + correctedXmlPath );
+		System.out.println("=== STEP 1: Loading CORRECTED dataset ===");
+		System.out.println("XML path: " + correctedXmlPath);
 
-		final SpimData2 correctedData = new XmlIoSpimData2().load( correctedXmlPath );
+		final SpimData2 correctedData = new XmlIoSpimData2().load(correctedXmlPath);
 		final SequenceDescription correctedSeqDesc = correctedData.getSequenceDescription();
 
 		// Verify it's a ViewerFlatfieldCorrectionWrappedImgLoader
-		if ( !( correctedSeqDesc.getImgLoader() instanceof ViewerFlatfieldCorrectionWrappedImgLoader ) )
-		{
-			System.err.println( "ERROR: Expected ViewerFlatfieldCorrectionWrappedImgLoader!" );
-			System.err.println( "Loader type: " + correctedSeqDesc.getImgLoader().getClass().getName() );
+		if (!(correctedSeqDesc.getImgLoader() instanceof ViewerFlatfieldCorrectionWrappedImgLoader)) {
+			System.err.println("ERROR: Expected ViewerFlatfieldCorrectionWrappedImgLoader!");
+			System.err.println("Loader type: " + correctedSeqDesc.getImgLoader().getClass().getName());
 			return;
 		}
 
 		final ViewerFlatfieldCorrectionWrappedImgLoader correctedLoader =
 				(ViewerFlatfieldCorrectionWrappedImgLoader) correctedSeqDesc.getImgLoader();
 
-		System.out.println( "Corrected loader type: " + correctedLoader.getClass().getSimpleName() );
-		System.out.println( "  Correction active: " + correctedLoader.isActive() );
-		System.out.println( "  Caching enabled: " + correctedLoader.isCached() );
-		System.out.println( "  Wrapped loader: " + correctedLoader.getWrappedImgLoader().getClass().getSimpleName() );
-		System.out.println( "  Implements ViewerImgLoader: " + ( correctedLoader instanceof ViewerImgLoader ? "YES" : "NO" ) );
+		System.out.println("Corrected loader type: " + correctedLoader.getClass().getSimpleName());
+		System.out.println("  Correction active: " + correctedLoader.isActive());
+		System.out.println("  Caching enabled: " + correctedLoader.isCached());
+		System.out.println("  Wrapped loader: " + correctedLoader.getWrappedImgLoader().getClass().getSimpleName());
+		System.out.println("  Implements ViewerImgLoader: " + (correctedLoader instanceof ViewerImgLoader ? "YES" : "NO"));
 
 		// ========== STEP 2: Load UNCORRECTED dataset (original XML) ==========
-		System.out.println( "\n=== STEP 2: Loading UNCORRECTED dataset ===" );
-		System.out.println( "XML path: " + uncorrectedXmlPath );
+		System.out.println("\n=== STEP 2: Loading UNCORRECTED dataset ===");
+		System.out.println("XML path: " + uncorrectedXmlPath);
 
-		final SpimData2 uncorrectedData = new XmlIoSpimData2().load( uncorrectedXmlPath );
+		final SpimData2 uncorrectedData = new XmlIoSpimData2().load(uncorrectedXmlPath);
 		final SequenceDescription uncorrectedSeqDesc = uncorrectedData.getSequenceDescription();
 
 		// Verify the base loader is a ViewerImgLoader
-		if ( !( uncorrectedSeqDesc.getImgLoader() instanceof ViewerImgLoader ) )
-		{
-			System.err.println( "ERROR: Base loader is not a ViewerImgLoader!" );
-			System.err.println( "Loader type: " + uncorrectedSeqDesc.getImgLoader().getClass().getName() );
+		if (!(uncorrectedSeqDesc.getImgLoader() instanceof ViewerImgLoader)) {
+			System.err.println("ERROR: Base loader is not a ViewerImgLoader!");
+			System.err.println("Loader type: " + uncorrectedSeqDesc.getImgLoader().getClass().getName());
 			return;
 		}
 
 		final ViewerImgLoader uncorrectedLoader = (ViewerImgLoader) uncorrectedSeqDesc.getImgLoader();
-		System.out.println( "Uncorrected loader type: " + uncorrectedLoader.getClass().getSimpleName() );
+		System.out.println("Uncorrected loader type: " + uncorrectedLoader.getClass().getSimpleName());
 
 		// ========== STEP 3: Create SplitViewerImgLoader wrapping the corrected loader ==========
-		System.out.println( "\n=== STEP 3: Creating SplitViewerImgLoader ===" );
+		System.out.println("\n=== STEP 3: Creating SplitViewerImgLoader ===");
 
 		// Get original image dimensions for the setup we're demonstrating
-		final ViewSetup vs = correctedSeqDesc.getViewSetups().get( setupToShow );
-		final long[] dims = new long[ 3 ];
-		vs.getSize().dimensions( dims );
-		System.out.println( "Original image size: " + dims[0] + " x " + dims[1] + " x " + dims[2] );
+		final ViewSetup vs = correctedSeqDesc.getViewSetups().get(setupToShow);
+		final long[] dims = new long[3];
+		vs.getSize().dimensions(dims);
+		System.out.println("Original image size: " + dims[0] + " x " + dims[1] + " x " + dims[2]);
 
 		// Create a simple 2x1 split in X dimension
-		final long splitX = dims[ 0 ] / 2;
+		final long splitX = dims[0] / 2;
 
 		// Define the mappings for split regions
-		final HashMap< Integer, Integer > new2oldSetupId = new HashMap<>();
-		final HashMap< Integer, Interval > newSetupId2Interval = new HashMap<>();
+		final HashMap<Integer, Integer> new2oldSetupId = new HashMap<>();
+		final HashMap<Integer, Interval> newSetupId2Interval = new HashMap<>();
 
 		// Split region 0: left half
-		new2oldSetupId.put( 100, setupToShow );
-		newSetupId2Interval.put( 100, new FinalInterval(
-			new long[] { 0, 0, 0 },
-			new long[] { splitX - 1, dims[1] - 1, dims[2] - 1 }
+		new2oldSetupId.put(100, setupToShow);
+		newSetupId2Interval.put(100, new FinalInterval(
+			new long[] {0, 0, 0},
+			new long[] {splitX - 1, dims[1] - 1, dims[2] - 1}
 		));
 
 		// Split region 1: right half
-		new2oldSetupId.put( 101, setupToShow );
-		newSetupId2Interval.put( 101, new FinalInterval(
-			new long[] { splitX, 0, 0 },
-			new long[] { dims[0] - 1, dims[1] - 1, dims[2] - 1 }
+		new2oldSetupId.put(101, setupToShow);
+		newSetupId2Interval.put(101, new FinalInterval(
+			new long[] {splitX, 0, 0},
+			new long[] {dims[0] - 1, dims[1] - 1, dims[2] - 1}
 		));
 
-		System.out.println( "Created 2 split regions:" );
-		System.out.println( "  Setup 100: X=[0, " + (splitX-1) + "] (left half)" );
-		System.out.println( "  Setup 101: X=[" + splitX + ", " + (dims[0]-1) + "] (right half)" );
+		System.out.println("Created 2 split regions:");
+		System.out.println("  Setup 100: X=[0, " + (splitX-1) + "] (left half)");
+		System.out.println("  Setup 101: X=[" + splitX + ", " + (dims[0]-1) + "] (right half)");
 
 		// Create the split loader wrapping the CORRECTED ViewerImgLoader
 		final SplitViewerImgLoader splitLoader = new SplitViewerImgLoader(
@@ -153,85 +149,83 @@ public class TestViewerFlatfieldCorrection
 			correctedSeqDesc
 		);
 
-		System.out.println( "Split loader implements ViewerImgLoader: " +
-			( splitLoader instanceof ViewerImgLoader ? "YES" : "NO" ) );
+		System.out.println("Split loader implements ViewerImgLoader: " +
+			(splitLoader instanceof ViewerImgLoader ? "YES" : "NO"));
 
 		// ========== STEP 4: Test ViewerImgLoader-specific features ==========
-		System.out.println( "\n=== STEP 4: Testing ViewerImgLoader features ===" );
+		System.out.println("\n=== STEP 4: Testing ViewerImgLoader features ===");
 
 		// Test cache control delegation
-		System.out.println( "Cache control available: " + ( splitLoader.getCacheControl() != null ) );
+		System.out.println("Cache control available: " + (splitLoader.getCacheControl() != null));
 
 		// Test mipmap levels
-		final ViewerSetupImgLoader< ?, ? > setupImgLoader = splitLoader.getSetupImgLoader( 100 );
-		System.out.println( "Number of mipmap levels: " + setupImgLoader.numMipmapLevels() );
+		final ViewerSetupImgLoader<?, ?> setupImgLoader = splitLoader.getSetupImgLoader(100);
+		System.out.println("Number of mipmap levels: " + setupImgLoader.numMipmapLevels());
 
 		final double[][] resolutions = setupImgLoader.getMipmapResolutions();
-		System.out.println( "Mipmap resolutions:" );
-		for ( int level = 0; level < resolutions.length; level++ )
-		{
-			System.out.println( "  Level " + level + ": " +
-				resolutions[level][0] + " x " + resolutions[level][1] + " x " + resolutions[level][2] );
+		System.out.println("Mipmap resolutions:");
+		for (int level = 0; level < resolutions.length; level++) {
+			System.out.println("  Level " + level + ": " +
+				resolutions[level][0] + " x " + resolutions[level][1] + " x " + resolutions[level][2]);
 		}
 
 		// ========== STEP 5: Display comparison images ==========
-		System.out.println( "\n=== STEP 5: Displaying images ===" );
+		System.out.println("\n=== STEP 5: Displaying images ===");
 		new ImageJ();
 
 		// Get tile ID from ViewSetup metadata
 		final int tileId = correctedData.getSequenceDescription()
-				.getViewSetups().get( setupToShow ).getTile().getId();
+				.getViewSetups().get(setupToShow).getTile().getId();
 
 		// 5a. Show UNCORRECTED original at level 0
-		System.out.println( "Loading uncorrected image (level 0)..." );
+		System.out.println("Loading uncorrected image (level 0)...");
 		@SuppressWarnings("unchecked")
-		final MultiResolutionSetupImgLoader< FloatType > uncorrectedSetupLoader =
-			(MultiResolutionSetupImgLoader< FloatType >) uncorrectedLoader.getSetupImgLoader( setupToShow );
-		final RandomAccessibleInterval< FloatType > uncorrected =
-			uncorrectedSetupLoader.getFloatImage( timepoint, 0, false );
-		ImageJFunctions.show( uncorrected, "1. Uncorrected - Setup " + setupToShow + " (tile " + tileId + ")" );
+		final MultiResolutionSetupImgLoader<FloatType> uncorrectedSetupLoader =
+			(MultiResolutionSetupImgLoader<FloatType>) uncorrectedLoader.getSetupImgLoader(setupToShow);
+		final RandomAccessibleInterval<FloatType> uncorrected =
+			uncorrectedSetupLoader.getFloatImage(timepoint, 0, false);
+		ImageJFunctions.show(uncorrected, "1. Uncorrected - Setup " + setupToShow + " (tile " + tileId + ")");
 
 		// 5b. Show CORRECTED at level 0
-		System.out.println( "Loading corrected image (level 0)..." );
-		final RandomAccessibleInterval< FloatType > corrected =
-			correctedLoader.getSetupImgLoader( setupToShow ).getFloatImage( timepoint, 0, false );
-		ImageJFunctions.show( corrected, "2. Corrected - Setup " + setupToShow + " (tile " + tileId + ")" );
+		System.out.println("Loading corrected image (level 0)...");
+		final RandomAccessibleInterval<FloatType> corrected =
+			correctedLoader.getSetupImgLoader(setupToShow).getFloatImage(timepoint, 0, false);
+		ImageJFunctions.show(corrected, "2. Corrected - Setup " + setupToShow + " (tile " + tileId + ")");
 
 		// 5c. Show CORRECTED + SPLIT (left half) at level 0
-		System.out.println( "Loading corrected + split (left half, level 0)..." );
-		final RandomAccessibleInterval< FloatType > splitLeft =
-			splitLoader.getSetupImgLoader( 100 ).getFloatImage( timepoint, 0, false );
-		ImageJFunctions.show( splitLeft, "3. Corrected+Split LEFT - Setup 100" );
+		System.out.println("Loading corrected + split (left half, level 0)...");
+		final RandomAccessibleInterval<FloatType> splitLeft =
+			splitLoader.getSetupImgLoader(100).getFloatImage(timepoint, 0, false);
+		ImageJFunctions.show(splitLeft, "3. Corrected+Split LEFT - Setup 100");
 
 		// 5d. Show at different mipmap level if available
-		if ( setupImgLoader.numMipmapLevels() > 1 )
-		{
-			System.out.println( "Loading corrected + split (left half, level 1)..." );
-			final RandomAccessibleInterval< FloatType > splitLeftLevel1 =
-				splitLoader.getSetupImgLoader( 100 ).getFloatImage( timepoint, 1, false );
-			ImageJFunctions.show( splitLeftLevel1, "4. Corrected+Split LEFT (Level 1) - Setup 100" );
+		if (setupImgLoader.numMipmapLevels() > 1) {
+			System.out.println("Loading corrected + split (left half, level 1)...");
+			final RandomAccessibleInterval<FloatType> splitLeftLevel1 =
+				splitLoader.getSetupImgLoader(100).getFloatImage(timepoint, 1, false);
+			ImageJFunctions.show(splitLeftLevel1, "4. Corrected+Split LEFT (Level 1) - Setup 100");
 		}
 
 		// ========== Summary ==========
-		System.out.println( "\n=== VIEWERIMGLOADER CHAIN SUMMARY ===" );
-		System.out.println( "Layer 1 (innermost): " + correctedLoader.getWrappedImgLoader().getClass().getSimpleName() + " [ViewerImgLoader]" );
-		System.out.println( "Layer 2 (middle):    " + correctedLoader.getClass().getSimpleName() + " [ViewerImgLoader]" );
-		System.out.println( "Layer 3 (outermost): " + splitLoader.getClass().getSimpleName() + " [ViewerImgLoader]" );
-		System.out.println( "" );
-		System.out.println( "Flatfield correction is now configured in the XML!" );
-		System.out.println( "No manual setBrightImage()/setDarkImage() calls needed." );
-		System.out.println( "" );
-		System.out.println( "All layers maintain ViewerImgLoader compatibility:" );
-		System.out.println( "  - Cache control: delegated through chain" );
-		System.out.println( "  - Volatile images: supported at all levels" );
-		System.out.println( "  - Multi-resolution: " + setupImgLoader.numMipmapLevels() + " mipmap levels available" );
-		System.out.println( "" );
-		System.out.println( "Compare the images to verify:" );
-		System.out.println( "  - Image 1 vs 2: See flatfield correction effect" );
-		System.out.println( "  - Image 2 vs 3: Verify split region matches corrected full image" );
-		if ( setupImgLoader.numMipmapLevels() > 1 )
-			System.out.println( "  - Image 3 vs 4: Compare different mipmap levels" );
-		System.out.println( "" );
-		System.out.println( "Tip: Use Image > Adjust > Brightness/Contrast (Ctrl+Shift+C)" );
+		System.out.println("\n=== VIEWERIMGLOADER CHAIN SUMMARY ===");
+		System.out.println("Layer 1 (innermost): " + correctedLoader.getWrappedImgLoader().getClass().getSimpleName() + " [ViewerImgLoader]");
+		System.out.println("Layer 2 (middle):    " + correctedLoader.getClass().getSimpleName() + " [ViewerImgLoader]");
+		System.out.println("Layer 3 (outermost): " + splitLoader.getClass().getSimpleName() + " [ViewerImgLoader]");
+		System.out.println();
+		System.out.println("Flatfield correction is now configured in the XML!");
+		System.out.println("No manual setBrightImage()/setDarkImage() calls needed.");
+		System.out.println();
+		System.out.println("All layers maintain ViewerImgLoader compatibility:");
+		System.out.println("  - Cache control: delegated through chain");
+		System.out.println("  - Volatile images: supported at all levels");
+		System.out.println("  - Multi-resolution: " + setupImgLoader.numMipmapLevels() + " mipmap levels available");
+		System.out.println();
+		System.out.println("Compare the images to verify:");
+		System.out.println("  - Image 1 vs 2: See flatfield correction effect");
+		System.out.println("  - Image 2 vs 3: Verify split region matches corrected full image");
+		if (setupImgLoader.numMipmapLevels() > 1)
+			System.out.println("  - Image 3 vs 4: Compare different mipmap levels");
+		System.out.println();
+		System.out.println("Tip: Use Image > Adjust > Brightness/Contrast (Ctrl+Shift+C)");
 	}
 }

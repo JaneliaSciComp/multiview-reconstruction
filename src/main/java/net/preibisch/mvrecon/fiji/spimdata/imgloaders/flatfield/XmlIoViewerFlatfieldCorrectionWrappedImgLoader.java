@@ -41,7 +41,6 @@ import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.ImgLoaderIo;
 import mpicbg.spim.data.generic.sequence.ImgLoaders;
 import mpicbg.spim.data.generic.sequence.XmlIoBasicImgLoader;
-import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 
@@ -53,8 +52,7 @@ import net.imglib2.util.Pair;
  */
 @ImgLoaderIo(format = "spimreconstruction.wrapped.flatfield.viewer", type = ViewerFlatfieldCorrectionWrappedImgLoader.class)
 public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
-		implements XmlIoBasicImgLoader< ViewerFlatfieldCorrectionWrappedImgLoader >
-{
+		implements XmlIoBasicImgLoader<ViewerFlatfieldCorrectionWrappedImgLoader> {
 	public final static String WRAPPED_IMGLOADER_TAG = "WrappedImgLoader";
 	public final static String FLATFIELDS_TAG = "FlatFields";
 	public final static String FLATFIELD_TAG = "FlatField";
@@ -65,111 +63,97 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 
 	@Override
 	public ViewerFlatfieldCorrectionWrappedImgLoader fromXml(Element elem, File basePath,
-			AbstractSequenceDescription< ?, ?, ? > sequenceDescription)
-	{
-		Element wrappedImgLoaderEl = elem.getChild( WRAPPED_IMGLOADER_TAG ).getChild( IMGLOADER_TAG );
-		XmlIoBasicImgLoader< ? > xmlIoWrapped = null;
-		try
-		{
+			AbstractSequenceDescription<?, ?, ?> sequenceDescription) {
+		Element wrappedImgLoaderEl = elem.getChild(WRAPPED_IMGLOADER_TAG).getChild(IMGLOADER_TAG);
+		XmlIoBasicImgLoader<?> xmlIoWrapped;
+		try {
 			xmlIoWrapped = ImgLoaders
-					.createXmlIoForFormat( wrappedImgLoaderEl.getAttributeValue( IMGLOADER_FORMAT_ATTRIBUTE_NAME ) );
-		}
-		catch ( SpimDataInstantiationException e )
-		{
+					.createXmlIoForFormat(wrappedImgLoaderEl.getAttributeValue(IMGLOADER_FORMAT_ATTRIBUTE_NAME));
+		} catch (SpimDataInstantiationException e) {
 			e.printStackTrace();
 			return null;
 		}
 
 		boolean cached = false;
 		boolean active = false;
-		try
-		{
-			cached = elem.getAttribute( CACHED_TAG ).getBooleanValue();
-			active = elem.getAttribute( ACTIVE_TAG ).getBooleanValue();
-		}
-		catch ( DataConversionException e )
-		{
+		try {
+			cached = elem.getAttribute(CACHED_TAG).getBooleanValue();
+			active = elem.getAttribute(ACTIVE_TAG).getBooleanValue();
+		} catch (DataConversionException e) {
 			e.printStackTrace();
 		}
 
-		BasicImgLoader wrappedImgLoader = xmlIoWrapped.fromXml( wrappedImgLoaderEl, basePath, sequenceDescription );
+		BasicImgLoader wrappedImgLoader = xmlIoWrapped.fromXml(wrappedImgLoaderEl, basePath, sequenceDescription);
 
 		// Verify wrapped loader is a ViewerImgLoader
-		if ( !( wrappedImgLoader instanceof ViewerImgLoader ) )
-		{
-			System.err.println( "ViewerFlatfieldCorrectionWrappedImgLoader requires a ViewerImgLoader, but got: "
-					+ wrappedImgLoader.getClass().getName() );
+		if (!(wrappedImgLoader instanceof ViewerImgLoader)) {
+			System.err.println("ViewerFlatfieldCorrectionWrappedImgLoader requires a ViewerImgLoader, but got: "
+					+ wrappedImgLoader.getClass().getName());
 			return null;
 		}
 
 		ViewerFlatfieldCorrectionWrappedImgLoader res =
-				new ViewerFlatfieldCorrectionWrappedImgLoader( (ViewerImgLoader) wrappedImgLoader, cached );
+				new ViewerFlatfieldCorrectionWrappedImgLoader((ViewerImgLoader) wrappedImgLoader, cached);
 
-		Element flatfields = elem.getChild( FLATFIELDS_TAG );
-		for ( Element flatfield : flatfields.getChildren() )
-		{
-			int tp = Integer.parseInt( flatfield.getAttributeValue( TIMEPOINTS_TIMEPOINT_TAG ) );
-			int vs = Integer.parseInt( flatfield.getAttributeValue( VIEWSETUP_TAG ) );
-			File brightImg = XmlHelpers.loadPath( flatfield, BRIGHTIMG_TAG, basePath );
-			File darkImg = XmlHelpers.loadPath( flatfield, DARKIMG_TAG, basePath );
-			res.setBrightImage( new ViewId( tp, vs ), brightImg );
-			res.setDarkImage( new ViewId( tp, vs ), darkImg );
+		Element flatfields = elem.getChild(FLATFIELDS_TAG);
+		for (Element flatfield : flatfields.getChildren()) {
+			int tp = Integer.parseInt(flatfield.getAttributeValue(TIMEPOINTS_TIMEPOINT_TAG));
+			int vs = Integer.parseInt(flatfield.getAttributeValue(VIEWSETUP_TAG));
+			File brightImg = XmlHelpers.loadPath(flatfield, BRIGHTIMG_TAG, basePath);
+			File darkImg = XmlHelpers.loadPath(flatfield, DARKIMG_TAG, basePath);
+			res.setBrightImage(new ViewId(tp, vs), brightImg);
+			res.setDarkImage(new ViewId(tp, vs), darkImg);
 		}
 
-		res.setActive( active );
+		res.setActive(active);
 		return res;
 	}
 
 	@Override
-	public Element toXml(ViewerFlatfieldCorrectionWrappedImgLoader imgLoader, File basePath)
-	{
-		final Map< ViewId, Pair< File, File > > fileMap = imgLoader.fileMap;
+	public Element toXml(ViewerFlatfieldCorrectionWrappedImgLoader imgLoader, File basePath) {
+		final Map<ViewId, Pair<File, File>> fileMap = imgLoader.fileMap;
 
-		final Element wholeElem = new Element( IMGLOADER_TAG );
-		wholeElem.setAttribute( IMGLOADER_FORMAT_ATTRIBUTE_NAME,
-				this.getClass().getAnnotation( ImgLoaderIo.class ).format() );
-		final Element wrappedIL = new Element( WRAPPED_IMGLOADER_TAG );
+		final Element wholeElem = new Element(IMGLOADER_TAG);
+		wholeElem.setAttribute(IMGLOADER_FORMAT_ATTRIBUTE_NAME,
+				this.getClass().getAnnotation(ImgLoaderIo.class).format());
+		final Element wrappedIL = new Element(WRAPPED_IMGLOADER_TAG);
 
-		wholeElem.setAttribute( ACTIVE_TAG, Boolean.toString( imgLoader.isActive() ) );
-		wholeElem.setAttribute( CACHED_TAG, Boolean.toString( imgLoader.isCached() ) );
+		wholeElem.setAttribute(ACTIVE_TAG, Boolean.toString(imgLoader.isActive()));
+		wholeElem.setAttribute(CACHED_TAG, Boolean.toString(imgLoader.isCached()));
 
-		try
-		{
-			@SuppressWarnings({ "unchecked", "rawtypes" })
+		try {
+			@SuppressWarnings({"rawtypes"})
 			XmlIoBasicImgLoader loaderIO = ImgLoaders
-					.createXmlIoForImgLoaderClass( imgLoader.getWrappedImgLoader().getClass() );
+					.createXmlIoForImgLoaderClass(imgLoader.getWrappedImgLoader().getClass());
 			@SuppressWarnings("unchecked")
-			Element wrappedInner = loaderIO.toXml( imgLoader.getWrappedImgLoader(), basePath );
-			wrappedIL.addContent( wrappedInner );
-		}
-		catch ( SpimDataInstantiationException e )
-		{
+			Element wrappedInner = loaderIO.toXml(imgLoader.getWrappedImgLoader(), basePath);
+			wrappedIL.addContent(wrappedInner);
+		} catch (SpimDataInstantiationException e) {
 			e.printStackTrace();
 			return null;
 		}
 
-		final Element elFlatfields = new Element( FLATFIELDS_TAG );
+		final Element elFlatfields = new Element(FLATFIELDS_TAG);
 
-		for ( ViewId vid : fileMap.keySet() )
-		{
-			final Pair< File, File > files = fileMap.get( vid );
-			if ( files == null || ( files.getA() == null && files.getB() == null ) )
+		for (ViewId vid : fileMap.keySet()) {
+			final Pair<File, File> files = fileMap.get(vid);
+			if (files == null || (files.getA() == null && files.getB() == null))
 				continue;
 
-			final Element elFlatfield = new Element( FLATFIELD_TAG );
-			elFlatfield.setAttribute( TIMEPOINTS_TIMEPOINT_TAG, Integer.toString( vid.getTimePointId() ) );
-			elFlatfield.setAttribute( VIEWSETUP_TAG, Integer.toString( vid.getViewSetupId() ) );
+			final Element elFlatfield = new Element(FLATFIELD_TAG);
+			elFlatfield.setAttribute(TIMEPOINTS_TIMEPOINT_TAG, Integer.toString(vid.getTimePointId()));
+			elFlatfield.setAttribute(VIEWSETUP_TAG, Integer.toString(vid.getViewSetupId()));
 
-			if ( files.getA() != null )
-				elFlatfield.addContent( XmlHelpers.pathElement( BRIGHTIMG_TAG, files.getA(), basePath ) );
-			if ( files.getB() != null )
-				elFlatfield.addContent( XmlHelpers.pathElement( DARKIMG_TAG, files.getB(), basePath ) );
+			if (files.getA() != null)
+				elFlatfield.addContent(XmlHelpers.pathElement(BRIGHTIMG_TAG, files.getA(), basePath));
+			if (files.getB() != null)
+				elFlatfield.addContent(XmlHelpers.pathElement(DARKIMG_TAG, files.getB(), basePath));
 
-			elFlatfields.addContent( elFlatfield );
+			elFlatfields.addContent(elFlatfield);
 		}
 
-		wholeElem.addContent( wrappedIL );
-		wholeElem.addContent( elFlatfields );
+		wholeElem.addContent(wrappedIL);
+		wholeElem.addContent(elFlatfields);
 		return wholeElem;
 	}
 }

@@ -40,11 +40,9 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
  * The XML wraps the N5 loader with MultiResolutionFlatfieldCorrectionWrappedImgLoader
  * and specifies bright/dark images for each view setup.
  */
-public class TestFlatfieldCorrection
-{
+public class TestFlatfieldCorrection {
 
-	public static void main( String[] args ) throws SpimDataException
-	{
+	public static void main(String[] args) throws SpimDataException {
 		// Paths
 		final String basePath = "/Users/innerbergerm/Projects/janelia/multiview-reconstruction/";
 		final String correctedXmlPath = basePath + "data/dataset_corrected.xml";
@@ -55,65 +53,64 @@ public class TestFlatfieldCorrection
 		final int timepoint = 0;
 
 		// ========== Load CORRECTED dataset (from XML with flatfield config) ==========
-		System.out.println( "=== Loading CORRECTED dataset ===" );
-		System.out.println( "XML path: " + correctedXmlPath );
+		System.out.println("=== Loading CORRECTED dataset ===");
+		System.out.println("XML path: " + correctedXmlPath);
 
-		final SpimData2 correctedData = new XmlIoSpimData2().load( correctedXmlPath );
+		final SpimData2 correctedData = new XmlIoSpimData2().load(correctedXmlPath);
 		final ImgLoader correctedImgLoader = correctedData.getSequenceDescription().getImgLoader();
 
-		System.out.println( "ImgLoader type: " + correctedImgLoader.getClass().getSimpleName() );
+		System.out.println("ImgLoader type: " + correctedImgLoader.getClass().getSimpleName());
 
 		// Verify it's a flatfield-corrected loader
-		if ( correctedImgLoader instanceof FlatfieldCorrectionWrappedImgLoader )
-		{
-			final FlatfieldCorrectionWrappedImgLoader< ? > ffcLoader =
-				(FlatfieldCorrectionWrappedImgLoader< ? >) correctedImgLoader;
-			System.out.println( "  Correction active: " + ffcLoader.isActive() );
-			System.out.println( "  Caching enabled: " + ffcLoader.isCached() );
-			System.out.println( "  Wrapped loader: " + ffcLoader.getWrappedImgLoder().getClass().getSimpleName() );
+		if (correctedImgLoader instanceof FlatfieldCorrectionWrappedImgLoader) {
+			final FlatfieldCorrectionWrappedImgLoader<?> ffcLoader =
+				(FlatfieldCorrectionWrappedImgLoader<?>) correctedImgLoader;
+			System.out.println("  Correction active: " + ffcLoader.isActive());
+			System.out.println("  Caching enabled: " + ffcLoader.isCached());
+			System.out.println("  Wrapped loader: " + ffcLoader.getWrappedImgLoder().getClass().getSimpleName());
 		}
 
 		// ========== Load UNCORRECTED dataset (original XML) ==========
-		System.out.println( "\n=== Loading UNCORRECTED dataset ===" );
-		System.out.println( "XML path: " + uncorrectedXmlPath );
+		System.out.println("\n=== Loading UNCORRECTED dataset ===");
+		System.out.println("XML path: " + uncorrectedXmlPath);
 
-		final SpimData2 uncorrectedData = new XmlIoSpimData2().load( uncorrectedXmlPath );
+		final SpimData2 uncorrectedData = new XmlIoSpimData2().load(uncorrectedXmlPath);
 		final ImgLoader uncorrectedImgLoader = uncorrectedData.getSequenceDescription().getImgLoader();
 
-		System.out.println( "ImgLoader type: " + uncorrectedImgLoader.getClass().getSimpleName() );
+		System.out.println("ImgLoader type: " + uncorrectedImgLoader.getClass().getSimpleName());
 
 		// ========== Display images for comparison ==========
 		new ImageJ();
 
 		// Get tile ID from ViewSetup metadata (no hardcoded mapping needed!)
         final int tileId = correctedData.getSequenceDescription()
-			.getViewSetups().get( setupToShow ).getTile().getId();
+			.getViewSetups().get(setupToShow).getTile().getId();
 
-		System.out.println( "\n=== Displaying setup " + setupToShow + " (tile " + tileId + ") ===" );
-		System.out.println( "  Dimensions: " + correctedData.getSequenceDescription()
-			.getViewSetups().get( setupToShow ).getSize() );
+		System.out.println("\n=== Displaying setup " + setupToShow + " (tile " + tileId + ") ===");
+		System.out.println("  Dimensions: " + correctedData.getSequenceDescription()
+			.getViewSetups().get(setupToShow).getSize());
 
 		// Load and display UNCORRECTED image
-		System.out.println( "Loading uncorrected image..." );
-		final RandomAccessibleInterval< FloatType > uncorrected =
-			uncorrectedImgLoader.getSetupImgLoader( setupToShow ).getFloatImage( timepoint, false );
-		ImageJFunctions.show( uncorrected, "1. Uncorrected - Setup " + setupToShow + " (tile " + tileId + ")" );
+		System.out.println("Loading uncorrected image...");
+		final RandomAccessibleInterval<FloatType> uncorrected =
+			uncorrectedImgLoader.getSetupImgLoader(setupToShow).getFloatImage(timepoint, false);
+		ImageJFunctions.show(uncorrected, "1. Uncorrected - Setup " + setupToShow + " (tile " + tileId + ")");
 
 		// Load and display CORRECTED image
-		System.out.println( "Loading corrected image..." );
-		final RandomAccessibleInterval< FloatType > corrected =
-			correctedImgLoader.getSetupImgLoader( setupToShow ).getFloatImage( timepoint, false );
-		ImageJFunctions.show( corrected, "2. Corrected - Setup " + setupToShow + " (tile " + tileId + ")" );
+		System.out.println("Loading corrected image...");
+		final RandomAccessibleInterval<FloatType> corrected =
+			correctedImgLoader.getSetupImgLoader(setupToShow).getFloatImage(timepoint, false);
+		ImageJFunctions.show(corrected, "2. Corrected - Setup " + setupToShow + " (tile " + tileId + ")");
 
 		// ========== Summary ==========
-		System.out.println( "\n=== SUMMARY ===" );
-		System.out.println( "Flatfield correction is now configured in the XML!" );
-		System.out.println( "No manual setBrightImage()/setDarkImage() calls needed." );
-		System.out.println( "" );
-		System.out.println( "Compare the two images to verify correction:" );
-		System.out.println( "  - Image 1: Raw data from N5" );
-		System.out.println( "  - Image 2: Corrected with flatfield/darkfield" );
-		System.out.println( "" );
-		System.out.println( "Tip: Use Image > Adjust > Brightness/Contrast (Ctrl+Shift+C)" );
+		System.out.println("\n=== SUMMARY ===");
+		System.out.println("Flatfield correction is now configured in the XML!");
+		System.out.println("No manual setBrightImage()/setDarkImage() calls needed.");
+		System.out.println();
+		System.out.println("Compare the two images to verify correction:");
+		System.out.println("  - Image 1: Raw data from N5");
+		System.out.println("  - Image 2: Corrected with flatfield/darkfield");
+		System.out.println();
+		System.out.println("Tip: Use Image > Adjust > Brightness/Contrast (Ctrl+Shift+C)");
 	}
 }
