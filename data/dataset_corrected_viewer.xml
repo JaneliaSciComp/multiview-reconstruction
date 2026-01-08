@@ -1,0 +1,417 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SpimData version="0.2">
+  <BasePath type="relative">.</BasePath>
+  <SequenceDescription>
+    <ImageLoader format="spimreconstruction.wrapped.flatfield.viewer" Active="true" Cached="true">
+      <WrappedImgLoader>
+        <ImageLoader format="bdv.n5" version="1.1">
+          <n5 type="relative">dataset.n5/</n5>
+        </ImageLoader>
+      </WrappedImgLoader>
+      <FlatFields>
+        <FlatField Timepoint="0" ViewSetup="0">
+          <BrightImg>dark_and_flatfields/setup187-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg>dark_and_flatfields/setup187-AVG_darkfield-fromdata.tif</DarkImg>
+        </FlatField>
+        <FlatField Timepoint="0" ViewSetup="1">
+          <BrightImg>dark_and_flatfields/setup188-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg>dark_and_flatfields/setup188-AVG_darkfield-fromdata.tif</DarkImg>
+        </FlatField>
+        <FlatField Timepoint="0" ViewSetup="2">
+          <BrightImg>dark_and_flatfields/setup189-flatfield.tif</BrightImg>
+          <DarkImg>dark_and_flatfields/setup189-AVG_darkfield-fromdata.tif</DarkImg>
+        </FlatField>
+        <FlatField Timepoint="0" ViewSetup="3">
+          <BrightImg>dark_and_flatfields/setup200-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg>dark_and_flatfields/setup200-AVG_darkfield-fromdata.tif</DarkImg>
+        </FlatField>
+        <FlatField Timepoint="0" ViewSetup="4">
+          <BrightImg>dark_and_flatfields/setup201-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg>dark_and_flatfields/setup201-AVG_darkfield-fromdata.tif</DarkImg>
+        </FlatField>
+        <FlatField Timepoint="0" ViewSetup="5">
+          <BrightImg>dark_and_flatfields/setup202-flatfield.tif</BrightImg>
+          <DarkImg>dark_and_flatfields/setup202-AVG_darkfield-fromdata.tif</DarkImg>
+        </FlatField>
+        <FlatField Timepoint="0" ViewSetup="6">
+          <BrightImg>dark_and_flatfields/setup213-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg>dark_and_flatfields/setup213-AVG_darkfield-fromdata.tif</DarkImg>
+        </FlatField>
+        <FlatField Timepoint="0" ViewSetup="7">
+          <BrightImg>dark_and_flatfields/setup214-flatfield.tif</BrightImg>
+          <DarkImg>dark_and_flatfields/setup214-AVG_darkfield-fromdata.tif</DarkImg>
+        </FlatField>
+        <FlatField Timepoint="0" ViewSetup="8">
+          <BrightImg>dark_and_flatfields/setup215-flatfield.tif</BrightImg>
+          <DarkImg>dark_and_flatfields/setup215-AVG_darkfield-fromdata.tif</DarkImg>
+        </FlatField>
+      </FlatFields>
+    </ImageLoader>
+    <ViewSetups>
+      <ViewSetup>
+        <id>0</id>
+        <name>0</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>187</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>1</id>
+        <name>1</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>188</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>2</id>
+        <name>2</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>189</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>3</id>
+        <name>3</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>200</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>4</id>
+        <name>4</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>201</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>5</id>
+        <name>5</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>202</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>6</id>
+        <name>6</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>213</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>7</id>
+        <name>7</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>214</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>8</id>
+        <name>8</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>215</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <Attributes name="illumination">
+        <Illumination>
+          <id>0</id>
+          <name>0</name>
+        </Illumination>
+      </Attributes>
+      <Attributes name="channel">
+        <Channel>
+          <id>0</id>
+          <name>0</name>
+        </Channel>
+      </Attributes>
+      <Attributes name="tile">
+        <Tile>
+          <id>187</id>
+          <name>187</name>
+        </Tile>
+        <Tile>
+          <id>188</id>
+          <name>188</name>
+        </Tile>
+        <Tile>
+          <id>189</id>
+          <name>189</name>
+        </Tile>
+        <Tile>
+          <id>200</id>
+          <name>200</name>
+        </Tile>
+        <Tile>
+          <id>201</id>
+          <name>201</name>
+        </Tile>
+        <Tile>
+          <id>202</id>
+          <name>202</name>
+        </Tile>
+        <Tile>
+          <id>213</id>
+          <name>213</name>
+        </Tile>
+        <Tile>
+          <id>214</id>
+          <name>214</name>
+        </Tile>
+        <Tile>
+          <id>215</id>
+          <name>215</name>
+        </Tile>
+      </Attributes>
+      <Attributes name="angle">
+        <Angle>
+          <id>0</id>
+          <name>0</name>
+        </Angle>
+      </Attributes>
+    </ViewSetups>
+    <Timepoints type="pattern">
+      <integerpattern>0</integerpattern>
+    </Timepoints>
+    <MissingViews />
+  </SequenceDescription>
+  <ViewRegistrations>
+    <ViewRegistration timepoint="0" setup="0">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0 0.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 0.4554158176323426 0.0 1.0 0.0 -0.13328548693164066 0.0 0.0 1.0 1.039028825990859</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 199.68 0.0 1.0 0.0 102.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="1">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9996881730582423 1.0178764373025146E-4 9.91613051380682E-5 0.296854107149204 -0.0014206520238486176 1.000352820575225 5.493263412035365E-5 0.4978096475705985 -4.038421786319725E-4 1.2989941922307108E-4 1.0000050536353644 0.012322662821996552</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0 0.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -256.0 0.0 1.0 0.0 102.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="2">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9999774841758134 -2.0323268523581142E-4 5.914840097558037E-5 0.41302203806414345 -6.595441757221898E-4 1.0005468325585005 1.0422412713430604E-4 0.86847428183128 -3.8743282755243446E-4 6.197381562939316E-4 0.9999038186675331 -0.1051593717912322</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.2804882451294475 0.0 1.0 0.0 0.15177465825263425 0.0 0.0 1.0 -0.8673431810167168</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -711.6800000000001 0.0 1.0 0.0 102.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="3">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9996509004376033 0.0011789057647756168 6.625470971101606E-5 -0.4380062409126003 -5.886838131605057E-6 0.9993980714516947 8.378533632140301E-4 0.21066285389381184 1.1914663433102846E-4 -0.0017577181435329034 0.9993905308006584 -0.10732512771106033</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.8442948117588571 0.0 1.0 0.0 7.4417831077170336 0.0 0.0 1.0 -8.789096260073075</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 199.68 0.0 1.0 0.0 -160.0 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="4">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9993691627809789 6.213286683890014E-4 9.303551548369867E-5 -0.5698358880199796 -0.0012153705700172891 0.9994415380582407 8.680618674785683E-4 0.916909696194346 -1.5083252038943456E-4 -0.0011408852434367028 0.9994660587646744 0.2820529225572497</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.9089191675130128 0.0 1.0 0.0 7.4256749717825095 0.0 0.0 1.0 -10.328335265676746</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -256.0 0.0 1.0 0.0 -160.0 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="5">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9995958883424029 1.1960194298687558E-4 1.3045003320240472E-4 -0.5288425017288729 -4.5021629309568165E-4 0.9995801176422028 9.375713906809582E-4 1.7071573589623064 -2.5232116962087617E-4 -5.217759052761294E-4 0.9995631970154002 0.266678832277585</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -1.1369886493304193 0.0 1.0 0.0 7.212246076053502 0.0 0.0 1.0 -11.06907324837572</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -711.6800000000001 0.0 1.0 0.0 -160.0 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="6">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>1.001169864797628 0.00527491302811622 1.4584877195363756E-4 -0.15773640915627343 -0.004686469222584484 0.9996923176367982 -0.002087984887367355 1.2420606082221906 -6.295077531490363E-4 0.005598468303174577 1.0011602899054004 1.9104004620529875</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.2626855827553527 0.0 1.0 0.0 -6.7600081391679225 0.0 0.0 1.0 12.896136661870298</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 199.68 0.0 1.0 0.0 -422.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="7">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>1.0009007956899272 0.0053216640997549155 1.371415077664928E-4 0.31426019006657296 -0.005800996293005373 0.9993339550765709 -0.0019903541975732236 0.5557333216408067 -4.823233633192067E-4 0.003500523337610362 1.0009341748352047 1.2744275908022205</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.7700626936842326 0.0 1.0 0.0 -7.432744962459225 0.0 0.0 1.0 11.579421273826847</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -256.0 0.0 1.0 0.0 -422.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="8">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>1.0012387020759832 0.005337931651988534 5.916593012930141E-5 0.6833023552548335 -0.0048548568558627265 0.9989044018136208 -0.0019280609543394106 -0.26569722464665557 -3.915489271687177E-4 0.0016823628452441262 1.0009459560649534 0.679636329046033</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -1.2414564955437868 0.0 1.0 0.0 -8.130736624699523 0.0 0.0 1.0 10.981609779561097</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -711.6800000000001 0.0 1.0 0.0 -422.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+  </ViewRegistrations>
+  <ViewInterestPoints />
+  <BoundingBoxes />
+  <PointSpreadFunctions />
+  <StitchingResults />
+  <IntensityAdjustments />
+</SpimData>

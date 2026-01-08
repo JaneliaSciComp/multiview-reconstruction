@@ -22,15 +22,14 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
-import java.io.File;
 import java.util.HashMap;
 
 import bdv.ViewerImgLoader;
 import bdv.ViewerSetupImgLoader;
 import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.sequence.MultiResolutionSetupImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
-import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
@@ -42,12 +41,15 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 
 /**
- * Test class for ViewerFlatfieldCorrectionWrappedImgLoader.
+ * Test class for XML-based ViewerFlatfieldCorrectionWrappedImgLoader.
  *
  * Demonstrates the full ViewerImgLoader-compatible decorator chain:
  *   N5ImageLoader (ViewerImgLoader)
  *       -> ViewerFlatfieldCorrectionWrappedImgLoader (ViewerImgLoader)
  *           -> SplitViewerImgLoader (ViewerImgLoader)
+ *
+ * Loads dataset_corrected_viewer.xml which has flatfield correction configured
+ * directly in the ImageLoader section. No manual configuration needed!
  *
  * This maintains full BDV compatibility throughout the chain, including:
  * - Cache control delegation
@@ -56,92 +58,64 @@ import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLo
  */
 public class TestViewerFlatfieldCorrection
 {
-	// Mapping from ViewSetup ID to Tile ID (from dataset.xml)
-	private static final int[][] SETUP_TO_TILE = {
-		{ 0, 187 },
-		{ 1, 188 },
-		{ 2, 189 },
-		{ 3, 200 },
-		{ 4, 201 },
-		{ 5, 202 },
-		{ 6, 213 },
-		{ 7, 214 },
-		{ 8, 215 }
-	};
-
 	public static void main( String[] args ) throws SpimDataException
 	{
-		// ========== CONFIGURATION ==========
+		// Paths
 		final String basePath = "/Users/innerbergerm/Projects/janelia/multiview-reconstruction/";
-		final String xmlPath = basePath + "data/dataset.xml";
-		final String correctionPath = basePath + "dark_and_flatfields/";
+		final String correctedXmlPath = basePath + "data/dataset_corrected_viewer.xml";
+		final String uncorrectedXmlPath = basePath + "data/dataset.xml";
 
 		// Which setup to demonstrate (0-8)
 		final int setupToShow = 0;
 		final int timepoint = 0;
 
-		// ========== STEP 1: Load dataset and get base ViewerImgLoader ==========
-		System.out.println( "=== STEP 1: Loading dataset ===" );
-		System.out.println( "XML path: " + xmlPath );
+		// ========== STEP 1: Load CORRECTED dataset (from XML with flatfield config) ==========
+		System.out.println( "=== STEP 1: Loading CORRECTED dataset ===");
+		System.out.println( "XML path: " + correctedXmlPath );
 
-		final SpimData2 data = new XmlIoSpimData2().load( xmlPath );
-		final SequenceDescription seqDesc = data.getSequenceDescription();
+		final SpimData2 correctedData = new XmlIoSpimData2().load( correctedXmlPath );
+		final SequenceDescription correctedSeqDesc = correctedData.getSequenceDescription();
 
-		// Verify the base loader is a ViewerImgLoader
-		if ( !( seqDesc.getImgLoader() instanceof ViewerImgLoader ) )
+		// Verify it's a ViewerFlatfieldCorrectionWrappedImgLoader
+		if ( !( correctedSeqDesc.getImgLoader() instanceof ViewerFlatfieldCorrectionWrappedImgLoader ) )
 		{
-			System.err.println( "ERROR: Base loader is not a ViewerImgLoader!" );
-			System.err.println( "Loader type: " + seqDesc.getImgLoader().getClass().getName() );
+			System.err.println( "ERROR: Expected ViewerFlatfieldCorrectionWrappedImgLoader!" );
+			System.err.println( "Loader type: " + correctedSeqDesc.getImgLoader().getClass().getName() );
 			return;
 		}
 
-		final ViewerImgLoader baseLoader = (ViewerImgLoader) seqDesc.getImgLoader();
-		System.out.println( "Base loader type: " + baseLoader.getClass().getSimpleName() );
-		System.out.println( "Base loader implements ViewerImgLoader: YES" );
-
-		// ========== STEP 2: Wrap with ViewerFlatfieldCorrectionWrappedImgLoader ==========
-		System.out.println( "\n=== STEP 2: Wrapping with ViewerFlatfieldCorrectionWrappedImgLoader ===" );
-
 		final ViewerFlatfieldCorrectionWrappedImgLoader correctedLoader =
-			new ViewerFlatfieldCorrectionWrappedImgLoader( baseLoader, true );
+				(ViewerFlatfieldCorrectionWrappedImgLoader) correctedSeqDesc.getImgLoader();
 
-		// Configure correction images for each view setup
-		for ( int[] mapping : SETUP_TO_TILE )
+		System.out.println( "Corrected loader type: " + correctedLoader.getClass().getSimpleName() );
+		System.out.println( "  Correction active: " + correctedLoader.isActive() );
+		System.out.println( "  Caching enabled: " + correctedLoader.isCached() );
+		System.out.println( "  Wrapped loader: " + correctedLoader.getWrappedImgLoader().getClass().getSimpleName() );
+		System.out.println( "  Implements ViewerImgLoader: " + ( correctedLoader instanceof ViewerImgLoader ? "YES" : "NO" ) );
+
+		// ========== STEP 2: Load UNCORRECTED dataset (original XML) ==========
+		System.out.println( "\n=== STEP 2: Loading UNCORRECTED dataset ===" );
+		System.out.println( "XML path: " + uncorrectedXmlPath );
+
+		final SpimData2 uncorrectedData = new XmlIoSpimData2().load( uncorrectedXmlPath );
+		final SequenceDescription uncorrectedSeqDesc = uncorrectedData.getSequenceDescription();
+
+		// Verify the base loader is a ViewerImgLoader
+		if ( !( uncorrectedSeqDesc.getImgLoader() instanceof ViewerImgLoader ) )
 		{
-			final int setupId = mapping[ 0 ];
-			final int tileId = mapping[ 1 ];
-
-			// Find darkfield file
-			final File darkfield = new File( correctionPath + "setup" + tileId + "-AVG_darkfield-fromdata.tif" );
-
-			// Find flatfield file (try both naming conventions)
-			File flatfield = new File( correctionPath + "setup" + tileId + "-flatfield.tif" );
-			if ( !flatfield.exists() )
-				flatfield = new File( correctionPath + "setup" + tileId + "-flatfield (fixed by mirroring).tif" );
-
-			final ViewId viewId = new ViewId( timepoint, setupId );
-
-			if ( darkfield.exists() )
-			{
-				correctedLoader.setDarkImage( viewId, darkfield );
-				System.out.println( "  Setup " + setupId + ": darkfield = " + darkfield.getName() );
-			}
-
-			if ( flatfield.exists() )
-			{
-				correctedLoader.setBrightImage( viewId, flatfield );
-				System.out.println( "  Setup " + setupId + ": flatfield = " + flatfield.getName() );
-			}
+			System.err.println( "ERROR: Base loader is not a ViewerImgLoader!" );
+			System.err.println( "Loader type: " + uncorrectedSeqDesc.getImgLoader().getClass().getName() );
+			return;
 		}
 
-		System.out.println( "Corrected loader implements ViewerImgLoader: " +
-			( correctedLoader instanceof ViewerImgLoader ? "YES" : "NO" ) );
+		final ViewerImgLoader uncorrectedLoader = (ViewerImgLoader) uncorrectedSeqDesc.getImgLoader();
+		System.out.println( "Uncorrected loader type: " + uncorrectedLoader.getClass().getSimpleName() );
 
-		// ========== STEP 3: Wrap with SplitViewerImgLoader ==========
-		System.out.println( "\n=== STEP 3: Wrapping with SplitViewerImgLoader ===" );
+		// ========== STEP 3: Create SplitViewerImgLoader wrapping the corrected loader ==========
+		System.out.println( "\n=== STEP 3: Creating SplitViewerImgLoader ===" );
 
 		// Get original image dimensions for the setup we're demonstrating
-		final ViewSetup vs = seqDesc.getViewSetups().get( setupToShow );
+		final ViewSetup vs = correctedSeqDesc.getViewSetups().get( setupToShow );
 		final long[] dims = new long[ 3 ];
 		vs.getSize().dimensions( dims );
 		System.out.println( "Original image size: " + dims[0] + " x " + dims[1] + " x " + dims[2] );
@@ -176,7 +150,7 @@ public class TestViewerFlatfieldCorrection
 			correctedLoader,  // <-- ViewerImgLoader compatible!
 			new2oldSetupId,
 			newSetupId2Interval,
-			seqDesc
+			correctedSeqDesc
 		);
 
 		System.out.println( "Split loader implements ViewerImgLoader: " +
@@ -204,18 +178,21 @@ public class TestViewerFlatfieldCorrection
 		System.out.println( "\n=== STEP 5: Displaying images ===" );
 		new ImageJ();
 
-		final int tileId = SETUP_TO_TILE[ setupToShow ][ 1 ];
+		// Get tile ID from ViewSetup metadata
+		final int tileId = correctedData.getSequenceDescription()
+				.getViewSetups().get( setupToShow ).getTile().getId();
 
 		// 5a. Show UNCORRECTED original at level 0
 		System.out.println( "Loading uncorrected image (level 0)..." );
-		correctedLoader.setActive( false );
+		@SuppressWarnings("unchecked")
+		final MultiResolutionSetupImgLoader< FloatType > uncorrectedSetupLoader =
+			(MultiResolutionSetupImgLoader< FloatType >) uncorrectedLoader.getSetupImgLoader( setupToShow );
 		final RandomAccessibleInterval< FloatType > uncorrected =
-			correctedLoader.getSetupImgLoader( setupToShow ).getFloatImage( timepoint, 0, false );
+			uncorrectedSetupLoader.getFloatImage( timepoint, 0, false );
 		ImageJFunctions.show( uncorrected, "1. Uncorrected - Setup " + setupToShow + " (tile " + tileId + ")" );
 
 		// 5b. Show CORRECTED at level 0
 		System.out.println( "Loading corrected image (level 0)..." );
-		correctedLoader.setActive( true );
 		final RandomAccessibleInterval< FloatType > corrected =
 			correctedLoader.getSetupImgLoader( setupToShow ).getFloatImage( timepoint, 0, false );
 		ImageJFunctions.show( corrected, "2. Corrected - Setup " + setupToShow + " (tile " + tileId + ")" );
@@ -237,9 +214,12 @@ public class TestViewerFlatfieldCorrection
 
 		// ========== Summary ==========
 		System.out.println( "\n=== VIEWERIMGLOADER CHAIN SUMMARY ===" );
-		System.out.println( "Layer 1 (innermost): " + baseLoader.getClass().getSimpleName() + " [ViewerImgLoader]" );
+		System.out.println( "Layer 1 (innermost): " + correctedLoader.getWrappedImgLoader().getClass().getSimpleName() + " [ViewerImgLoader]" );
 		System.out.println( "Layer 2 (middle):    " + correctedLoader.getClass().getSimpleName() + " [ViewerImgLoader]" );
 		System.out.println( "Layer 3 (outermost): " + splitLoader.getClass().getSimpleName() + " [ViewerImgLoader]" );
+		System.out.println( "" );
+		System.out.println( "Flatfield correction is now configured in the XML!" );
+		System.out.println( "No manual setBrightImage()/setDarkImage() calls needed." );
 		System.out.println( "" );
 		System.out.println( "All layers maintain ViewerImgLoader compatibility:" );
 		System.out.println( "  - Cache control: delegated through chain" );
