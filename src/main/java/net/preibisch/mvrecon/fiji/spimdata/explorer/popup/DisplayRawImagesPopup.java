@@ -25,9 +25,11 @@ package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 import java.awt.Color;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.stream.Collectors;
 
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -89,9 +91,11 @@ public class DisplayRawImagesPopup extends JMenu implements ExplorerWindowSetabl
 					final MultiResolutionImgLoader mrLoader = (MultiResolutionImgLoader)spimData.getSequenceDescription().getImgLoader();
 
 					HashMap< Integer, long[] > levelToSize = null;
+					HashMap< Integer, double[] > levelToDownsampling = null;
 
 					boolean consistent = true;
 					boolean consistentSizes = true;
+					boolean consistentDownsampling = true;
 
 					for ( final ViewId v : views )
 					{
@@ -101,29 +105,50 @@ public class DisplayRawImagesPopup extends JMenu implements ExplorerWindowSetabl
 						final MultiResolutionSetupImgLoader<?> il = mrLoader.getSetupImgLoader( v.getViewSetupId() );
 						final int levels = il.getMipmapTransforms().length;
 
-						if ( levelToSize == null )
+						if ( levelToSize == null || levelToDownsampling == null )
 						{
 							levelToSize = new HashMap<>();
 
 							for ( int level = 0; level < levels; ++level )
 								levelToSize.put( level, il.getImageSize( v.getTimePointId(), level ).dimensionsAsLongArray() );
+
+							levelToDownsampling = new HashMap<>();
+
+							for ( int level = 0; level < levels; ++level )
+								levelToDownsampling.put( level, il.getMipmapResolutions()[ level ] );
 						}
 						else
 						{
 							if ( levels != levelToSize.size() )
+							{
 								consistent = false;
+							}
 							else
+							{
 								for ( int level = 0; level < levels; ++level )
 									if ( !Arrays.equals( levelToSize.get( level ), il.getImageSize( v.getTimePointId(), level ).dimensionsAsLongArray() ) )
 										consistentSizes = false;
+
+								for ( int level = 0; level < levels; ++level )
+									if ( !Arrays.equals( levelToDownsampling.get( level ), il.getMipmapResolutions()[ level ] ) )
+										consistentDownsampling = false;
+							}
 						}
 					}
 
-					if ( levelToSize != null && consistent )
+					if ( levelToSize != null && levelToDownsampling != null && consistent )
 					{
+						final DecimalFormat decimalFormat = new DecimalFormat("0.0");
+						
 						for ( int level = 0; level < levelToSize.size(); ++level )
 						{
-							JMenuItem item = new JMenuItem( "Level " + level + (consistentSizes ? " " + Arrays.toString( levelToSize.get( level ) ) : " [image sizes vary]" ) );
+							final String[] listDS =
+									Arrays.stream(levelToDownsampling.get( level )).mapToObj( v -> decimalFormat.format( v ) ).toArray( size -> new String[size] );
+
+							final JMenuItem item = new JMenuItem(
+									"Level " + level + ": " +
+									"dim=" + (consistentSizes ? Arrays.toString( levelToSize.get( level ) ) : " [not constant]" ) + ", " +
+									"ds=" + (consistentDownsampling ? " " + Arrays.toString( listDS ) : " [not constant]" ) );
 							item.addActionListener( new MyActionListener( level ) );
 							asStack.add( item );
 						}
