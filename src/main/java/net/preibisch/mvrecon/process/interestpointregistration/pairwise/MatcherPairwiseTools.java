@@ -114,6 +114,9 @@ public class MatcherPairwiseTools
 		// it doesn't matter which pair of groups it comes from: ?
 		for ( final Pair< ?, P > p : resultGroup )
 		{
+			final List< Integer > setIds = p.getB().getInlierSetIds();
+			int idx = 0;  // Track index for setIds list
+
 			for ( final PointMatchGeneric< GroupedInterestPoint< V > > pm : p.getB().getInliers() )
 			{
 				// assign correspondences
@@ -127,13 +130,18 @@ public class MatcherPairwiseTools
 				{
 					final String labelA = p.getB().getLabelA();//labelMap.get( viewIdA );
 					final String labelB = p.getB().getLabelB();//labelMap.get( viewIdB );
-	
-					final CorrespondingInterestPoints correspondingToA = new CorrespondingInterestPoints( gpA.getId(), viewIdB, labelB, gpB.getId() );
-					final CorrespondingInterestPoints correspondingToB = new CorrespondingInterestPoints( gpB.getId(), viewIdA, labelA, gpA.getId() );
-	
+
+					// Get setId from list or default to -1 if null/out of bounds
+					final int setId = (setIds != null && setIds.size() > idx) ? setIds.get(idx) : -1;
+
+					final CorrespondingInterestPoints correspondingToA = new CorrespondingInterestPoints( gpA.getId(), viewIdB, labelB, gpB.getId(), setId );
+					final CorrespondingInterestPoints correspondingToB = new CorrespondingInterestPoints( gpB.getId(), viewIdA, labelA, gpA.getId(), setId );
+
 					cMap.get( viewIdA ).get( labelA ).add( correspondingToA );
 					cMap.get( viewIdB ).get( labelB ).add( correspondingToB );
 				}
+
+				++idx;  // Increment index for next inlier
 
 				// update transformedMap
 				final Pair< V, V > pair = new ValuePair<>( viewIdA, viewIdB );
@@ -211,6 +219,7 @@ public class MatcherPairwiseTools
 	 */
 	public static < I extends InterestPoint > void addCorrespondences(
 			final List< PointMatchGeneric< I > > correspondences,
+			final List< Integer > setIds,
 			final ViewId viewIdA,
 			final ViewId viewIdB,
 			final String labelA,
@@ -221,13 +230,17 @@ public class MatcherPairwiseTools
 		final Collection< CorrespondingInterestPoints > corrListA = listA.getCorrespondingInterestPointsCopy();
 		final Collection< CorrespondingInterestPoints > corrListB = listB.getCorrespondingInterestPointsCopy();
 
-		for ( final PointMatchGeneric< I > pm : correspondences )
+		for ( int idx = 0; idx < correspondences.size(); ++idx )
 		{
+			final PointMatchGeneric< I > pm = correspondences.get( idx );
 			final I pA = pm.getPoint1();
 			final I pB = pm.getPoint2();
 
-			final CorrespondingInterestPoints correspondingToA = new CorrespondingInterestPoints( pA.getId(), viewIdB, labelB, pB.getId() );
-			final CorrespondingInterestPoints correspondingToB = new CorrespondingInterestPoints( pB.getId(), viewIdA, labelA, pA.getId() );
+			// Get setId from list or default to -1 if null/out of bounds
+			final int setId = (setIds != null && setIds.size() > idx) ? setIds.get(idx) : -1;
+
+			final CorrespondingInterestPoints correspondingToA = new CorrespondingInterestPoints( pA.getId(), viewIdB, labelB, pB.getId(), setId );
+			final CorrespondingInterestPoints correspondingToB = new CorrespondingInterestPoints( pB.getId(), viewIdA, labelA, pA.getId(), setId );
 
 			corrListA.add( correspondingToA );
 			corrListB.add( correspondingToB );
@@ -235,6 +248,19 @@ public class MatcherPairwiseTools
 
 		listA.setCorrespondingInterestPoints( corrListA );
 		listB.setCorrespondingInterestPoints( corrListB );
+	}
+
+	// Backward-compatible overload without setIds parameter
+	public static < I extends InterestPoint > void addCorrespondences(
+			final List< PointMatchGeneric< I > > correspondences,
+			final ViewId viewIdA,
+			final ViewId viewIdB,
+			final String labelA,
+			final String labelB,
+			final InterestPoints listA,
+			final InterestPoints listB )
+	{
+		addCorrespondences( correspondences, null, viewIdA, viewIdB, labelA, labelB, listA, listB );
 	}
 
 	public static void assignLoggingDescriptions(

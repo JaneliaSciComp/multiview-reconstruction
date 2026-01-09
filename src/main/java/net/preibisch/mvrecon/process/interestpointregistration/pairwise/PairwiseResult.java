@@ -35,6 +35,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 public class PairwiseResult< I extends InterestPoint >
 {
 	private List< PointMatchGeneric< I > > candidates, inliers;
+	private List< Integer > inlierSetIds = null;  // parallel to inliers list, null = single-consensus
 	private double error = Double.NaN;
 	private long time = 0;
 	private String result = "", desc = "";
@@ -77,11 +78,22 @@ public class PairwiseResult< I extends InterestPoint >
 	}
 	public double getError() { return error; }
 	public void setCandidates( final List< PointMatchGeneric< I > > candidates ) { this.candidates = candidates; }
+
 	public void setInliers( final List< PointMatchGeneric< I > > inliers, final double error )
 	{
 		this.inliers = inliers;
 		this.error = error;
+		this.inlierSetIds = null;  // Backward compatible: no set IDs
 	}
+
+	public void setInliers( final List< PointMatchGeneric< I > > inliers, final double error, final List< Integer > setIds )
+	{
+		this.inliers = inliers;
+		this.error = error;
+		this.inlierSetIds = setIds;
+	}
+
+	public List< Integer > getInlierSetIds() { return inlierSetIds; }
 
 	public void setFlippedMatches( final Collection< PointMatch > flippedMatches ) { this.flippedMatches = flippedMatches; };
 	public Collection< PointMatch > getFlippedMatches() { return flippedMatches; };

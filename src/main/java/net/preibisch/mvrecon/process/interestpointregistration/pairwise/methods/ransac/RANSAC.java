@@ -51,6 +51,7 @@ public class RANSAC
 	public static < I extends InterestPoint > Pair< String, Double > computeRANSAC(
 			final ArrayList< PointMatchGeneric < I > > correspondenceCandidates,
 			final ArrayList< PointMatchGeneric < I > > inlierList,
+			final ArrayList< Integer > setIdList,
 			final Model<?> model,
 			final double maxEpsilon,
 			final double minInlierRatio,
@@ -154,6 +155,7 @@ public class RANSAC
 					final I detectionB = pm.getPoint2().getLinkedObject();
 
 					inlierList.add( new PointMatchGeneric< I >( detectionA, detectionB ) );
+					setIdList.add( -1 );  // Single-consensus mode always uses -1
 				}
 
 				String inconsistent = "";
@@ -249,6 +251,7 @@ public class RANSAC
 						final I detectionB = pm.getPoint2().getLinkedObject();
 
 						inlierList.add( new PointMatchGeneric< I >( detectionA, detectionB ) );
+						setIdList.add( i );  // Track which consensus set this inlier belongs to
 					}
 				}
 
