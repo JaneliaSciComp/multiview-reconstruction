@@ -23,7 +23,6 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -80,6 +79,8 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 	private final ViewerImgLoader wrappedImgLoader;
 	private boolean active;
 	private boolean cacheResult;
+
+	private static final Pair<File, File> NULL_PAIR = new ValuePair<>(null, null);
 
 	/** Maps ViewId to (brightFile, darkFile) pair */
 	protected final Map<ViewId, Pair<File, File>> fileMap;
@@ -143,17 +144,13 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 	}
 
 	public void setBrightImage(final ViewId vId, final File imgFile) {
-		if (!fileMap.containsKey(vId))
-			fileMap.put(vId, new ValuePair<>(null, null));
-
-        fileMap.compute(vId, (k, oldPair) -> new ValuePair<>(imgFile, oldPair.getB()));
+		final Pair<File, File> oldPair = fileMap.getOrDefault(vId, NULL_PAIR);
+		fileMap.put(vId, new ValuePair<>(imgFile, oldPair.getB()));
 	}
 
 	public void setDarkImage(final ViewId vId, final File imgFile) {
-		if (!fileMap.containsKey(vId))
-			fileMap.put(vId, new ValuePair<>(null, null));
-
-        fileMap.compute(vId, (k, oldPair) -> new ValuePair<>(oldPair.getA(), imgFile));
+		final Pair<File, File> oldPair = fileMap.getOrDefault(vId, NULL_PAIR);
+		fileMap.put(vId, new ValuePair<>(oldPair.getA(), imgFile));
 	}
 
 	// ========== Image loading helpers ==========
@@ -299,12 +296,13 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 					numPx *= rai.dimension(d);
 
 				final ImgFactory<T> imgFactory;
-				if (Math.log(numPx) / Math.log(2) < 31)
-					imgFactory = new ArrayImgFactory<>();
-				else
-					imgFactory = new CellImgFactory<>();
+				if (Math.log(numPx) / Math.log(2) < 31) {
+					imgFactory = new ArrayImgFactory<>(getImageType());
+				} else {
+					imgFactory = new CellImgFactory<>(getImageType());
+				}
 
-				final Img<T> loadedImg = imgFactory.create(rai, getImageType());
+				final Img<T> loadedImg = imgFactory.create(rai);
 				RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
 
 				rai = loadedImg;
@@ -313,8 +311,8 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 				Arrays.fill(cellSize, 1);
 				for (int d = 0; d < rai.numDimensions() - 1; d++)
 					cellSize[d] = (int) rai.dimension(d);
-				rai = FusionTools.cacheRandomAccessibleInterval(rai, Long.MAX_VALUE,
-						Views.iterable(rai).firstElement().createVariable(), cellSize);
+				rai = FusionTools.cacheRandomAccessibleInterval(
+						rai, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
 			}
 
 			return rai;
@@ -397,11 +395,11 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 				final ImgFactory<FloatType> imgFactory;
 				if (Math.log(numPx) / Math.log(2) < 31)
-					imgFactory = new ArrayImgFactory<>();
+					imgFactory = new ArrayImgFactory<>(new FloatType());
 				else
-					imgFactory = new CellImgFactory<>();
+					imgFactory = new CellImgFactory<>(new FloatType());
 
-				final Img<FloatType> loadedImg = imgFactory.create(rai, new FloatType());
+				final Img<FloatType> loadedImg = imgFactory.create(rai);
 				RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
 
 				rai = loadedImg;
