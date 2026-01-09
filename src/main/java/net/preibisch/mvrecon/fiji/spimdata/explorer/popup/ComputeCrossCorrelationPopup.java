@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
@@ -60,7 +61,7 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 
 	public ComputeCrossCorrelationPopup()
 	{
-		super("Compute Cross-Correlation for Selected Tiles");
+		super("Compute Cross-Correlation for Overlapping Tiles");
 		this.addActionListener(new MyActionListener());
 	}
 
@@ -92,117 +93,24 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 						// Get SpimData
 						final SpimData2 spimData = panel.getSpimData();
 
-						// Step 1: Validate selection - exactly 2 tiles
+						// Get selected groups for potential use
 						List<List<ViewId>> selectedGroups = ((GroupedRowWindow) panel).selectedRowsViewIdGroups();
 
-						if (selectedGroups.size() != 2)
+						// Get available downsampling levels
+						List<ViewId> allViewIds = new ArrayList<>(spimData.getSequenceDescription().getViewDescriptions().keySet());
+						if (allViewIds.isEmpty())
 						{
 							IOFunctions.println(new Date(System.currentTimeMillis()) +
-									": ERROR: Please select exactly 2 tiles. Currently selected: " +
-									selectedGroups.size());
+									": ERROR: No views found in dataset");
 							return;
 						}
 
-						// Filter missing views
-						for (List<ViewId> group : selectedGroups)
-						{
-							SpimData2.filterMissingViews(spimData, group);
-						}
+						ViewId sampleViewId = allViewIds.get(0);
+						String[] availableDownsamplings = DownsampleTools.availableDownsamplings(spimData, sampleViewId);
 
-						// Check that each group has at least one view
-						if (selectedGroups.get(0).isEmpty() || selectedGroups.get(1).isEmpty())
-						{
-							IOFunctions.println(new Date(System.currentTimeMillis()) +
-									": ERROR: Selected groups contain no valid views");
-							return;
-						}
-
-						// Get first ViewId from each group
-						ViewId viewId1 = selectedGroups.get(0).get(0);
-						ViewId viewId2 = selectedGroups.get(1).get(0);
-
-//						IOFunctions.println(new Date(System.currentTimeMillis()) +
-//								": Computing cross-correlation between tiles...");
-//						IOFunctions.println("  Tile 1: ViewId(" + viewId1.getTimePointId() + ", " +
-//								viewId1.getViewSetupId() + ")");
-//						IOFunctions.println("  Tile 2: ViewId(" + viewId2.getTimePointId() + ", " +
-//								viewId2.getViewSetupId() + ")");
-
-						// Step 2: Calculate overlap using SimpleBoundingBoxOverlap
-						SimpleBoundingBoxOverlap<ViewId> overlapDetection = new SimpleBoundingBoxOverlap<>(spimData);
-
-						RealInterval globalOverlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
-
-						if (globalOverlap == null)
-						{
-							IOFunctions.println(new Date(System.currentTimeMillis()) +
-									": ERROR: Selected tiles do not overlap");
-							return;
-						}
-
-                        // excess debug
-//						// Print global overlap region
-//					StringBuilder sb = new StringBuilder("(");
-//					for (int d = 0; d < globalOverlap.numDimensions(); d++)
-//					{
-//						if (d > 0) sb.append(", ");
-//						sb.append(String.format("%.1f", globalOverlap.realMin(d)));
-//						sb.append(" - ");
-//						sb.append(String.format("%.1f", globalOverlap.realMax(d)));
-//					}
-//					sb.append(")");
-//					IOFunctions.println("  Global overlap region: " + sb);
-
-						// Step 3: Get bounding boxes and convert overlap to local coordinates
-						BasicViewSetup vs1 = spimData.getSequenceDescription().getViewSetups().get(viewId1.getViewSetupId());
-						BasicViewSetup vs2 = spimData.getSequenceDescription().getViewSetups().get(viewId2.getViewSetupId());
-						ViewRegistration vr1 = spimData.getViewRegistrations().getViewRegistration(viewId1);
-						ViewRegistration vr2 = spimData.getViewRegistrations().getViewRegistration(viewId2);
-
-						vr1.updateModel();
-						vr2.updateModel();
-
-						RealInterval bbox1 = SimpleBoundingBoxOverlap.getBoundingBoxReal(vs1, vr1);
-						RealInterval bbox2 = SimpleBoundingBoxOverlap.getBoundingBoxReal(vs2, vr2);
-
-						// Convert global overlap to local coordinates
-						double[] localMin1 = new double[globalOverlap.numDimensions()];
-						double[] localMax1 = new double[globalOverlap.numDimensions()];
-						double[] localMin2 = new double[globalOverlap.numDimensions()];
-						double[] localMax2 = new double[globalOverlap.numDimensions()];
-
-						for (int d = 0; d < globalOverlap.numDimensions(); d++)
-						{
-							localMin1[d] = globalOverlap.realMin(d) - bbox1.realMin(d);
-							localMax1[d] = globalOverlap.realMax(d) - bbox1.realMin(d);
-							localMin2[d] = globalOverlap.realMin(d) - bbox2.realMin(d);
-							localMax2[d] = globalOverlap.realMax(d) - bbox2.realMin(d);
-						}
-
-						// Convert to raster coordinates with bounds checking
-						long[] dims1 = new long[globalOverlap.numDimensions()];
-						long[] dims2 = new long[globalOverlap.numDimensions()];
-						vs1.getSize().dimensions(dims1);
-						vs2.getSize().dimensions(dims2);
-
-						long[] rasterMin1 = new long[globalOverlap.numDimensions()];
-						long[] rasterMax1 = new long[globalOverlap.numDimensions()];
-						long[] rasterMin2 = new long[globalOverlap.numDimensions()];
-						long[] rasterMax2 = new long[globalOverlap.numDimensions()];
-
-						for (int d = 0; d < globalOverlap.numDimensions(); d++)
-						{
-							rasterMin1[d] = Math.max(0, (long) Math.ceil(localMin1[d]));
-							rasterMax1[d] = Math.min(dims1[d] - 1, (long) Math.floor(localMax1[d]));
-							rasterMin2[d] = Math.max(0, (long) Math.ceil(localMin2[d]));
-							rasterMax2[d] = Math.min(dims2[d] - 1, (long) Math.floor(localMax2[d]));
-						}
-
-						// Step 4: Ask user for downsampling level
-						// Get available downsampling levels from the data pyramid
-						String[] availableDownsamplings = DownsampleTools.availableDownsamplings(spimData, viewId1);
-
+						// Show dialog with checkbox and downsampling choice
 						final GenericDialog gd = new GenericDialog("Cross-Correlation Parameters");
+						gd.addCheckbox("Only compute for selected tiles (requires at least 2 selected)", false);
 						gd.addChoice("Downsampling", availableDownsamplings, availableDownsamplings[0]);
 						gd.addMessage("Choose downsampling level:");
 						gd.addMessage("1, 1, 1 = full resolution (slower, more accurate)");
@@ -216,68 +124,120 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 							return;
 						}
 
+						final boolean selectedOnly = gd.getNextBoolean();
 						final String downsamplingChoice = gd.getNextChoice();
 						final long[] downsampleFactors = DownsampleTools.parseDownsampleChoice(downsamplingChoice);
 
+						IOFunctions.println(new Date(System.currentTimeMillis()) +
+								": Computing cross-correlations...");
 						IOFunctions.println("  Using downsampling: " + downsamplingChoice);
 
-						// Adjust overlap intervals for downsampling
-						long[] dsRasterMin1 = new long[rasterMin1.length];
-						long[] dsRasterMax1 = new long[rasterMax1.length];
-						long[] dsRasterMin2 = new long[rasterMin2.length];
-						long[] dsRasterMax2 = new long[rasterMax2.length];
+						List<ViewId[]> pairsToProcess = new ArrayList<>();
 
-						for (int d = 0; d < rasterMin1.length; d++)
+						if (selectedOnly)
 						{
-							dsRasterMin1[d] = rasterMin1[d] / downsampleFactors[d];
-							dsRasterMax1[d] = rasterMax1[d] / downsampleFactors[d];
-							dsRasterMin2[d] = rasterMin2[d] / downsampleFactors[d];
-							dsRasterMax2[d] = rasterMax2[d] / downsampleFactors[d];
+							// Validate at least 2 tiles selected
+							if (selectedGroups.size() < 2)
+							{
+								IOFunctions.println(new Date(System.currentTimeMillis()) +
+										": ERROR: Please select at least 2 tiles. Currently selected: " +
+										selectedGroups.size());
+								return;
+							}
+
+							// Filter missing views and collect valid ViewIds from selected groups
+							List<ViewId> selectedViewIds = new ArrayList<>();
+							for (List<ViewId> group : selectedGroups)
+							{
+								SpimData2.filterMissingViews(spimData, group);
+								if (!group.isEmpty())
+								{
+									// Get first ViewId from each group
+									selectedViewIds.add(group.get(0));
+								}
+							}
+
+							if (selectedViewIds.size() < 2)
+							{
+								IOFunctions.println(new Date(System.currentTimeMillis()) +
+										": ERROR: Selected groups contain fewer than 2 valid views");
+								return;
+							}
+
+							IOFunctions.println("  Processing " + selectedViewIds.size() + " selected views");
+
+							SimpleBoundingBoxOverlap<ViewId> overlapDetection = new SimpleBoundingBoxOverlap<>(spimData);
+
+							// Find all overlapping pairs among selected views
+							for (int i = 0; i < selectedViewIds.size(); i++)
+							{
+								for (int j = i + 1; j < selectedViewIds.size(); j++)
+								{
+									ViewId viewId1 = selectedViewIds.get(i);
+									ViewId viewId2 = selectedViewIds.get(j);
+
+									RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
+									if (overlap != null)
+									{
+										pairsToProcess.add(new ViewId[] { viewId1, viewId2 });
+									}
+								}
+							}
+
+							IOFunctions.println("  Found " + pairsToProcess.size() + " overlapping pairs among selected views");
+						}
+						else
+						{
+							// Get all views and find overlapping pairs
+							List<ViewId> viewIds = new ArrayList<>();
+							for (ViewId viewId : allViewIds)
+							{
+								if (!spimData.getSequenceDescription().getMissingViews().getMissingViews().contains(viewId))
+								{
+									viewIds.add(viewId);
+								}
+							}
+
+							IOFunctions.println("  Found " + viewIds.size() + " valid views");
+
+							SimpleBoundingBoxOverlap<ViewId> overlapDetection = new SimpleBoundingBoxOverlap<>(spimData);
+
+							// Find all overlapping pairs
+							for (int i = 0; i < viewIds.size(); i++)
+							{
+								for (int j = i + 1; j < viewIds.size(); j++)
+								{
+									ViewId viewId1 = viewIds.get(i);
+									ViewId viewId2 = viewIds.get(j);
+
+									RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
+									if (overlap != null)
+									{
+										pairsToProcess.add(new ViewId[] { viewId1, viewId2 });
+									}
+								}
+							}
+
+							IOFunctions.println("  Found " + pairsToProcess.size() + " overlapping pairs");
 						}
 
-						Interval dsInterval1 = new FinalInterval(dsRasterMin1, dsRasterMax1);
-						Interval dsInterval2 = new FinalInterval(dsRasterMin2, dsRasterMax2);
-
-					// Step 5: Load image data at specified downsampling level using pyramid
-					final BasicImgLoader imgLoader = spimData.getSequenceDescription().getImgLoader();
-
-					// Open images at the specified downsampling level using pre-computed pyramid
-					net.imglib2.util.Pair<RandomAccessibleInterval, AffineTransform3D> opened1 =
-							DownsampleTools.openAndDownsample(imgLoader, viewId1, downsampleFactors, false);
-					net.imglib2.util.Pair<RandomAccessibleInterval, AffineTransform3D> opened2 =
-							DownsampleTools.openAndDownsample(imgLoader, viewId2, downsampleFactors, false);
-
-					RandomAccessibleInterval<FloatType> img1 = opened1.getA();
-					RandomAccessibleInterval<FloatType> img2 = opened2.getA();
-
-						// Extract overlap regions and convert to FloatType
-						RandomAccessibleInterval<FloatType> overlap1 = Views.zeroMin(
-								Views.interval(Views.zeroMin(img1), dsInterval1));
-						RandomAccessibleInterval<FloatType> overlap2 = Views.zeroMin(
-								Views.interval(Views.zeroMin(img2), dsInterval2));
-
-						// Step 6: Compute cross-correlation directly
-						IOFunctions.println("  Computing cross-correlation...");
-
-						// Create a peak with zero shift to compute correlation at current alignment
-						Point zeroShift = new Point(overlap1.numDimensions());
-						PhaseCorrelationPeak2 peak = new PhaseCorrelationPeak2(zeroShift, 0.0);
-
-						// Set the shift field (required by calculateCrossCorr)
-						peak.setShift(zeroShift);
-
-						// Calculate cross-correlation at zero shift (current alignment)
-						peak.calculateCrossCorr(overlap1, overlap2);
-
-						// Step 7: Log results
-						double correlationCoefficient = peak.getCrossCorr();
-						long nPixels = peak.getnPixel();
+						// Process all pairs
+						int successCount = 0;
+						for (ViewId[] pair : pairsToProcess)
+						{
+							try
+							{
+								computeCorrelationForPair(spimData, pair[0], pair[1], downsampleFactors, downsamplingChoice);
+								successCount++;
+							}
+							catch (Exception ex)
+						{
+							// Silently skip pairs with errors (e.g., no overlap after downsampling)
+						}
+						}
 
 						IOFunctions.println(new Date(System.currentTimeMillis()) +
-                                String.format(" %d-%d <> %d-%d", viewId1.getTimePointId(), viewId1.getViewSetupId(),
-                                        viewId2.getTimePointId(), viewId2.getViewSetupId())
-                                + String.format(": r=%.4f", correlationCoefficient));
-
+								": Completed " + successCount + " of " + pairsToProcess.size() + " correlations");
 					}
 					catch (Exception ex)
 					{
@@ -288,5 +248,164 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 				}
 			}).start();
 		}
+	}
+
+	/**
+	 * Compute cross-correlation for a specific pair of views
+	 */
+	private static void computeCorrelationForPair(
+			SpimData2 spimData,
+			ViewId viewId1,
+			ViewId viewId2,
+			long[] downsampleFactors,
+			String downsamplingChoice) throws Exception
+	{
+		// Calculate overlap using SimpleBoundingBoxOverlap
+		SimpleBoundingBoxOverlap<ViewId> overlapDetection = new SimpleBoundingBoxOverlap<>(spimData);
+		RealInterval globalOverlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
+
+		if (globalOverlap == null)
+		{
+			throw new Exception("No overlap found");
+		}
+
+		// Get bounding boxes and convert overlap to local coordinates
+		BasicViewSetup vs1 = spimData.getSequenceDescription().getViewSetups().get(viewId1.getViewSetupId());
+		BasicViewSetup vs2 = spimData.getSequenceDescription().getViewSetups().get(viewId2.getViewSetupId());
+		ViewRegistration vr1 = spimData.getViewRegistrations().getViewRegistration(viewId1);
+		ViewRegistration vr2 = spimData.getViewRegistrations().getViewRegistration(viewId2);
+
+		vr1.updateModel();
+		vr2.updateModel();
+
+		RealInterval bbox1 = SimpleBoundingBoxOverlap.getBoundingBoxReal(vs1, vr1);
+		RealInterval bbox2 = SimpleBoundingBoxOverlap.getBoundingBoxReal(vs2, vr2);
+
+		// Convert global overlap to local coordinates
+		double[] localMin1 = new double[globalOverlap.numDimensions()];
+		double[] localMax1 = new double[globalOverlap.numDimensions()];
+		double[] localMin2 = new double[globalOverlap.numDimensions()];
+		double[] localMax2 = new double[globalOverlap.numDimensions()];
+
+		for (int d = 0; d < globalOverlap.numDimensions(); d++)
+		{
+			localMin1[d] = globalOverlap.realMin(d) - bbox1.realMin(d);
+			localMax1[d] = globalOverlap.realMax(d) - bbox1.realMin(d);
+			localMin2[d] = globalOverlap.realMin(d) - bbox2.realMin(d);
+			localMax2[d] = globalOverlap.realMax(d) - bbox2.realMin(d);
+		}
+
+		// Convert to raster coordinates with bounds checking
+		long[] dims1 = new long[globalOverlap.numDimensions()];
+		long[] dims2 = new long[globalOverlap.numDimensions()];
+		vs1.getSize().dimensions(dims1);
+		vs2.getSize().dimensions(dims2);
+
+		long[] rasterMin1 = new long[globalOverlap.numDimensions()];
+		long[] rasterMax1 = new long[globalOverlap.numDimensions()];
+		long[] rasterMin2 = new long[globalOverlap.numDimensions()];
+		long[] rasterMax2 = new long[globalOverlap.numDimensions()];
+
+		for (int d = 0; d < globalOverlap.numDimensions(); d++)
+		{
+			rasterMin1[d] = Math.max(0, (long) Math.ceil(localMin1[d]));
+			rasterMax1[d] = Math.min(dims1[d] - 1, (long) Math.floor(localMax1[d]));
+			rasterMin2[d] = Math.max(0, (long) Math.ceil(localMin2[d]));
+			rasterMax2[d] = Math.min(dims2[d] - 1, (long) Math.floor(localMax2[d]));
+		}
+
+		// Adjust overlap intervals for downsampling
+		long[] dsRasterMin1 = new long[rasterMin1.length];
+		long[] dsRasterMax1 = new long[rasterMax1.length];
+		long[] dsRasterMin2 = new long[rasterMin2.length];
+		long[] dsRasterMax2 = new long[rasterMax2.length];
+
+		for (int d = 0; d < rasterMin1.length; d++)
+		{
+			dsRasterMin1[d] = rasterMin1[d] / downsampleFactors[d];
+			dsRasterMax1[d] = rasterMax1[d] / downsampleFactors[d];
+			dsRasterMin2[d] = rasterMin2[d] / downsampleFactors[d];
+			dsRasterMax2[d] = rasterMax2[d] / downsampleFactors[d];
+		}
+
+		Interval dsInterval1 = new FinalInterval(dsRasterMin1, dsRasterMax1);
+		Interval dsInterval2 = new FinalInterval(dsRasterMin2, dsRasterMax2);
+
+
+		// Validate that intervals are non-empty (have positive size in all dimensions)
+		for (int d = 0; d < dsInterval1.numDimensions(); d++)
+		{
+			if (dsInterval1.min(d) > dsInterval1.max(d) || dsInterval2.min(d) > dsInterval2.max(d))
+			{
+				throw new Exception("Empty overlap interval after downsampling");
+			}
+		}
+
+		// Calculate number of overlapping pixels to validate
+		long numPixels = 1;
+		for (int d = 0; d < dsInterval1.numDimensions(); d++)
+		{
+			numPixels *= (dsInterval1.max(d) - dsInterval1.min(d) + 1);
+		}
+
+		if (numPixels == 0)
+		{
+			throw new Exception("No overlapping pixels after downsampling");
+		}
+
+		// Load image data at specified downsampling level using pyramid
+		final BasicImgLoader imgLoader = spimData.getSequenceDescription().getImgLoader();
+
+		// Open images at the specified downsampling level using pre-computed pyramid
+		net.imglib2.util.Pair<RandomAccessibleInterval, AffineTransform3D> opened1 =
+				DownsampleTools.openAndDownsample(imgLoader, viewId1, downsampleFactors, false);
+		net.imglib2.util.Pair<RandomAccessibleInterval, AffineTransform3D> opened2 =
+				DownsampleTools.openAndDownsample(imgLoader, viewId2, downsampleFactors, false);
+
+		RandomAccessibleInterval<?> img1 = opened1.getA();
+		RandomAccessibleInterval<?> img2 = opened2.getA();
+
+		// Extract overlap regions and convert to FloatType
+		RandomAccessibleInterval<FloatType> overlap1 = Views.zeroMin(
+				Views.interval(
+						Views.zeroMin((RandomAccessibleInterval<FloatType>) img1),
+						dsInterval1));
+		RandomAccessibleInterval<FloatType> overlap2 = Views.zeroMin(
+				Views.interval(
+						Views.zeroMin((RandomAccessibleInterval<FloatType>) img2),
+						dsInterval2));
+
+		// Compute cross-correlation directly
+		// Create a peak with zero shift to compute correlation at current alignment
+		Point zeroShift = new Point(overlap1.numDimensions());
+		PhaseCorrelationPeak2 peak = new PhaseCorrelationPeak2(zeroShift, 0.0);
+
+		// Set the shift field (required by calculateCrossCorr)
+		peak.setShift(zeroShift);
+
+		// Calculate cross-correlation at zero shift (current alignment)
+		peak.calculateCrossCorr(overlap1, overlap2);
+
+		// Log results
+		double correlationCoefficient = peak.getCrossCorr();
+		long nPixels = peak.getnPixel();
+
+
+		// Validate results before logging
+		if (nPixels == 0)
+		{
+			throw new Exception("No overlapping pixels found");
+		}
+
+		if (!Double.isFinite(correlationCoefficient))
+		{
+			throw new Exception("Invalid correlation coefficient: " + correlationCoefficient);
+		}
+
+		IOFunctions.println(new Date(System.currentTimeMillis()) +
+				String.format(" %d-%d <> %d-%d",
+						viewId1.getTimePointId(), viewId1.getViewSetupId(),
+						viewId2.getTimePointId(), viewId2.getViewSetupId()) +
+				String.format(": r=%.4f (n=%d)", correlationCoefficient, nPixels));
 	}
 }
