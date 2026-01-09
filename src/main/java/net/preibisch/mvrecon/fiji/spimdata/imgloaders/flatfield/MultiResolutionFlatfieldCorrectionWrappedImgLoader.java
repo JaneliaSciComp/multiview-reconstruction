@@ -108,7 +108,7 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 	) {
 		// Convert to a list here to have a proper hash code for the map key
 		List<Integer> dsFactorList = Arrays.stream(downsamplingFactors).boxed().collect(Collectors.toList());
-		final ValuePair<URI, List<Integer>> key = new ValuePair<>(uriSelector.apply(uriMap.get(vId)), dsFactorList);
+		final ValuePair<URI, List<Integer>> key = new ValuePair<>(uriSelector.apply(getUriMap().get(vId)), dsFactorList);
 
 		if (!dsRaiMap.containsKey(key)) {
 			final RandomAccessibleInterval<FloatType> img = imgGetter.apply(vId);
