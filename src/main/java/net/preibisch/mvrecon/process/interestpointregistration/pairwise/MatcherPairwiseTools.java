@@ -227,6 +227,7 @@ public class MatcherPairwiseTools
 			final InterestPoints listA,
 			final InterestPoints listB )
 	{
+
 		final Collection< CorrespondingInterestPoints > corrListA = listA.getCorrespondingInterestPointsCopy();
 		final Collection< CorrespondingInterestPoints > corrListB = listB.getCorrespondingInterestPointsCopy();
 

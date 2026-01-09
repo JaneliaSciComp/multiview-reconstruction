@@ -356,7 +356,7 @@ public class Interest_Point_Registration implements PlugIn
 						final InterestPoints listA = interestpointLists.get( vA ).getInterestPointList( labelA );
 						final InterestPoints listB = interestpointLists.get( vB ).getInterestPointList( labelB );
 
-						MatcherPairwiseTools.addCorrespondences( p.getB().getInliers(), vA, vB, labelA, labelB, listA, listB );
+						MatcherPairwiseTools.addCorrespondences( p.getB().getInliers(), p.getB().getInlierSetIds(), vA, vB, labelA, labelB, listA, listB );
 					}
 				}
 

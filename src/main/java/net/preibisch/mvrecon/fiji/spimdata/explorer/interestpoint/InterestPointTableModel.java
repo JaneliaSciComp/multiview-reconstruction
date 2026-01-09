@@ -523,7 +523,8 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 						{
 							// Use consensus set ID as color ID - all correspondences from the same
 							// multi-consensus RANSAC set will have the same color
-							final int colorId = cip.getConsensusSetId();
+							// Offset by 1 so -1 (single-consensus) becomes 0, and multi-consensus 0,1,2... become 1,2,3...
+							final int colorId = cip.getConsensusSetId() + 1;
 							correspondenceColorMap.get( viewIdA ).put( cip.getDetectionId(), colorId );
 							correspondenceColorMap.get( viewIdB ).put( cip.getCorrespondingDetectionId(), colorId );
 						}
