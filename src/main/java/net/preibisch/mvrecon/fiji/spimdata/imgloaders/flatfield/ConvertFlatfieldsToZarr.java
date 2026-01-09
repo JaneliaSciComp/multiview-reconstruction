@@ -22,11 +22,15 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.GzipCompression;
@@ -36,13 +40,9 @@ import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import ij.IJ;
 import ij.ImagePlus;
-import mpicbg.spim.data.SpimDataException;
-import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.img.Img;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.real.FloatType;
-import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import util.URITools;
 
 /**
@@ -122,137 +122,88 @@ public class ConvertFlatfieldsToZarr {
 	}
 
 	/**
-	 * Generate a test XML file with Zarr-based flatfield correction.
+	 * Generate a test XML file with Zarr-based flatfield correction by copying
+	 * an existing working XML and updating the flatfield paths to point to Zarr files.
 	 *
-	 * @param baseXmlPath     path to the original dataset XML
-	 * @param outputXmlPath   path for the new XML with flatfield correction
-	 * @param flatfieldDir    directory containing .zarr flatfield files
-	 * @param brightPattern   pattern for bright image names (e.g., "flatfield_tile%d")
-	 * @param darkPattern     pattern for dark image names (e.g., "darkfield_tile%d")
-	 * @throws SpimDataException if XML loading fails
-	 * @throws IOException       if XML writing fails
+	 * @param sourceXmlPath   path to a working flatfield-corrected XML (with TIFF paths)
+	 * @param outputXmlPath   path for the new XML with Zarr flatfield paths
+	 * @param zarrDir         directory containing .zarr flatfield files
+	 * @param convertedFiles  map of base names to Zarr files from conversion
+	 * @throws IOException if reading/writing fails
 	 */
 	public static void generateTestXml(
-			final String baseXmlPath,
+			final String sourceXmlPath,
 			final String outputXmlPath,
-			final File flatfieldDir,
-			final String brightPattern,
-			final String darkPattern) throws SpimDataException, IOException {
+			final File zarrDir,
+			final Map<String, File> convertedFiles) throws IOException {
 
 		System.out.println("\n=== Generating Test XML ===");
-		System.out.println("Base XML: " + baseXmlPath);
+		System.out.println("Source XML: " + sourceXmlPath);
 		System.out.println("Output XML: " + outputXmlPath);
 
-		// Load original dataset to get view setup info
-		final SpimData2 data = new XmlIoSpimData2().load(baseXmlPath);
-
-		// Build XML content manually to wrap the original loader with flatfield correction
-		final StringBuilder xml = new StringBuilder();
-		xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-		xml.append("<SpimData version=\"0.2\">\n");
-		xml.append("  <BasePath type=\"relative\">.</BasePath>\n");
-		xml.append("  <SequenceDescription>\n");
-
-		// ImageLoader section with flatfield wrapper
-		xml.append("    <ImageLoader format=\"spimreconstruction.wrapped.flatfield.default\" ");
-		xml.append("Active=\"true\" Cached=\"true\">\n");
-
-		// Reference the original loader - read from original XML
-		xml.append("      <WrappedImgLoader>\n");
-		xml.append("        <!-- Original loader from base dataset -->\n");
-		xml.append("        <ImageLoader format=\"bdv.n5\" version=\"1.0\">\n");
-		xml.append("          <n5 type=\"relative\">dataset.n5</n5>\n");
-		xml.append("        </ImageLoader>\n");
-		xml.append("      </WrappedImgLoader>\n");
-
-		// Flatfield configuration for each view setup
-		xml.append("      <FlatFields>\n");
-
-		for (final ViewSetup vs : data.getSequenceDescription().getViewSetupsOrdered()) {
-			final int setupId = vs.getId();
-			final int tileId = vs.getTile().getId();
-
-			// Construct Zarr file names based on patterns
-			final String brightName = String.format(brightPattern, tileId) + ".zarr";
-			final String darkName = String.format(darkPattern, tileId) + ".zarr";
-
-			final File brightFile = new File(flatfieldDir, brightName);
-			final File darkFile = new File(flatfieldDir, darkName);
-
-			// Only include if files exist
-			final boolean hasBright = brightFile.exists();
-			final boolean hasDark = darkFile.exists();
-
-			if (hasBright || hasDark) {
-				xml.append("        <FlatField timepoint=\"0\" setup=\"").append(setupId).append("\">\n");
-				if (hasBright)
-					xml.append("          <BrightImg>").append(brightFile.getName()).append("</BrightImg>\n");
-				if (hasDark)
-					xml.append("          <DarkImg>").append(darkFile.getName()).append("</DarkImg>\n");
-				xml.append("        </FlatField>\n");
-
-				System.out.println("  Setup " + setupId + " (tile " + tileId + "): " +
-						(hasBright ? "bright=" + brightName : "") +
-						(hasDark ? " dark=" + darkName : ""));
+		// Read the source XML
+		final StringBuilder content = new StringBuilder();
+		try (BufferedReader reader = new BufferedReader(new FileReader(sourceXmlPath))) {
+			String line;
+			while ((line = reader.readLine()) != null) {
+				content.append(line).append("\n");
 			}
 		}
 
-		xml.append("      </FlatFields>\n");
-		xml.append("    </ImageLoader>\n");
+		String xml = content.toString();
 
-		// Copy ViewSetups from original
-		xml.append("    <!-- ViewSetups copied from original dataset -->\n");
-		xml.append("    <ViewSetups>\n");
-		for (final ViewSetup vs : data.getSequenceDescription().getViewSetupsOrdered()) {
-			xml.append("      <ViewSetup>\n");
-			xml.append("        <id>").append(vs.getId()).append("</id>\n");
-			xml.append("        <name>").append(vs.getName()).append("</name>\n");
-			xml.append("        <size>").append(vs.getSize().dimension(0)).append(" ")
-					.append(vs.getSize().dimension(1)).append(" ")
-					.append(vs.getSize().dimension(2)).append("</size>\n");
-			xml.append("        <voxelSize>\n");
-			xml.append("          <unit>").append(vs.getVoxelSize().unit()).append("</unit>\n");
-			xml.append("          <size>").append(vs.getVoxelSize().dimension(0)).append(" ")
-					.append(vs.getVoxelSize().dimension(1)).append(" ")
-					.append(vs.getVoxelSize().dimension(2)).append("</size>\n");
-			xml.append("        </voxelSize>\n");
-			xml.append("        <attributes>\n");
-			xml.append("          <channel>").append(vs.getChannel().getId()).append("</channel>\n");
-			xml.append("          <tile>").append(vs.getTile().getId()).append("</tile>\n");
-			xml.append("          <illumination>").append(vs.getIllumination().getId()).append("</illumination>\n");
-			xml.append("          <angle>").append(vs.getAngle().getId()).append("</angle>\n");
-			xml.append("        </attributes>\n");
-			xml.append("      </ViewSetup>\n");
-		}
-		xml.append("    </ViewSetups>\n");
+		// Pattern to match BrightImg and DarkImg paths
+		final Pattern brightPattern = Pattern.compile("(<BrightImg>)([^<]+)(</BrightImg>)");
+		final Pattern darkPattern = Pattern.compile("(<DarkImg>)([^<]+)(</DarkImg>)");
 
-		// Timepoints
-		xml.append("    <Timepoints type=\"range\">\n");
-		xml.append("      <first>0</first>\n");
-		xml.append("      <last>0</last>\n");
-		xml.append("    </Timepoints>\n");
+		// Replace TIFF paths with Zarr paths
+		xml = replaceFlatfieldPaths(xml, brightPattern, zarrDir, convertedFiles);
+		xml = replaceFlatfieldPaths(xml, darkPattern, zarrDir, convertedFiles);
 
-		xml.append("  </SequenceDescription>\n");
-
-		// ViewRegistrations (identity transforms)
-		xml.append("  <ViewRegistrations>\n");
-		for (final ViewSetup vs : data.getSequenceDescription().getViewSetupsOrdered()) {
-			xml.append("    <ViewRegistration timepoint=\"0\" setup=\"").append(vs.getId()).append("\">\n");
-			xml.append("      <ViewTransform type=\"affine\">\n");
-			xml.append("        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0 0.0</affine>\n");
-			xml.append("      </ViewTransform>\n");
-			xml.append("    </ViewRegistration>\n");
-		}
-		xml.append("  </ViewRegistrations>\n");
-
-		xml.append("</SpimData>\n");
-
-		// Write XML file
+		// Write output XML
 		try (FileWriter writer = new FileWriter(outputXmlPath)) {
-			writer.write(xml.toString());
+			writer.write(xml);
 		}
 
-		System.out.println("\nCreated: " + outputXmlPath);
+		System.out.println("Created: " + outputXmlPath);
+	}
+
+	/**
+	 * Replace flatfield TIFF paths with Zarr paths in XML content.
+	 */
+	private static String replaceFlatfieldPaths(
+			String xml,
+			final Pattern pattern,
+			final File zarrDir,
+			final Map<String, File> convertedFiles) {
+
+		final Matcher matcher = pattern.matcher(xml);
+		final StringBuffer result = new StringBuffer();
+
+		while (matcher.find()) {
+			final String openTag = matcher.group(1);
+			final String oldPath = matcher.group(2);
+			final String closeTag = matcher.group(3);
+
+			// Extract base name from old path (remove directory and extension)
+			String baseName = new File(oldPath).getName();
+			baseName = baseName.replaceAll("\\.(tif|tiff)$", "");
+
+			// Find corresponding Zarr file
+			String newPath = oldPath;  // default: keep original if not found
+			if (convertedFiles.containsKey(baseName)) {
+				// Use relative path from zarrDir
+				newPath = zarrDir.getName() + "/" + convertedFiles.get(baseName).getName();
+				System.out.println("  " + oldPath + " -> " + newPath);
+			} else {
+				System.out.println("  WARNING: No Zarr found for: " + baseName);
+			}
+
+			matcher.appendReplacement(result, Matcher.quoteReplacement(openTag + newPath + closeTag));
+		}
+		matcher.appendTail(result);
+
+		return result.toString();
 	}
 
 	/**
@@ -266,34 +217,35 @@ public class ConvertFlatfieldsToZarr {
 		// Input: directory with TIFF flatfields
 		final File tiffDir = new File(basePath, "dark_and_flatfields");
 
-		// Output: directory for Zarr flatfields
+		// Output: directory for Zarr flatfields (in data folder, next to other data)
 		final File zarrDir = new File(basePath, "dark_and_flatfields_zarr");
 
 		// Step 1: Convert all TIFFs to Zarr
 		System.out.println("=== Step 1: Converting TIFFs to Zarr v3 ===\n");
 
+		Map<String, File> convertedFiles;
 		if (tiffDir.exists()) {
-			convertDirectory(tiffDir, zarrDir);
+			convertedFiles = convertDirectory(tiffDir, zarrDir);
 		} else {
 			throw new IOException("Input TIFF directory does not exist: " + tiffDir.getAbsolutePath());
 		}
 
-		// Step 2: Generate test XML
+		// Step 2: Generate test XML by copying from working TIFF-based XML
 		System.out.println("\n=== Step 2: Generating Test XML ===\n");
 
-		final String baseXml = dataPath + "dataset.xml";
+		// Use the working flatfield-corrected XML as source
+		final String sourceXml = dataPath + "dataset_corrected_viewer.xml";
 		final String outputXml = dataPath + "dataset_corrected_zarr.xml";
 
-		if (new File(baseXml).exists()) {
+		if (new File(sourceXml).exists()) {
 			generateTestXml(
-					baseXml,
+					sourceXml,
 					outputXml,
 					zarrDir,
-					"flatfield_tile%d",  // pattern for bright images
-					"darkfield_tile%d"   // pattern for dark images
+					convertedFiles
 			);
 		} else {
-			System.out.println("Base XML not found: " + baseXml);
+			System.out.println("Source XML not found: " + sourceXml);
 			System.out.println("Skipping XML generation.");
 		}
 
