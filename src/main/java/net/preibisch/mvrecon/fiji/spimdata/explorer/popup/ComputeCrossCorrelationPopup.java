@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 import javax.swing.JComponent;
 import javax.swing.JMenuItem;
@@ -40,6 +41,7 @@ import ij.gui.GenericDialog;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
@@ -112,14 +114,22 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 
 						ViewId sampleViewId = allViewIds.get(0);
 						String[] availableDownsamplings = DownsampleTools.availableDownsamplings(spimData, sampleViewId);
+                        List<Integer> allChannels = new ArrayList<>(spimData.getSequenceDescription().getAllChannels().keySet());
+                        List<String> allChannelsStr = allChannels.stream()
+                                .map(i -> String.format("Channel %d", i))
+                                .collect(Collectors.toList());
+                        allChannelsStr.add("Compare across all channels");
+                        String[] allChannelsArr = allChannelsStr.toArray(new String[0]);
+
 
 						// Show dialog with checkbox and downsampling choice
 						final GenericDialog gd = new GenericDialog("Cross-Correlation Parameters");
 						gd.addCheckbox("Only compute for selected tiles (requires at least 2 selected)", false);
-						gd.addChoice("Downsampling", availableDownsamplings, availableDownsamplings[0]);
 						gd.addMessage("Choose downsampling level:");
 						gd.addMessage("1, 1, 1 = full resolution (slower, more accurate)");
 						gd.addMessage("Higher values = faster computation (less accurate)");
+                        gd.addChoice("Downsampling", availableDownsamplings, availableDownsamplings[0]);
+                        gd.addChoice("Channel", allChannelsArr, allChannelsArr[0]);
 						gd.showDialog();
 
 						if (gd.wasCanceled())
@@ -131,11 +141,22 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 
 						final boolean selectedOnly = gd.getNextBoolean();
 						final String downsamplingChoice = gd.getNextChoice();
+                        final String chChoiceStr = gd.getNextChoice();
 						final long[] downsampleFactors = DownsampleTools.parseDownsampleChoice(downsamplingChoice);
+
+                        final int chChoice;
+                        if (chChoiceStr.equals("Compare across all channels")) {
+                            chChoice = -1;
+                        }
+                        else {
+                            String[] parts = chChoiceStr.split(" ");
+                            chChoice = Integer.parseInt(parts[parts.length - 1]);
+                        }
 
 						IOFunctions.println(new Date(System.currentTimeMillis()) +
 								": Computing cross-correlations...");
 						IOFunctions.println("  Using downsampling: " + downsamplingChoice);
+                        IOFunctions.println("  Using channel: " + chChoiceStr);
 
 						List<ViewId[]> pairsToProcess = new ArrayList<>();
 
@@ -185,6 +206,15 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
                                     if (viewId1.getTimePointId() != viewId2.getTimePointId())
                                         continue;
 
+									// Skip cross-channel comparisons if specific channel selected
+									if (chChoice != -1)
+									{
+										int ch1 = getChannelId(spimData, viewId1);
+										int ch2 = getChannelId(spimData, viewId2);
+										if (ch1 != chChoice || ch2 != chChoice)
+											continue;
+									}
+
                                     RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
 									if (overlap != null)
 									{
@@ -223,6 +253,15 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 								if (viewId1.getTimePointId() != viewId2.getTimePointId())
 									continue;
 
+								// Skip cross-channel comparisons if specific channel selected
+								if (chChoice != -1)
+								{
+									int ch1 = getChannelId(spimData, viewId1);
+									int ch2 = getChannelId(spimData, viewId2);
+									if (ch1 != chChoice || ch2 != chChoice)
+										continue;
+								}
+
                                 RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
                                 if (overlap != null)
                                 {
@@ -252,7 +291,7 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 								{
 									try
 									{
-										computeCorrelationForPair(spimData, pair[0], pair[1], downsampleFactors, downsamplingChoice);
+										computeCorrelationForPair(spimData, pair[0], pair[1], downsampleFactors);
 										successCount.incrementAndGet();
 									}
 									catch (Exception ex)
@@ -308,8 +347,8 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 			SpimData2 spimData,
 			ViewId viewId1,
 			ViewId viewId2,
-			long[] downsampleFactors,
-			String downsamplingChoice) throws Exception
+			long[] downsampleFactors
+			) throws Exception
 	{
 		// Calculate overlap using SimpleBoundingBoxOverlap
 		SimpleBoundingBoxOverlap<ViewId> overlapDetection = new SimpleBoundingBoxOverlap<>(spimData);
@@ -382,27 +421,16 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 		Interval dsInterval1 = new FinalInterval(dsRasterMin1, dsRasterMax1);
 		Interval dsInterval2 = new FinalInterval(dsRasterMin2, dsRasterMax2);
 
+        // check whether we have 0-sized (or negative sized)
+        // ignore this pair in that case
+        for ( int d = 0; d < dsInterval1.numDimensions(); ++d )
+        {
+            if ( dsInterval1.dimension( d ) <= 0 || dsInterval2.dimension( d ) <= 0)
+            {
+                throw new Exception("Rastered overlap volume is zero, skipping." );
+            }
+        }
 
-		// Validate that intervals are non-empty (have positive size in all dimensions)
-		for (int d = 0; d < dsInterval1.numDimensions(); d++)
-		{
-			if (dsInterval1.min(d) > dsInterval1.max(d) || dsInterval2.min(d) > dsInterval2.max(d))
-			{
-				throw new Exception("Empty overlap interval after downsampling");
-			}
-		}
-
-		// Calculate number of overlapping pixels to validate
-		long numPixels = 1;
-		for (int d = 0; d < dsInterval1.numDimensions(); d++)
-		{
-			numPixels *= (dsInterval1.max(d) - dsInterval1.min(d) + 1);
-		}
-
-		if (numPixels == 0)
-		{
-			throw new Exception("No overlapping pixels after downsampling");
-		}
 
 		// Load image data at specified downsampling level using pyramid
 		final BasicImgLoader imgLoader = spimData.getSequenceDescription().getImgLoader();
@@ -473,8 +501,25 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 				String.format(" %d-%d <> %d-%d",
 						viewId1.getTimePointId(), viewId1.getViewSetupId(),
 						viewId2.getTimePointId(), viewId2.getViewSetupId()) +
-				String.format(": r=%.4f (n=%d) avg int=[%.1f, %.1f]",
-						correlationCoefficient, nPixels, avgIntensity1, avgIntensity2));
+				String.format(": r=%.4f avg int=[%.1f, %.1f]",
+						correlationCoefficient, avgIntensity1, avgIntensity2));
+	}
+
+	/**
+	 * Get the channel ID for a given ViewId.
+	 *
+	 * @param spimData The SpimData2 object
+	 * @param viewId The ViewId to query
+	 * @return The channel ID, or -1 if channel information is not available
+	 */
+	private static int getChannelId(SpimData2 spimData, ViewId viewId)
+	{
+		mpicbg.spim.data.sequence.ViewDescription vd = spimData.getSequenceDescription().getViewDescriptions().get(viewId);
+		if (vd != null && vd.getViewSetup().getChannel() != null)
+		{
+			return vd.getViewSetup().getChannel().getId();
+		}
+		return -1;
 	}
 
 	/**
