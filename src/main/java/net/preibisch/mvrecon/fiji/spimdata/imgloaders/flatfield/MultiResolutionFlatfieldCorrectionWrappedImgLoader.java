@@ -47,6 +47,8 @@ import net.imglib2.converter.RealTypeConverters;
 import net.imglib2.img.Img;
 import net.imglib2.img.ImgFactory;
 import net.imglib2.img.array.ArrayImgFactory;
+import net.imglib2.img.cell.AbstractCellImg;
+import net.imglib2.img.cell.CellGrid;
 import net.imglib2.img.cell.CellImgFactory;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -395,6 +397,9 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 
 	/**
 	 * Downsample an image using the imglib2-algorithm blocks API.
+	 * <p>
+	 * If the input is a cell/chunked image, the output cell size is computed
+	 * to align with input chunk boundaries (input chunk size / downsampling factor).
 	 *
 	 * @param input image to downsample
 	 * @param dsFactor factors to downsample by (may have more dimensions than input)
@@ -424,10 +429,21 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		for (int d = 0; d < n; d++)
 			outDim[d] = Math.max(input.dimension(d) / effectiveFactors[d], 1);
 
+		// Determine output cell size - use input chunk size if available
+		final int[] cellSize = new int[n];
+		if (input instanceof AbstractCellImg) {
+			@SuppressWarnings("rawtypes")
+			final CellGrid grid = ((AbstractCellImg) input).getCellGrid();
+			grid.cellDimensions(cellSize);
+		} else {
+			// Default fallback for non-chunked images
+			Arrays.fill(cellSize, 128);
+		}
+
 		final BlockSupplier<T> blocks = BlockSupplier.of(input)
 				.andThen(Downsample.downsample(effectiveFactors));
 
-		return BlockAlgoUtils.cellImg(blocks, outDim, new int[]{64});
+		return BlockAlgoUtils.cellImg(blocks, outDim, cellSize);
 	}
 
 	public static void main(String[] args)
