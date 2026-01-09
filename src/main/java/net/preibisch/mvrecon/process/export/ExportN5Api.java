@@ -117,9 +117,9 @@ public class ExportN5Api implements ImgExport, Calibrateable
 
 	public static boolean defaultAdvancedBlockSize = false;
 
-	public static int defaultBlocksizeFactorX_N5 = 1;
-	public static int defaultBlocksizeFactorY_N5 = 1;
-	public static int defaultBlocksizeFactorZ_N5 = 1;
+	public static int defaultBlocksizeFactorX_N5 = 2;
+	public static int defaultBlocksizeFactorY_N5 = 2;
+	public static int defaultBlocksizeFactorZ_N5 = 2;
 	public static int defaultBlocksizeFactorX_H5 = 4;
 	public static int defaultBlocksizeFactorY_H5 = 4;
 	public static int defaultBlocksizeFactorZ_H5 = 4;
@@ -202,6 +202,8 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		final EnumSet< DataType > supportedDataTypes = EnumSet.of( DataType.UINT8, DataType.UINT16, DataType.FLOAT32 );
 		if ( !supportedDataTypes.contains( dataType ) )
 			throw new RuntimeException( "dataType " + type.getClass().getSimpleName() + " not supported." );
+
+		System.out.println( "Datatype: " + dataType );
 
 		// the container is created the first time this method is called, usually it is called many times, for each channel and timepoint (but depends on the settings)
 		if ( driverVolumeWriter == null )
