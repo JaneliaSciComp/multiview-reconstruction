@@ -28,6 +28,7 @@ import static mpicbg.spim.data.XmlKeys.TIMEPOINTS_TIMEPOINT_TAG;
 import static mpicbg.spim.data.XmlKeys.VIEWSETUP_TAG;
 
 import java.io.File;
+import java.net.URI;
 import java.util.Map;
 
 import org.jdom2.DataConversionException;
@@ -64,6 +65,12 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 	@Override
 	public ViewerFlatfieldCorrectionWrappedImgLoader fromXml(Element elem, File basePath,
 			AbstractSequenceDescription<?, ?, ?> sequenceDescription) {
+		return fromXml(elem, basePath == null ? null : basePath.toURI(), sequenceDescription);
+	}
+
+	@Override
+	public ViewerFlatfieldCorrectionWrappedImgLoader fromXml(Element elem, URI basePathURI,
+			AbstractSequenceDescription<?, ?, ?> sequenceDescription) {
 		Element wrappedImgLoaderEl = elem.getChild(WRAPPED_IMGLOADER_TAG).getChild(IMGLOADER_TAG);
 		XmlIoBasicImgLoader<?> xmlIoWrapped;
 		try {
@@ -83,7 +90,7 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 			e.printStackTrace();
 		}
 
-		BasicImgLoader wrappedImgLoader = xmlIoWrapped.fromXml(wrappedImgLoaderEl, basePath, sequenceDescription);
+		BasicImgLoader wrappedImgLoader = xmlIoWrapped.fromXml(wrappedImgLoaderEl, basePathURI, sequenceDescription);
 
 		// Verify wrapped loader is a ViewerImgLoader
 		if (!(wrappedImgLoader instanceof ViewerImgLoader)) {
@@ -99,8 +106,8 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 		for (Element flatfield : flatfields.getChildren()) {
 			int tp = Integer.parseInt(flatfield.getAttributeValue(TIMEPOINTS_TIMEPOINT_TAG));
 			int vs = Integer.parseInt(flatfield.getAttributeValue(VIEWSETUP_TAG));
-			File brightImg = XmlHelpers.loadPath(flatfield, BRIGHTIMG_TAG, basePath);
-			File darkImg = XmlHelpers.loadPath(flatfield, DARKIMG_TAG, basePath);
+			URI brightImg = XmlHelpers.loadPathURI(flatfield, BRIGHTIMG_TAG, basePathURI);
+			URI darkImg = XmlHelpers.loadPathURI(flatfield, DARKIMG_TAG, basePathURI);
 			res.setBrightImage(new ViewId(tp, vs), brightImg);
 			res.setDarkImage(new ViewId(tp, vs), darkImg);
 		}
@@ -111,7 +118,12 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 
 	@Override
 	public Element toXml(ViewerFlatfieldCorrectionWrappedImgLoader imgLoader, File basePath) {
-		final Map<ViewId, Pair<File, File>> fileMap = imgLoader.fileMap;
+		return toXml(imgLoader, basePath == null ? null : basePath.toURI());
+	}
+
+	@Override
+	public Element toXml(ViewerFlatfieldCorrectionWrappedImgLoader imgLoader, URI basePathURI) {
+		final Map<ViewId, Pair<URI, URI>> uriMap = imgLoader.getUriMap();
 
 		final Element wholeElem = new Element(IMGLOADER_TAG);
 		wholeElem.setAttribute(IMGLOADER_FORMAT_ATTRIBUTE_NAME,
@@ -126,7 +138,7 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 			XmlIoBasicImgLoader loaderIO = ImgLoaders
 					.createXmlIoForImgLoaderClass(imgLoader.getWrappedImgLoader().getClass());
 			@SuppressWarnings("unchecked")
-			Element wrappedInner = loaderIO.toXml(imgLoader.getWrappedImgLoader(), basePath);
+			Element wrappedInner = loaderIO.toXml(imgLoader.getWrappedImgLoader(), basePathURI);
 			wrappedIL.addContent(wrappedInner);
 		} catch (SpimDataInstantiationException e) {
 			e.printStackTrace();
@@ -135,19 +147,19 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 
 		final Element elFlatfields = new Element(FLATFIELDS_TAG);
 
-		for (ViewId vid : fileMap.keySet()) {
-			final Pair<File, File> files = fileMap.get(vid);
-			if (files == null || (files.getA() == null && files.getB() == null))
+		for (ViewId vid : uriMap.keySet()) {
+			final Pair<URI, URI> uris = uriMap.get(vid);
+			if (uris == null || (uris.getA() == null && uris.getB() == null))
 				continue;
 
 			final Element elFlatfield = new Element(FLATFIELD_TAG);
 			elFlatfield.setAttribute(TIMEPOINTS_TIMEPOINT_TAG, Integer.toString(vid.getTimePointId()));
 			elFlatfield.setAttribute(VIEWSETUP_TAG, Integer.toString(vid.getViewSetupId()));
 
-			if (files.getA() != null)
-				elFlatfield.addContent(XmlHelpers.pathElement(BRIGHTIMG_TAG, files.getA(), basePath));
-			if (files.getB() != null)
-				elFlatfield.addContent(XmlHelpers.pathElement(DARKIMG_TAG, files.getB(), basePath));
+			if (uris.getA() != null)
+				elFlatfield.addContent(XmlHelpers.pathElementURI(BRIGHTIMG_TAG, uris.getA(), basePathURI));
+			if (uris.getB() != null)
+				elFlatfield.addContent(XmlHelpers.pathElementURI(DARKIMG_TAG, uris.getB(), basePathURI));
 
 			elFlatfields.addContent(elFlatfield);
 		}

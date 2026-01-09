@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
+import java.net.URI;
 
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
@@ -34,6 +35,36 @@ public interface FlatfieldCorrectionWrappedImgLoader<IL extends ImgLoader> exten
 	public boolean isActive();
 	public void setCached(boolean cached);
 	public boolean isCached();
-	public void setBrightImage(ViewId vId, File imgFile);
-	public void setDarkImage(ViewId vId, File imgFile);
+
+	/**
+	 * Set the bright (flatfield) image for a view.
+	 * @param vId view id
+	 * @param imgUri URI to the bright image (supports file://, s3://, gs://, local paths)
+	 */
+	public void setBrightImage(ViewId vId, URI imgUri);
+
+	/**
+	 * Set the dark (darkfield) image for a view.
+	 * @param vId view id
+	 * @param imgUri URI to the dark image (supports file://, s3://, gs://, local paths)
+	 */
+	public void setDarkImage(ViewId vId, URI imgUri);
+
+	/**
+	 * Set the bright (flatfield) image for a view from a local file.
+	 * @param vId view id
+	 * @param imgFile local file path to the bright image
+	 */
+	default void setBrightImage(ViewId vId, File imgFile) {
+		setBrightImage(vId, imgFile == null ? null : imgFile.toURI());
+	}
+
+	/**
+	 * Set the dark (darkfield) image for a view from a local file.
+	 * @param vId view id
+	 * @param imgFile local file path to the dark image
+	 */
+	default void setDarkImage(ViewId vId, File imgFile) {
+		setDarkImage(vId, imgFile == null ? null : imgFile.toURI());
+	}
 }

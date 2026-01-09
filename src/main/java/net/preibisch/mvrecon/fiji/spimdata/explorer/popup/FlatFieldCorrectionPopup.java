@@ -27,6 +27,7 @@ import java.awt.Point;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -101,10 +102,10 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 								.isCached()
 						: true );
 
-				Map< ViewId, Pair< File, File > > fileMap = null;
+				Map<ViewId, Pair<URI, URI>> uriMap = null;
 				if ( alreadyFF )
-					fileMap = ( (LazyLoadingFlatFieldCorrectionMap< ImgLoader >) data.getSequenceDescription()
-							.getImgLoader() ).getFileMap();
+					uriMap = ((LazyLoadingFlatFieldCorrectionMap<ImgLoader>) data.getSequenceDescription()
+							.getImgLoader()).getUriMap();
 
 				for ( Channel c : channels )
 					for ( Illumination ill : illums )
@@ -120,13 +121,12 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 									} ).findAny().orElseGet( null );
 
 							if ( anyViewId != null )
-								if ( fileMap.containsKey( anyViewId ) )
-								{
-									Pair< File, File > files = fileMap.get( anyViewId );
-									if ( files.getA() != null )
-										bright = files.getA().getAbsolutePath();
-									if ( files.getB() != null )
-										dark = files.getB().getAbsolutePath();
+								if (uriMap.containsKey(anyViewId)) {
+									Pair<URI, URI> uris = uriMap.get(anyViewId);
+									if (uris.getA() != null)
+										bright = new File(uris.getA()).getAbsolutePath();
+									if (uris.getB() != null)
+										dark = new File(uris.getB()).getAbsolutePath();
 								}
 						}
 						gdp.addMessage( "Channel: " + c.getName() + ", Illumination: " + ill.getName() + ":" );

@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
+import java.net.URI;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -69,7 +70,7 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 	private boolean cacheResult;
 
 	/* downsampled bright/dark images */
-	private final Map< Pair< File, List< Integer > >, RandomAccessibleInterval< FloatType > > dsRaiMap;
+	private final Map<Pair<URI, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
 
 	public MultiResolutionFlatfieldCorrectionWrappedImgLoader(MultiResolutionImgLoader wrappedImgLoader)
 	{
@@ -102,12 +103,12 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 	private RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
 			ViewId vId,
 			int[] downsamplingFactors,
-			Function<Pair<File, File>, File> fileSelector,
+			Function<Pair<URI, URI>, URI> uriSelector,
 			Function<ViewId, RandomAccessibleInterval<FloatType>> imgGetter
 	) {
 		// Convert to a list here to have a proper hash code for the map key
 		List<Integer> dsFactorList = Arrays.stream(downsamplingFactors).boxed().collect(Collectors.toList());
-		final ValuePair<File, List<Integer>> key = new ValuePair<>(fileSelector.apply(fileMap.get(vId)), dsFactorList);
+		final ValuePair<URI, List<Integer>> key = new ValuePair<>(uriSelector.apply(uriMap.get(vId)), dsFactorList);
 
 		if (!dsRaiMap.containsKey(key)) {
 			final RandomAccessibleInterval<FloatType> img = imgGetter.apply(vId);

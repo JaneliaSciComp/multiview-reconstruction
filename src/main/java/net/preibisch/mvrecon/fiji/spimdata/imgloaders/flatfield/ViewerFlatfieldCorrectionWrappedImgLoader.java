@@ -23,12 +23,17 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
+import java.net.URI;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+
+import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import bdv.ViewerImgLoader;
 import bdv.ViewerSetupImgLoader;
@@ -54,10 +59,12 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Cast;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
+import util.URITools;
 
 /**
  * Flatfield correction wrapper for ViewerImgLoader.
@@ -80,16 +87,16 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 	private boolean active;
 	private boolean cacheResult;
 
-	private static final Pair<File, File> NULL_PAIR = new ValuePair<>(null, null);
+	private static final Pair<URI, URI> NULL_PAIR = new ValuePair<>(null, null);
 
-	/** Maps ViewId to (brightFile, darkFile) pair */
-	protected final Map<ViewId, Pair<File, File>> fileMap;
+	/** Maps ViewId to (brightUri, darkUri) pair */
+	protected final Map<ViewId, Pair<URI, URI>> uriMap;
 
 	/** Cached loaded correction images */
-	protected final Map<File, RandomAccessibleInterval<FloatType>> raiMap;
+	protected final Map<URI, RandomAccessibleInterval<FloatType>> raiMap;
 
 	/** Downsampled bright/dark images for each mipmap level */
-	private final Map<Pair<File, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
+	private final Map<Pair<URI, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
 
 	public ViewerFlatfieldCorrectionWrappedImgLoader(final ViewerImgLoader wrappedImgLoader) {
 		this(wrappedImgLoader, true);
@@ -99,7 +106,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		this.wrappedImgLoader = wrappedImgLoader;
 		this.active = true;
 		this.cacheResult = cacheResult;
-		this.fileMap = new HashMap<>();
+		this.uriMap = new HashMap<>();
 		this.raiMap = new HashMap<>();
 		this.dsRaiMap = new HashMap<>();
 	}
@@ -143,50 +150,108 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		this.cacheResult = cached;
 	}
 
+	public void setBrightImage(final ViewId vId, final URI imgUri) {
+		final Pair<URI, URI> oldPair = uriMap.getOrDefault(vId, NULL_PAIR);
+		uriMap.put(vId, new ValuePair<>(imgUri, oldPair.getB()));
+	}
+
+	public void setDarkImage(final ViewId vId, final URI imgUri) {
+		final Pair<URI, URI> oldPair = uriMap.getOrDefault(vId, NULL_PAIR);
+		uriMap.put(vId, new ValuePair<>(oldPair.getA(), imgUri));
+	}
+
 	public void setBrightImage(final ViewId vId, final File imgFile) {
-		final Pair<File, File> oldPair = fileMap.getOrDefault(vId, NULL_PAIR);
-		fileMap.put(vId, new ValuePair<>(imgFile, oldPair.getB()));
+		setBrightImage(vId, imgFile == null ? null : imgFile.toURI());
 	}
 
 	public void setDarkImage(final ViewId vId, final File imgFile) {
-		final Pair<File, File> oldPair = fileMap.getOrDefault(vId, NULL_PAIR);
-		fileMap.put(vId, new ValuePair<>(oldPair.getA(), imgFile));
+		setDarkImage(vId, imgFile == null ? null : imgFile.toURI());
 	}
 
 	// ========== Image loading helpers ==========
 
 	protected RandomAccessibleInterval<FloatType> getBrightImg(final ViewId vId) {
-		if (!fileMap.containsKey(vId))
+		if (!uriMap.containsKey(vId))
 			return null;
 
-		final File fileToLoad = fileMap.get(vId).getA();
-		if (fileToLoad == null)
+		final URI uriToLoad = uriMap.get(vId).getA();
+		if (uriToLoad == null)
 			return null;
 
-		loadFileIfNecessary(fileToLoad);
-		return raiMap.get(fileToLoad);
+		loadImageIfNecessary(uriToLoad);
+		return raiMap.get(uriToLoad);
 	}
 
 	protected RandomAccessibleInterval<FloatType> getDarkImg(final ViewId vId) {
-		if (!fileMap.containsKey(vId))
+		if (!uriMap.containsKey(vId))
 			return null;
 
-		final File fileToLoad = fileMap.get(vId).getB();
-		if (fileToLoad == null)
+		final URI uriToLoad = uriMap.get(vId).getB();
+		if (uriToLoad == null)
 			return null;
 
-		loadFileIfNecessary(fileToLoad);
-		return raiMap.get(fileToLoad);
+		loadImageIfNecessary(uriToLoad);
+		return raiMap.get(uriToLoad);
 	}
 
-	protected void loadFileIfNecessary(final File file) {
-		if (raiMap.containsKey(file))
+	/**
+	 * Load an image from a URI. Supports:
+	 * - Local TIFF files (via ImageJ)
+	 * - Local/cloud Zarr v3 containers (via N5 API)
+	 * - Local/cloud N5 containers (via N5 API)
+	 */
+	protected void loadImageIfNecessary(final URI uri) {
+		if (raiMap.containsKey(uri))
 			return;
 
-		final ImagePlus imp = IJ.openImage(file.getAbsolutePath());
-		final RandomAccessibleInterval<FloatType> img = ImageJFunctions.convertFloat(imp).copy();
+		RandomAccessibleInterval<FloatType> img;
 
-		raiMap.put(file, img);
+		if (isChunkedFormat(uri)) {
+			// Use N5/Zarr API for chunked formats
+			final StorageFormat format = detectStorageFormat(uri);
+			final N5Reader reader = URITools.instantiateN5Reader(format, uri);
+			final RandomAccessibleInterval<?> raw = N5Utils.open(reader, "/");
+			img = RealTypeConverters.convert(Cast.unchecked(raw), new FloatType());
+		} else {
+			// Legacy TIFF path via ImageJ
+			final File file = new File(uri);
+			final ImagePlus imp = IJ.openImage(file.getAbsolutePath());
+			if (imp == null)
+				throw new RuntimeException("Failed to load image from: " + uri);
+			img = ImageJFunctions.convertFloat(imp).copy();
+		}
+
+		raiMap.put(uri, img);
+	}
+
+	/**
+	 * Determine if the URI points to a chunked format (N5/Zarr) vs TIFF.
+	 */
+	private static boolean isChunkedFormat(final URI uri) {
+		final String scheme = uri.getScheme();
+		// Cloud URIs are always chunked format
+		if ("s3".equals(scheme) || "gs".equals(scheme))
+			return true;
+
+		// Check path for .zarr or .n5 extension
+		final String path = uri.getPath();
+		if (path == null)
+			return false;
+
+		final String lowerPath = path.toLowerCase();
+		return lowerPath.endsWith(".zarr") || lowerPath.endsWith(".n5")
+			|| lowerPath.contains(".zarr/") || lowerPath.contains(".n5/");
+	}
+
+	/**
+	 * Detect the storage format from the URI.
+	 */
+	private static StorageFormat detectStorageFormat(final URI uri) {
+		final String path = uri.getPath();
+		if (path != null && path.toLowerCase().contains(".n5"))
+			return StorageFormat.N5;
+		// Default to Zarr v3 for cloud and .zarr paths
+		return StorageFormat.ZARR;
 	}
 
 	protected RandomAccessibleInterval<FloatType> getOrCreateBrightImgDownsampled(
@@ -210,12 +275,12 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 	private RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
 			ViewId vId,
 			int[] downsamplingFactors,
-			Function<Pair<File, File>, File> fileSelector,
+			Function<Pair<URI, URI>, URI> uriSelector,
 			Function<ViewId, RandomAccessibleInterval<FloatType>> imgGetter
 	) {
 		// Convert to a list here to have a proper hash code for the map key
 		List<Integer> dsFactorList = Arrays.stream(downsamplingFactors).boxed().collect(Collectors.toList());
-		final ValuePair<File, List<Integer>> key = new ValuePair<>(fileSelector.apply(fileMap.get(vId)), dsFactorList);
+		final ValuePair<URI, List<Integer>> key = new ValuePair<>(uriSelector.apply(uriMap.get(vId)), dsFactorList);
 
 		if (!dsRaiMap.containsKey(key)) {
 			final RandomAccessibleInterval<FloatType> img = imgGetter.apply(vId);
@@ -229,6 +294,14 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		}
 
 		return dsRaiMap.get(key);
+	}
+
+	/**
+	 * Get the URI map for bright/dark images per view.
+	 * @return map from ViewId to (brightUri, darkUri) pair
+	 */
+	public Map<ViewId, Pair<URI, URI>> getUriMap() {
+		return uriMap;
 	}
 
 	// ========== Inner class: ViewerSetupImgLoader implementation ==========
