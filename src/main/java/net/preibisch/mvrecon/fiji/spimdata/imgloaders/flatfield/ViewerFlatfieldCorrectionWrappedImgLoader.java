@@ -28,6 +28,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import bdv.ViewerImgLoader;
 import bdv.ViewerSetupImgLoader;
@@ -192,54 +194,40 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 	protected RandomAccessibleInterval<FloatType> getOrCreateBrightImgDownsampled(
 			final ViewId vId,
-			final int[] downsamplingFactors) {
-		if (!fileMap.containsKey(vId) || fileMap.get(vId).getA() == null)
-			return null;
-
-		final ArrayList<Integer> dsFactorList = new ArrayList<>();
-		for (final int i : downsamplingFactors)
-			dsFactorList.add(i);
-
-		final ValuePair<File, List<Integer>> key = new ValuePair<>(fileMap.get(vId).getA(), dsFactorList);
-
-		if (!dsRaiMap.containsKey(key)) {
-			final RandomAccessibleInterval<FloatType> brightImg = getBrightImg(vId);
-
-			if (brightImg == null)
-				return null;
-
-			// Add singleton z-dimension for downsampleHDF5 to work
-			final RandomAccessibleInterval<FloatType> downsampled =
-					MultiResolutionFlatfieldCorrectionWrappedImgLoader.downsampleHDF5(
-							Views.addDimension(brightImg, 0, 0), downsamplingFactors);
-			dsRaiMap.put(key, downsampled);
-		}
-
-		return dsRaiMap.get(key);
+			final int[] downsamplingFactors
+	) {
+		return getOrCreateDownsampledImg(vId, downsamplingFactors, Pair::getA, this::getBrightImg);
 	}
 
 	protected RandomAccessibleInterval<FloatType> getOrCreateDarkImgDownsampled(
 			final ViewId vId,
-			final int[] downsamplingFactors) {
-		if (!fileMap.containsKey(vId) || fileMap.get(vId).getB() == null)
-			return null;
+			final int[] downsamplingFactors
+	) {
+		return getOrCreateDownsampledImg(vId, downsamplingFactors, Pair::getB, this::getDarkImg);
+	}
 
-		final ArrayList<Integer> dsFactorList = new ArrayList<>();
-		for (final int i : downsamplingFactors)
-			dsFactorList.add(i);
-
-		final ValuePair<File, List<Integer>> key = new ValuePair<>(fileMap.get(vId).getB(), dsFactorList);
+	/**
+	 * Generic method to get a downsampled image or do downsampling on the fly. The bright image
+	 * is stored in the A element of the pair, the dark image in B.
+	 */
+	private RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
+			ViewId vId,
+			int[] downsamplingFactors,
+			Function<Pair<File, File>, File> fileSelector,
+			Function<ViewId, RandomAccessibleInterval<FloatType>> imgGetter
+	) {
+		// Convert to a list here to have a proper hash code for the map key
+		List<Integer> dsFactorList = Arrays.stream(downsamplingFactors).boxed().collect(Collectors.toList());
+		final ValuePair<File, List<Integer>> key = new ValuePair<>(fileSelector.apply(fileMap.get(vId)), dsFactorList);
 
 		if (!dsRaiMap.containsKey(key)) {
-			final RandomAccessibleInterval<FloatType> darkImg = getDarkImg(vId);
+			final RandomAccessibleInterval<FloatType> img = imgGetter.apply(vId);
 
-			if (darkImg == null)
+			if (img == null)
 				return null;
 
-			// Add singleton z-dimension for downsampleHDF5 to work
 			final RandomAccessibleInterval<FloatType> downsampled =
-					MultiResolutionFlatfieldCorrectionWrappedImgLoader.downsampleHDF5(
-							Views.addDimension(darkImg, 0, 0), downsamplingFactors);
+					MultiResolutionFlatfieldCorrectionWrappedImgLoader.downsampleHDF5(img, downsamplingFactors);
 			dsRaiMap.put(key, downsampled);
 		}
 
