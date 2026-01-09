@@ -25,6 +25,8 @@ package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -65,6 +67,27 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 {
 	private static final long serialVersionUID = 1L;
 	ExplorerWindow<?> panel;
+
+	/**
+	 * Class to store correlation result for a pair of views
+	 */
+	private static class CorrelationResult
+	{
+		final ViewId viewId1;
+		final ViewId viewId2;
+		final double correlation;
+		final double avgIntensity1;
+		final double avgIntensity2;
+
+		CorrelationResult(ViewId viewId1, ViewId viewId2, double correlation, double avgIntensity1, double avgIntensity2)
+		{
+			this.viewId1 = viewId1;
+			this.viewId2 = viewId2;
+			this.correlation = correlation;
+			this.avgIntensity1 = avgIntensity1;
+			this.avgIntensity2 = avgIntensity2;
+		}
+	}
 
 	public ComputeCrossCorrelationPopup()
 	{
@@ -277,6 +300,7 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 						final int numThreads = Math.min(pairsToProcess.size(), Runtime.getRuntime().availableProcessors());
 						final ExecutorService executor = Executors.newFixedThreadPool(numThreads);
 						final AtomicInteger successCount = new AtomicInteger(0);
+						final List<CorrelationResult> results = Collections.synchronizedList(new ArrayList<>());
 
 						IOFunctions.println("  Using " + numThreads + " threads for parallel processing");
 
@@ -291,8 +315,12 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 								{
 									try
 									{
-										computeCorrelationForPair(spimData, pair[0], pair[1], downsampleFactors);
-										successCount.incrementAndGet();
+										CorrelationResult result = computeCorrelationForPair(spimData, pair[0], pair[1], downsampleFactors);
+										if (result != null)
+										{
+											results.add(result);
+											successCount.incrementAndGet();
+										}
 									}
 									catch (Exception ex)
 									{
@@ -325,9 +353,42 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 						// Shut down executor
 						executor.shutdown();
 
-
 						IOFunctions.println(new Date(System.currentTimeMillis()) +
 								": Completed " + successCount.get() + " of " + pairsToProcess.size() + " correlations");
+
+						// Print summary table sorted by correlation (ascending)
+						if (!results.isEmpty())
+						{
+							IOFunctions.println("\n" + new Date(System.currentTimeMillis()) +
+									": Summary of correlations (sorted by correlation):");
+							IOFunctions.println("================================================================================");
+							IOFunctions.println(String.format("%-20s %-20s %12s %12s %12s",
+									"ViewId 1", "ViewId 2", "Correlation", "Avg Int 1", "Avg Int 2"));
+							IOFunctions.println("================================================================================");
+
+							// Sort by correlation (ascending)
+							Collections.sort(results, new Comparator<CorrelationResult>()
+							{
+								@Override
+								public int compare(CorrelationResult r1, CorrelationResult r2)
+								{
+									return Double.compare(r1.correlation, r2.correlation);
+								}
+							});
+
+							// Print each result
+							for (CorrelationResult result : results)
+							{
+								String viewId1Str = String.format("%d-%d",
+										result.viewId1.getTimePointId(), result.viewId1.getViewSetupId());
+								String viewId2Str = String.format("%d-%d",
+										result.viewId2.getTimePointId(), result.viewId2.getViewSetupId());
+								IOFunctions.println(String.format("%-20s %-20s %12.4f %12.1f %12.1f",
+										viewId1Str, viewId2Str, result.correlation,
+										result.avgIntensity1, result.avgIntensity2));
+							}
+							IOFunctions.println("================================================================================");
+						}
 					}
 					catch (Exception ex)
 					{
@@ -343,7 +404,7 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 	/**
 	 * Compute cross-correlation for a specific pair of views
 	 */
-	private static void computeCorrelationForPair(
+	private static CorrelationResult computeCorrelationForPair(
 			SpimData2 spimData,
 			ViewId viewId1,
 			ViewId viewId2,
@@ -497,12 +558,16 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 			throw new Exception("Invalid correlation coefficient: " + correlationCoefficient);
 		}
 
+		// Log individual result
 		IOFunctions.println(new Date(System.currentTimeMillis()) +
 				String.format(" %d-%d <> %d-%d",
 						viewId1.getTimePointId(), viewId1.getViewSetupId(),
 						viewId2.getTimePointId(), viewId2.getViewSetupId()) +
 				String.format(": r=%.4f avg int=[%.1f, %.1f]",
 						correlationCoefficient, avgIntensity1, avgIntensity2));
+
+		// Return result for summary table
+		return new CorrelationResult(viewId1, viewId2, correlationCoefficient, avgIntensity1, avgIntensity2);
 	}
 
 	/**
