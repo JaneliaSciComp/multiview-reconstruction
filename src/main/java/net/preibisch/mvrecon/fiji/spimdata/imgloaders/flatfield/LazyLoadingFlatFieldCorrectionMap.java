@@ -25,6 +25,7 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Function;
 
 import ij.IJ;
 import ij.ImagePlus;
@@ -41,7 +42,9 @@ public abstract class LazyLoadingFlatFieldCorrectionMap<IL extends ImgLoader> im
 	
 	protected final Map< File, RandomAccessibleInterval< FloatType > > raiMap;
 	protected final Map<ViewId, Pair<File, File>> fileMap;
-	
+
+	private static final Pair<File, File> NULL_PAIR = new ValuePair<>(null, null);
+
 	public LazyLoadingFlatFieldCorrectionMap()
 	{
 		raiMap = new HashMap<>();
@@ -49,62 +52,49 @@ public abstract class LazyLoadingFlatFieldCorrectionMap<IL extends ImgLoader> im
 	}
 	
 	@Override
-	public void setBrightImage(ViewId vId, File imgFile)
-	{
-		if (!fileMap.containsKey( vId ))
-			fileMap.put( vId, new ValuePair< File, File >( null, null ) );
-
-		final Pair< File, File > oldPair = fileMap.get( vId );
-		fileMap.put( vId, new ValuePair< File, File >( imgFile, oldPair.getB() ) );
+	public void setBrightImage(ViewId vId, File imgFile) {
+		final Pair<File, File> oldPair = fileMap.getOrDefault(vId, NULL_PAIR);
+		fileMap.put(vId, new ValuePair<>(imgFile, oldPair.getB()));
 	}
 
 	@Override
-	public void setDarkImage(ViewId vId, File imgFile)
-	{
-		if (!fileMap.containsKey( vId ))
-			fileMap.put( vId, new ValuePair< File, File >( null, null ) );
-
-		final Pair< File, File > oldPair = fileMap.get( vId );
-		fileMap.put( vId, new ValuePair< File, File >( oldPair.getA(), imgFile ) );
+	public void setDarkImage(ViewId vId, File imgFile) {
+		final Pair<File, File> oldPair = fileMap.getOrDefault(vId, NULL_PAIR);
+        fileMap.put(vId, new ValuePair<>(oldPair.getA(), imgFile));
 	}
-	
-	protected RandomAccessibleInterval< FloatType > getBrightImg(ViewId vId)
-	{
-		if (!fileMap.containsKey( vId ))
+
+	protected RandomAccessibleInterval<FloatType> getBrightImg(ViewId vId) {
+		return getImg(vId, Pair::getA);
+	}
+
+	protected RandomAccessibleInterval<FloatType> getDarkImg(ViewId vId) {
+		return getImg(vId, Pair::getB);
+	}
+
+	/**
+	 * Get image for view id; the brightfield is stored in the A element of the pair, the darkfield in B
+	 * @param vId view id
+	 * @param fileSelector function to select file from pair
+	 * @return image, or null if not set
+	 */
+	private RandomAccessibleInterval<FloatType> getImg(ViewId vId, Function<Pair<File, File>, File> fileSelector) {
+		if (!fileMap.containsKey(vId))
 			return null;
 
-		final File fileToLoad = fileMap.get( vId ).getA();
-
+		final File fileToLoad = fileSelector.apply(fileMap.get(vId));
 		if (fileToLoad == null)
 			return null;
 
-		loadFileIfNecessary( fileToLoad );
-		return raiMap.get( fileToLoad );
-	}
-
-	protected RandomAccessibleInterval< FloatType > getDarkImg(ViewId vId)
-	{
-		if (!fileMap.containsKey( vId ))
-			return null;
-
-		final File fileToLoad = fileMap.get( vId ).getB();
-
-		if (fileToLoad == null)
-			return null;
-
-		loadFileIfNecessary( fileToLoad );
-		return raiMap.get( fileToLoad );
+		return loadFileIfNecessary(fileToLoad);
 	}
 	
-	protected void loadFileIfNecessary(File file)
-	{
-		if (raiMap.containsKey( file ))
-			return;
-		
-		final ImagePlus imp = IJ.openImage( file.getAbsolutePath() );
-		final RandomAccessibleInterval< FloatType > img = ImageJFunctions.convertFloat( imp ).copy();
-		
-		raiMap.put( file, img );
+	private RandomAccessibleInterval<FloatType> loadFileIfNecessary(File file) {
+		if (!raiMap.containsKey(file)) {
+			final ImagePlus imp = IJ.openImage(file.getAbsolutePath());
+			final RandomAccessibleInterval<FloatType> img = ImageJFunctions.convertFloat(imp).copy();
+			raiMap.put(file, img);
+		}
+		return raiMap.get(file);
 	}
 	
 	public static void main(String[] args)
