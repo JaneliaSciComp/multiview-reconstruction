@@ -284,7 +284,7 @@ public class SpimData2Tools
 
 			final Map< ViewId, OMEZARREntry > viewIdToPath = new HashMap<>();
 
-			if ( StorageFormat.ZARR.equals( storageType ))
+			if ( StorageFormat.ZARR.equals( storageType ) || StorageFormat.ZARR2.equals( storageType ))
 				viewIdToPath.put( viewId, omeZarrEntry );
 
 			final SpimData2 spimData =
