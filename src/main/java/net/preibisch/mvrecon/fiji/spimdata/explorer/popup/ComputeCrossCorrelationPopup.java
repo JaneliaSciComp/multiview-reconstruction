@@ -27,6 +27,10 @@ import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.swing.JComponent;
 import javax.swing.JMenuItem;
@@ -221,23 +225,55 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 							IOFunctions.println("  Found " + pairsToProcess.size() + " overlapping pairs");
 						}
 
-						// Process all pairs
-						int successCount = 0;
-						for (ViewId[] pair : pairsToProcess)
+						// Process all pairs in parallel
+						final int numThreads = Math.min(pairsToProcess.size(), Runtime.getRuntime().availableProcessors());
+						final ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+						final AtomicInteger successCount = new AtomicInteger(0);
+
+						IOFunctions.println("  Using " + numThreads + " threads for parallel processing");
+
+						List<Future<?>> futures = new ArrayList<>();
+
+						for (final ViewId[] pair : pairsToProcess)
+						{
+							Future<?> future = executor.submit(new Runnable()
+							{
+								@Override
+								public void run()
+								{
+									try
+									{
+										computeCorrelationForPair(spimData, pair[0], pair[1], downsampleFactors, downsamplingChoice);
+										successCount.incrementAndGet();
+									}
+									catch (Exception ex)
+									{
+										// Silently skip pairs with errors (e.g., no overlap after downsampling)
+									}
+								}
+							});
+							futures.add(future);
+						}
+
+						// Wait for all tasks to complete
+						for (Future<?> future : futures)
 						{
 							try
 							{
-								computeCorrelationForPair(spimData, pair[0], pair[1], downsampleFactors, downsamplingChoice);
-								successCount++;
+								future.get();
 							}
 							catch (Exception ex)
-						{
-							// Silently skip pairs with errors (e.g., no overlap after downsampling)
-						}
+							{
+								// Already handled in the task
+							}
 						}
 
+						// Shut down executor
+						executor.shutdown();
+
+
 						IOFunctions.println(new Date(System.currentTimeMillis()) +
-								": Completed " + successCount + " of " + pairsToProcess.size() + " correlations");
+								": Completed " + successCount.get() + " of " + pairsToProcess.size() + " correlations");
 					}
 					catch (Exception ex)
 					{
