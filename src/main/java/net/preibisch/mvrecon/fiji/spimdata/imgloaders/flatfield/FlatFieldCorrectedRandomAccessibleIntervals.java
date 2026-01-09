@@ -25,7 +25,6 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 import java.util.Arrays;
 
 import bdv.util.ConstantRandomAccessible;
-import bdv.viewer.overlay.SourceInfoOverlayRenderer;
 import net.imglib2.FinalInterval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.type.numeric.RealType;
@@ -39,7 +38,7 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 			RandomAccessibleInterval< S > brightImg,
 			RandomAccessibleInterval< T > darkImg )
 	{
-		R type = Views.iterable( sourceImg ).firstElement().createVariable();
+		R type = sourceImg.firstElement().createVariable();
 		return create( sourceImg, brightImg, darkImg, type );
 	}
 	public static <O extends RealType< O >, R extends RealType< R >, S extends RealType< S >, T extends RealType< T >> RandomAccessibleInterval< O > create(
@@ -85,20 +84,20 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 		{
 			// assume bright and dark images constant -> should return original
 			// TODO: 'optimize' by really returning sourceImg?
-			final ConstantRandomAccessible< FloatType > constantBright = new ConstantRandomAccessible<FloatType>( new FloatType(1.0f), sourceImg.numDimensions() );
-			final ConstantRandomAccessible< FloatType > constantDark = new ConstantRandomAccessible<FloatType>( new FloatType(0.0f), sourceImg.numDimensions() );
+			final ConstantRandomAccessible< FloatType > constantBright = new ConstantRandomAccessible<>( new FloatType(1.0f), sourceImg.numDimensions() );
+			final ConstantRandomAccessible< FloatType > constantDark = new ConstantRandomAccessible<>( new FloatType(0.0f), sourceImg.numDimensions() );
 			return new FlatFieldCorrectedRandomAccessibleInterval<>(outputType, sourceImg, Views.interval( constantBright, sourceImg ), Views.interval( constantDark, sourceImg ) );
 		}
 		else if (brightImg == null)
 		{
 			// assume bright image == constant
-			final ConstantRandomAccessible< FloatType > constantBright = new ConstantRandomAccessible<FloatType>( new FloatType(1.0f), sourceImg.numDimensions() );
+			final ConstantRandomAccessible< FloatType > constantBright = new ConstantRandomAccessible<>( new FloatType(1.0f), sourceImg.numDimensions() );
 			return new FlatFieldCorrectedRandomAccessibleInterval<>(outputType, sourceImg, Views.interval( constantBright, sourceImg ), Views.interval( Views.extendBorder( darkImg ), intervalDark ) );
 		}
 		else if (darkImg == null)
 		{
 			// assume dark image == constant == 0;
-			final ConstantRandomAccessible< FloatType > constantDark = new ConstantRandomAccessible<FloatType>( new FloatType(0.0f), sourceImg.numDimensions() );
+			final ConstantRandomAccessible< FloatType > constantDark = new ConstantRandomAccessible<>( new FloatType(0.0f), sourceImg.numDimensions() );
 			return new FlatFieldCorrectedRandomAccessibleInterval<>(outputType, sourceImg, Views.interval( Views.extendBorder( brightImg ), intervalBright ), Views.interval( constantDark, sourceImg ) );
 		}
 			

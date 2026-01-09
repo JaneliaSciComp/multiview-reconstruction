@@ -28,12 +28,10 @@ import net.imglib2.Interval;
 import net.imglib2.Point;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.Sampler;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.RealSum;
 import net.imglib2.util.ValuePair;
-import net.imglib2.view.Views;
 
 /*
  * 
@@ -148,7 +146,7 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		final RealSum sum = new RealSum();
 		long count = 0;
 		
-		final Cursor< P > brightCursor = Views.iterable( brightImg ).cursor();
+		final Cursor< P > brightCursor = brightImg.cursor();
 		final RandomAccess< Q > darkRA = darkImg.randomAccess();
 		
 		while (brightCursor.hasNext())
@@ -172,7 +170,7 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		double min = Double.MAX_VALUE;
 		double max = - Double.MAX_VALUE;
 
-		for (final P pixel : Views.iterable( img ))
+		for (final P pixel : img)
 		{
 			double value = pixel.getRealDouble();
 			
@@ -183,7 +181,7 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 				min = value;
 		}
 		
-		return new ValuePair< Double, Double >( min, max );
+		return new ValuePair<>( min, max );
 	}
 
 }
