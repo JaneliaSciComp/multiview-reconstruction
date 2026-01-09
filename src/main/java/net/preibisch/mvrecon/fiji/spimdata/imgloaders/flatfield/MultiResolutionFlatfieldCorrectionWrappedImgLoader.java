@@ -23,7 +23,6 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -31,7 +30,6 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import bdv.export.WriteSequenceToHdf5;
 import ij.ImageJ;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHints;
@@ -39,12 +37,11 @@ import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionSetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.VoxelDimensions;
-import net.imglib2.Cursor;
 import net.imglib2.Dimensions;
-import net.imglib2.FinalDimensions;
-import net.imglib2.RandomAccess;
-import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.blocks.BlockAlgoUtils;
+import net.imglib2.algorithm.blocks.BlockSupplier;
+import net.imglib2.algorithm.blocks.downsample.Downsample;
 import net.imglib2.converter.RealTypeConverters;
 import net.imglib2.img.Img;
 import net.imglib2.img.ImgFactory;
@@ -57,7 +54,6 @@ import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -120,9 +116,7 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 			if (img == null)
 				return null;
 
-			// Add a singleton z-dimension here for downsampleHDF5 to work
-			final IntervalView<FloatType> extendedImg = Views.addDimension(img, 0, 0);
-			final RandomAccessibleInterval<FloatType> downsampled = downsampleHDF5(extendedImg, downsamplingFactors);
+			final RandomAccessibleInterval<FloatType> downsampled = downsampleHDF5(img, downsamplingFactors);
 			dsRaiMap.put(key, downsampled);
 		}
 
@@ -387,84 +381,40 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 	}
 
 	/**
-	 * downsampling code form {@link WriteSequenceToHdf5}, distilled into one
-	 * method
-	 * 
-	 * @param input
-	 *            image to downsample
-	 * @param dsFactor
-	 *            factors to downsample by
-	 * @param <T>
-	 *            the image type
-	 * @return downsampled image
+	 * Downsample an image using the imglib2-algorithm blocks API.
+	 *
+	 * @param input image to downsample
+	 * @param dsFactor factors to downsample by (may have more dimensions than input)
+	 * @param <T> the image type
+	 * @return downsampled image, or input unchanged if no downsampling needed
 	 */
-	public static <T extends RealType< T > & NativeType< T >> RandomAccessibleInterval< T > downsampleHDF5(
-			RandomAccessibleInterval< T > input, final int[] dsFactor)
-	{
-		final long[] blockMin = new long[input.numDimensions()];
+	public static <T extends RealType<T> & NativeType<T>> RandomAccessibleInterval<T> downsampleHDF5(
+			RandomAccessibleInterval<T> input,
+			final int[] dsFactor
+	) {
+		final int n = input.numDimensions();
 
-		final long[] outDim = new long[input.numDimensions()];
-		for ( int d = 0; d < input.numDimensions(); d++ )
-			outDim[d] = Math.max( input.dimension( d ) / dsFactor[d], 1 );
-
-		final Img< T > downsampled = new ArrayImgFactory< T >().create( new FinalDimensions( outDim ),
-				Views.iterable( input ).firstElement().createVariable() );
-		final RandomAccess< T > randomAccess = Views.extendBorder( input ).randomAccess();
-
-		final Cursor< T > out = downsampled.cursor();
-
-		double scale = 1;
-		for ( int f : dsFactor )
-			scale *= f;
-		scale = 1.0 / scale;
-
-		final int numBlockPixels = (int) ( outDim[0] * outDim[1] * outDim[2] );
-		final double[] accumulator = new double[numBlockPixels];
-
-		randomAccess.setPosition( blockMin );
-
-		final int ox = (int) outDim[0];
-		final int oy = (int) outDim[1];
-		final int oz = (int) outDim[2];
-
-		final int sx = ox * dsFactor[0];
-		final int sy = oy * dsFactor[1];
-		final int sz = oz * dsFactor[2];
-
-		int i = 0;
-		for ( int z = 0, bz = 0; z < sz; ++z )
-		{
-			for ( int y = 0, by = 0; y < sy; ++y )
-			{
-				for ( int x = 0, bx = 0; x < sx; ++x )
-				{
-					accumulator[i] += randomAccess.get().getRealDouble();
-					randomAccess.fwd( 0 );
-					if ( ++bx == dsFactor[0] )
-					{
-						bx = 0;
-						++i;
-					}
-				}
-				randomAccess.move( -sx, 0 );
-				randomAccess.fwd( 1 );
-				if ( ++by == dsFactor[1] )
-					by = 0;
-				else
-					i -= ox;
-			}
-			randomAccess.move( -sy, 1 );
-			randomAccess.fwd( 2 );
-			if ( ++bz == dsFactor[2] )
-				bz = 0;
-			else
-				i -= ox * oy;
+		// Build effective factors matching input dimensions, check if downsampling needed
+		boolean needsDownsampling = false;
+		final int[] effectiveFactors = new int[n];
+		for (int d = 0; d < n; d++) {
+			effectiveFactors[d] = (d < dsFactor.length) ? dsFactor[d] : 1;
+			if (effectiveFactors[d] > 1)
+				needsDownsampling = true;
 		}
 
-		for ( int j = 0; j < numBlockPixels; ++j )
-			out.next().setReal( accumulator[j] * scale );
+		// Return input unchanged if all factors are 1
+		if (!needsDownsampling)
+			return input;
 
-		return downsampled;
+		final long[] outDim = new long[n];
+		for (int d = 0; d < n; d++)
+			outDim[d] = Math.max(input.dimension(d) / effectiveFactors[d], 1);
+
+		final BlockSupplier<T> blocks = BlockSupplier.of(input)
+				.andThen(Downsample.downsample(effectiveFactors));
+
+		return BlockAlgoUtils.cellImg(blocks, outDim, new int[]{64});
 	}
 
 	public static void main(String[] args)
