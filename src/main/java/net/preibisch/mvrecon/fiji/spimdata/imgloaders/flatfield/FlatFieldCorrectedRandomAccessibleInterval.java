@@ -55,6 +55,9 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		this.brightImg = brightImg;
 		this.darkImg = darkImg;
 
+		if (brightImg.numDimensions() > sourceImg.numDimensions() || darkImg.numDimensions() > sourceImg.numDimensions())
+			throw new IllegalArgumentException("Bright-/darkfield images have more dimensions than source image!");
+
 		meanBrightCorrected = getMeanCorrected( brightImg, darkImg );
 		type = outputType;
 	}
@@ -105,20 +108,15 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		@Override
 		public O get()
 		{
-			// NB: the flat field images seem to be 3D with 1 z slice
-			// if they were truly 2D, we would use position.length - 1
-			final long[] positionBright = new long[ nDimBright ];
-			final long[] positionDark = new long[ nDimDark ];
-			// only copy position of n-1 dimensions
-			System.arraycopy( position, 0, positionBright, 0, nDimBright );
-			System.arraycopy( position, 0, positionDark, 0, nDimDark );
+			// Use the fact that bright and dark must be of dimensionality <= source,
+			// and that coordinates outside the dimensionality are ignored
+			sourceRA.setPosition(position);
+			brightRA.setPosition(position);
+			darkRA.setPosition(position);
 
-			sourceRA.setPosition( position );
-			brightRA.setPosition( positionBright );
-			darkRA.setPosition( positionDark );
-
-			final double corrBright = brightRA.get().getRealDouble() - darkRA.get().getRealDouble();
-			final double corrImg = sourceRA.get().getRealDouble() - darkRA.get().getRealDouble();
+			final double darkValue = darkRA.get().getRealDouble();
+			final double corrBright = brightRA.get().getRealDouble() - darkValue;
+			final double corrImg = sourceRA.get().getRealDouble() - darkValue;
 
 			if (corrBright == 0)
 				value.setReal( 0.0 );
