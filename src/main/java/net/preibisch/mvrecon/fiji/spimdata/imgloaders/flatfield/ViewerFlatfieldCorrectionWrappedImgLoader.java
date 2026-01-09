@@ -210,7 +210,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 			// Use N5/Zarr API for chunked formats
 			final StorageFormat format = detectStorageFormat(uri);
 			final N5Reader reader = URITools.instantiateN5Reader(format, uri);
-			final RandomAccessibleInterval<?> raw = N5Utils.open(reader, "/");
+			final RandomAccessibleInterval<?> raw = N5Utils.open(reader, "");
 			img = RealTypeConverters.convert(Cast.unchecked(raw), new FloatType());
 		} else {
 			// Legacy TIFF path via ImageJ

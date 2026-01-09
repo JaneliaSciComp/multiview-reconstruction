@@ -33,7 +33,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.janelia.saalfeldlab.n5.Compression;
-import org.janelia.saalfeldlab.n5.GzipCompression;
+import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
@@ -43,6 +43,7 @@ import ij.ImagePlus;
 import net.imglib2.img.Img;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.real.FloatType;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 import util.URITools;
 
 /**
@@ -80,9 +81,11 @@ public class ConvertFlatfieldsToZarr {
 		for (int d = 0; d < img.numDimensions(); d++)
 			blockSize[d] = (int) img.dimension(d);
 
-		// Save (N5Utils.save creates the dataset internally)
-		final Compression compression = new GzipCompression();
-		N5Utils.save(img, writer, "/", blockSize, compression);
+		// Save at root (empty string for Zarr v3)
+		// Save a block manually to work around a N5Utils.save issue for now
+		final Compression compression = new ZstandardCompression();
+		writer.createDataset("/", img.dimensionsAsLongArray(), blockSize, DataType.FLOAT32, compression);
+		N5Utils.saveBlock(img, writer, "", new long[]{0, 0});
 
 		writer.close();
 		System.out.println("  Created: " + outputZarr.getAbsolutePath());
