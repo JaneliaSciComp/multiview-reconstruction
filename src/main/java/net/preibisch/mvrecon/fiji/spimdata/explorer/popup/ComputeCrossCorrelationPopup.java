@@ -47,9 +47,10 @@ import net.imglib2.Point;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealInterval;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import net.imglib2.converter.Converters;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
@@ -180,7 +181,11 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 									ViewId viewId1 = selectedViewIds.get(i);
 									ViewId viewId2 = selectedViewIds.get(j);
 
-									RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
+                                    // Skip comparisons between different timepoints
+                                    if (viewId1.getTimePointId() != viewId2.getTimePointId())
+                                        continue;
+
+                                    RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
 									if (overlap != null)
 									{
 										pairsToProcess.add(new ViewId[] { viewId1, viewId2 });
@@ -214,11 +219,15 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 									ViewId viewId1 = viewIds.get(i);
 									ViewId viewId2 = viewIds.get(j);
 
-									RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
-									if (overlap != null)
-									{
-										pairsToProcess.add(new ViewId[] { viewId1, viewId2 });
-									}
+								// Skip comparisons between different timepoints
+								if (viewId1.getTimePointId() != viewId2.getTimePointId())
+									continue;
+
+                                RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
+                                if (overlap != null)
+                                {
+                                    pairsToProcess.add(new ViewId[] { viewId1, viewId2 });
+                                }
 								}
 							}
 
@@ -248,7 +257,13 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 									}
 									catch (Exception ex)
 									{
-										// Silently skip pairs with errors (e.g., no overlap after downsampling)
+//										// Temporarily log first error to diagnose issue
+//										if (successCount.get() == 0)
+//										{
+//											IOFunctions.println(new Date(System.currentTimeMillis()) +
+//													": ERROR (first failure): " + ex.getMessage());
+//											ex.printStackTrace();
+//										}
 									}
 								}
 							});
@@ -398,18 +413,34 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 		net.imglib2.util.Pair<RandomAccessibleInterval, AffineTransform3D> opened2 =
 				DownsampleTools.openAndDownsample(imgLoader, viewId2, downsampleFactors, false);
 
-		RandomAccessibleInterval<?> img1 = opened1.getA();
-		RandomAccessibleInterval<?> img2 = opened2.getA();
+		RandomAccessibleInterval<?> img1Raw = opened1.getA();
+		RandomAccessibleInterval<?> img2Raw = opened2.getA();
 
-		// Extract overlap regions and convert to FloatType
+		// Convert to FloatType (handles any numeric type)
+		@SuppressWarnings("unchecked")
+		RandomAccessibleInterval<FloatType> img1 = Converters.convert(
+				(RandomAccessibleInterval<RealType<?>>) img1Raw,
+				(in, out) -> out.setReal(in.getRealDouble()),
+				new FloatType());
+		@SuppressWarnings("unchecked")
+		RandomAccessibleInterval<FloatType> img2 = Converters.convert(
+				(RandomAccessibleInterval<RealType<?>>) img2Raw,
+				(in, out) -> out.setReal(in.getRealDouble()),
+				new FloatType());
+
+		// Extract overlap regions
 		RandomAccessibleInterval<FloatType> overlap1 = Views.zeroMin(
 				Views.interval(
-						Views.zeroMin((RandomAccessibleInterval<FloatType>) img1),
+						Views.zeroMin(img1),
 						dsInterval1));
 		RandomAccessibleInterval<FloatType> overlap2 = Views.zeroMin(
 				Views.interval(
-						Views.zeroMin((RandomAccessibleInterval<FloatType>) img2),
+						Views.zeroMin(img2),
 						dsInterval2));
+
+		// Compute average intensities in the overlapping regions (with sampling for speed)
+		double avgIntensity1 = computeAverageIntensity(overlap1, 10);
+		double avgIntensity2 = computeAverageIntensity(overlap2, 10);
 
 		// Compute cross-correlation directly
 		// Create a peak with zero shift to compute correlation at current alignment
@@ -442,6 +473,50 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 				String.format(" %d-%d <> %d-%d",
 						viewId1.getTimePointId(), viewId1.getViewSetupId(),
 						viewId2.getTimePointId(), viewId2.getViewSetupId()) +
-				String.format(": r=%.4f (n=%d)", correlationCoefficient, nPixels));
+				String.format(": r=%.4f (n=%d) avg int=[%.1f, %.1f]",
+						correlationCoefficient, nPixels, avgIntensity1, avgIntensity2));
+	}
+
+	/**
+	 * Compute average intensity of an image using sampling for efficiency.
+	 * Samples every stepSize-th pixel in each dimension.
+	 *
+	 * @param img The image to sample
+	 * @param stepSize Sampling step (e.g., 10 means sample every 10th pixel)
+	 * @return Average intensity of sampled pixels
+	 */
+	private static double computeAverageIntensity(RandomAccessibleInterval<FloatType> img, int stepSize)
+	{
+		double sum = 0;
+		long count = 0;
+
+		// Create a cursor that samples at regular intervals
+		final net.imglib2.Cursor<FloatType> cursor = Views.iterable(img).cursor();
+		final long[] position = new long[img.numDimensions()];
+
+		while (cursor.hasNext())
+		{
+			cursor.fwd();
+			cursor.localize(position);
+
+			// Sample only at regular intervals
+			boolean shouldSample = true;
+			for (int d = 0; d < position.length; d++)
+			{
+				if (position[d] % stepSize != 0)
+				{
+					shouldSample = false;
+					break;
+				}
+			}
+
+			if (shouldSample)
+			{
+				sum += cursor.get().get();
+				count++;
+			}
+		}
+
+		return count > 0 ? sum / count : 0.0;
 	}
 }
