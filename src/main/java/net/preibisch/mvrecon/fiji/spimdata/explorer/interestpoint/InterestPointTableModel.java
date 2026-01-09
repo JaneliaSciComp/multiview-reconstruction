@@ -489,7 +489,6 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	}
 
 	private HashMap< ViewId, HashMap< Integer, Integer > > correspondenceColorMap = null;
-	private int correspondenceColorIdCounter = 0;
 
 	@Override
 	public int getCorrespondenceColorId( final ViewId viewId, final int detectionId, final int timepointIndex )
@@ -502,7 +501,6 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		if ( correspondenceColorMap == null )
 		{
 			correspondenceColorMap = new HashMap<>();
-			correspondenceColorIdCounter = 0;
 
 			final HashMap< String, Integer > labels = InterestPointTools.getAllInterestPointMap( viewInterestPoints, currentVDs );
 			final String label = label( labels, selectedRow );
@@ -523,7 +521,9 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 					{
 						if ( cip.getCorrespondingViewId().equals( viewIdB ) )
 						{
-							final int colorId = correspondenceColorIdCounter++;
+							// Use consensus set ID as color ID - all correspondences from the same
+							// multi-consensus RANSAC set will have the same color
+							final int colorId = cip.getConsensusSetId();
 							correspondenceColorMap.get( viewIdA ).put( cip.getDetectionId(), colorId );
 							correspondenceColorMap.get( viewIdB ).put( cip.getCorrespondingDetectionId(), colorId );
 						}
