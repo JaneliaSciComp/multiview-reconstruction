@@ -33,7 +33,6 @@ import mpicbg.spim.data.sequence.SetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
-import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.RealTypeConverters;
 import net.imglib2.img.Img;
@@ -47,14 +46,13 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapImgLoaderLOCI2;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 
 
 public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatFieldCorrectionMap< ImgLoader >
 		implements ImgLoader
 {
-	private ImgLoader wrappedImgLoader;
+	private final ImgLoader wrappedImgLoader;
 	private boolean active;
 	private boolean cacheResult;
 
@@ -106,23 +104,27 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 		}
 
 		@Override
-		public RandomAccessibleInterval< T > getImage(int timepointId, ImgLoaderHint... hints)
-		{
-			if (!active)
-				return (RandomAccessibleInterval< T >) wrappedImgLoader.getSetupImgLoader( setupId ).getImage( timepointId,
-						hints );
+		public RandomAccessibleInterval< T > getImage(int timepointId, ImgLoaderHint... hints) {
+			if (!active) {
+				@SuppressWarnings("unchecked") final RandomAccessibleInterval<T> img =
+						(RandomAccessibleInterval<T>) wrappedImgLoader.getSetupImgLoader(setupId).getImage(timepointId, hints);
+				return img;
+			}
 
 			@SuppressWarnings("unchecked")
-			RandomAccessibleInterval< T > rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
-					(RandomAccessibleInterval< T >) wrappedImgLoader.getSetupImgLoader( setupId ).getImage( timepointId,
-							hints ),
-					getBrightImg( new ViewId( timepointId, setupId ) ),
-					getDarkImg( new ViewId( timepointId, setupId ) ) );
+			RandomAccessibleInterval<T> rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
+					(RandomAccessibleInterval<T>) wrappedImgLoader.getSetupImgLoader(setupId).getImage(timepointId,
+																									   hints),
+					getBrightImg(new ViewId(timepointId, setupId)),
+					getDarkImg(new ViewId(timepointId, setupId)));
 
 			boolean loadCompletelyRequested = false;
-			for (ImgLoaderHint hint : hints)
-				if (hint == ImgLoaderHints.LOAD_COMPLETELY)
+			for (ImgLoaderHint hint : hints) {
+				if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
 					loadCompletelyRequested = true;
+					break;
+				}
+			}
 
 			if (loadCompletelyRequested)
 			{
@@ -131,12 +133,13 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 					numPx *= rai.dimension( d );
 
 				final ImgFactory< T > imgFactory;
-				if (Math.log(numPx) / Math.log( 2 ) < 31)
-					imgFactory = new ArrayImgFactory<T>();
-				else
-					imgFactory = new CellImgFactory<T>();
+				if (Math.log(numPx) / Math.log(2) < 31) {
+					imgFactory = new ArrayImgFactory<>(getImageType());
+				} else {
+					imgFactory = new CellImgFactory<>(getImageType());
+				}
 
-				Img< T > loadedImg = imgFactory.create( rai, getImageType() );
+				Img<T> loadedImg = imgFactory.create(rai);
 				RealTypeConverters.copyFromTo( Views.extendZero( rai ), loadedImg );
 
 				rai = loadedImg;
@@ -148,8 +151,8 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 				Arrays.fill( cellSize, 1 );
 				for ( int d = 0; d < rai.numDimensions() - 1; d++ )
 					cellSize[d] = (int) rai.dimension( d );
-				rai = FusionTools.cacheRandomAccessibleInterval( rai, Long.MAX_VALUE,
-						Views.iterable( rai ).firstElement().createVariable(), cellSize );
+				rai = FusionTools.cacheRandomAccessibleInterval(
+						rai, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
 			}
 
 			return rai;
@@ -161,8 +164,7 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 				ImgLoaderHint... hints)
 		{
 			if (!active)
-				return (RandomAccessibleInterval< FloatType >) wrappedImgLoader.getSetupImgLoader( setupId ).getFloatImage( timepointId,
-						false, hints );
+				return wrappedImgLoader.getSetupImgLoader(setupId).getFloatImage(timepointId, false, hints);
 
 			@SuppressWarnings("unchecked")
 			RandomAccessibleInterval< FloatType > rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
@@ -176,9 +178,12 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 				RandomAccessibleInterval< FloatType > raiNormalized = new VirtuallyNormalizedRandomAccessibleInterval<>(
 						rai );
 				boolean loadCompletelyRequested = false;
-				for (ImgLoaderHint hint : hints)
-					if (hint == ImgLoaderHints.LOAD_COMPLETELY)
+				for (ImgLoaderHint hint : hints) {
+					if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
 						loadCompletelyRequested = true;
+						break;
+					}
+				}
 
 				if (loadCompletelyRequested)
 				{
@@ -187,13 +192,14 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 						numPx *= raiNormalized.dimension( d );
 
 					final ImgFactory< FloatType > imgFactory;
-					if (Math.log(numPx) / Math.log( 2 ) < 31)
-						imgFactory = new ArrayImgFactory<FloatType>();
-					else
-						imgFactory = new CellImgFactory<FloatType>();
+					if (Math.log(numPx) / Math.log(2) < 31) {
+						imgFactory = new ArrayImgFactory<>(new FloatType());
+					} else {
+						imgFactory = new CellImgFactory<>(new FloatType());
+					}
 
-					Img< FloatType > loadedImg = imgFactory.create( raiNormalized, new FloatType() );
-					FileMapImgLoaderLOCI2.copy(Views.extendZero( raiNormalized ), loadedImg);
+					Img<FloatType> loadedImg = imgFactory.create(raiNormalized);
+					RealTypeConverters.copyFromTo(Views.extendZero(raiNormalized), loadedImg);
 
 					raiNormalized = loadedImg;
 				}
@@ -203,17 +209,20 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 					Arrays.fill( cellSize, 1 );
 					for ( int d = 0; d < raiNormalized.numDimensions() - 1; d++ )
 						cellSize[d] = (int) raiNormalized.dimension( d );
-					raiNormalized = FusionTools.cacheRandomAccessibleInterval( raiNormalized, Long.MAX_VALUE,
-							Views.iterable( rai ).firstElement().createVariable(), cellSize );
+					raiNormalized = FusionTools.cacheRandomAccessibleInterval(
+							raiNormalized, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
 				}
 				rai = raiNormalized;
 			}
 			else
 			{
 				boolean loadCompletelyRequested = false;
-				for (ImgLoaderHint hint : hints)
-					if (hint == ImgLoaderHints.LOAD_COMPLETELY)
+				for (ImgLoaderHint hint : hints) {
+					if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
 						loadCompletelyRequested = true;
+						break;
+					}
+				}
 
 				if (loadCompletelyRequested)
 				{
@@ -222,13 +231,14 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 						numPx *= rai.dimension( d );
 
 					final ImgFactory< FloatType > imgFactory;
-					if (Math.log(numPx) / Math.log( 2 ) < 31)
-						imgFactory = new ArrayImgFactory<FloatType>();
-					else
-						imgFactory = new CellImgFactory<FloatType>();
+					if (Math.log(numPx) / Math.log(2) < 31) {
+						imgFactory = new ArrayImgFactory<>(new FloatType());
+					} else {
+						imgFactory = new CellImgFactory<>(new FloatType());
+					}
 
-					Img< FloatType > loadedImg = imgFactory.create( rai, new FloatType() );
-					FileMapImgLoaderLOCI2.copy(Views.extendZero( rai ), loadedImg);
+					Img< FloatType > loadedImg = imgFactory.create(rai);
+					RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
 
 					rai = loadedImg;
 				}
@@ -238,8 +248,8 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 					Arrays.fill( cellSize, 1 );
 					for ( int d = 0; d < rai.numDimensions() - 1; d++ )
 						cellSize[d] = (int) rai.dimension( d );
-					rai = FusionTools.cacheRandomAccessibleInterval( rai, Long.MAX_VALUE,
-							Views.iterable( rai ).firstElement().createVariable(), cellSize );
+					rai = FusionTools.cacheRandomAccessibleInterval(
+							rai, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
 				}
 
 			}
