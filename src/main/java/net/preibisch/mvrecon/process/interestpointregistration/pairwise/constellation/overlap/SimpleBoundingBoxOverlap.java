@@ -41,7 +41,9 @@ import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
+import net.imglib2.FinalInterval;
 import net.imglib2.FinalRealInterval;
+import net.imglib2.Interval;
 import net.imglib2.RealInterval;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
@@ -418,5 +420,703 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 
 		// Step 2: Filter pairs in parallel using pre-computed bounding boxes
 		return removeNonOverlappingPairsParallel(pairs, boundingBoxes);
+	}
+
+	/**
+	 * Compute overlap between two views by sampling points and validating they fall
+	 * within both views. Returns two local intervals - one for each view.
+	 *
+	 * This correctly handles rotations by validating pixel-by-pixel.
+	 *
+	 * @param dims1 Dimensions of view 1
+	 * @param dims2 Dimensions of view 2
+	 * @param transform1 Local-to-global transform for view 1
+	 * @param transform2 Local-to-global transform for view 2
+	 * @return Array of [localOverlap1, localOverlap2], or null if no overlap
+	 */
+	public static RealInterval[] getLocalOverlapsUsingPixelValidation(
+			final Dimensions dims1,
+			final Dimensions dims2,
+			final AffineTransform3D transform1,
+			final AffineTransform3D transform2 )
+	{
+		final AffineTransform3D invTransform1 = transform1.inverse();
+		final AffineTransform3D invTransform2 = transform2.inverse();
+
+		// Sample in view 1's local space and validate pixels are in view 2
+		final RealInterval localOverlap1 = sampleLocalSpaceAndValidate(
+				dims1, dims2, transform1, invTransform2 );
+
+		// Sample in view 2's local space and validate pixels are in view 1
+		final RealInterval localOverlap2 = sampleLocalSpaceAndValidate(
+				dims2, dims1, transform2, invTransform1 );
+
+		if ( localOverlap1 == null || localOverlap2 == null )
+			return null;
+
+		return new RealInterval[] { localOverlap1, localOverlap2 };
+	}
+
+	/**
+	 * Sample pixels in a view's local space and validate they map to valid pixels in the other view.
+	 * Builds bounding box directly in local space from valid pixels.
+	 * Includes refinement to find tighter boundaries.
+	 *
+	 * @param dimsLocal Dimensions of this view
+	 * @param dimsOther Dimensions of other view
+	 * @param transformLocal Local-to-global transform for this view
+	 * @param invTransformOther Global-to-local transform for other view
+	 * @return Bounding box of valid pixels in local space, or null if none found
+	 */
+	private static RealInterval sampleLocalSpaceAndValidate(
+			final Dimensions dimsLocal,
+			final Dimensions dimsOther,
+			final AffineTransform3D transformLocal,
+			final AffineTransform3D invTransformOther )
+	{
+		final int n = dimsLocal.numDimensions();
+		final double[] minValid = new double[ n ];
+		final double[] maxValid = new double[ n ];
+
+		// Store the points that generated the min/max values to use as seeds for refinement
+		final double[][] minPoints = new double[ n ][ n ];
+		final double[][] maxPoints = new double[ n ][ n ];
+
+		// Initialize with invalid values
+		for ( int d = 0; d < n; d++ )
+		{
+			minValid[ d ] = Double.MAX_VALUE;
+			maxValid[ d ] = -Double.MAX_VALUE;
+		}
+
+		final int stride = 10;
+		final double[] localPoint = new double[ n ];
+		final double[] globalPoint = new double[ n ];
+		final double[] otherLocalPoint = new double[ n ];
+
+		boolean foundValid = false;
+
+		// Sample in this view's local space
+		for ( long z = 0; z < dimsLocal.dimension( 2 ); z += stride )
+		{
+			for ( long y = 0; y < dimsLocal.dimension( 1 ); y += stride )
+			{
+				for ( long x = 0; x < dimsLocal.dimension( 0 ); x += stride )
+				{
+					localPoint[ 0 ] = x;
+					localPoint[ 1 ] = y;
+					localPoint[ 2 ] = z;
+
+					if ( isValid( localPoint, dimsOther, transformLocal, invTransformOther, globalPoint, otherLocalPoint ) )
+					{
+						foundValid = true;
+						for ( int d = 0; d < n; d++ )
+						{
+							if ( localPoint[ d ] < minValid[ d ] )
+							{
+								minValid[ d ] = localPoint[ d ];
+								System.arraycopy( localPoint, 0, minPoints[ d ], 0, n );
+							}
+							if ( localPoint[ d ] > maxValid[ d ] )
+							{
+								maxValid[ d ] = localPoint[ d ];
+								System.arraycopy( localPoint, 0, maxPoints[ d ], 0, n );
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if ( !foundValid )
+			return null;
+
+		// Refine boundaries
+		// For each dimension, search outwards from the min/max points found
+		// First with step 1, then step 0.1
+		refineBoundaries( minValid, maxValid, minPoints, maxPoints, dimsOther, transformLocal, invTransformOther, stride );
+
+		return new FinalRealInterval( minValid, maxValid );
+	}
+
+	private static void refineBoundaries(
+			final double[] minValid,
+			final double[] maxValid,
+			final double[][] minPoints,
+			final double[][] maxPoints,
+			final Dimensions dimsOther,
+			final AffineTransform3D transformLocal,
+			final AffineTransform3D invTransformOther,
+			final int initialStride )
+	{
+		final int n = minValid.length;
+		final double[] globalPoint = new double[ n ];
+		final double[] otherLocalPoint = new double[ n ];
+		final double[] testPoint = new double[ n ];
+
+		// Refinement steps
+		final double[] steps = { 1.0, 0.1 };
+
+		for ( int d = 0; d < n; d++ )
+		{
+			// Refine Min
+			System.arraycopy( minPoints[ d ], 0, testPoint, 0, n );
+			// Search backwards from current min
+			// We search up to 'initialStride' distance because that's the max error from coarse scan
+			// But we do it in two passes (step 1, then step 0.1)
+
+			double currentMin = minValid[ d ];
+			double range = initialStride;
+
+			for ( double step : steps )
+			{
+				boolean improved = false;
+				// Search backwards
+				for ( double val = currentMin - step; val >= currentMin - range; val -= step )
+				{
+					testPoint[ d ] = val;
+					if ( isValid( testPoint, dimsOther, transformLocal, invTransformOther, globalPoint, otherLocalPoint ) )
+					{
+						minValid[ d ] = val;
+						// Update the point to this new valid location for next pass
+						// (though for 1D search on this dim, just keeping the coordinate is enough,
+						// but keeping other coords fixed is correct behavior for local refinement)
+						improved = true;
+					}
+					else
+					{
+						// Once we hit invalid, we stop this pass
+						// The next finer pass will start from the last valid point (minValid[d])
+						break;
+					}
+				}
+				// For the next finer pass, we only need to search a small range around the new min
+				// specifically, we just searched with 'step', so error is at most 'step'.
+				// So set range = step for next pass.
+				// Also update currentMin to the new best found.
+				currentMin = minValid[ d ];
+				range = step;
+			}
+
+
+			// Refine Max
+			System.arraycopy( maxPoints[ d ], 0, testPoint, 0, n );
+			double currentMax = maxValid[ d ];
+			range = initialStride;
+
+			for ( double step : steps )
+			{
+				boolean improved = false;
+				// Search forwards
+				for ( double val = currentMax + step; val <= currentMax + range; val += step )
+				{
+					testPoint[ d ] = val;
+					if ( isValid( testPoint, dimsOther, transformLocal, invTransformOther, globalPoint, otherLocalPoint ) )
+					{
+						maxValid[ d ] = val;
+						improved = true;
+					}
+					else
+					{
+						break;
+					}
+				}
+				currentMax = maxValid[ d ];
+				range = step;
+			}
+		}
+	}
+
+	private static boolean isValid(
+			final double[] localPoint,
+			final Dimensions dimsOther,
+			final AffineTransform3D transformLocal,
+			final AffineTransform3D invTransformOther,
+			final double[] globalPoint, // temp buffer
+			final double[] otherLocalPoint // temp buffer
+	)
+	{
+		// Transform to global, then to other view's local space
+		transformLocal.apply( localPoint, globalPoint );
+		invTransformOther.apply( globalPoint, otherLocalPoint );
+
+		// Check if it falls within other view's valid bounds
+		for ( int d = 0; d < localPoint.length; d++ )
+		{
+			if ( otherLocalPoint[ d ] < 0 || otherLocalPoint[ d ] >= dimsOther.dimension( d ) )
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Sample points in global overlap region and validate they map to valid pixels in both views.
+	 * Returns refined global overlap bounding box containing only valid pixels.
+	 *
+	 * @param globalOverlap Candidate global overlap region
+	 * @param dims1 Dimensions of view 1
+	 * @param dims2 Dimensions of view 2
+	 * @param invTransform1 Global-to-local transform for view 1
+	 * @param invTransform2 Global-to-local transform for view 2
+	 * @return Refined global overlap, or null if no valid pixels
+	 */
+	private static RealInterval sampleAndRefineGlobalOverlap(
+			final RealInterval globalOverlap,
+			final Dimensions dims1,
+			final Dimensions dims2,
+			final AffineTransform3D invTransform1,
+			final AffineTransform3D invTransform2 )
+	{
+		final int n = globalOverlap.numDimensions();
+		final double[] minValid = new double[ n ];
+		final double[] maxValid = new double[ n ];
+
+		// Initialize with invalid values
+		for ( int d = 0; d < n; d++ )
+		{
+			minValid[ d ] = Double.MAX_VALUE;
+			maxValid[ d ] = -Double.MAX_VALUE;
+		}
+
+		// Sample stride
+		final int stride = 10;
+
+		// Get sampling bounds in global space
+		final long[] min = new long[ n ];
+		final long[] max = new long[ n ];
+		for ( int d = 0; d < n; d++ )
+		{
+			min[ d ] = (long) Math.ceil( globalOverlap.realMin( d ) );
+			max[ d ] = (long) Math.floor( globalOverlap.realMax( d ) );
+		}
+
+		// Sample and validate points
+		final double[] globalPoint = new double[ n ];
+		final double[] local1Point = new double[ n ];
+		final double[] local2Point = new double[ n ];
+
+		boolean foundValid = false;
+
+		// Sample in 3D grid in global space
+		for ( long z = min[ 2 ]; z <= max[ 2 ]; z += stride )
+		{
+			for ( long y = min[ 1 ]; y <= max[ 1 ]; y += stride )
+			{
+				for ( long x = min[ 0 ]; x <= max[ 0 ]; x += stride )
+				{
+					globalPoint[ 0 ] = x;
+					globalPoint[ 1 ] = y;
+					globalPoint[ 2 ] = z;
+
+					// Transform to both views' local spaces
+					invTransform1.apply( globalPoint, local1Point );
+					invTransform2.apply( globalPoint, local2Point );
+
+					// Check if it falls within both views' valid bounds
+					boolean validInView1 = true;
+					boolean validInView2 = true;
+					for ( int d = 0; d < n; d++ )
+					{
+						if ( local1Point[ d ] < 0 || local1Point[ d ] >= dims1.dimension( d ) )
+							validInView1 = false;
+						if ( local2Point[ d ] < 0 || local2Point[ d ] >= dims2.dimension( d ) )
+							validInView2 = false;
+					}
+
+					if ( validInView1 && validInView2 )
+					{
+						foundValid = true;
+						for ( int d = 0; d < n; d++ )
+						{
+							minValid[ d ] = Math.min( minValid[ d ], globalPoint[ d ] );
+							maxValid[ d ] = Math.max( maxValid[ d ], globalPoint[ d ] );
+						}
+					}
+				}
+			}
+		}
+
+		if ( !foundValid )
+			return null;
+
+		return new FinalRealInterval( minValid, maxValid );
+	}
+
+	/**
+	 * Compute overlap between two views by transforming each view's bounding box corners
+	 * into the other view's local space, computing overlaps there, transforming back to
+	 * global space, and intersecting.
+	 *
+	 * This correctly handles rotations by working in each view's local coordinate system.
+	 *
+	 * @param dims1 Dimensions of view 1
+	 * @param dims2 Dimensions of view 2
+	 * @param transform1 Local-to-global transform for view 1
+	 * @param transform2 Local-to-global transform for view 2
+	 * @return The overlap interval in global coordinates, or null if no overlap
+	 */
+	public static RealInterval getOverlapIntervalUsingCorners(
+			final Dimensions dims1,
+			final Dimensions dims2,
+			final AffineTransform3D transform1,
+			final AffineTransform3D transform2 )
+	{
+		// Get bounding boxes in global space
+		final RealInterval bbox1Global = getBoundingBoxReal( dims1, transform1 );
+		final RealInterval bbox2Global = getBoundingBoxReal( dims2, transform2 );
+
+		// Generate corners of each view's global bounding box
+		final double[][] corners1Global = generateCornersFromInterval( bbox1Global );
+		final double[][] corners2Global = generateCornersFromInterval( bbox2Global );
+
+		// Transform bbox1's corners to view 2's local space
+		final AffineTransform3D invTransform2 = transform2.inverse();
+		final double[][] corners1InLocal2 = transformCorners( corners1Global, invTransform2 );
+
+		// Compute bounding box of transformed corners in view 2's local space
+		final RealInterval bbox1InLocal2 = getBoundingBoxFromCorners( corners1InLocal2 );
+
+		// Intersect with view 2's valid image bounds [0, dims2-1]
+		final RealInterval overlapInLocal2 = intersectWithImageBounds( bbox1InLocal2, dims2 );
+		if ( overlapInLocal2 == null )
+			return null;
+
+		// Transform just the min/max points of this overlap back to global space
+		final RealInterval overlap2Global = transformMinMaxToGlobal( overlapInLocal2, transform2 );
+
+		// Do the same for view 2 → view 1
+		final AffineTransform3D invTransform1 = transform1.inverse();
+		final double[][] corners2InLocal1 = transformCorners( corners2Global, invTransform1 );
+		final RealInterval bbox2InLocal1 = getBoundingBoxFromCorners( corners2InLocal1 );
+		final RealInterval overlapInLocal1 = intersectWithImageBounds( bbox2InLocal1, dims1 );
+		if ( overlapInLocal1 == null )
+			return null;
+
+		// Transform just the min/max points of this overlap back to global space
+		final RealInterval overlap1Global = transformMinMaxToGlobal( overlapInLocal1, transform1 );
+
+		// Intersect the two global overlaps
+		return intersectIntervals( overlap1Global, overlap2Global );
+	}
+
+	/**
+	 * Generate corner points from an existing RealInterval.
+	 *
+	 * @param interval The interval to generate corners from
+	 * @return Array of corner points [numCorners][numDimensions]
+	 */
+	private static double[][] generateCornersFromInterval( final RealInterval interval )
+	{
+		final int n = interval.numDimensions();
+		final int numCorners = (int) Math.pow( 2, n );
+		final double[][] corners = new double[ numCorners ][ n ];
+
+		final double[] min = new double[ n ];
+		final double[] max = new double[ n ];
+		interval.realMin( min );
+		interval.realMax( max );
+
+		// Generate all 2^n corner combinations using bit pattern
+		for ( int i = 0; i < numCorners; i++ )
+		{
+			int j = i;
+			for ( int d = 0; d < n; d++ )
+			{
+				corners[ i ][ d ] = ( j % 2 == 0 ) ? min[ d ] : max[ d ];
+				j /= 2;
+			}
+		}
+
+		return corners;
+	}
+
+	/**
+	 * Intersect an interval with valid image bounds [0, dims[d]-1] for each dimension.
+	 *
+	 * @param interval The interval to intersect
+	 * @param dims The image dimensions defining the bounds
+	 * @return The intersected interval, or null if no overlap
+	 */
+	private static RealInterval intersectWithImageBounds( final RealInterval interval, final Dimensions dims )
+	{
+		final int n = interval.numDimensions();
+		final double[] min = new double[ n ];
+		final double[] max = new double[ n ];
+
+		for ( int d = 0; d < n; d++ )
+		{
+			min[ d ] = Math.max( 0, interval.realMin( d ) );
+			max[ d ] = Math.min( dims.dimension( d ) - 1, interval.realMax( d ) );
+
+			// Check for no overlap
+			if ( max[ d ] < min[ d ] )
+				return null;
+		}
+
+		return new FinalRealInterval( min, max );
+	}
+
+	/**
+	 * Transform just the min and max corner points of an interval to local space.
+	 * This avoids the expansion that would occur if all corners were transformed.
+	 *
+	 * @param globalInterval The interval in global coordinates
+	 * @param invTransform The global-to-local transform
+	 * @return The interval in local coordinates
+	 */
+	private static RealInterval transformMinMaxToLocal( final RealInterval globalInterval, final AffineTransform3D invTransform )
+	{
+		final int n = globalInterval.numDimensions();
+		final double[] globalMin = new double[ n ];
+		final double[] globalMax = new double[ n ];
+		final double[] localMin = new double[ n ];
+		final double[] localMax = new double[ n ];
+
+		globalInterval.realMin( globalMin );
+		globalInterval.realMax( globalMax );
+
+		// Transform min and max points
+		invTransform.apply( globalMin, localMin );
+		invTransform.apply( globalMax, localMax );
+
+		// Ensure min < max (transform might swap them)
+		final double[] resultMin = new double[ n ];
+		final double[] resultMax = new double[ n ];
+		for ( int d = 0; d < n; d++ )
+		{
+			resultMin[ d ] = Math.min( localMin[ d ], localMax[ d ] );
+			resultMax[ d ] = Math.max( localMin[ d ], localMax[ d ] );
+		}
+
+		return new FinalRealInterval( resultMin, resultMax );
+	}
+
+	/**
+	 * Transform just the min and max corner points of an interval to global space.
+	 * This avoids the expansion that would occur if all corners were transformed.
+	 *
+	 * @param localInterval The interval in local coordinates
+	 * @param transform The local-to-global transform
+	 * @return The interval in global coordinates
+	 */
+	private static RealInterval transformMinMaxToGlobal( final RealInterval localInterval, final AffineTransform3D transform )
+	{
+		final int n = localInterval.numDimensions();
+		final double[] localMin = new double[ n ];
+		final double[] localMax = new double[ n ];
+		final double[] globalMin = new double[ n ];
+		final double[] globalMax = new double[ n ];
+
+		localInterval.realMin( localMin );
+		localInterval.realMax( localMax );
+
+		// Transform min and max points
+		transform.apply( localMin, globalMin );
+		transform.apply( localMax, globalMax );
+
+		// Ensure min < max (transform might swap them)
+		final double[] resultMin = new double[ n ];
+		final double[] resultMax = new double[ n ];
+		for ( int d = 0; d < n; d++ )
+		{
+			resultMin[ d ] = Math.min( globalMin[ d ], globalMax[ d ] );
+			resultMax[ d ] = Math.max( globalMin[ d ], globalMax[ d ] );
+		}
+
+		return new FinalRealInterval( resultMin, resultMax );
+	}
+
+	/**
+	 * Intersect two intervals by taking max of mins and min of maxs.
+	 *
+	 * @param interval1 First interval
+	 * @param interval2 Second interval
+	 * @return The intersection, or null if no overlap
+	 */
+	private static RealInterval intersectIntervals( final RealInterval interval1, final RealInterval interval2 )
+	{
+		final int n = interval1.numDimensions();
+		final double[] min = new double[ n ];
+		final double[] max = new double[ n ];
+
+		for ( int d = 0; d < n; d++ )
+		{
+			min[ d ] = Math.max( interval1.realMin( d ), interval2.realMin( d ) );
+			max[ d ] = Math.min( interval1.realMax( d ), interval2.realMax( d ) );
+
+			// Check for no overlap
+			if ( max[ d ] < min[ d ] )
+				return null;
+		}
+
+		return new FinalRealInterval( min, max );
+	}
+
+	/**
+	 * Generate all 2^n corner points of an n-dimensional bounding box in local coordinates.
+	 * For a 3D box with dimensions (width, height, depth), generates 8 corners from
+	 * (0,0,0) to (width-1, height-1, depth-1).
+	 *
+	 * @param dims The dimensions of the view in local coordinates
+	 * @return Array of corner points [numCorners][numDimensions]
+	 */
+	private static double[][] generateCorners( final Dimensions dims )
+	{
+		final int n = dims.numDimensions();
+		final int numCorners = (int) Math.pow( 2, n );
+		final double[][] corners = new double[ numCorners ][ n ];
+
+		final double[] min = new double[ n ];
+		final double[] max = new double[ n ];
+
+		// min is always [0, 0, 0, ...] in local coordinates
+		// max is [dim0-1, dim1-1, dim2-1, ...]
+		for ( int d = 0; d < n; d++ )
+		{
+			min[ d ] = 0;
+			max[ d ] = dims.dimension( d ) - 1;
+		}
+
+		// Generate all 2^n corner combinations using bit pattern
+		for ( int i = 0; i < numCorners; i++ )
+		{
+			int j = i;
+			for ( int d = 0; d < n; d++ )
+			{
+				corners[ i ][ d ] = ( j % 2 == 0 ) ? min[ d ] : max[ d ];
+				j /= 2;
+			}
+		}
+
+		return corners;
+	}
+
+	/**
+	 * Transform an array of corner points using the given affine transformation.
+	 *
+	 * @param corners Array of corner points to transform [numCorners][numDimensions]
+	 * @param transform The affine transformation to apply
+	 * @return Array of transformed corner points [numCorners][numDimensions]
+	 */
+	private static double[][] transformCorners( final double[][] corners, final AffineTransform3D transform )
+	{
+		final int numCorners = corners.length;
+		final int n = corners[ 0 ].length;
+		final double[][] transformed = new double[ numCorners ][ n ];
+
+		for ( int i = 0; i < numCorners; i++ )
+		{
+			transform.apply( corners[ i ], transformed[ i ] );
+		}
+
+		return transformed;
+	}
+
+	/**
+	 * Calculate the axis-aligned bounding box that encompasses all given corner points.
+	 * Finds the minimum and maximum coordinate values across all corners for each dimension.
+	 *
+	 * @param transformedCorners Array of corner points [numCorners][numDimensions]
+	 * @return RealInterval representing the axis-aligned bounding box
+	 */
+	private static RealInterval getBoundingBoxFromCorners( final double[][] transformedCorners )
+	{
+		final int n = transformedCorners[ 0 ].length;
+		final double[] min = new double[ n ];
+		final double[] max = new double[ n ];
+
+		// Initialize with extreme values
+		for ( int d = 0; d < n; d++ )
+		{
+			min[ d ] = Double.MAX_VALUE;
+			max[ d ] = -Double.MAX_VALUE;
+		}
+
+		// Find min and max across all corners
+		for ( double[] corner : transformedCorners )
+		{
+			for ( int d = 0; d < n; d++ )
+			{
+				min[ d ] = Math.min( min[ d ], corner[ d ] );
+				max[ d ] = Math.max( max[ d ], corner[ d ] );
+			}
+		}
+
+		return new FinalRealInterval( min, max );
+	}
+
+	/**
+	 * Transform a global space overlap interval to local coordinates by transforming
+	 * all corners of the overlap box and finding the bounding box of transformed corners.
+	 * This correctly handles non-axis-aligned transformations like rotations.
+	 *
+	 * @param globalOverlap The overlap interval in global coordinates
+	 * @param invTransform The inverse transform (global-to-local)
+	 * @return RealInterval in local coordinates
+	 */
+	public static RealInterval transformOverlapToLocal(
+			final RealInterval globalOverlap,
+			final AffineTransform3D invTransform )
+	{
+		// Generate corners of the global overlap box
+		final int n = globalOverlap.numDimensions();
+		final int numCorners = (int) Math.pow( 2, n );
+		final double[][] globalCorners = new double[ numCorners ][ n ];
+
+		final double[] gMin = new double[ n ];
+		final double[] gMax = new double[ n ];
+		globalOverlap.realMin( gMin );
+		globalOverlap.realMax( gMax );
+
+		// Generate all corners of global overlap box
+		for ( int i = 0; i < numCorners; i++ )
+		{
+			int j = i;
+			for ( int d = 0; d < n; d++ )
+			{
+				globalCorners[ i ][ d ] = ( j % 2 == 0 ) ? gMin[ d ] : gMax[ d ];
+				j /= 2;
+			}
+		}
+
+		// Transform all corners to local space
+		final double[][] localCorners = transformCorners( globalCorners, invTransform );
+
+		// Find bounding box of transformed corners
+		return getBoundingBoxFromCorners( localCorners );
+	}
+
+	/**
+	 * Convert real-valued local overlap coordinates to integer raster coordinates
+	 * with proper bounds checking. Clamps to [0, dims[d]-1] for each dimension.
+	 *
+	 * @param localOverlap The overlap in local real coordinates
+	 * @param dims The dimensions of the view (for bounds checking)
+	 * @return FinalInterval with integer raster coordinates, or null if no valid overlap
+	 */
+	public static FinalInterval getRasterOverlap(
+			final RealInterval localOverlap,
+			final Dimensions dims )
+	{
+		final int n = localOverlap.numDimensions();
+		final long[] min = new long[ n ];
+		final long[] max = new long[ n ];
+
+		for ( int d = 0; d < n; d++ )
+		{
+			// Use ceiling for min, floor for max to be conservative
+			min[ d ] = Math.max( 0, (long) Math.ceil( localOverlap.realMin( d ) ) );
+			max[ d ] = Math.min( dims.dimension( d ) - 1, (long) Math.floor( localOverlap.realMax( d ) ) );
+
+			// Validate that we have positive size
+			if ( max[ d ] < min[ d ] )
+			{
+				return null; // No valid overlap
+			}
+		}
+
+		return new FinalInterval( min, max );
 	}
 }
