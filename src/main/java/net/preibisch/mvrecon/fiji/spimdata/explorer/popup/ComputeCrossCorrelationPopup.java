@@ -181,7 +181,8 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 						IOFunctions.println("  Using downsampling: " + downsamplingChoice);
                         IOFunctions.println("  Using channel: " + chChoiceStr);
 
-						List<ViewId[]> pairsToProcess = new ArrayList<>();
+						// Get the list of views to process
+						List<ViewId> viewIdsToProcess;
 
 						if (selectedOnly)
 						{
@@ -195,106 +196,47 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 							}
 
 							// Filter missing views and collect valid ViewIds from selected groups
-							List<ViewId> selectedViewIds = new ArrayList<>();
+							viewIdsToProcess = new ArrayList<>();
 							for (List<ViewId> group : selectedGroups)
 							{
 								SpimData2.filterMissingViews(spimData, group);
 								if (!group.isEmpty())
 								{
 									// Get first ViewId from each group
-									selectedViewIds.add(group.get(0));
+									viewIdsToProcess.add(group.get(0));
 								}
 							}
 
-							if (selectedViewIds.size() < 2)
+							if (viewIdsToProcess.size() < 2)
 							{
 								IOFunctions.println(new Date(System.currentTimeMillis()) +
 										": ERROR: Selected groups contain fewer than 2 valid views");
 								return;
 							}
 
-							IOFunctions.println("  Processing " + selectedViewIds.size() + " selected views");
-
-							SimpleBoundingBoxOverlap<ViewId> overlapDetection = new SimpleBoundingBoxOverlap<>(spimData);
-
-							// Find all overlapping pairs among selected views
-							for (int i = 0; i < selectedViewIds.size(); i++)
-							{
-								for (int j = i + 1; j < selectedViewIds.size(); j++)
-								{
-									ViewId viewId1 = selectedViewIds.get(i);
-									ViewId viewId2 = selectedViewIds.get(j);
-
-                                    // Skip comparisons between different timepoints
-                                    if (viewId1.getTimePointId() != viewId2.getTimePointId())
-                                        continue;
-
-									// Skip cross-channel comparisons if specific channel selected
-									if (chChoice != -1)
-									{
-										int ch1 = getChannelId(spimData, viewId1);
-										int ch2 = getChannelId(spimData, viewId2);
-										if (ch1 != chChoice || ch2 != chChoice)
-											continue;
-									}
-
-                                    RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
-									if (overlap != null)
-									{
-										pairsToProcess.add(new ViewId[] { viewId1, viewId2 });
-									}
-								}
-							}
-
-							IOFunctions.println("  Found " + pairsToProcess.size() + " overlapping pairs among selected views");
+							IOFunctions.println("  Processing " + viewIdsToProcess.size() + " selected views");
 						}
 						else
 						{
-							// Get all views and find overlapping pairs
-							List<ViewId> viewIds = new ArrayList<>();
+							// Get all views
+							viewIdsToProcess = new ArrayList<>();
 							for (ViewId viewId : allViewIds)
 							{
 								if (!spimData.getSequenceDescription().getMissingViews().getMissingViews().contains(viewId))
 								{
-									viewIds.add(viewId);
+									viewIdsToProcess.add(viewId);
 								}
 							}
 
-							IOFunctions.println("  Found " + viewIds.size() + " valid views");
-
-							SimpleBoundingBoxOverlap<ViewId> overlapDetection = new SimpleBoundingBoxOverlap<>(spimData);
-
-							// Find all overlapping pairs
-							for (int i = 0; i < viewIds.size(); i++)
-							{
-								for (int j = i + 1; j < viewIds.size(); j++)
-								{
-									ViewId viewId1 = viewIds.get(i);
-									ViewId viewId2 = viewIds.get(j);
-
-								// Skip comparisons between different timepoints
-								if (viewId1.getTimePointId() != viewId2.getTimePointId())
-									continue;
-
-								// Skip cross-channel comparisons if specific channel selected
-								if (chChoice != -1)
-								{
-									int ch1 = getChannelId(spimData, viewId1);
-									int ch2 = getChannelId(spimData, viewId2);
-									if (ch1 != chChoice || ch2 != chChoice)
-										continue;
-								}
-
-                                RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
-                                if (overlap != null)
-                                {
-                                    pairsToProcess.add(new ViewId[] { viewId1, viewId2 });
-                                }
-								}
-							}
-
-							IOFunctions.println("  Found " + pairsToProcess.size() + " overlapping pairs");
+							IOFunctions.println("  Found " + viewIdsToProcess.size() + " valid views");
 						}
+
+						// Find all overlapping pairs
+						List<ViewId[]> pairsToProcess = findOverlappingPairs(
+								spimData, viewIdsToProcess, chChoice);
+
+						IOFunctions.println("  Found " + pairsToProcess.size() + " overlapping pairs" +
+								(selectedOnly ? " among selected views" : ""));
 
 						// Process all pairs in parallel
 						final int numThreads = Math.min(pairsToProcess.size(), Runtime.getRuntime().availableProcessors());
@@ -432,7 +374,34 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 		RealInterval bbox1 = SimpleBoundingBoxOverlap.getBoundingBoxReal(vs1, vr1);
 		RealInterval bbox2 = SimpleBoundingBoxOverlap.getBoundingBoxReal(vs2, vr2);
 
-		// Convert global overlap to local coordinates
+		// Get image dimensions
+		long[] dims1 = new long[globalOverlap.numDimensions()];
+		long[] dims2 = new long[globalOverlap.numDimensions()];
+		vs1.getSize().dimensions(dims1);
+		vs2.getSize().dimensions(dims2);
+
+		// Debug: Print bounding boxes and global overlap
+		IOFunctions.println(String.format("DEBUG: Analyzing %d-%d <> %d-%d",
+				viewId1.getTimePointId(), viewId1.getViewSetupId(),
+				viewId2.getTimePointId(), viewId2.getViewSetupId()));
+		IOFunctions.println(String.format("  Image sizes: view1=[%d,%d,%d] view2=[%d,%d,%d]",
+				dims1[0], dims1[1], dims1[2], dims2[0], dims2[1], dims2[2]));
+		for (int d = 0; d < globalOverlap.numDimensions(); d++)
+		{
+			IOFunctions.println(String.format("  Dim %d: bbox1=[%.1f,%.1f] bbox2=[%.1f,%.1f] overlap=[%.1f,%.1f]",
+					d, bbox1.realMin(d), bbox1.realMax(d),
+					bbox2.realMin(d), bbox2.realMax(d),
+					globalOverlap.realMin(d), globalOverlap.realMax(d)));
+		}
+
+		// Convert global overlap to local coordinates using inverse transforms
+		AffineTransform3D transform1 = vr1.getModel();
+		AffineTransform3D transform2 = vr2.getModel();
+		AffineTransform3D invTransform1 = transform1.inverse();
+		AffineTransform3D invTransform2 = transform2.inverse();
+
+		double[] globalMin = new double[globalOverlap.numDimensions()];
+		double[] globalMax = new double[globalOverlap.numDimensions()];
 		double[] localMin1 = new double[globalOverlap.numDimensions()];
 		double[] localMax1 = new double[globalOverlap.numDimensions()];
 		double[] localMin2 = new double[globalOverlap.numDimensions()];
@@ -440,17 +409,41 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 
 		for (int d = 0; d < globalOverlap.numDimensions(); d++)
 		{
-			localMin1[d] = globalOverlap.realMin(d) - bbox1.realMin(d);
-			localMax1[d] = globalOverlap.realMax(d) - bbox1.realMin(d);
-			localMin2[d] = globalOverlap.realMin(d) - bbox2.realMin(d);
-			localMax2[d] = globalOverlap.realMax(d) - bbox2.realMin(d);
+			globalMin[d] = globalOverlap.realMin(d);
+			globalMax[d] = globalOverlap.realMax(d);
+		}
+
+		// Apply inverse transforms to convert world coords to local pixel coords
+		invTransform1.apply(globalMin, localMin1);
+		invTransform1.apply(globalMax, localMax1);
+		invTransform2.apply(globalMin, localMin2);
+		invTransform2.apply(globalMax, localMax2);
+
+		// Ensure min < max (inverse transform might swap them)
+		for (int d = 0; d < globalOverlap.numDimensions(); d++)
+		{
+			if (localMin1[d] > localMax1[d])
+			{
+				double tmp = localMin1[d];
+				localMin1[d] = localMax1[d];
+				localMax1[d] = tmp;
+			}
+			if (localMin2[d] > localMax2[d])
+			{
+				double tmp = localMin2[d];
+				localMin2[d] = localMax2[d];
+				localMax2[d] = tmp;
+			}
+		}
+
+		// Debug: Print local coordinates
+		for (int d = 0; d < globalOverlap.numDimensions(); d++)
+		{
+			IOFunctions.println(String.format("  Dim %d local: view1=[%.1f,%.1f] view2=[%.1f,%.1f]",
+					d, localMin1[d], localMax1[d], localMin2[d], localMax2[d]));
 		}
 
 		// Convert to raster coordinates with bounds checking
-		long[] dims1 = new long[globalOverlap.numDimensions()];
-		long[] dims2 = new long[globalOverlap.numDimensions()];
-		vs1.getSize().dimensions(dims1);
-		vs2.getSize().dimensions(dims2);
 
 		long[] rasterMin1 = new long[globalOverlap.numDimensions()];
 		long[] rasterMax1 = new long[globalOverlap.numDimensions()];
@@ -488,6 +481,18 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
         {
             if ( dsInterval1.dimension( d ) <= 0 || dsInterval2.dimension( d ) <= 0)
             {
+				// Debug logging
+				IOFunctions.println(String.format("DEBUG: Zero overlap for %d-%d <> %d-%d",
+						viewId1.getTimePointId(), viewId1.getViewSetupId(),
+						viewId2.getTimePointId(), viewId2.getViewSetupId()));
+				IOFunctions.println(String.format("  Dimension %d: view1=[%d,%d] (%d px), view2=[%d,%d] (%d px)",
+						d, dsRasterMin1[d], dsRasterMax1[d], dsInterval1.dimension(d),
+						dsRasterMin2[d], dsRasterMax2[d], dsInterval2.dimension(d)));
+				IOFunctions.println(String.format("  Original raster: view1=[%d,%d], view2=[%d,%d]",
+						rasterMin1[d], rasterMax1[d], rasterMin2[d], rasterMax2[d]));
+				IOFunctions.println(String.format("  Downsampling factor: %d", downsampleFactors[d]));
+				IOFunctions.println(String.format("  Global overlap: [%.1f, %.1f]",
+						globalOverlap.realMin(d), globalOverlap.realMax(d)));
                 throw new Exception("Rastered overlap volume is zero, skipping." );
             }
         }
@@ -628,5 +633,52 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 		}
 
 		return count > 0 ? sum / count : 0.0;
+	}
+
+	/**
+	 * Find all overlapping pairs among a list of views, with optional channel filtering.
+	 *
+	 * @param spimData The SpimData2 object
+	 * @param viewIds List of views to check for overlaps
+	 * @param chChoice Channel to filter by, or -1 for all channels
+	 * @return List of overlapping view pairs
+	 */
+	private static List<ViewId[]> findOverlappingPairs(
+			SpimData2 spimData,
+			List<ViewId> viewIds,
+			int chChoice)
+	{
+		List<ViewId[]> pairsToProcess = new ArrayList<>();
+		SimpleBoundingBoxOverlap<ViewId> overlapDetection = new SimpleBoundingBoxOverlap<>(spimData);
+
+		for (int i = 0; i < viewIds.size(); i++)
+		{
+			for (int j = i + 1; j < viewIds.size(); j++)
+			{
+				ViewId viewId1 = viewIds.get(i);
+				ViewId viewId2 = viewIds.get(j);
+
+				// Skip comparisons between different timepoints
+				if (viewId1.getTimePointId() != viewId2.getTimePointId())
+					continue;
+
+				// Skip cross-channel comparisons if specific channel selected
+				if (chChoice != -1)
+				{
+					int ch1 = getChannelId(spimData, viewId1);
+					int ch2 = getChannelId(spimData, viewId2);
+					if (ch1 != chChoice || ch2 != chChoice)
+						continue;
+				}
+
+				RealInterval overlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
+				if (overlap != null)
+				{
+					pairsToProcess.add(new ViewId[] { viewId1, viewId2 });
+				}
+			}
+		}
+
+		return pairsToProcess;
 	}
 }
