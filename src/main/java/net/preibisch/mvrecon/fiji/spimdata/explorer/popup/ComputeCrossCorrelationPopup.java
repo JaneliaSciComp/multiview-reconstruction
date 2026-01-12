@@ -353,109 +353,81 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 			long[] downsampleFactors
 			) throws Exception
 	{
-		// Calculate overlap using SimpleBoundingBoxOverlap
-		SimpleBoundingBoxOverlap<ViewId> overlapDetection = new SimpleBoundingBoxOverlap<>(spimData);
-		RealInterval globalOverlap = overlapDetection.getOverlapInterval(viewId1, viewId2);
-
-		if (globalOverlap == null)
-		{
-			throw new Exception("No overlap found");
-		}
-
-		// Get bounding boxes and convert overlap to local coordinates
+		// Get view information
 		BasicViewSetup vs1 = spimData.getSequenceDescription().getViewSetups().get(viewId1.getViewSetupId());
 		BasicViewSetup vs2 = spimData.getSequenceDescription().getViewSetups().get(viewId2.getViewSetupId());
 		ViewRegistration vr1 = spimData.getViewRegistrations().getViewRegistration(viewId1);
 		ViewRegistration vr2 = spimData.getViewRegistrations().getViewRegistration(viewId2);
 
-		vr1.updateModel();
-		vr2.updateModel();
+		// thread-safe update of the model and creation of a copy for processing
+		AffineTransform3D m1, m2;
 
-		RealInterval bbox1 = SimpleBoundingBoxOverlap.getBoundingBoxReal(vs1, vr1);
-		RealInterval bbox2 = SimpleBoundingBoxOverlap.getBoundingBoxReal(vs2, vr2);
+		synchronized (vr1)
+		{
+			vr1.updateModel();
+			m1 = vr1.getModel().copy();
+		}
+
+		synchronized (vr2)
+		{
+			vr2.updateModel();
+			m2 = vr2.getModel().copy();
+		}
+
+		// Calculate local overlaps using pixel validation that handles rotations correctly
+		RealInterval[] localOverlaps = SimpleBoundingBoxOverlap.getLocalOverlapsUsingPixelValidation(
+				vs1.getSize(), vs2.getSize(),
+				m1, m2);
+
+		if (localOverlaps == null)
+		{
+			throw new Exception("No overlap found");
+		}
+
+		RealInterval localOverlap1 = localOverlaps[0];
+		RealInterval localOverlap2 = localOverlaps[1];
 
 		// Get image dimensions
-		long[] dims1 = new long[globalOverlap.numDimensions()];
-		long[] dims2 = new long[globalOverlap.numDimensions()];
+		long[] dims1 = new long[3];
+		long[] dims2 = new long[3];
 		vs1.getSize().dimensions(dims1);
 		vs2.getSize().dimensions(dims2);
 
-		// Debug: Print bounding boxes and global overlap
+		// Debug: Print local overlaps
 		IOFunctions.println(String.format("DEBUG: Analyzing %d-%d <> %d-%d",
 				viewId1.getTimePointId(), viewId1.getViewSetupId(),
 				viewId2.getTimePointId(), viewId2.getViewSetupId()));
 		IOFunctions.println(String.format("  Image sizes: view1=[%d,%d,%d] view2=[%d,%d,%d]",
 				dims1[0], dims1[1], dims1[2], dims2[0], dims2[1], dims2[2]));
-		for (int d = 0; d < globalOverlap.numDimensions(); d++)
+		for (int d = 0; d < 3; d++)
 		{
-			IOFunctions.println(String.format("  Dim %d: bbox1=[%.1f,%.1f] bbox2=[%.1f,%.1f] overlap=[%.1f,%.1f]",
-					d, bbox1.realMin(d), bbox1.realMax(d),
-					bbox2.realMin(d), bbox2.realMax(d),
-					globalOverlap.realMin(d), globalOverlap.realMax(d)));
-		}
-
-		// Convert global overlap to local coordinates using inverse transforms
-		AffineTransform3D transform1 = vr1.getModel();
-		AffineTransform3D transform2 = vr2.getModel();
-		AffineTransform3D invTransform1 = transform1.inverse();
-		AffineTransform3D invTransform2 = transform2.inverse();
-
-		double[] globalMin = new double[globalOverlap.numDimensions()];
-		double[] globalMax = new double[globalOverlap.numDimensions()];
-		double[] localMin1 = new double[globalOverlap.numDimensions()];
-		double[] localMax1 = new double[globalOverlap.numDimensions()];
-		double[] localMin2 = new double[globalOverlap.numDimensions()];
-		double[] localMax2 = new double[globalOverlap.numDimensions()];
-
-		for (int d = 0; d < globalOverlap.numDimensions(); d++)
-		{
-			globalMin[d] = globalOverlap.realMin(d);
-			globalMax[d] = globalOverlap.realMax(d);
-		}
-
-		// Apply inverse transforms to convert world coords to local pixel coords
-		invTransform1.apply(globalMin, localMin1);
-		invTransform1.apply(globalMax, localMax1);
-		invTransform2.apply(globalMin, localMin2);
-		invTransform2.apply(globalMax, localMax2);
-
-		// Ensure min < max (inverse transform might swap them)
-		for (int d = 0; d < globalOverlap.numDimensions(); d++)
-		{
-			if (localMin1[d] > localMax1[d])
-			{
-				double tmp = localMin1[d];
-				localMin1[d] = localMax1[d];
-				localMax1[d] = tmp;
-			}
-			if (localMin2[d] > localMax2[d])
-			{
-				double tmp = localMin2[d];
-				localMin2[d] = localMax2[d];
-				localMax2[d] = tmp;
-			}
-		}
-
-		// Debug: Print local coordinates
-		for (int d = 0; d < globalOverlap.numDimensions(); d++)
-		{
-			IOFunctions.println(String.format("  Dim %d local: view1=[%.1f,%.1f] view2=[%.1f,%.1f]",
-					d, localMin1[d], localMax1[d], localMin2[d], localMax2[d]));
+			IOFunctions.println(String.format("  Dim %d local: view1=[%.1f,%.1f] (size=%.1f) view2=[%.1f,%.1f] (size=%.1f)",
+					d, localOverlap1.realMin(d), localOverlap1.realMax(d),
+					localOverlap1.realMax(d) - localOverlap1.realMin(d),
+					localOverlap2.realMin(d), localOverlap2.realMax(d),
+					localOverlap2.realMax(d) - localOverlap2.realMin(d)));
 		}
 
 		// Convert to raster coordinates with bounds checking
+		long[] rasterMin1 = new long[3];
+		long[] rasterMax1 = new long[3];
+		long[] rasterMin2 = new long[3];
+		long[] rasterMax2 = new long[3];
 
-		long[] rasterMin1 = new long[globalOverlap.numDimensions()];
-		long[] rasterMax1 = new long[globalOverlap.numDimensions()];
-		long[] rasterMin2 = new long[globalOverlap.numDimensions()];
-		long[] rasterMax2 = new long[globalOverlap.numDimensions()];
-
-		for (int d = 0; d < globalOverlap.numDimensions(); d++)
+		for (int d = 0; d < 3; d++)
 		{
-			rasterMin1[d] = Math.max(0, (long) Math.ceil(localMin1[d]));
-			rasterMax1[d] = Math.min(dims1[d] - 1, (long) Math.floor(localMax1[d]));
-			rasterMin2[d] = Math.max(0, (long) Math.ceil(localMin2[d]));
-			rasterMax2[d] = Math.min(dims2[d] - 1, (long) Math.floor(localMax2[d]));
+			rasterMin1[d] = Math.max(0, (long) Math.ceil(localOverlap1.realMin(d)));
+			rasterMax1[d] = Math.min(dims1[d] - 1, (long) Math.floor(localOverlap1.realMax(d)));
+			rasterMin2[d] = Math.max(0, (long) Math.ceil(localOverlap2.realMin(d)));
+			rasterMax2[d] = Math.min(dims2[d] - 1, (long) Math.floor(localOverlap2.realMax(d)));
+		}
+
+		// Debug: Print raster coordinates
+		for (int d = 0; d < 3; d++)
+		{
+			IOFunctions.println(String.format("  Dim %d raster: view1=[%d,%d] (size=%d) view2=[%d,%d] (size=%d)",
+					d, rasterMin1[d], rasterMax1[d], rasterMax1[d] - rasterMin1[d] + 1,
+					rasterMin2[d], rasterMax2[d], rasterMax2[d] - rasterMin2[d] + 1));
 		}
 
 		// Adjust overlap intervals for downsampling
@@ -491,8 +463,6 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 				IOFunctions.println(String.format("  Original raster: view1=[%d,%d], view2=[%d,%d]",
 						rasterMin1[d], rasterMax1[d], rasterMin2[d], rasterMax2[d]));
 				IOFunctions.println(String.format("  Downsampling factor: %d", downsampleFactors[d]));
-				IOFunctions.println(String.format("  Global overlap: [%.1f, %.1f]",
-						globalOverlap.realMin(d), globalOverlap.realMax(d)));
                 throw new Exception("Rastered overlap volume is zero, skipping." );
             }
         }
