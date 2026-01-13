@@ -433,19 +433,6 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 			}
 		}
 
-		// Debug output
-		IOFunctions.println(String.format("DEBUG: Analyzing %d-%d <> %d-%d",
-				viewId1.getTimePointId(), viewId1.getViewSetupId(),
-				viewId2.getTimePointId(), viewId2.getViewSetupId()));
-		IOFunctions.println(String.format("  View1 overlap local: [%.1f,%.1f] [%.1f,%.1f] [%.1f,%.1f]",
-				localMin1[0], localMax1[0], localMin1[1], localMax1[1], localMin1[2], localMax1[2]));
-		IOFunctions.println(String.format("  View1 raster: [%d,%d] [%d,%d] [%d,%d] (size: %dx%dx%d)",
-				rasterMin1[0], rasterMax1[0], rasterMin1[1], rasterMax1[1], rasterMin1[2], rasterMax1[2],
-				rasterMax1[0]-rasterMin1[0]+1, rasterMax1[1]-rasterMin1[1]+1, rasterMax1[2]-rasterMin1[2]+1));
-		IOFunctions.println(String.format("  Downsampled interval: [%d,%d] [%d,%d] [%d,%d] (size: %dx%dx%d)",
-				dsRasterMin1[0], dsRasterMax1[0], dsRasterMin1[1], dsRasterMax1[1], dsRasterMin1[2], dsRasterMax1[2],
-				dsInterval1.dimension(0), dsInterval1.dimension(1), dsInterval1.dimension(2)));
-
 		// Load image data at specified downsampling level
 		final BasicImgLoader imgLoader = spimData.getSequenceDescription().getImgLoader();
 
