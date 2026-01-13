@@ -55,6 +55,8 @@ import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
 import net.imglib2.converter.Converters;
+import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
+import net.imglib2.realtransform.RealViews;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
@@ -374,7 +376,7 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 			m2 = vr2.getModel().copy();
 		}
 
-		// Calculate local overlaps using pixel validation that handles rotations correctly
+		// Use pixel validation to find accurate overlap regions that account for rotations
 		RealInterval[] localOverlaps = SimpleBoundingBoxOverlap.getLocalOverlapsUsingPixelValidation(
 				vs1.getSize(), vs2.getSize(),
 				m1, m2);
@@ -385,104 +387,68 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 		}
 
 		RealInterval localOverlap1 = localOverlaps[0];
-		RealInterval localOverlap2 = localOverlaps[1];
+
+		double[] localMin1 = new double[3];
+		double[] localMax1 = new double[3];
+		for (int d = 0; d < 3; d++)
+		{
+			localMin1[d] = localOverlap1.realMin(d);
+			localMax1[d] = localOverlap1.realMax(d);
+		}
 
 		// Get image dimensions
 		long[] dims1 = new long[3];
-		long[] dims2 = new long[3];
 		vs1.getSize().dimensions(dims1);
-		vs2.getSize().dimensions(dims2);
-
-		// Debug: Print local overlaps
-		IOFunctions.println(String.format("DEBUG: Analyzing %d-%d <> %d-%d",
-				viewId1.getTimePointId(), viewId1.getViewSetupId(),
-				viewId2.getTimePointId(), viewId2.getViewSetupId()));
-		IOFunctions.println(String.format("  Image sizes: view1=[%d,%d,%d] view2=[%d,%d,%d]",
-				dims1[0], dims1[1], dims1[2], dims2[0], dims2[1], dims2[2]));
-		for (int d = 0; d < 3; d++)
-		{
-			IOFunctions.println(String.format("  Dim %d local: view1=[%.1f,%.1f] (size=%.1f) view2=[%.1f,%.1f] (size=%.1f)",
-					d, localOverlap1.realMin(d), localOverlap1.realMax(d),
-					localOverlap1.realMax(d) - localOverlap1.realMin(d),
-					localOverlap2.realMin(d), localOverlap2.realMax(d),
-					localOverlap2.realMax(d) - localOverlap2.realMin(d)));
-		}
 
 		// Convert to raster coordinates with bounds checking
 		long[] rasterMin1 = new long[3];
 		long[] rasterMax1 = new long[3];
-		long[] rasterMin2 = new long[3];
-		long[] rasterMax2 = new long[3];
 
 		for (int d = 0; d < 3; d++)
 		{
-			rasterMin1[d] = Math.max(0, (long) Math.ceil(localOverlap1.realMin(d)));
-			rasterMax1[d] = Math.min(dims1[d] - 1, (long) Math.floor(localOverlap1.realMax(d)));
-			rasterMin2[d] = Math.max(0, (long) Math.ceil(localOverlap2.realMin(d)));
-			rasterMax2[d] = Math.min(dims2[d] - 1, (long) Math.floor(localOverlap2.realMax(d)));
+			rasterMin1[d] = Math.max(0, (long) Math.ceil(localMin1[d]));
+			rasterMax1[d] = Math.min(dims1[d] - 1, (long) Math.floor(localMax1[d]));
 		}
 
-		// Debug: Print raster coordinates
-		for (int d = 0; d < 3; d++)
-		{
-			IOFunctions.println(String.format("  Dim %d raster: view1=[%d,%d] (size=%d) view2=[%d,%d] (size=%d)",
-					d, rasterMin1[d], rasterMax1[d], rasterMax1[d] - rasterMin1[d] + 1,
-					rasterMin2[d], rasterMax2[d], rasterMax2[d] - rasterMin2[d] + 1));
-		}
-
-		// Calculate downsampled image dimensions
+		// Calculate downsampled coordinates
+		long[] dsRasterMin1 = new long[3];
+		long[] dsRasterMax1 = new long[3];
 		long[] dsDims1 = new long[3];
-		long[] dsDims2 = new long[3];
+
 		for (int d = 0; d < 3; d++)
 		{
 			dsDims1[d] = dims1[d] / downsampleFactors[d];
-			dsDims2[d] = dims2[d] / downsampleFactors[d];
-		}
-
-		// Adjust overlap intervals for downsampling
-		// Apply downsampling to real coordinates first to maintain alignment
-		long[] dsRasterMin1 = new long[rasterMin1.length];
-		long[] dsRasterMax1 = new long[rasterMax1.length];
-		long[] dsRasterMin2 = new long[rasterMin2.length];
-		long[] dsRasterMax2 = new long[rasterMax2.length];
-
-		for (int d = 0; d < rasterMin1.length; d++)
-		{
-			// Calculate directly from real coordinates to preserve alignment
-			dsRasterMin1[d] = Math.max(0, (long) Math.ceil(localOverlap1.realMin(d) / downsampleFactors[d]));
-			dsRasterMax1[d] = Math.min(dsDims1[d] - 1, (long) Math.floor(localOverlap1.realMax(d) / downsampleFactors[d]));
-			dsRasterMin2[d] = Math.max(0, (long) Math.ceil(localOverlap2.realMin(d) / downsampleFactors[d]));
-			dsRasterMax2[d] = Math.min(dsDims2[d] - 1, (long) Math.floor(localOverlap2.realMax(d) / downsampleFactors[d]));
+			dsRasterMin1[d] = Math.max(0, rasterMin1[d] / downsampleFactors[d]);
+			dsRasterMax1[d] = Math.min(dsDims1[d] - 1, rasterMax1[d] / downsampleFactors[d]);
 		}
 
 		Interval dsInterval1 = new FinalInterval(dsRasterMin1, dsRasterMax1);
-		Interval dsInterval2 = new FinalInterval(dsRasterMin2, dsRasterMax2);
 
-        // check whether we have 0-sized (or negative sized)
-        // ignore this pair in that case
-        for ( int d = 0; d < dsInterval1.numDimensions(); ++d )
-        {
-            if ( dsInterval1.dimension( d ) <= 0 || dsInterval2.dimension( d ) <= 0)
-            {
-				// Debug logging
-				IOFunctions.println(String.format("DEBUG: Zero overlap for %d-%d <> %d-%d",
-						viewId1.getTimePointId(), viewId1.getViewSetupId(),
-						viewId2.getTimePointId(), viewId2.getViewSetupId()));
-				IOFunctions.println(String.format("  Dimension %d: view1=[%d,%d] (%d px), view2=[%d,%d] (%d px)",
-						d, dsRasterMin1[d], dsRasterMax1[d], dsInterval1.dimension(d),
-						dsRasterMin2[d], dsRasterMax2[d], dsInterval2.dimension(d)));
-				IOFunctions.println(String.format("  Original raster: view1=[%d,%d], view2=[%d,%d]",
-						rasterMin1[d], rasterMax1[d], rasterMin2[d], rasterMax2[d]));
-				IOFunctions.println(String.format("  Downsampling factor: %d", downsampleFactors[d]));
-                throw new Exception("Rastered overlap volume is zero, skipping." );
-            }
-        }
+		// Check for zero-sized interval
+		for (int d = 0; d < 3; d++)
+		{
+			if (dsInterval1.dimension(d) <= 0)
+			{
+				throw new Exception("Rastered overlap volume is zero");
+			}
+		}
 
+		// Debug output
+		IOFunctions.println(String.format("DEBUG: Analyzing %d-%d <> %d-%d",
+				viewId1.getTimePointId(), viewId1.getViewSetupId(),
+				viewId2.getTimePointId(), viewId2.getViewSetupId()));
+		IOFunctions.println(String.format("  View1 overlap local: [%.1f,%.1f] [%.1f,%.1f] [%.1f,%.1f]",
+				localMin1[0], localMax1[0], localMin1[1], localMax1[1], localMin1[2], localMax1[2]));
+		IOFunctions.println(String.format("  View1 raster: [%d,%d] [%d,%d] [%d,%d] (size: %dx%dx%d)",
+				rasterMin1[0], rasterMax1[0], rasterMin1[1], rasterMax1[1], rasterMin1[2], rasterMax1[2],
+				rasterMax1[0]-rasterMin1[0]+1, rasterMax1[1]-rasterMin1[1]+1, rasterMax1[2]-rasterMin1[2]+1));
+		IOFunctions.println(String.format("  Downsampled interval: [%d,%d] [%d,%d] [%d,%d] (size: %dx%dx%d)",
+				dsRasterMin1[0], dsRasterMax1[0], dsRasterMin1[1], dsRasterMax1[1], dsRasterMin1[2], dsRasterMax1[2],
+				dsInterval1.dimension(0), dsInterval1.dimension(1), dsInterval1.dimension(2)));
 
-		// Load image data at specified downsampling level using pyramid
+		// Load image data at specified downsampling level
 		final BasicImgLoader imgLoader = spimData.getSequenceDescription().getImgLoader();
 
-		// Open images at the specified downsampling level using pre-computed pyramid
 		net.imglib2.util.Pair<RandomAccessibleInterval, AffineTransform3D> opened1 =
 				DownsampleTools.openAndDownsample(imgLoader, viewId1, downsampleFactors, false);
 		net.imglib2.util.Pair<RandomAccessibleInterval, AffineTransform3D> opened2 =
@@ -491,7 +457,17 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 		RandomAccessibleInterval<?> img1Raw = opened1.getA();
 		RandomAccessibleInterval<?> img2Raw = opened2.getA();
 
-		// Convert to FloatType (handles any numeric type)
+		// Get the downsampled transforms
+		AffineTransform3D dsTransform1 = opened1.getB();
+		AffineTransform3D dsTransform2 = opened2.getB();
+
+		// Update transforms to account for downsampling
+		AffineTransform3D dsM1 = m1.copy();
+		dsM1.concatenate(dsTransform1);
+		AffineTransform3D dsM2 = m2.copy();
+		dsM2.concatenate(dsTransform2);
+
+		// Convert to FloatType
 		@SuppressWarnings("unchecked")
 		RandomAccessibleInterval<FloatType> img1 = Converters.convert(
 				(RandomAccessibleInterval<RealType<?>>) img1Raw,
@@ -503,15 +479,28 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 				(in, out) -> out.setReal(in.getRealDouble()),
 				new FloatType());
 
-		// Extract overlap regions
+		// Extract overlap region from view1
 		RandomAccessibleInterval<FloatType> overlap1 = Views.zeroMin(
-				Views.interval(
-						Views.zeroMin(img1),
-						dsInterval1));
+				Views.interval(Views.zeroMin(img1), dsInterval1));
+
+		// Transform view2 into view1's coordinate system
+		// The transform is: view2_local -> view2_global -> view1_local
+		// Which is: invDsM1 * dsM2
+		AffineTransform3D view2ToView1 = dsM1.inverse();
+		view2ToView1.concatenate(dsM2);
+
+		// Create interpolated view of img2 transformed into view1's space
+		// Use mirror extension to handle edge cases more gracefully than zero-padding
+		net.imglib2.RealRandomAccessible<FloatType> interpolated2 = Views.interpolate(
+				Views.extendMirrorSingle(img2),
+				new NLinearInterpolatorFactory<>());
+
+		net.imglib2.RealRandomAccessible<FloatType> transformed2 =
+				RealViews.transform(interpolated2, view2ToView1);
+
+		// Rasterize the transformed view2 over the same interval as overlap1
 		RandomAccessibleInterval<FloatType> overlap2 = Views.zeroMin(
-				Views.interval(
-						Views.zeroMin(img2),
-						dsInterval2));
+				Views.interval(Views.raster(transformed2), dsInterval1));
 
 		// Compute average intensities in the overlapping regions (with sampling for speed)
 		double avgIntensity1 = computeAverageIntensity(overlap1, 10);
