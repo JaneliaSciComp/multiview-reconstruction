@@ -430,7 +430,17 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 					rasterMin2[d], rasterMax2[d], rasterMax2[d] - rasterMin2[d] + 1));
 		}
 
+		// Calculate downsampled image dimensions
+		long[] dsDims1 = new long[3];
+		long[] dsDims2 = new long[3];
+		for (int d = 0; d < 3; d++)
+		{
+			dsDims1[d] = dims1[d] / downsampleFactors[d];
+			dsDims2[d] = dims2[d] / downsampleFactors[d];
+		}
+
 		// Adjust overlap intervals for downsampling
+		// Apply downsampling to real coordinates first to maintain alignment
 		long[] dsRasterMin1 = new long[rasterMin1.length];
 		long[] dsRasterMax1 = new long[rasterMax1.length];
 		long[] dsRasterMin2 = new long[rasterMin2.length];
@@ -438,10 +448,11 @@ public class ComputeCrossCorrelationPopup extends JMenuItem implements ExplorerW
 
 		for (int d = 0; d < rasterMin1.length; d++)
 		{
-			dsRasterMin1[d] = rasterMin1[d] / downsampleFactors[d];
-			dsRasterMax1[d] = rasterMax1[d] / downsampleFactors[d];
-			dsRasterMin2[d] = rasterMin2[d] / downsampleFactors[d];
-			dsRasterMax2[d] = rasterMax2[d] / downsampleFactors[d];
+			// Calculate directly from real coordinates to preserve alignment
+			dsRasterMin1[d] = Math.max(0, (long) Math.ceil(localOverlap1.realMin(d) / downsampleFactors[d]));
+			dsRasterMax1[d] = Math.min(dsDims1[d] - 1, (long) Math.floor(localOverlap1.realMax(d) / downsampleFactors[d]));
+			dsRasterMin2[d] = Math.max(0, (long) Math.ceil(localOverlap2.realMin(d) / downsampleFactors[d]));
+			dsRasterMax2[d] = Math.min(dsDims2[d] - 1, (long) Math.floor(localOverlap2.realMax(d) / downsampleFactors[d]));
 		}
 
 		Interval dsInterval1 = new FinalInterval(dsRasterMin1, dsRasterMax1);
