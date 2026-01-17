@@ -369,6 +369,8 @@ public class N5ApiTools
 				return "OME-ZARR v3";
 			else if (s.name().equals("ZARR2"))
 				return "OME-ZARR v2 (deprecated)";
+			else if (s.name().equals("HDF5"))
+				return "HDF5 (currently not supported)";
 			else
 				return s.name();
 		}).toArray(String[]::new);

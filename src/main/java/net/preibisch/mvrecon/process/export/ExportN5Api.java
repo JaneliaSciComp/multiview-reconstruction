@@ -695,9 +695,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		gdInit.addChoice( "Export as ...", options, options[ defaultOption ] );
 
 		gdInit.addMessage(
-				"For local export HDF5 is a reasonable format choice (unless you need a specific one)\n"
-				+ "since it supports small blocksizes, can be written multi-threaded, and produces a single file.\n\n"
-				+ "For cluster/cloud - distributed fusion please check out BigStitcher-Spark.", GUIHelper.smallStatusFont, GUIHelper.neutral );
+				"For cluster/cloud - distributed fusion please check out BigStitcher-Spark.", GUIHelper.smallStatusFont, GUIHelper.neutral );
 
 		gdInit.addMessage(
 				"Note: you can always add new datasets to an existing HDF5/N5/ZARR container, so you can specify\n"
@@ -731,6 +729,14 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		final boolean multiRes = defaultMultiRes = gdInit.getNextBoolean();
 		this.splittingType = fusion.getSplittingType();
 		this.instantiate = new InstantiateViewSetupBigStitcher( splittingType );
+
+		// Check if HDF5 was selected
+		if ( storageType == StorageFormat.HDF5 )
+		{
+			IOFunctions.println( "HDF5 export is currently unavailable due to library incompatibilities with n5 4.0.0-alpha-6." );
+			IOFunctions.println( "Please use N5 or ZARR format instead." );
+			return false;
+		}
 
 		final String name = storageType.name();
 		final String ext;
