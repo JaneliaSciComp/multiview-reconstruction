@@ -366,6 +366,18 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 					<argLine>-Xmx4g -Xms512m</argLine>
 				</configuration>
 			</plugin>
+			<!-- Build test-jar for sharing test classes with BigStitcher-Spark -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<executions>
+					<execution>
+						<goals>
+							<goal>test-jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 
