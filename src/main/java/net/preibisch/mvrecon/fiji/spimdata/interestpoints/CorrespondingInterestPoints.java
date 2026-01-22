@@ -56,12 +56,19 @@ public class CorrespondingInterestPoints implements Comparable< CorrespondingInt
 	 */
 	final int correspondingDetectionId;
 
+	/**
+	 * The consensus set ID this correspondence belongs to:
+	 * -1 = single-consensus mode (no multi-consensus RANSAC used)
+	 * 0, 1, 2, ... = multi-consensus set ID
+	 */
+	final int consensusSetId;
+
 	public CorrespondingInterestPoints( final CorrespondingInterestPoints c )
 	{
-		this( c.detectionId, c.correspondingViewIdTP, c.correspondingViewIdSetup, c.correspondingLabel, c.correspondingDetectionId );
+		this( c.detectionId, c.correspondingViewIdTP, c.correspondingViewIdSetup, c.correspondingLabel, c.correspondingDetectionId, c.consensusSetId );
 	}
 
-	public CorrespondingInterestPoints( final int detectionId, final ViewId correspondingViewId, final String correspondingLabel, final int correspondingDetectionId )
+	public CorrespondingInterestPoints( final int detectionId, final ViewId correspondingViewId, final String correspondingLabel, final int correspondingDetectionId, final int consensusSetId )
 	{
 		this.detectionId = detectionId;
 		//this.correspondingViewId = correspondingViewId;
@@ -69,9 +76,10 @@ public class CorrespondingInterestPoints implements Comparable< CorrespondingInt
 		this.correspondingViewIdSetup = correspondingViewId.getViewSetupId();
 		this.correspondingLabel = correspondingLabel;
 		this.correspondingDetectionId = correspondingDetectionId;
+		this.consensusSetId = consensusSetId;
 	}
 
-	public CorrespondingInterestPoints( final int detectionId, final int correspondingViewIdTP, final int correspondingViewIdSetup, final String correspondingLabel, final int correspondingDetectionId )
+	public CorrespondingInterestPoints( final int detectionId, final int correspondingViewIdTP, final int correspondingViewIdSetup, final String correspondingLabel, final int correspondingDetectionId, final int consensusSetId )
 	{
 		this.detectionId = detectionId;
 		//this.correspondingViewId = correspondingViewId;
@@ -79,6 +87,18 @@ public class CorrespondingInterestPoints implements Comparable< CorrespondingInt
 		this.correspondingViewIdSetup = correspondingViewIdSetup;
 		this.correspondingLabel = correspondingLabel;
 		this.correspondingDetectionId = correspondingDetectionId;
+		this.consensusSetId = consensusSetId;
+	}
+
+	// Backward-compatible constructors (default consensusSetId to -1)
+	public CorrespondingInterestPoints( final int detectionId, final ViewId correspondingViewId, final String correspondingLabel, final int correspondingDetectionId )
+	{
+		this( detectionId, correspondingViewId, correspondingLabel, correspondingDetectionId, -1 );
+	}
+
+	public CorrespondingInterestPoints( final int detectionId, final int correspondingViewIdTP, final int correspondingViewIdSetup, final String correspondingLabel, final int correspondingDetectionId )
+	{
+		this( detectionId, correspondingViewIdTP, correspondingViewIdSetup, correspondingLabel, correspondingDetectionId, -1 );
 	}
 
 	/**
@@ -100,6 +120,11 @@ public class CorrespondingInterestPoints implements Comparable< CorrespondingInt
 	 * @return The detection id of the corresponding interest point in the {@link InterestPoints}
 	 */
 	final public int getCorrespondingDetectionId() { return correspondingDetectionId; }
+
+	/**
+	 * @return The consensus set ID (-1 for single-consensus, 0+ for multi-consensus sets)
+	 */
+	final public int getConsensusSetId() { return consensusSetId; }
 
 //	/**
 //	 * Order by {@link #getCorrespondingViewId().getTimePointId()  timepoint} id, then

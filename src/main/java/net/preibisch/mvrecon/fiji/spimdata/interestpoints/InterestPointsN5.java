@@ -267,7 +267,7 @@ public class InterestPointsN5 extends InterestPoints
 
 			n5Writer.createGroup(dataset);
 
-			n5Writer.setAttribute( dataset, "correspondences", "1.0.0");
+			n5Writer.setAttribute( dataset, "correspondences", "2.0.0");  // Version bump for consensusSetId support
 
 			final String corrDataset = dataset + "/data";
 
@@ -310,7 +310,7 @@ public class InterestPointsN5 extends InterestPoints
 
 			n5Writer.setAttribute( dataset, "idMap", idMap );
 
-			// 3 x N array (which is a 2D array, ID_a, ID_b, ID)
+			// 4 x N array (which is a 2D array: ID_a, ID_b, metadataID, consensusSetId)
 			final FunctionRandomAccessible< UnsignedLongType > corrId =
 					new FunctionRandomAccessible<>(
 							2,
@@ -321,13 +321,21 @@ public class InterestPointsN5 extends InterestPoints
 									value.set( cip.getDetectionId() );
 								else if ( x == 1 )
 									value.set( cip.getCorrespondingDetectionId() );
-								else
+								else if ( x == 2 )
 									value.set( quickLookup.get( cip.getCorrespondingViewId() ).get( cip.getCorrespodingLabel() ) );
+								else // x == 3: consensus set ID
+								{
+									// Encode -1 as max uint64 to distinguish from valid set ID 0
+									final long setIdValue = cip.getConsensusSetId() == -1
+											? 0xFFFFFFFFFFFFFFFFL
+											: (long)cip.getConsensusSetId();
+									value.set( setIdValue );
+								}
 							},
 							UnsignedLongType::new );
 
 			final RandomAccessibleInterval< UnsignedLongType > corrIdData =
-					Views.interval( corrId, new long[] { 0, 0 }, new long[] { 2, list.size() - 1 } );
+					Views.interval( corrId, new long[] { 0, 0 }, new long[] { 3, list.size() - 1 } );  // 3 instead of 2 for 4xN
 
 			N5Utils.save( corrIdData, n5Writer, corrDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
 
@@ -475,8 +483,43 @@ public class InterestPointsN5 extends InterestPoints
 				return false;
 			}
 
-			//final String version = n5.getAttribute(dataset, "correspondences", String.class );
-			//System.out.println( "Version: " + version + ", " + idMap.size() + " correspondence codes" );
+			// Version detection for backward compatibility
+			final String version = n5.getAttribute(dataset, "correspondences", String.class );
+
+			if ( version == null || version.startsWith("1.") )
+			{
+				IOFunctions.println( "Loading correspondences v1.x format (3xN array)" );
+				return loadCorrespondencesV1( n5, dataset );
+			}
+			else if ( version.startsWith("2.") )
+			{
+				IOFunctions.println( "Loading correspondences v2.x format (4xN array with consensusSetId)" );
+				return loadCorrespondencesV2( n5, dataset );
+			}
+			else
+			{
+				IOFunctions.println( "Unknown correspondences version: " + version + ", attempting v1.x loader" );
+				return loadCorrespondencesV1( n5, dataset );
+			}
+		}
+		catch ( final Exception e )
+		{
+			this.correspondingInterestPoints = null;
+			modifiedCorrespondingInterestPoints = false;
+			IOFunctions.println( "InterestPointsN5.loadCorrespondences(): " + e );
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	/**
+	 * Load correspondences in v1.x format (3xN array: detectionId_A, detectionId_B, metadataId)
+	 * Sets consensusSetId to -1 for all correspondences (single-consensus mode)
+	 */
+	protected boolean loadCorrespondencesV1( final N5Reader n5, final String dataset )
+	{
+		try
+		{
 
 			@SuppressWarnings("unchecked")
 			final Map< String, Long > idMap = n5.getAttribute(dataset, "idMap", Map.class ); // to store ID (viewId.getTimePointId() + "," + viewId.getViewSetupId() + "," + label)
@@ -549,8 +592,125 @@ public class InterestPointsN5 extends InterestPoints
 			this.correspondingInterestPoints = correspondingInterestPoints;
 			modifiedCorrespondingInterestPoints = false;
 
-			n5.close();
-			/*
+			return true;
+		}
+		catch ( final Exception e )
+		{
+			this.correspondingInterestPoints = null;
+			modifiedCorrespondingInterestPoints = false;
+			IOFunctions.println( "InterestPointsN5.loadCorrespondencesV1(): " + e );
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	/**
+	 * Load correspondences in v2.x format (4xN array: detectionId_A, detectionId_B, metadataId, consensusSetId)
+	 * Reads consensusSetId from 4th column, decoding 0xFFFFFFFFFFFFFFFF as -1
+	 */
+	protected boolean loadCorrespondencesV2( final N5Reader n5, final String dataset )
+	{
+		try
+		{
+			@SuppressWarnings("unchecked")
+			final Map< String, Long > idMap = n5.getAttribute(dataset, "idMap", Map.class );
+
+			if ( idMap.size() == 0 )
+			{
+				this.correspondingInterestPoints = new ArrayList<>();
+				modifiedCorrespondingInterestPoints = false;
+				return true;
+			}
+
+			final Map< Long, Pair<ViewId, String> > quickLookup = new HashMap<>();
+			for ( final Entry<String, Long> entry : idMap.entrySet() )
+			{
+				final int firstComma = entry.getKey().indexOf( "," );
+				final String tp = entry.getKey().substring( 0, firstComma );
+				String remaining = entry.getKey().substring( firstComma + 1, entry.getKey().length() );
+				final int secondComma = remaining.indexOf( "," );
+				final String setup = remaining.substring( 0, secondComma );
+				final String label = remaining.substring( secondComma + 1, remaining.length() );
+
+				final int tpInt = Integer.parseInt(tp);
+				final int setupInt = Integer.parseInt(setup);
+
+				final long id;
+
+				if ( Double.class.isInstance((Object)entry.getValue()))
+					id = Math.round( (Double)(Object)entry.getValue() );
+				else
+					id = entry.getValue();
+
+				final Pair<ViewId, String> value = new ValuePair<>( new ViewId( tpInt, setupInt ), label );
+				quickLookup.put( id , value );
+			}
+
+			final String corrDataset = dataset + "/data";
+
+			// 4 x N array (detectionId_A, detectionId_B, metadataId, consensusSetId)
+			final RandomAccessibleInterval< UnsignedLongType > corrData = N5Utils.open( n5, corrDataset );
+
+			// Verify it's 4xN format
+			if ( corrData.dimension(0) != 4 )
+			{
+				IOFunctions.println( "Error: Expected 4xN array for v2.x, got " + corrData.dimension(0) + "xN" );
+				return false;
+			}
+
+			final RandomAccess< UnsignedLongType > corrRA = corrData.randomAccess();
+			final ArrayList< CorrespondingInterestPoints > correspondingInterestPoints = new ArrayList<>();
+
+			corrRA.setPosition( 0, 0 );
+			corrRA.setPosition( 0, 1 );
+
+			for ( int i = 0; i < corrData.dimension( 1 ); ++ i )
+			{
+				final long idA = corrRA.get().get();
+				corrRA.fwd(0);
+				final long idB = corrRA.get().get();
+				corrRA.fwd(0);
+				final long id = corrRA.get().get();
+				corrRA.fwd(0);
+				final long setIdRaw = corrRA.get().get();  // 4th element: consensus set ID
+
+				corrRA.bck(0);
+				corrRA.bck(0);
+				corrRA.bck(0);
+
+				if ( i != corrData.dimension( 1 ) - 1 )
+					corrRA.fwd( 1 );
+
+				// Decode setId: max uint64 represents -1
+				final int setId = (setIdRaw == 0xFFFFFFFFFFFFFFFFL) ? -1 : (int)setIdRaw;
+
+				final Pair<ViewId, String> value = quickLookup.get( id );
+				final CorrespondingInterestPoints cip = new CorrespondingInterestPoints( (int)idA, value.getA(), value.getB(), (int)idB, setId );
+
+				correspondingInterestPoints.add( cip );
+			}
+
+			this.correspondingInterestPoints = correspondingInterestPoints;
+			modifiedCorrespondingInterestPoints = false;
+
+			return true;
+		}
+		catch ( final Exception e )
+		{
+			this.correspondingInterestPoints = null;
+			modifiedCorrespondingInterestPoints = false;
+			IOFunctions.println( "InterestPointsN5.loadCorrespondencesV2(): " + e );
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	// Old commented-out code kept for reference
+	/*
+	protected boolean loadCorrespondences_OLD()
+	{
+		try
+		{
 			final N5FSReader n5 = new N5FSReader( new File( baseDir.getAbsolutePath(), baseN5 ).getAbsolutePath() );
 			final String dataset = corrDataset();
 
@@ -566,10 +726,9 @@ public class InterestPointsN5 extends InterestPoints
 			modifiedCorrespondingInterestPoints = false;
 
 			n5.close();
-			*/
 
 			return true;
-		} 
+		}
 		catch ( final Exception e )
 		{
 			this.ids = new int[0];
@@ -579,6 +738,7 @@ public class InterestPointsN5 extends InterestPoints
 			return false;
 		}
 	}
+	*/
 
 	@Override
 	public boolean deleteInterestPoints()

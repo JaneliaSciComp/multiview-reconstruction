@@ -90,19 +90,21 @@ public class RGLDMPairwise< I extends InterestPoint > implements MatcherPairwise
 
 		// compute ransac and remove inconsistent candidates
 		final ArrayList< PointMatchGeneric< I > > inliers = new ArrayList<>();
-	
+		final ArrayList< Integer > setIds = new ArrayList<>();
+
 		final Pair< String, Double > ransacResult =
 				RANSAC.computeRANSAC(
 						candidates,
 						inliers,
+						setIds,
 						dp.getModel(),
 						rp.getMaxEpsilon(),
 						rp.getMinInlierRatio(),
 						rp.getMinNumMatches(),
 						rp.getNumIterations(),
 						rp.multiConsensus() );
-	
-		result.setInliers( inliers, ransacResult.getB() );
+
+		result.setInliers( inliers, ransacResult.getB(), setIds );
 	
 		result.setResult( System.currentTimeMillis(), ransacResult.getA() );
 		

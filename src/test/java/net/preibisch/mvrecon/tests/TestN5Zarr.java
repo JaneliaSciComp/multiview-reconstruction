@@ -37,7 +37,9 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.shard.ShardCodecInfo;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -215,11 +217,10 @@ public class TestN5Zarr
 			System.out.println("  Class: " + s0Attrs.getClass().getName());
 			System.out.println("  Dimensions: " + java.util.Arrays.toString(s0Attrs.getDimensions()));
 			System.out.println("  Block size: " + java.util.Arrays.toString(s0Attrs.getBlockSize()));
-			if (s0Attrs instanceof org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes) {
-				org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes zarrAttrs =
-					(org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes) s0Attrs;
+			if (s0Attrs instanceof ZarrV3DatasetAttributes) {
+				ZarrV3DatasetAttributes zarrAttrs = (ZarrV3DatasetAttributes) s0Attrs;
 				System.out.println("  Chunk grid shape: " + java.util.Arrays.toString(zarrAttrs.getChunkAttributes().getGrid().getShape()));
-				System.out.println("  Is sharded: " + (zarrAttrs.getBlockCodecInfo() instanceof org.janelia.saalfeldlab.n5.shard.ShardCodecInfo));
+				System.out.println("  Is sharded: " + (zarrAttrs.getBlockCodecInfo() instanceof ShardCodecInfo));
 			}
 
 			// Count files created

@@ -168,8 +168,18 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 				if ( selectedState == 2 && selectedRow == row )
 				{
 					final int interVisible = numCorrespondingBetweenVisible( viewInterestPoints, currentVDs, label );
+
+				// Count unique consensus sets when displaying 2 views
+				if ( currentVDs.size() == 2 )
+				{
+					final int numSets = numConsensusSetsBetweenVisible( viewInterestPoints, currentVDs, label );
+					return interVisible + " (" + numSets + " set" + (numSets == 1 ? "" : "s") + ")";
+				}
+				else
+				{
 					final int total = numCorresponding( viewInterestPoints, currentVDs, label );
 					return interVisible + "/" + total;
+				}
 				}
 				else
 				{
@@ -251,6 +261,27 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		}
 
 		return sum;
+	}
+
+	protected int numConsensusSetsBetweenVisible( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )
+	{
+		final HashSet< ViewId > visibleViewSet = new HashSet<>( views );
+		final HashSet< Integer > uniqueSetIds = new HashSet<>();
+
+		for ( final ViewId v : views )
+		{
+			if ( vip.getViewInterestPointLists( v ).getHashMap().containsKey( label ) )
+			{
+				for ( final CorrespondingInterestPoints c : vip.getViewInterestPointLists( v ).getInterestPointList( label ).getCorrespondingInterestPointsCopy() )
+				{
+					// Only count if correspondence is to another visible view
+					if ( visibleViewSet.contains( c.getCorrespondingViewId() ) )
+						uniqueSetIds.add( c.getConsensusSetId() );
+				}
+			}
+		}
+
+		return uniqueSetIds.size();
 	}
 
 	protected String findNumPresent( final HashMap< String, Integer > labels, final List< ? extends ViewId > views, final String label )
@@ -427,14 +458,21 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 				}
 			}
 
-			if ( interestPointOverlay == null )
+			// Always recreate overlay to get new randomized colors each time
+			final BigDataViewer bdv = bdvPopup.getBDV();
+
+			// Remove old overlay if it exists
+			if ( interestPointOverlay != null )
 			{
-				final BigDataViewer bdv = bdvPopup.getBDV();
-				interestPointOverlay = new InterestPointOverlay( bdv.getViewer(), interestPointSources );
-				bdv.getViewer().renderTransformListeners().add( interestPointOverlay );
-				bdv.getViewer().getDisplay().overlays().add( interestPointOverlay );
-				bdvPopup.updateBDV();
+				bdv.getViewer().renderTransformListeners().remove( interestPointOverlay );
+				bdv.getViewer().getDisplay().overlays().remove( interestPointOverlay );
 			}
+
+			// Create new overlay with fresh randomized color palette
+			interestPointOverlay = new InterestPointOverlay( bdv.getViewer(), interestPointSources );
+			bdv.getViewer().renderTransformListeners().add( interestPointOverlay );
+			bdv.getViewer().getDisplay().overlays().add( interestPointOverlay );
+			bdvPopup.updateBDV();
 		}
 		else
 		{
@@ -489,7 +527,6 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	}
 
 	private HashMap< ViewId, HashMap< Integer, Integer > > correspondenceColorMap = null;
-	private int correspondenceColorIdCounter = 0;
 
 	@Override
 	public int getCorrespondenceColorId( final ViewId viewId, final int detectionId, final int timepointIndex )
@@ -502,7 +539,6 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		if ( correspondenceColorMap == null )
 		{
 			correspondenceColorMap = new HashMap<>();
-			correspondenceColorIdCounter = 0;
 
 			final HashMap< String, Integer > labels = InterestPointTools.getAllInterestPointMap( viewInterestPoints, currentVDs );
 			final String label = label( labels, selectedRow );
@@ -523,7 +559,10 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 					{
 						if ( cip.getCorrespondingViewId().equals( viewIdB ) )
 						{
-							final int colorId = correspondenceColorIdCounter++;
+							// Use consensus set ID as color ID - all correspondences from the same
+							// multi-consensus RANSAC set will have the same color
+							// Offset by 1 so -1 (single-consensus) becomes 0, and multi-consensus 0,1,2... become 1,2,3...
+							final int colorId = cip.getConsensusSetId() + 1;
 							correspondenceColorMap.get( viewIdA ).put( cip.getDetectionId(), colorId );
 							correspondenceColorMap.get( viewIdB ).put( cip.getCorrespondingDetectionId(), colorId );
 						}

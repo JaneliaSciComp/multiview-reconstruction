@@ -25,8 +25,13 @@ package net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint;
 import java.awt.Color;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Random;
 
 import net.imglib2.RealLocalizable;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -58,6 +63,9 @@ public class InterestPointOverlay implements OverlayRenderer, TransformListener<
 
 	private final HashMap< ViewId, Color > viewColors = new HashMap<>();
 
+	// Shuffled color palette for consensus sets - randomized on each overlay creation
+	private final List< Float > shuffledHues;
+
 	private Color getGreenShadeForView( final ViewId viewId )
 	{
 		if ( !viewColors.containsKey( viewId ) )
@@ -76,11 +84,22 @@ public class InterestPointOverlay implements OverlayRenderer, TransformListener<
 
 	private Color getColorForCorrespondence( final int corrId )
 	{
-		// Generate distinct colors for correspondence pairs
-		// Vary hue across spectrum (avoiding red ~0.0 which is reserved for current plane)
-		final float hue = 0.15f + (corrId * 0.17f) % 0.70f; // 0.15-0.85, skipping red
-		final float saturation = 0.8f;
-		final float brightness = 0.9f;
+		// Use shuffled predefined colors for first 8 consensus sets
+		// Palette is randomized on overlay creation, so restarting gives different colors
+		final float hue;
+		if ( corrId < shuffledHues.size() )
+		{
+			// Use shuffled predefined highly contrasting color
+			hue = shuffledHues.get( corrId );
+		}
+		else
+		{
+			// Fall back to golden ratio spacing for many sets
+			hue = 0.15f + (corrId * 0.618033988749895f) % 0.70f;
+		}
+
+		final float saturation = 0.85f;
+		final float brightness = 0.95f;
 		return Color.getHSBColor( hue, saturation, brightness );
 	}
 
@@ -150,6 +169,21 @@ public class InterestPointOverlay implements OverlayRenderer, TransformListener<
 		this.viewer = viewer;
 		this.interestPointSources = interestPointSources;
 		viewerTransform = new AffineTransform3D();
+
+		// Initialize shuffled color palette - randomized each time overlay is created
+		// This allows users to restart overlay if colors are too similar
+		final Float[] predefinedHues = {
+			0.15f,  // Yellow
+			0.50f,  // Cyan
+			0.83f,  // Magenta
+			0.33f,  // Green
+			0.60f,  // Blue
+			0.08f,  // Orange
+			0.48f,  // Teal
+			0.25f   // Lime
+		};
+		shuffledHues = new ArrayList<>( Arrays.asList( predefinedHues ) );
+		Collections.shuffle( shuffledHues, new Random() );
 	}
 
 	@Override

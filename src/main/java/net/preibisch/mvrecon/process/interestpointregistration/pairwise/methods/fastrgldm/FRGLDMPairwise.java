@@ -81,11 +81,13 @@ public class FRGLDMPairwise< I extends InterestPoint > implements MatcherPairwis
 
 		// compute ransac and remove inconsistent candidates
 		final ArrayList< PointMatchGeneric< I > > inliers = new ArrayList<>();
+		final ArrayList< Integer > setIds = new ArrayList<>();
 
 		final Pair< String, Double > ransacResult =
 				RANSAC.computeRANSAC(
 						candidates,
 						inliers,
+						setIds,
 						fp.getModel(),
 						rp.getMaxEpsilon(),
 						rp.getMinInlierRatio(),
@@ -93,7 +95,7 @@ public class FRGLDMPairwise< I extends InterestPoint > implements MatcherPairwis
 						rp.getNumIterations(),
 						rp.multiConsensus() );
 
-		result.setInliers( inliers, ransacResult.getB() );
+		result.setInliers( inliers, ransacResult.getB(), setIds );
 
 		result.setResult( System.currentTimeMillis(), ransacResult.getA() );
 

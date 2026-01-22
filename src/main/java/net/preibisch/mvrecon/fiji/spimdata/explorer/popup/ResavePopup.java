@@ -65,9 +65,14 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 	FilteredAndGroupedExplorerPanel< ? > panel;
 
 	protected static String[] types = new String[]{
-			"As TIFF (in place) ...", "As compressed TIFF (in place) ...", "As HDF5 (in place) ...",
-			"As compressed HDF5 (in place) ...", "As N5 (in place ) ...", "As N5 (local, cloud) ...",
-			"As OME-ZARR (in place ) ...", "As OME-ZARR (local, cloud) ..."};
+			"As TIFF (in place) ...",
+			"As compressed TIFF (in place) ...",
+			"As HDF5 (in place) ...",
+			"As compressed HDF5 (in place) ...",
+			"As N5 (in place ) ...",
+			"As N5 (local, cloud) ...",
+			"As OME-ZARR v3 (in place ) ...",
+			"As OME-ZARR v3 (local, cloud) ..."};
 
 	public ResavePopup()
 	{
@@ -284,7 +289,7 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 
 						StorageFormat format;
 
-						// TODO: add ZARR v2
+						// if you want ZARR v2, you need to go through the full options dialog
 						if (index <= 5)
 							format = StorageFormat.N5;
 						else
