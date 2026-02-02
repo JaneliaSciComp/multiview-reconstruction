@@ -10,40 +10,40 @@
       </WrappedImgLoader>
       <FlatFields>
         <FlatField Timepoint="0" ViewSetup="0">
-          <BrightImg>dark_and_flatfields/setup187-flatfield (fixed by mirroring).tif</BrightImg>
-          <DarkImg>dark_and_flatfields/setup187-AVG_darkfield-fromdata.tif</DarkImg>
+          <BrightImg format="tif">dark_and_flatfields/setup187-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg format="tif">dark_and_flatfields/setup187-AVG_darkfield-fromdata.tif</DarkImg>
         </FlatField>
         <FlatField Timepoint="0" ViewSetup="1">
-          <BrightImg>dark_and_flatfields/setup188-flatfield (fixed by mirroring).tif</BrightImg>
-          <DarkImg>dark_and_flatfields/setup188-AVG_darkfield-fromdata.tif</DarkImg>
+          <BrightImg format="tif">dark_and_flatfields/setup188-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg format="tif">dark_and_flatfields/setup188-AVG_darkfield-fromdata.tif</DarkImg>
         </FlatField>
         <FlatField Timepoint="0" ViewSetup="2">
-          <BrightImg>dark_and_flatfields/setup189-flatfield.tif</BrightImg>
-          <DarkImg>dark_and_flatfields/setup189-AVG_darkfield-fromdata.tif</DarkImg>
+          <BrightImg format="tif">dark_and_flatfields/setup189-flatfield.tif</BrightImg>
+          <DarkImg format="tif">dark_and_flatfields/setup189-AVG_darkfield-fromdata.tif</DarkImg>
         </FlatField>
         <FlatField Timepoint="0" ViewSetup="3">
-          <BrightImg>dark_and_flatfields/setup200-flatfield (fixed by mirroring).tif</BrightImg>
-          <DarkImg>dark_and_flatfields/setup200-AVG_darkfield-fromdata.tif</DarkImg>
+          <BrightImg format="tif">dark_and_flatfields/setup200-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg format="tif">dark_and_flatfields/setup200-AVG_darkfield-fromdata.tif</DarkImg>
         </FlatField>
         <FlatField Timepoint="0" ViewSetup="4">
-          <BrightImg>dark_and_flatfields/setup201-flatfield (fixed by mirroring).tif</BrightImg>
-          <DarkImg>dark_and_flatfields/setup201-AVG_darkfield-fromdata.tif</DarkImg>
+          <BrightImg format="tif">dark_and_flatfields/setup201-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg format="tif">dark_and_flatfields/setup201-AVG_darkfield-fromdata.tif</DarkImg>
         </FlatField>
         <FlatField Timepoint="0" ViewSetup="5">
-          <BrightImg>dark_and_flatfields/setup202-flatfield.tif</BrightImg>
-          <DarkImg>dark_and_flatfields/setup202-AVG_darkfield-fromdata.tif</DarkImg>
+          <BrightImg format="tif">dark_and_flatfields/setup202-flatfield.tif</BrightImg>
+          <DarkImg format="tif">dark_and_flatfields/setup202-AVG_darkfield-fromdata.tif</DarkImg>
         </FlatField>
         <FlatField Timepoint="0" ViewSetup="6">
-          <BrightImg>dark_and_flatfields/setup213-flatfield (fixed by mirroring).tif</BrightImg>
-          <DarkImg>dark_and_flatfields/setup213-AVG_darkfield-fromdata.tif</DarkImg>
+          <BrightImg format="tif">dark_and_flatfields/setup213-flatfield (fixed by mirroring).tif</BrightImg>
+          <DarkImg format="tif">dark_and_flatfields/setup213-AVG_darkfield-fromdata.tif</DarkImg>
         </FlatField>
         <FlatField Timepoint="0" ViewSetup="7">
-          <BrightImg>dark_and_flatfields/setup214-flatfield.tif</BrightImg>
-          <DarkImg>dark_and_flatfields/setup214-AVG_darkfield-fromdata.tif</DarkImg>
+          <BrightImg format="tif">dark_and_flatfields/setup214-flatfield.tif</BrightImg>
+          <DarkImg format="tif">dark_and_flatfields/setup214-AVG_darkfield-fromdata.tif</DarkImg>
         </FlatField>
         <FlatField Timepoint="0" ViewSetup="8">
-          <BrightImg>dark_and_flatfields/setup215-flatfield.tif</BrightImg>
-          <DarkImg>dark_and_flatfields/setup215-AVG_darkfield-fromdata.tif</DarkImg>
+          <BrightImg format="tif">dark_and_flatfields/setup215-flatfield.tif</BrightImg>
+          <DarkImg format="tif">dark_and_flatfields/setup215-AVG_darkfield-fromdata.tif</DarkImg>
         </FlatField>
       </FlatFields>
     </ImageLoader>

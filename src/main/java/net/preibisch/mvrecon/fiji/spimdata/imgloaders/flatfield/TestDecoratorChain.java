@@ -109,12 +109,12 @@ public class TestDecoratorChain {
 			final ViewId viewId = new ViewId(timepoint, setupId);
 
 			if (darkfield.exists()) {
-				correctedLoader.setDarkImage(viewId, darkfield);
+				correctedLoader.setDarkImage(viewId, new FlatfieldImageInfo(darkfield.toURI(), null));
 				System.out.println("  Setup " + setupId + ": darkfield = " + darkfield.getName());
 			}
 
 			if (flatfield.exists()) {
-				correctedLoader.setBrightImage(viewId, flatfield);
+				correctedLoader.setBrightImage(viewId, new FlatfieldImageInfo(flatfield.toURI(), null));
 				System.out.println("  Setup " + setupId + ": flatfield = " + flatfield.getName());
 			}
 		}
