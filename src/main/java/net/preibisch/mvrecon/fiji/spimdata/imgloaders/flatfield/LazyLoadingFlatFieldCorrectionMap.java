@@ -23,7 +23,6 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
-import java.net.URI;
 import java.util.Map;
 
 import mpicbg.spim.data.sequence.ImgLoader;
@@ -43,13 +42,13 @@ public abstract class LazyLoadingFlatFieldCorrectionMap<IL extends ImgLoader> im
 	}
 
 	@Override
-	public void setBrightImage(ViewId vId, URI imgUri) {
-		imageLoader.setBrightImage(vId, imgUri);
+	public void setBrightImage(ViewId vId, FlatfieldImageInfo info) {
+		imageLoader.setBrightImage(vId, info);
 	}
 
 	@Override
-	public void setDarkImage(ViewId vId, URI imgUri) {
-		imageLoader.setDarkImage(vId, imgUri);
+	public void setDarkImage(ViewId vId, FlatfieldImageInfo info) {
+		imageLoader.setDarkImage(vId, info);
 	}
 
 	protected RandomAccessibleInterval<FloatType> getBrightImg(ViewId vId) {
@@ -63,18 +62,18 @@ public abstract class LazyLoadingFlatFieldCorrectionMap<IL extends ImgLoader> im
 	public static void main(String[] args)
 	{
 		DefaultFlatfieldCorrectionWrappedImgLoader testImgLoader = new DefaultFlatfieldCorrectionWrappedImgLoader(null);
-		testImgLoader.setBrightImage(new ViewId(0, 0), new File("/Users/David/Desktop/ell2.tif"));
+		testImgLoader.setBrightImage(new ViewId(0, 0), new FlatfieldImageInfo(new File("/Users/David/Desktop/ell2.tif").toURI()));
 		RandomAccessibleInterval<FloatType> brightImg = testImgLoader.getBrightImg(new ViewId(0, 0));
 
 		ImageJFunctions.show(brightImg);
 	}
 
 	/**
-	 * Get the URI map for bright/dark images per view.
-	 * @return map from ViewId to (brightUri, darkUri) pair
+	 * Get the info map for bright/dark images per view.
+	 * @return map from ViewId to (brightInfo, darkInfo) pair
 	 */
-	public Map<ViewId, Pair<URI, URI>> getUriMap()
+	public Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> getInfoMap()
 	{
-		return imageLoader.getUriMap();
+		return imageLoader.getInfoMap();
 	}
 }

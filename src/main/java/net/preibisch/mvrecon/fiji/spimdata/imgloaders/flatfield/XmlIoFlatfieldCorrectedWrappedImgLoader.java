@@ -26,6 +26,10 @@ import static mpicbg.spim.data.XmlKeys.IMGLOADER_FORMAT_ATTRIBUTE_NAME;
 import static mpicbg.spim.data.XmlKeys.IMGLOADER_TAG;
 import static mpicbg.spim.data.XmlKeys.TIMEPOINTS_TIMEPOINT_TAG;
 import static mpicbg.spim.data.XmlKeys.VIEWSETUP_TAG;
+import static net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.XmlIoViewerFlatfieldCorrectionWrappedImgLoader.FORMAT_ATTR;
+import static net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.XmlIoViewerFlatfieldCorrectionWrappedImgLoader.DATASET_ATTR;
+import static net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.XmlIoViewerFlatfieldCorrectionWrappedImgLoader.parseFlatfieldImageInfo;
+import static net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.XmlIoViewerFlatfieldCorrectionWrappedImgLoader.createFlatfieldImageElement;
 
 import java.io.File;
 import java.net.URI;
@@ -35,7 +39,6 @@ import org.jdom2.DataConversionException;
 import org.jdom2.Element;
 
 import mpicbg.spim.data.SpimDataInstantiationException;
-import mpicbg.spim.data.XmlHelpers;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.ImgLoaderIo;
@@ -112,10 +115,15 @@ public class XmlIoFlatfieldCorrectedWrappedImgLoader
 		{
 			int tp = Integer.parseInt(flatfield.getAttributeValue(TIMEPOINTS_TIMEPOINT_TAG));
 			int vs = Integer.parseInt(flatfield.getAttributeValue(VIEWSETUP_TAG));
-			URI brightImg = XmlHelpers.loadPathURI(flatfield, BRIGHTIMG_TAG, basePathURI);
-			URI darkImg = XmlHelpers.loadPathURI(flatfield, DARKIMG_TAG, basePathURI);
-			res.setBrightImage(new ViewId(tp, vs), brightImg);
-			res.setDarkImage(new ViewId(tp, vs), darkImg);
+			ViewId viewId = new ViewId(tp, vs);
+
+			FlatfieldImageInfo brightInfo = parseFlatfieldImageInfo(flatfield, BRIGHTIMG_TAG, basePathURI);
+			FlatfieldImageInfo darkInfo = parseFlatfieldImageInfo(flatfield, DARKIMG_TAG, basePathURI);
+
+			if (brightInfo != null)
+				res.setBrightImage(viewId, brightInfo);
+			if (darkInfo != null)
+				res.setDarkImage(viewId, darkInfo);
 		}
 
 		res.setActive(active);
@@ -131,7 +139,8 @@ public class XmlIoFlatfieldCorrectedWrappedImgLoader
 	@Override
 	public Element toXml(FlatfieldCorrectionWrappedImgLoader<? extends ImgLoader> imgLoader, URI basePathURI)
 	{
-		final Map<ViewId, Pair<URI, URI>> uriMap = ((LazyLoadingFlatFieldCorrectionMap<? extends ImgLoader>) imgLoader).getUriMap();
+		final Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> infoMap =
+				((LazyLoadingFlatFieldCorrectionMap<? extends ImgLoader>) imgLoader).getInfoMap();
 
 		final Element wholeElem = new Element(IMGLOADER_TAG);
 		wholeElem.setAttribute(IMGLOADER_FORMAT_ATTRIBUTE_NAME,
@@ -157,20 +166,20 @@ public class XmlIoFlatfieldCorrectedWrappedImgLoader
 
 		final Element elFlatfields = new Element(FLATFIELDS_TAG);
 
-		for (ViewId vid : uriMap.keySet())
+		for (ViewId vid : infoMap.keySet())
 		{
-			final Pair<URI, URI> uris = uriMap.get(vid);
-			if (uris == null || (uris.getA() == null && uris.getB() == null))
+			final Pair<FlatfieldImageInfo, FlatfieldImageInfo> infos = infoMap.get(vid);
+			if (infos == null || (infos.getA() == null && infos.getB() == null))
 				continue;
 
 			final Element elFlatfield = new Element(FLATFIELD_TAG);
 			elFlatfield.setAttribute(TIMEPOINTS_TIMEPOINT_TAG, Integer.toString(vid.getTimePointId()));
 			elFlatfield.setAttribute(VIEWSETUP_TAG, Integer.toString(vid.getViewSetupId()));
 
-			if (uris.getA() != null)
-				elFlatfield.addContent(XmlHelpers.pathElementURI(BRIGHTIMG_TAG, uris.getA(), basePathURI));
-			if (uris.getB() != null)
-				elFlatfield.addContent(XmlHelpers.pathElementURI(DARKIMG_TAG, uris.getB(), basePathURI));
+			if (infos.getA() != null)
+				elFlatfield.addContent(createFlatfieldImageElement(BRIGHTIMG_TAG, infos.getA(), basePathURI));
+			if (infos.getB() != null)
+				elFlatfield.addContent(createFlatfieldImageElement(DARKIMG_TAG, infos.getB(), basePathURI));
 
 			elFlatfields.addContent(elFlatfield);
 		}

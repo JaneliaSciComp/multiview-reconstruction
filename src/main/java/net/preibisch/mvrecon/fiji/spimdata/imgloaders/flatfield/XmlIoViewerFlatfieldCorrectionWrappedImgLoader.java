@@ -31,6 +31,7 @@ import java.io.File;
 import java.net.URI;
 import java.util.Map;
 
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.jdom2.DataConversionException;
 import org.jdom2.Element;
 
@@ -61,6 +62,8 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 	public final static String DARKIMG_TAG = "DarkImg";
 	public final static String ACTIVE_TAG = "Active";
 	public final static String CACHED_TAG = "Cached";
+	public final static String FORMAT_ATTR = "format";
+	public final static String DATASET_ATTR = "dataset";
 
 	@Override
 	public ViewerFlatfieldCorrectionWrappedImgLoader fromXml(Element elem, File basePath,
@@ -106,10 +109,15 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 		for (Element flatfield : flatfields.getChildren()) {
 			int tp = Integer.parseInt(flatfield.getAttributeValue(TIMEPOINTS_TIMEPOINT_TAG));
 			int vs = Integer.parseInt(flatfield.getAttributeValue(VIEWSETUP_TAG));
-			URI brightImg = XmlHelpers.loadPathURI(flatfield, BRIGHTIMG_TAG, basePathURI);
-			URI darkImg = XmlHelpers.loadPathURI(flatfield, DARKIMG_TAG, basePathURI);
-			res.setBrightImage(new ViewId(tp, vs), brightImg);
-			res.setDarkImage(new ViewId(tp, vs), darkImg);
+			ViewId viewId = new ViewId(tp, vs);
+
+			FlatfieldImageInfo brightInfo = parseFlatfieldImageInfo(flatfield, BRIGHTIMG_TAG, basePathURI);
+			FlatfieldImageInfo darkInfo = parseFlatfieldImageInfo(flatfield, DARKIMG_TAG, basePathURI);
+
+			if (brightInfo != null)
+				res.setBrightImage(viewId, brightInfo);
+			if (darkInfo != null)
+				res.setDarkImage(viewId, darkInfo);
 		}
 
 		res.setActive(active);
@@ -123,7 +131,7 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 
 	@Override
 	public Element toXml(ViewerFlatfieldCorrectionWrappedImgLoader imgLoader, URI basePathURI) {
-		final Map<ViewId, Pair<URI, URI>> uriMap = imgLoader.getUriMap();
+		final Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> infoMap = imgLoader.getInfoMap();
 
 		final Element wholeElem = new Element(IMGLOADER_TAG);
 		wholeElem.setAttribute(IMGLOADER_FORMAT_ATTRIBUTE_NAME,
@@ -147,19 +155,19 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 
 		final Element elFlatfields = new Element(FLATFIELDS_TAG);
 
-		for (ViewId vid : uriMap.keySet()) {
-			final Pair<URI, URI> uris = uriMap.get(vid);
-			if (uris == null || (uris.getA() == null && uris.getB() == null))
+		for (ViewId vid : infoMap.keySet()) {
+			final Pair<FlatfieldImageInfo, FlatfieldImageInfo> infos = infoMap.get(vid);
+			if (infos == null || (infos.getA() == null && infos.getB() == null))
 				continue;
 
 			final Element elFlatfield = new Element(FLATFIELD_TAG);
 			elFlatfield.setAttribute(TIMEPOINTS_TIMEPOINT_TAG, Integer.toString(vid.getTimePointId()));
 			elFlatfield.setAttribute(VIEWSETUP_TAG, Integer.toString(vid.getViewSetupId()));
 
-			if (uris.getA() != null)
-				elFlatfield.addContent(XmlHelpers.pathElementURI(BRIGHTIMG_TAG, uris.getA(), basePathURI));
-			if (uris.getB() != null)
-				elFlatfield.addContent(XmlHelpers.pathElementURI(DARKIMG_TAG, uris.getB(), basePathURI));
+			if (infos.getA() != null)
+				elFlatfield.addContent(createFlatfieldImageElement(BRIGHTIMG_TAG, infos.getA(), basePathURI));
+			if (infos.getB() != null)
+				elFlatfield.addContent(createFlatfieldImageElement(DARKIMG_TAG, infos.getB(), basePathURI));
 
 			elFlatfields.addContent(elFlatfield);
 		}
@@ -167,5 +175,45 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 		wholeElem.addContent(wrappedIL);
 		wholeElem.addContent(elFlatfields);
 		return wholeElem;
+	}
+
+	/**
+	 * Parse a flatfield image element (BrightImg or DarkImg) into a FlatfieldImageInfo.
+	 *
+	 * @param parent parent element containing the image element
+	 * @param tag the tag name (BRIGHTIMG_TAG or DARKIMG_TAG)
+	 * @param basePathURI base path for resolving relative URIs
+	 * @return FlatfieldImageInfo, or null if element doesn't exist
+	 */
+	protected static FlatfieldImageInfo parseFlatfieldImageInfo(Element parent, String tag, URI basePathURI) {
+		Element imgElement = parent.getChild(tag);
+		if (imgElement == null)
+			return null;
+
+		URI uri = XmlHelpers.loadPathURI(parent, tag, basePathURI);
+		if (uri == null)
+			return null;
+
+		String formatStr = imgElement.getAttributeValue(FORMAT_ATTR);
+		String dataset = imgElement.getAttributeValue(DATASET_ATTR);
+
+		StorageFormat format = FlatfieldImageLoader.parseFormat(formatStr);
+		return new FlatfieldImageInfo(uri, format, dataset);
+	}
+
+	/**
+	 * Create an XML element for a flatfield image with format and dataset attributes.
+	 *
+	 * @param tag the tag name (BRIGHTIMG_TAG or DARKIMG_TAG)
+	 * @param info the flatfield image info
+	 * @param basePathURI base path for creating relative URIs
+	 * @return the XML element
+	 */
+	protected static Element createFlatfieldImageElement(String tag, FlatfieldImageInfo info, URI basePathURI) {
+		Element el = XmlHelpers.pathElementURI(tag, info.getUri(), basePathURI);
+		el.setAttribute(FORMAT_ATTR, FlatfieldImageLoader.formatToString(info.getFormat()));
+		if (info.getDataset() != null && !info.getDataset().isEmpty())
+			el.setAttribute(DATASET_ATTR, info.getDataset());
+		return el;
 	}
 }
