@@ -48,39 +48,31 @@ import util.URITools;
  * Helper class for loading flatfield correction images from various sources.
  *
  * This class handles:
- * - URI-based storage of bright/dark image paths per view
+ * - Storage of bright/dark image info per view (URI, format, dataset path)
  * - Lazy loading and caching of images
- * - Auto-detection of format (TIFF vs N5/Zarr)
- * - Support for cloud storage (S3, GCS)
+ * - Support for TIF, N5, Zarr (v2/v3), and HDF5 formats
+ * - Support for cloud storage (S3, GCS) for N5/Zarr formats
  */
 public class FlatfieldImageLoader {
 
-	protected final Map<URI, RandomAccessibleInterval<FloatType>> raiMap;
-	protected final Map<ViewId, Pair<URI, URI>> uriMap;
+	protected final Map<FlatfieldImageInfo, RandomAccessibleInterval<FloatType>> raiMap;
+	protected final Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> infoMap;
 
-	private static final Pair<URI, URI> NULL_PAIR = new ValuePair<>(null, null);
+	private static final Pair<FlatfieldImageInfo, FlatfieldImageInfo> NULL_PAIR = new ValuePair<>(null, null);
 
 	public FlatfieldImageLoader() {
 		raiMap = new HashMap<>();
-		uriMap = new HashMap<>();
+		infoMap = new HashMap<>();
 	}
 
-	public void setBrightImage(ViewId vId, URI imgUri) {
-		final Pair<URI, URI> oldPair = uriMap.getOrDefault(vId, NULL_PAIR);
-		uriMap.put(vId, new ValuePair<>(imgUri, oldPair.getB()));
+	public void setBrightImage(ViewId vId, FlatfieldImageInfo info) {
+		final Pair<FlatfieldImageInfo, FlatfieldImageInfo> oldPair = infoMap.getOrDefault(vId, NULL_PAIR);
+		infoMap.put(vId, new ValuePair<>(info, oldPair.getB()));
 	}
 
-	public void setDarkImage(ViewId vId, URI imgUri) {
-		final Pair<URI, URI> oldPair = uriMap.getOrDefault(vId, NULL_PAIR);
-		uriMap.put(vId, new ValuePair<>(oldPair.getA(), imgUri));
-	}
-
-	public void setBrightImage(ViewId vId, File imgFile) {
-		setBrightImage(vId, imgFile == null ? null : imgFile.toURI());
-	}
-
-	public void setDarkImage(ViewId vId, File imgFile) {
-		setDarkImage(vId, imgFile == null ? null : imgFile.toURI());
+	public void setDarkImage(ViewId vId, FlatfieldImageInfo info) {
+		final Pair<FlatfieldImageInfo, FlatfieldImageInfo> oldPair = infoMap.getOrDefault(vId, NULL_PAIR);
+		infoMap.put(vId, new ValuePair<>(oldPair.getA(), info));
 	}
 
 	public RandomAccessibleInterval<FloatType> getBrightImg(ViewId vId) {
@@ -94,88 +86,125 @@ public class FlatfieldImageLoader {
 	/**
 	 * Get image for view id; the brightfield is stored in the A element of the pair, the darkfield in B
 	 * @param vId view id
-	 * @param uriSelector function to select URI from pair
+	 * @param infoSelector function to select info from pair
 	 * @return image, or null if not set
 	 */
-	private RandomAccessibleInterval<FloatType> getImg(ViewId vId, Function<Pair<URI, URI>, URI> uriSelector) {
-		if (!uriMap.containsKey(vId))
+	private RandomAccessibleInterval<FloatType> getImg(ViewId vId, Function<Pair<FlatfieldImageInfo, FlatfieldImageInfo>, FlatfieldImageInfo> infoSelector) {
+		if (!infoMap.containsKey(vId))
 			return null;
 
-		final URI uriToLoad = uriSelector.apply(uriMap.get(vId));
-		if (uriToLoad == null)
+		final FlatfieldImageInfo info = infoSelector.apply(infoMap.get(vId));
+		if (info == null)
 			return null;
 
-		return loadImageIfNecessary(uriToLoad);
+		return loadImageIfNecessary(info);
 	}
 
 	/**
-	 * Load an image from a URI. Supports:
-	 * - Local TIFF files (via ImageJ)
-	 * - Local/cloud Zarr v3 containers (via N5 API)
-	 * - Local/cloud N5 containers (via N5 API)
+	 * Load an image using the specified format. Supports:
+	 * - TIF files (local only, via ImageJ)
+	 * - N5 containers (local + cloud)
+	 * - Zarr v2/v3 containers (local + cloud)
+	 * - HDF5 files (local only)
 	 *
-	 * @param uri URI to the image
+	 * @param info the flatfield image info containing URI, format, and dataset path
 	 * @return the loaded image as FloatType
 	 */
-	public RandomAccessibleInterval<FloatType> loadImageIfNecessary(URI uri) {
-		if (!raiMap.containsKey(uri)) {
+	public RandomAccessibleInterval<FloatType> loadImageIfNecessary(FlatfieldImageInfo info) {
+		if (!raiMap.containsKey(info)) {
 			RandomAccessibleInterval<FloatType> img;
 
-			if (isChunkedFormat(uri)) {
-				// Use N5/Zarr API for chunked formats
-				final StorageFormat format = detectStorageFormat(uri);
-				final N5Reader reader = URITools.instantiateN5Reader(format, uri);
-				final RandomAccessibleInterval<?> raw = N5Utils.open(reader, "");
-				img = RealTypeConverters.convert(Cast.unchecked(raw), new FloatType());
-			} else {
-				// Legacy TIFF path via ImageJ
-				final File file = new File(uri);
+			if (info.isTif()) {
+				// TIF format via ImageJ
+				final File file = new File(info.getUri());
 				final ImagePlus imp = IJ.openImage(file.getAbsolutePath());
 				if (imp == null)
-					throw new RuntimeException("Failed to load image from: " + uri);
+					throw new RuntimeException("Failed to load TIF image from: " + info.getUri());
 				img = ImageJFunctions.convertFloat(imp).copy();
+			} else {
+				// N5, Zarr, or HDF5 via N5 API
+				final StorageFormat format = info.getFormat();
+				final URI uri = info.getUri();
+
+				// Validate HDF5 is not used with cloud storage
+				if (format == StorageFormat.HDF5) {
+					final String scheme = uri.getScheme();
+					if ("s3".equals(scheme) || "gs".equals(scheme)) {
+						throw new RuntimeException("HDF5 format does not support cloud storage (s3/gs). URI: " + uri);
+					}
+				}
+
+				final N5Reader reader = URITools.instantiateN5Reader(format, uri);
+				final String dataset = info.getEffectiveDataset();
+				final RandomAccessibleInterval<?> raw = N5Utils.open(reader, dataset);
+				img = RealTypeConverters.convert(Cast.unchecked(raw), new FloatType());
 			}
 
-			raiMap.put(uri, img);
+			raiMap.put(info, img);
 		}
-		return raiMap.get(uri);
+		return raiMap.get(info);
 	}
 
 	/**
-	 * Determine if the URI points to a chunked format (N5/Zarr) vs TIFF.
+	 * Get the info map for bright/dark images per view.
+	 * @return map from ViewId to (brightInfo, darkInfo) pair
 	 */
-	public static boolean isChunkedFormat(URI uri) {
-		final String scheme = uri.getScheme();
-		// Cloud URIs are always chunked format
-		if ("s3".equals(scheme) || "gs".equals(scheme))
-			return true;
+	public Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> getInfoMap() {
+		return infoMap;
+	}
 
-		// Check path for .zarr or .n5 extension
-		final String path = uri.getPath();
-		if (path == null)
-			return false;
+	// ==================== Format Parsing Utilities ====================
 
-		final String lowerPath = path.toLowerCase();
-		return lowerPath.endsWith(".zarr") || lowerPath.endsWith(".n5")
-			|| lowerPath.contains(".zarr/") || lowerPath.contains(".n5/");
+	/**
+	 * Parse a format string to StorageFormat.
+	 * @param formatStr the format string (tif, n5, zarr, zarr2, hdf5)
+	 * @return StorageFormat, or null for TIF format
+	 * @throws IllegalArgumentException if format string is unknown
+	 */
+	public static StorageFormat parseFormat(String formatStr) {
+		if (formatStr == null || formatStr.isEmpty())
+			throw new IllegalArgumentException("Format attribute is required");
+
+		switch (formatStr.toLowerCase()) {
+			case "tif":
+			case "tiff":
+				return null; // null indicates TIF format
+			case "n5":
+				return StorageFormat.N5;
+			case "zarr":
+			case "zarr3":
+				return StorageFormat.ZARR;
+			case "zarr2":
+				return StorageFormat.ZARR2;
+			case "hdf5":
+			case "h5":
+				return StorageFormat.HDF5;
+			default:
+				throw new IllegalArgumentException("Unknown flatfield format: " + formatStr
+						+ ". Supported formats: tif, n5, zarr, zarr2, hdf5");
+		}
 	}
 
 	/**
-	 * Detect the storage format from the URI.
+	 * Convert StorageFormat to format string for XML serialization.
+	 * @param format the StorageFormat (null for TIF)
+	 * @return format string
 	 */
-	public static StorageFormat detectStorageFormat(URI uri) {
-		final String path = uri.getPath();
-		if (path != null && path.toLowerCase().contains(".n5"))
-			return StorageFormat.N5;
-		// Default to Zarr v3 for cloud and .zarr paths
-		return StorageFormat.ZARR;
-	}
+	public static String formatToString(StorageFormat format) {
+		if (format == null)
+			return "tif";
 
-	/**
-	 * Get the URI map for bright/dark images per view.
-	 * @return map from ViewId to (brightUri, darkUri) pair
-	 */
-	public Map<ViewId, Pair<URI, URI>> getUriMap() {
-		return uriMap;
+		switch (format) {
+			case N5:
+				return "n5";
+			case ZARR:
+				return "zarr";
+			case ZARR2:
+				return "zarr2";
+			case HDF5:
+				return "hdf5";
+			default:
+				throw new IllegalArgumentException("Unsupported format for flatfield: " + format);
+		}
 	}
 }

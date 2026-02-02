@@ -285,7 +285,7 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 
 		ImgLoader il = data.getSequenceDescription().getImgLoader();
 		DefaultFlatfieldCorrectionWrappedImgLoader ffcil = new DefaultFlatfieldCorrectionWrappedImgLoader( il );
-		ffcil.setDarkImage( new ViewId( 0, 0 ), new File( "/Users/david/desktop/ff.tif" ) );
+		ffcil.setDarkImage(new ViewId(0, 0), new FlatfieldImageInfo(new File("/Users/david/desktop/ff.tif").toURI()));
 
 		data.getSequenceDescription().setImgLoader( ffcil );
 

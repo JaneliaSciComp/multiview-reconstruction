@@ -23,7 +23,6 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
-import java.net.URI;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -72,7 +71,7 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 	private boolean cacheResult;
 
 	/* downsampled bright/dark images */
-	private final Map<Pair<URI, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
+	private final Map<Pair<FlatfieldImageInfo, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
 
 	public MultiResolutionFlatfieldCorrectionWrappedImgLoader(MultiResolutionImgLoader wrappedImgLoader)
 	{
@@ -105,12 +104,12 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 	private RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
 			ViewId vId,
 			int[] downsamplingFactors,
-			Function<Pair<URI, URI>, URI> uriSelector,
+			Function<Pair<FlatfieldImageInfo, FlatfieldImageInfo>, FlatfieldImageInfo> infoSelector,
 			Function<ViewId, RandomAccessibleInterval<FloatType>> imgGetter
 	) {
 		// Convert to a list here to have a proper hash code for the map key
 		List<Integer> dsFactorList = Arrays.stream(downsamplingFactors).boxed().collect(Collectors.toList());
-		final ValuePair<URI, List<Integer>> key = new ValuePair<>(uriSelector.apply(getUriMap().get(vId)), dsFactorList);
+		final ValuePair<FlatfieldImageInfo, List<Integer>> key = new ValuePair<>(infoSelector.apply(getInfoMap().get(vId)), dsFactorList);
 
 		if (!dsRaiMap.containsKey(key)) {
 			final RandomAccessibleInterval<FloatType> img = imgGetter.apply(vId);
@@ -456,7 +455,7 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		MultiResolutionImgLoader il = (MultiResolutionImgLoader) data.getSequenceDescription().getImgLoader();
 		MultiResolutionFlatfieldCorrectionWrappedImgLoader ffcil = new MultiResolutionFlatfieldCorrectionWrappedImgLoader(
 				il );
-		ffcil.setDarkImage( new ViewId( 0, 0 ), new File( "/Users/david/desktop/ff.tif" ) );
+		ffcil.setDarkImage( new ViewId( 0, 0 ), new FlatfieldImageInfo( new File( "/Users/david/desktop/ff.tif" ).toURI(), null ) );
 
 		data.getSequenceDescription().setImgLoader( ffcil );
 

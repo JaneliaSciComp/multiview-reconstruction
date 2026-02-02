@@ -22,8 +22,6 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
-import java.io.File;
-import java.net.URI;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -83,7 +81,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 	private final FlatfieldImageLoader imageLoader;
 
 	/** Downsampled bright/dark images for each mipmap level */
-	private final Map<Pair<URI, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
+	private final Map<Pair<FlatfieldImageInfo, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
 
 	public ViewerFlatfieldCorrectionWrappedImgLoader(final ViewerImgLoader wrappedImgLoader) {
 		this(wrappedImgLoader, true);
@@ -119,28 +117,20 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		this.cacheResult = cached;
 	}
 
-	public void setBrightImage(final ViewId vId, final URI imgUri) {
-		imageLoader.setBrightImage(vId, imgUri);
+	public void setBrightImage(final ViewId vId, final FlatfieldImageInfo info) {
+		imageLoader.setBrightImage(vId, info);
 	}
 
-	public void setDarkImage(final ViewId vId, final URI imgUri) {
-		imageLoader.setDarkImage(vId, imgUri);
-	}
-
-	public void setBrightImage(final ViewId vId, final File imgFile) {
-		imageLoader.setBrightImage(vId, imgFile);
-	}
-
-	public void setDarkImage(final ViewId vId, final File imgFile) {
-		imageLoader.setDarkImage(vId, imgFile);
+	public void setDarkImage(final ViewId vId, final FlatfieldImageInfo info) {
+		imageLoader.setDarkImage(vId, info);
 	}
 
 	/**
-	 * Get the URI map for bright/dark images per view.
-	 * @return map from ViewId to (brightUri, darkUri) pair
+	 * Get the info map for bright/dark images per view.
+	 * @return map from ViewId to (brightInfo, darkInfo) pair
 	 */
-	public Map<ViewId, Pair<URI, URI>> getUriMap() {
-		return imageLoader.getUriMap();
+	public Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> getInfoMap() {
+		return imageLoader.getInfoMap();
 	}
 
 	// ========== ViewerImgLoader interface ==========
@@ -191,12 +181,12 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 	private RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
 			ViewId vId,
 			int[] downsamplingFactors,
-			Function<Pair<URI, URI>, URI> uriSelector,
+			Function<Pair<FlatfieldImageInfo, FlatfieldImageInfo>, FlatfieldImageInfo> infoSelector,
 			Function<ViewId, RandomAccessibleInterval<FloatType>> imgGetter
 	) {
 		// Convert to a list here to have a proper hash code for the map key
 		List<Integer> dsFactorList = Arrays.stream(downsamplingFactors).boxed().collect(Collectors.toList());
-		final ValuePair<URI, List<Integer>> key = new ValuePair<>(uriSelector.apply(imageLoader.getUriMap().get(vId)), dsFactorList);
+		final ValuePair<FlatfieldImageInfo, List<Integer>> key = new ValuePair<>(infoSelector.apply(imageLoader.getInfoMap().get(vId)), dsFactorList);
 
 		if (!dsRaiMap.containsKey(key)) {
 			final RandomAccessibleInterval<FloatType> img = imgGetter.apply(vId);
