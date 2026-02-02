@@ -60,7 +60,7 @@ public class TestViewerFlatfieldCorrection {
 	public static void main(String[] args) throws SpimDataException {
 		// Paths
 		final String basePath = "/Users/innerbergerm/Projects/janelia/multiview-reconstruction/";
-		final String correctedXmlPath = basePath + "data/dataset_corrected_zarr.xml";
+		final String correctedXmlPath = basePath + "data/dataset_corrected_viewer_s3.xml";
 		final String uncorrectedXmlPath = basePath + "data/dataset.xml";
 
 		// Which setup to demonstrate (0-8)
