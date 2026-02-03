@@ -164,10 +164,15 @@ public class OMEZarrAttibutes
 		//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
 		// for this to work you need to register an adapter in the N5Factory class
 		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
-		final OmeNgffMultiScaleMetadata[] multiscales = n5.getAttribute( dataset, "multiscales", OmeNgffMultiScaleMetadata[].class );
+
+		// Try v0.4 structure first (multiscales at root), then v0.5/Zarr v3 structure (nested under ome)
+		OmeNgffMultiScaleMetadata[] multiscales = n5.getAttribute( dataset, "multiscales", OmeNgffMultiScaleMetadata[].class );
 
 		if ( multiscales == null || multiscales.length == 0 )
-			throw new RuntimeException( "Could not parse OME-ZARR multiscales object. stopping." );
+			multiscales = n5.getAttribute( dataset, "attributes/ome/multiscales", OmeNgffMultiScaleMetadata[].class );
+
+		if ( multiscales == null || multiscales.length == 0 )
+			throw new RuntimeException( "Could not parse OME-ZARR multiscales object (tried 'multiscales' and 'ome/multiscales'). stopping." );
 
 		if ( multiscales.length != 1 )
 			System.out.println( "This dataset has " + multiscales.length + " objects, we expected 1. Picking the first one." );
