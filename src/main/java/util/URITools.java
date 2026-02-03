@@ -276,9 +276,6 @@ public class URITools
 						new FileSystemKeyValueAccess(FileSystems.getDefault()),
 						URITools.fromURI( uri ),
 						builder,
-						true,  // mapN5DatasetAttributes
-						true,  // mergeAttributes
-						"/",   // dimensionSeparator
 						true   // cacheAttributes
 				);
 			}
@@ -335,13 +332,11 @@ public class URITools
 			{
 				// Create Zarr v3 reader
 				return new ZarrV3KeyValueReader(
-						new FileSystemKeyValueAccess(FileSystems.getDefault()),
-						URITools.fromURI( uri ),
-						builder,
-						true,  // mapN5DatasetAttributes
-						true,  // mergeAttributes
-						true   // cacheAttributes
-				);
+                        new FileSystemKeyValueAccess(FileSystems.getDefault()),
+                        URITools.fromURI( uri ),
+                        builder,
+                        true // cacheMeta
+                );
 			}
 			else if ( format.equals( StorageFormat.ZARR2 ))
 				return new N5ZarrReader( URITools.fromURI( uri ), builder );

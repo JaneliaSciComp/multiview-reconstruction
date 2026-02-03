@@ -201,15 +201,27 @@ public class OMEZARR implements MultiViewDatasetDefinition
 		for ( final String dataset : datasets )
 		{
 			IOFunctions.println( "\nFetching metadata for " + dataset );
+//			IOFunctions.println( "Reader URI: " + reader.getURI() );
+//			IOFunctions.println( "Full dataset URI: " + reader.getURI().resolve( dataset ) );
+//			IOFunctions.println( "Available attributes: " + reader.listAttributes( dataset ) );
 
 			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
 			// for this to work you need to register an adapter in the N5Factory class
 			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
-			final OmeNgffMultiScaleMetadata[] multiscales = reader.getAttribute( dataset, "multiscales", OmeNgffMultiScaleMetadata[].class );
+
+            OmeNgffMultiScaleMetadata[] multiscales;
+            if (format == StorageFormat.ZARR2) {
+                multiscales = reader.getAttribute( dataset, "multiscales", OmeNgffMultiScaleMetadata[].class );
+            }
+
+            else {
+                IOFunctions.println( "Zarrv3 detected, trying 'ome/multiscales'" );
+                multiscales = reader.getAttribute( dataset, "ome/multiscales", OmeNgffMultiScaleMetadata[].class );
+            }
 
 			if ( multiscales == null || multiscales.length == 0 )
 			{
-				IOFunctions.println( "Could not parse OME-ZARR multiscales object. stopping." );
+				IOFunctions.println( "Could not parse OME-ZARR multiscales object (tried 'multiscales' and/or 'ome/multiscales'). stopping." );
 				return null;
 			}
 
@@ -259,18 +271,16 @@ public class OMEZARR implements MultiViewDatasetDefinition
 
 			for ( final String path : multiscales[ 0 ].getPaths() )
 			{
-				IOFunctions.println( "path '" + path + "':");
 
-				final DatasetAttributes attr = reader.getDatasetAttributes( dataset + "/" + path );
+                DatasetAttributes attr = reader.getDatasetAttributes(dataset + "/" + path);
 
-				IOFunctions.println( "NumDimensions: " + attr.getNumDimensions() );
-				IOFunctions.println( "Dimensions: " + Arrays.toString( attr.getDimensions() ) );
-				IOFunctions.println( "BlockSize: " + Arrays.toString( attr.getBlockSize() ) );
-				IOFunctions.println( "DataType: " + attr.getDataType() );
-				IOFunctions.println( "Compression: " + attr.getCompression() );
+                IOFunctions.println("NumDimensions: " + attr.getNumDimensions());
+                IOFunctions.println("Dimensions: " + Arrays.toString(attr.getDimensions()));
+                IOFunctions.println("BlockSize: " + Arrays.toString(attr.getBlockSize()));
+                IOFunctions.println("DataType: " + attr.getDataType());
 
-				if ( fullScaleAttributes == null || attr.getDimensions()[ 0 ] > fullScaleAttributes.getDimensions()[ 0 ])
-					fullScaleAttributes = attr;
+                if (fullScaleAttributes == null || attr.getDimensions()[0] > fullScaleAttributes.getDimensions()[0])
+                    fullScaleAttributes = attr;
 			}
 
 			if ( numDimensions == -1 )
@@ -598,18 +608,22 @@ public class OMEZARR implements MultiViewDatasetDefinition
 		// create timepoints
 		//
 		final ArrayList< TimePoint > tps = new ArrayList< TimePoint >();
-		if ( timepointStrings.size() == 0 )
+		if ( timepointStrings.size() == 0 && sizeT > 0 )
 		{
-			// timepoints within the 4D/5D OME-ZARR (for 4D, there is only 1 timepoint)
-			final long numTimepoints = (numDimensions == 4) ? 1 : sizeT;
-			for ( int i = 0; i < numTimepoints; ++i )
+			// timepoints within the 5D OME-ZARR
+			for ( int i = 0; i < sizeT; ++i )
 				tps.add( new TimePoint( i ) );
 		}
-		else
+		else if ( timepointStrings.size() > 0 )
 		{
 			// timepoints as pattern in 3D OME-ZARR
 			for ( int i = 0; i < timepointStrings.size(); ++i )
 				tps.add( new TimePoint( i ) );
+		}
+		else
+		{
+			// 3D or 4D data with no timepoint pattern - add single default timepoint
+			tps.add( new TimePoint( 0 ) );
 		}
 
 		final TimePoints timepoints = new TimePoints( tps );
@@ -618,17 +632,22 @@ public class OMEZARR implements MultiViewDatasetDefinition
 		// create ViewSetups
 		//
 		final ArrayList< Channel > channels = new ArrayList< Channel >();
-		if ( channelStrings.size() == 0 )
+		if ( channelStrings.size() == 0 && sizeC > 0 )
 		{
-			// channels within the 5D OME-ZARR
+			// channels within the 4D/5D OME-ZARR
 			for ( int i = 0; i < sizeC; ++i )
 				channels.add( new Channel( i ) );
 		}
-		else
+		else if ( channelStrings.size() > 0 )
 		{
 			// channels as pattern in 3D OME-ZARR
 			for ( int i = 0; i < channelStrings.size(); ++i )
 				channels.add( new Channel( i, channelStrings.get( i ) ) );
+		}
+		else
+		{
+			// 3D data with no channel pattern - add default channel
+			channels.add( new Channel( 0 ) );
 		}
 
 		final ArrayList< Tile > tiles = new ArrayList<>();
@@ -736,11 +755,16 @@ public class OMEZARR implements MultiViewDatasetDefinition
 				// channel had a pattern, so it's a single channel for this dataset, still possibly multiple timepoints
 				viewIdToPath.putAll( updateViewSetup(dataset, viewSetups, meta, angleId, chId, illumId, tileId, tpId, sizeT, numDimensions ) );
 			}
-			else
+			else if ( sizeC > 0 )
 			{
-				// if the channels are inside the 5D OME-ZARR, this dataset could contain more than one ViewSetup
+				// if the channels are inside the 4D/5D OME-ZARR, this dataset could contain more than one ViewSetup
 				for ( int c = 0; c < sizeC; ++c )
 					viewIdToPath.putAll( updateViewSetup( dataset, viewSetups, meta, angleId, c, illumId, tileId, tpId, sizeT, numDimensions ) );
+			}
+			else
+			{
+				// 3D data with no channel pattern - single channel (channelId = 0)
+				viewIdToPath.putAll( updateViewSetup( dataset, viewSetups, meta, angleId, 0, illumId, tileId, tpId, sizeT, numDimensions ) );
 			}
 		}
 
@@ -806,10 +830,18 @@ public class OMEZARR implements MultiViewDatasetDefinition
 
 				if ( tpId >= 0 )
 				{
+					// timepoint from pattern (3D OME-ZARR with tp pattern, or 4D/5D with tp pattern)
 					final ViewId viewId = new ViewId( tpId, vs.getId() );
+					// For 3D: indices = null (no higher dimensions)
 					// For 4D: indices = [channelId] (single element)
 					// For 5D with pattern tp: indices = [channelId, 0]
-					final int[] indices = (numDimensions == 4) ? new int[] { channelId } : new int[] { channelId, 0 };
+					final int[] indices;
+					if ( numDimensions == 3 )
+						indices = null;
+					else if ( numDimensions == 4 )
+						indices = new int[] { channelId };
+					else
+						indices = new int[] { channelId, 0 };
 					final OMEZARREntry entry = new OMEZARREntry( dataset, indices );
 
 					IOFunctions.println( "ViewId: " + Group.pvid( viewId ) + " @ " + entry );
@@ -817,14 +849,26 @@ public class OMEZARR implements MultiViewDatasetDefinition
 				}
 				else
 				{
-					// if the timepoints are inside the 4D/5D OME-ZARR, this dataset could contain more than one ViewId
-					final long numTimepoints = (numDimensions == 4) ? 1 : sizeT;
+					// timepoints are inside the OME-ZARR or single timepoint for 3D/4D
+					final long numTimepoints;
+					if ( numDimensions == 3 || numDimensions == 4 )
+						numTimepoints = 1; // 3D has no tp dimension, 4D has only channel dimension
+					else
+						numTimepoints = sizeT; // 5D has both channel and timepoint dimensions
+
 					for ( int t = 0; t < numTimepoints; ++t )
 					{
 						final ViewId viewId = new ViewId( t, vs.getId() );
+						// For 3D: indices = null (no higher dimensions)
 						// For 4D: indices = [channelId] (single element)
 						// For 5D: indices = [channelId, t]
-						final int[] indices = (numDimensions == 4) ? new int[] { channelId } : new int[] { channelId, t };
+						final int[] indices;
+						if ( numDimensions == 3 )
+							indices = null;
+						else if ( numDimensions == 4 )
+							indices = new int[] { channelId };
+						else
+							indices = new int[] { channelId, t };
 						final OMEZARREntry entry = new OMEZARREntry( dataset, indices );
 
 						IOFunctions.println( "ViewId: " + Group.pvid( viewId ) + " @ " + entry );
