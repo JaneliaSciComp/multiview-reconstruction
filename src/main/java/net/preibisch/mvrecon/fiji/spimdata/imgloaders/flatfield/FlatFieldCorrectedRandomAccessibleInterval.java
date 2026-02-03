@@ -25,6 +25,7 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 import net.imglib2.AbstractInterval;
 import net.imglib2.Cursor;
 import net.imglib2.Interval;
+import net.imglib2.Localizable;
 import net.imglib2.Point;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
@@ -80,15 +81,11 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		return type;
 	}
 
-	private class FlatFieldCorrectedRandomAccess extends Point implements RandomAccess< O >
+	private class FlatFieldCorrectedRandomAccess extends Point implements RandomAccess<O>
 	{
-		/*
-		 * TODO: manually implement move methods
-		 */
-		
-		private final RandomAccess< T > sourceRA;
-		private final RandomAccess< S > brightRA;
-		private final RandomAccess< R > darkRA;
+		private final RandomAccess<T> sourceRA;
+		private final RandomAccess<S> brightRA;
+		private final RandomAccess<R> darkRA;
 		private final O value;
 
 		private final int nDimBright;
@@ -96,7 +93,7 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 
 		public FlatFieldCorrectedRandomAccess()
 		{
-			super( sourceImg.numDimensions() );
+			super(sourceImg.numDimensions());
 			sourceRA = sourceImg.randomAccess();
 			brightRA = brightImg.randomAccess();
 			darkRA = darkImg.randomAccess();
@@ -108,35 +105,153 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		@Override
 		public O get()
 		{
-			// Use the fact that bright and dark must be of dimensionality <= source,
-			// and that coordinates outside the dimensionality are ignored
-			sourceRA.setPosition(position);
-			brightRA.setPosition(position);
-			darkRA.setPosition(position);
-
 			final double darkValue = darkRA.get().getRealDouble();
 			final double corrBright = brightRA.get().getRealDouble() - darkValue;
 			final double corrImg = sourceRA.get().getRealDouble() - darkValue;
 
 			if (corrBright == 0)
-				value.setReal( 0.0 );
+				value.setReal(0.0);
 			else
 			{
-				final double corr = Math.min( Math.max( corrImg * meanBrightCorrected / corrBright, value.getMinValue() ), value.getMaxValue() );
-				value.setReal( corr );
+				final double corr = Math.min(Math.max(corrImg * meanBrightCorrected / corrBright, value.getMinValue()), value.getMaxValue());
+				value.setReal(corr);
 			}
 
 			return value;
 		}
 
 		@Override
-		public RandomAccess< O > copy()
+		public void fwd(int d)
 		{
-			final FlatFieldCorrectedRandomAccessibleInterval<O, T, S, R >.FlatFieldCorrectedRandomAccess copy = new FlatFieldCorrectedRandomAccess();
-			copy.setPosition( this );
+			position[d]++;
+			sourceRA.fwd(d);
+			if (d < nDimBright) brightRA.fwd(d);
+			if (d < nDimDark) darkRA.fwd(d);
+		}
+
+		@Override
+		public void bck(int d)
+		{
+			position[d]--;
+			sourceRA.bck(d);
+			if (d < nDimBright) brightRA.bck(d);
+			if (d < nDimDark) darkRA.bck(d);
+		}
+
+		@Override
+		public void move(int distance, int d)
+		{
+			position[d] += distance;
+			sourceRA.move(distance, d);
+			if (d < nDimBright) brightRA.move(distance, d);
+			if (d < nDimDark) darkRA.move(distance, d);
+		}
+
+		@Override
+		public void move(long distance, int d)
+		{
+			position[d] += distance;
+			sourceRA.move(distance, d);
+			if (d < nDimBright) brightRA.move(distance, d);
+			if (d < nDimDark) darkRA.move(distance, d);
+		}
+
+		@Override
+		public void move(Localizable distance)
+		{
+			for (int d = 0; d < n; d++)
+				position[d] += distance.getLongPosition(d);
+			sourceRA.move(distance);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.move(distance.getLongPosition(d), d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.move(distance.getLongPosition(d), d);
+		}
+
+		@Override
+		public void move(int[] distance)
+		{
+			for (int d = 0; d < n; d++)
+				position[d] += distance[d];
+			sourceRA.move(distance);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.move(distance[d], d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.move(distance[d], d);
+		}
+
+		@Override
+		public void move(long[] distance)
+		{
+			for (int d = 0; d < n; d++)
+				position[d] += distance[d];
+			sourceRA.move(distance);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.move(distance[d], d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.move(distance[d], d);
+		}
+
+		@Override
+		public void setPosition(Localizable position)
+		{
+			for (int d = 0; d < n; d++)
+				this.position[d] = position.getLongPosition(d);
+			sourceRA.setPosition(position);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.setPosition(position.getLongPosition(d), d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.setPosition(position.getLongPosition(d), d);
+		}
+
+		@Override
+		public void setPosition(int[] position)
+		{
+			for (int d = 0; d < n; d++)
+				this.position[d] = position[d];
+			sourceRA.setPosition(position);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.setPosition(position[d], d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.setPosition(position[d], d);
+		}
+
+		@Override
+		public void setPosition(long[] position)
+		{
+			for (int d = 0; d < n; d++)
+				this.position[d] = position[d];
+			sourceRA.setPosition(position);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.setPosition(position[d], d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.setPosition(position[d], d);
+		}
+
+		@Override
+		public void setPosition(int position, int d)
+		{
+			this.position[d] = position;
+			sourceRA.setPosition(position, d);
+			if (d < nDimBright) brightRA.setPosition(position, d);
+			if (d < nDimDark) darkRA.setPosition(position, d);
+		}
+
+		@Override
+		public void setPosition(long position, int d)
+		{
+			this.position[d] = position;
+			sourceRA.setPosition(position, d);
+			if (d < nDimBright) brightRA.setPosition(position, d);
+			if (d < nDimDark) darkRA.setPosition(position, d);
+		}
+
+		@Override
+		public RandomAccess<O> copy() {
+			final FlatFieldCorrectedRandomAccessibleInterval<O, T, S, R>.FlatFieldCorrectedRandomAccess copy = new FlatFieldCorrectedRandomAccess();
+			copy.setPosition(this);
 			return copy;
 		}
-		
 	}
 	
 	public static <P extends RealType< P >, Q extends RealType< Q >> double getMeanCorrected(RandomAccessibleInterval< P > brightImg, RandomAccessibleInterval< Q > darkImg)
