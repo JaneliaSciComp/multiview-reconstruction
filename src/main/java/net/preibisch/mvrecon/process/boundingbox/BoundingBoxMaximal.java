@@ -43,7 +43,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 public class BoundingBoxMaximal implements BoundingBoxEstimation
 {
 	final Collection< ViewId > views;
-	final HashMap< ViewId, Dimensions > dimensions;
+	public final HashMap< ViewId, Dimensions > dimensions;
 	final HashMap< ViewId, AffineTransform3D > registrations;
 
 	public static boolean ignoreMissingViews = false;

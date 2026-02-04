@@ -109,6 +109,7 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<!-- TEMP: Until pom-scijava 44.0.0 is released. -->
 		<imglib2.version>8.0.0</imglib2.version>
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
+		<imglib2-algorithm.version>0.18.3-SNAPSHOT</imglib2-algorithm.version>
 		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
 
 		<mpicbg.version>1.6.6</mpicbg.version>
