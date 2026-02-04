@@ -170,7 +170,11 @@ public class SplitMultiResolutionSetupImgLoader< T > implements MultiResolutionS
 	public RandomAccessibleInterval< FloatType > getFloatImage( int timepointId,
 			int level, boolean normalize, ImgLoaderHint... hints )
 	{
-		throw new RuntimeException( "not supported." );
+		final RandomAccessibleInterval< FloatType > full = underlyingSetupImgLoader.getFloatImage( timepointId, level, normalize, hints );
+
+		updateScaledIntervals( this.scaledIntervals, level, n, full );
+
+		return Views.zeroMin( Views.interval( full, scaledIntervals[ level ] ) );
 	}
 
 	@Override

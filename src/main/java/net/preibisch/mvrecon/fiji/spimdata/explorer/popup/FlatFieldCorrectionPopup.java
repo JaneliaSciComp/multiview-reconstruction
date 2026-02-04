@@ -45,6 +45,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.DefaultFlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldImageInfo;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.LazyLoadingFlatFieldCorrectionMap;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.MultiResolutionFlatfieldCorrectionWrappedImgLoader;
 
@@ -101,10 +102,10 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 								.isCached()
 						: true );
 
-				Map< ViewId, Pair< File, File > > fileMap = null;
+				Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> infoMap = null;
 				if ( alreadyFF )
-					fileMap = ( (LazyLoadingFlatFieldCorrectionMap< ImgLoader >) data.getSequenceDescription()
-							.getImgLoader() ).getFileMap();
+					infoMap = ((LazyLoadingFlatFieldCorrectionMap<ImgLoader>) data.getSequenceDescription()
+							.getImgLoader()).getInfoMap();
 
 				for ( Channel c : channels )
 					for ( Illumination ill : illums )
@@ -120,13 +121,12 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 									} ).findAny().orElseGet( null );
 
 							if ( anyViewId != null )
-								if ( fileMap.containsKey( anyViewId ) )
-								{
-									Pair< File, File > files = fileMap.get( anyViewId );
-									if ( files.getA() != null )
-										bright = files.getA().getAbsolutePath();
-									if ( files.getB() != null )
-										dark = files.getB().getAbsolutePath();
+								if (infoMap.containsKey(anyViewId)) {
+									Pair<FlatfieldImageInfo, FlatfieldImageInfo> infos = infoMap.get(anyViewId);
+									if (infos.getA() != null)
+										bright = new File(infos.getA().getUri()).getAbsolutePath();
+									if (infos.getB() != null)
+										dark = new File(infos.getB().getUri()).getAbsolutePath();
 								}
 						}
 						gdp.addMessage( "Channel: " + c.getName() + ", Illumination: " + ill.getName() + ":" );
@@ -160,12 +160,16 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 						File lightFile = !lightPath.equals( "" ) ? new File( lightPath ) : null;
 						File darkFile = !darkPath.equals( "" ) ? new File( darkPath ) : null;
 
+						final File finalLightFile = lightFile;
+						final File finalDarkFile = darkFile;
 						data.getSequenceDescription().getViewDescriptions().entrySet().forEach( el -> {
 							if ( el.getValue().getViewSetup().getChannel() == c
 									&& el.getValue().getViewSetup().getIllumination() == ill )
 							{
-								ffIL.setBrightImage( el.getKey(), lightFile );
-								ffIL.setDarkImage( el.getKey(), darkFile );
+								if (finalLightFile != null)
+									ffIL.setBrightImage( el.getKey(), new FlatfieldImageInfo(finalLightFile.toURI(), null) );
+								if (finalDarkFile != null)
+									ffIL.setDarkImage( el.getKey(), new FlatfieldImageInfo(finalDarkFile.toURI(), null) );
 							}
 						} );
 					}

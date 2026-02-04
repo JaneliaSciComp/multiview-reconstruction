@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SpimData version="0.2">
+  <BasePath type="relative">.</BasePath>
+  <SequenceDescription>
+    <ImageLoader format="spimreconstruction.wrapped.flatfield.viewer" Active="true" Cached="true">
+      <WrappedImgLoader>
+        <ImageLoader format="bdv.n5" version="1.1">
+          <n5 type="relative">https://s3.janelia.org/keller-lab/s12a/samples_for_stitching/fly_brain_3/basic_corrected/dataset.n5</n5>
+        </ImageLoader>
+      </WrappedImgLoader>
+      <FlatFields>
+        <FlatField Timepoint="0" ViewSetup="0">
+		  <BrightImg format="n5">https://s3.janelia.org/keller-lab/s12a/samples_for_stitching/fly_brain_3/kittisopikulm/camera1/dark_field/s0/</BrightImg>
+		  <DarkImg format="n5" >https://s3.janelia.org/keller-lab/s12a/samples_for_stitching/fly_brain_3/kittisopikulm/camera1/flat_field/s0/</DarkImg>
+        </FlatField>
+      </FlatFields>
+    </ImageLoader>
+    <ViewSetups>
+      <ViewSetup>
+        <id>0</id>
+        <name>0</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>187</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <Attributes name="illumination">
+        <Illumination>
+          <id>0</id>
+          <name>0</name>
+        </Illumination>
+      </Attributes>
+      <Attributes name="channel">
+        <Channel>
+          <id>0</id>
+          <name>0</name>
+        </Channel>
+      </Attributes>
+      <Attributes name="tile">
+        <Tile>
+          <id>187</id>
+          <name>187</name>
+        </Tile>
+        <Tile>
+          <id>188</id>
+          <name>188</name>
+        </Tile>
+        <Tile>
+          <id>189</id>
+          <name>189</name>
+        </Tile>
+        <Tile>
+          <id>200</id>
+          <name>200</name>
+        </Tile>
+        <Tile>
+          <id>201</id>
+          <name>201</name>
+        </Tile>
+        <Tile>
+          <id>202</id>
+          <name>202</name>
+        </Tile>
+        <Tile>
+          <id>213</id>
+          <name>213</name>
+        </Tile>
+        <Tile>
+          <id>214</id>
+          <name>214</name>
+        </Tile>
+        <Tile>
+          <id>215</id>
+          <name>215</name>
+        </Tile>
+      </Attributes>
+      <Attributes name="angle">
+        <Angle>
+          <id>0</id>
+          <name>0</name>
+        </Angle>
+      </Attributes>
+    </ViewSetups>
+    <Timepoints type="pattern">
+      <integerpattern>0</integerpattern>
+    </Timepoints>
+    <MissingViews />
+  </SequenceDescription>
+  <ViewRegistrations>
+    <ViewRegistration timepoint="0" setup="0">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0 0.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 0.4554158176323426 0.0 1.0 0.0 -0.13328548693164066 0.0 0.0 1.0 1.039028825990859</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 199.68 0.0 1.0 0.0 102.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+  </ViewRegistrations>
+  <ViewInterestPoints />
+  <BoundingBoxes />
+  <PointSpreadFunctions />
+  <StitchingResults />
+  <IntensityAdjustments />
+</SpimData>
