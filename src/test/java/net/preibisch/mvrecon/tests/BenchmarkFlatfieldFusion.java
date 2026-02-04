@@ -26,20 +26,27 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
+import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
+import net.imglib2.util.Pair;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionBlockSupplier;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldImageInfo;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldImageLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.ViewerFlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
@@ -221,6 +228,129 @@ public class BenchmarkFlatfieldFusion {
 
 		System.out.println();
 		System.out.printf("Overhead: %+d ms (%+.1f%%)%n", overhead, overheadPercent);
+		System.out.println("============================================================");
+
+		// Run BlockSupplier comparison if we have a ViewerFlatfieldCorrectionWrappedImgLoader
+		if (viewerFfLoader != null) {
+			System.out.println();
+			runBlockSupplierBenchmark(spimData, viewerFfLoader, viewIds.get(0), boundingBoxFusion);
+		}
+	}
+
+	/**
+	 * Benchmark comparing RandomAccess-based vs BlockSupplier-based flatfield correction.
+	 */
+	private static void runBlockSupplierBenchmark(
+			final SpimData2 spimData,
+			final ViewerFlatfieldCorrectionWrappedImgLoader viewerFfLoader,
+			final ViewId viewId,
+			final Interval boundingBox) {
+		System.out.println("============================================================");
+		System.out.println("BlockSupplier vs RandomAccess Flatfield Correction Benchmark");
+		System.out.println("============================================================");
+		System.out.println();
+
+		// Get bright/dark info for this view
+		final Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> infoMap = viewerFfLoader.getInfoMap();
+		final Pair<FlatfieldImageInfo, FlatfieldImageInfo> ffInfo = infoMap.get(viewId);
+
+		if (ffInfo == null) {
+			System.out.println("No flatfield info for view " + viewId + ", skipping BlockSupplier benchmark.");
+			return;
+		}
+
+		// Load bright/dark images
+		final FlatfieldImageLoader loader = new FlatfieldImageLoader();
+		loader.setBrightImage(viewId, ffInfo.getA());
+		loader.setDarkImage(viewId, ffInfo.getB());
+
+		final RandomAccessibleInterval<FloatType> brightImg = loader.getBrightImg(viewId);
+		final RandomAccessibleInterval<FloatType> darkImg = loader.getDarkImg(viewId);
+
+		if (brightImg == null || darkImg == null) {
+			System.out.println("Could not load bright/dark images, skipping BlockSupplier benchmark.");
+			return;
+		}
+
+		// Get raw source image (without flatfield correction)
+		viewerFfLoader.setActive(false);
+		@SuppressWarnings("unchecked")
+		final RandomAccessibleInterval<UnsignedShortType> sourceImg =
+				(RandomAccessibleInterval<UnsignedShortType>) viewerFfLoader.getSetupImgLoader(viewId.getViewSetupId())
+						.getImage(viewId.getTimePointId());
+
+		System.out.println("Testing single view: " + viewId);
+		System.out.println("Source dimensions: " + sourceImg.dimension(0) + " x " + sourceImg.dimension(1) + " x " + sourceImg.dimension(2));
+		System.out.println("Bright dimensions: " + brightImg.dimension(0) + " x " + brightImg.dimension(1));
+		System.out.println();
+
+		// Create interval to test (use full XY, limited Z for faster testing)
+		final long[] min = new long[] {sourceImg.min(0), sourceImg.min(1), sourceImg.min(2)};
+		final long[] max = new long[] {sourceImg.max(0), sourceImg.max(1), Math.min(sourceImg.min(2) + 31, sourceImg.max(2))};
+		final FinalInterval testInterval = new FinalInterval(min, max);
+
+		System.out.println("Test interval: [" + min[0] + "-" + max[0] + ", " + min[1] + "-" + max[1] + ", " + min[2] + "-" + max[2] + "]");
+		System.out.println();
+
+		// Create BlockSupplier for comparison
+		final BlockSupplier<FloatType> blockSupplier = FlatfieldCorrectionBlockSupplier.of(sourceImg, brightImg, darkImg);
+
+		// Allocate output array
+		final int len = (int) ((max[0] - min[0] + 1) * (max[1] - min[1] + 1) * (max[2] - min[2] + 1));
+		final float[] output = new float[len];
+
+		// Warmup
+		System.out.println("--- Warmup ---");
+		for (int i = 0; i < 5; i++) {
+			blockSupplier.copy(testInterval, output);
+		}
+
+		// Benchmark BlockSupplier
+		System.out.println("--- BlockSupplier Benchmark ---");
+		final long[] timesBlock = new long[20];
+		for (int i = 0; i < timesBlock.length; i++) {
+			final long start = System.currentTimeMillis();
+			blockSupplier.copy(testInterval, output);
+			timesBlock[i] = System.currentTimeMillis() - start;
+			System.out.println("  Iteration " + (i + 1) + ": " + timesBlock[i] + " ms");
+		}
+
+		// Benchmark RandomAccess-based (via fusion with single view)
+		System.out.println();
+		System.out.println("--- RandomAccess Benchmark (via single-view fusion) ---");
+		viewerFfLoader.setActive(true);
+
+		final long[] timesRA = new long[20];
+		for (int i = 0; i < timesRA.length; i++) {
+			// Re-get the image with correction enabled
+			@SuppressWarnings("unchecked")
+			final RandomAccessibleInterval<UnsignedShortType> correctedImg =
+					(RandomAccessibleInterval<UnsignedShortType>) viewerFfLoader.getSetupImgLoader(viewId.getViewSetupId())
+							.getImage(viewId.getTimePointId());
+
+			final long start = System.currentTimeMillis();
+			// Force computation by copying to array via BlockSupplier
+			final BlockSupplier<FloatType> raBlocks = BlockSupplier
+					.of(net.imglib2.view.Views.extendBorder(correctedImg))
+					.andThen(net.imglib2.algorithm.blocks.convert.Convert.convert(new FloatType()));
+			raBlocks.copy(testInterval, output);
+			timesRA[i] = System.currentTimeMillis() - start;
+			System.out.println("  Iteration " + (i + 1) + ": " + timesRA[i] + " ms");
+		}
+
+		// Calculate and report statistics
+		final Stats statsBlock = calculateStats(timesBlock);
+		final Stats statsRA = calculateStats(timesRA);
+
+		System.out.println();
+		System.out.println("--- Results ---");
+		System.out.printf("BlockSupplier:  avg %d ms (min %d, max %d, stddev %.1f)%n",
+				statsBlock.avg, statsBlock.min, statsBlock.max, statsBlock.stddev);
+		System.out.printf("RandomAccess:   avg %d ms (min %d, max %d, stddev %.1f)%n",
+				statsRA.avg, statsRA.min, statsRA.max, statsRA.stddev);
+
+		final double speedup = (double) statsRA.avg / statsBlock.avg;
+		System.out.printf("%nSpeedup: %.2fx%n", speedup);
 		System.out.println("============================================================");
 	}
 
