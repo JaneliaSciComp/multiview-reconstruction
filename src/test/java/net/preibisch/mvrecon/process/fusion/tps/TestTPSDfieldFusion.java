@@ -1,6 +1,8 @@
 package net.preibisch.mvrecon.process.fusion.tps;
 
+import static net.imglib2.algorithm.blocks.dfield.DisplacementFieldTransform.displacementFieldAffine;
 import static net.imglib2.util.Util.safeInt;
+import static net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension.zero;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -11,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import bdv.ViewerImgLoader;
 import ij.IJ;
@@ -23,21 +26,38 @@ import mpicbg.spim.data.registration.ViewTransform;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Cursor;
+import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
+import net.imglib2.FinalRealInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.RealInterval;
 import net.imglib2.algorithm.blocks.AbstractBlockSupplier;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
+import net.imglib2.algorithm.blocks.convert.Convert;
+import net.imglib2.algorithm.blocks.dfield.DisplacementField;
+import net.imglib2.algorithm.blocks.transform.Transform;
 import net.imglib2.blocks.BlockInterval;
 import net.imglib2.cache.img.CachedCellImg;
+import net.imglib2.img.array.ArrayCursor;
+import net.imglib2.img.array.ArrayImg;
+import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.basictypeaccess.array.DoubleArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.iterator.IntervalIterator;
+import net.imglib2.loops.LoopBuilder;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.realtransform.DisplacementFieldTransform;
+import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.RealTransformRealRandomAccessible;
+import net.imglib2.realtransform.Scale3D;
 import net.imglib2.realtransform.ThinplateSplineTransform;
+import net.imglib2.realtransform.inverse.WrappedIterativeInvertibleRealTransform;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
@@ -61,10 +81,11 @@ import net.preibisch.mvrecon.process.splitting.SplittingTools;
 /**
  * This needs a minimal grid size of 2x2x2, otherwise we get 'funny' transformations
  */
-public class TestTPSFusion
+public class TestTPSDfieldFusion
 {
+	
 	static boolean writeDontShow = true;
-
+	
 	public static HashMap< ViewId, Pair< double[][], double[][] > > getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
 			final Map<ViewId, ViewRegistration> splitRegMap,
@@ -98,7 +119,7 @@ public class TestTPSFusion
 	{
 		final SpimData2 data = 
 				new XmlIoSpimData2().load(
-						URI.create("file:/home/john/data/bigstitcher/split_dataset/dataset.split.xml") );
+						URI.create("file:/home/john/data/bigstitcher/split_dataset/dataset.split.xml"));
 
 		final ViewerImgLoader underlyingImgLoader = BlkThinPlateSplineFusion.getUnderlyingImageLoader(data);
 
@@ -135,8 +156,11 @@ public class TestTPSFusion
 				getCoefficients( splitImgLoader, data.getViewRegistrations().getViewRegistrations(), underlyingViewIds, anisotropyFactor, downsampling );
 
 		// we estimate the bounding box using the split imagel loader, which will be closer to real bounding box
-		BoundingBox boundingBox = new BoundingBoxMaximal( splitViewIds, data ).estimate( "Full Bounding Box" );
+		BoundingBoxMaximal boundingBoxMaximal = new BoundingBoxMaximal( splitViewIds, data );
+		BoundingBox boundingBox = boundingBoxMaximal.estimate( "Full Bounding Box" );
 		System.out.println( boundingBox );
+
+		HashMap<ViewId, Dimensions> idToDimensions = boundingBoxMaximal.dimensions;
 
 		if ( !Double.isNaN( anisotropyFactor ) )
 		{
@@ -169,12 +193,12 @@ public class TestTPSFusion
 		*/
 
 		// use BlockSupplier
-		final TPSMaxFusionBlockSupplier tpsSupplier = new TPSMaxFusionBlockSupplier( boundingBox, coeff, underlyingImgLoader );
+		final TPSMaxFusionBlockSupplier tpsSupplier = new TPSMaxFusionBlockSupplier( boundingBox, coeff, idToDimensions, underlyingImgLoader );
 
 		CachedCellImg<FloatType, ?> fused =
 				BlockAlgoUtils.cellImg( tpsSupplier, boundingBox.dimensionsAsLongArray(), new int[] { 256, 256, 1 } );
 
-		if( writeDontShow)
+		if( writeDontShow )
 		{
 			ImagePlus imp = ImageJFunctions.wrap(fused, "fused", Executors.newFixedThreadPool( 8 ));
 			IJ.save(imp, "TpsDfieldFusion.tif");
@@ -186,37 +210,79 @@ public class TestTPSFusion
 
 	private static class TPSMaxFusionBlockSupplier extends AbstractBlockSupplier< FloatType >
 	{
-		final Interval boundingBox;
+		final BoundingBox boundingBox;
 		final HashMap< ViewId, Pair< double[][], double[][] > > coeff;
 		final BasicImgLoader imgLoader;
 
-		final HashMap< ViewId, RandomAccessible > transformed;
+		final HashMap< ViewId, BlockSupplier<FloatType> > transformed;
+		private HashMap<ViewId, Dimensions> idToDimensions;
 
 		public TPSMaxFusionBlockSupplier(
-				final Interval boundingBox,
+				final BoundingBox boundingBox,
 				final HashMap< ViewId, Pair< double[][], double[][] > > coeff,
+				final HashMap< ViewId, Dimensions > idToDimensions,
 				final BasicImgLoader imgLoader )
 		{
 			this.boundingBox = boundingBox;
 			this.coeff = coeff;
+			this.idToDimensions = idToDimensions;
 			this.imgLoader = imgLoader;
 			this.transformed = new HashMap<>();
 
+			final double[] spacing = {8,8,8}; // TODO make a parameter
+	
 			this.coeff.forEach( ( v,c ) -> {
-
+				
+				// from rendered to original
 				final ThinplateSplineTransform transform = new ThinplateSplineTransform(
-					// we go from output to input
-					c.getB(),
-					c.getA() );
+						// we go from output to input
+						c.getB(),
+						c.getA() );
+				
+				// from original to rendered
+				RealTransform invTransform = new WrappedIterativeInvertibleRealTransform<>(transform).inverse();
+				
+				// dimensions of the viewId in original space
+				final Dimensions viewIdBoundingBox = idToDimensions.get(v);
+				final FinalInterval origInterval = new FinalInterval( viewIdBoundingBox);
+				
+				// we need rendered space
+				final Interval transformedInterval = corners(invTransform, origInterval);
+
+				
+				// smaller interval over which to rasterize the TPS
+				Interval downsampledTransformInterval = downsample(transformedInterval, spacing);
+				
+				System.out.println( "view id itvl: " + origInterval);
+				System.out.println( "transformed itvl: " + transformedInterval);
+				System.out.println( "down transformed itvl: " + downsampledTransformInterval);
+
+				// estimate the bounding box of the TPS
+				// then downsample the resulting interval
+
+				double[] offset = transformedInterval.minAsDoubleArray(); // use this when creating displacement field?
+				final RandomAccessibleInterval<DoubleType> dfieldV = DisplacementFieldTransform.createDisplacementField(
+						transform, downsampledTransformInterval, spacing, offset);
+
+				final ArrayImg<DoubleType, DoubleArray> dfieldImg = ArrayImgs.doubles(dfieldV.dimensionsAsLongArray());
+				for (int i = 0; i < viewIdBoundingBox.numDimensions(); i++) {
+					final double f = spacing[i];
+					LoopBuilder.setImages(dfieldV.view().slice(0, i), dfieldImg.view().slice(0, i))
+							.forEachPixel((x, y) -> y.set(x.get() / f));
+				}
 
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
-				final RealRandomAccessibleView< UnsignedByteType > interp =
-						img.view().extend(Extension.zero()).interpolate(Interpolation.clampingNLinear());
+	
+				final Scale3D transformFromSource = new Scale3D(8,8,8);
+				final DisplacementField< DoubleType > dfield = new DisplacementField<>(
+						BlockSupplier.of( dfieldImg ), spacing, new double[] { 0, 0, 0 } );
 
-				final RandomAccessible tformedImg =
-						new RealTransformRealRandomAccessible(interp, transform).realView().raster();
+				final BlockSupplier< FloatType > blocks = BlockSupplier
+						.of( img.view().extend(zero()) )
+						.andThen(Convert.convert(new FloatType()))
+						.andThen( displacementFieldAffine( transformFromSource, dfield, Transform.Interpolation.NLINEAR ) );
 
-				transformed.put(v, tformedImg);
+				transformed.put(v, blocks);
 			});
 			
 		}
@@ -231,11 +297,10 @@ public class TestTPSFusion
 			final int[] size = blockInterval.size();
 			final int len = safeInt( Intervals.numElements( size ) );
 
-			transformed.forEach( (v,ra) -> {
+			transformed.forEach( (v,blocks) -> {
 
-				//System.out.println( Util.printInterval( blockInterval ) );
-				final Cursor<RealType> c = Views.flatIterable( Views.interval( ra, blockInterval ) ).cursor();
-
+				final ArrayImg<FloatType, ?> img = BlockAlgoUtils.arrayImg( blocks, blockInterval );
+				final ArrayCursor<FloatType> c = img.cursor();
 				final float[] fdest = Cast.unchecked( dest );
 
 				for ( int x = 0; x < len; ++x )
@@ -244,7 +309,7 @@ public class TestTPSFusion
 		}
 
 		@Override
-		public BlockSupplier<FloatType> independentCopy() { return new TPSMaxFusionBlockSupplier( boundingBox, coeff, imgLoader); }
+		public BlockSupplier<FloatType> independentCopy() { return new TPSMaxFusionBlockSupplier( boundingBox, coeff, idToDimensions, imgLoader); }
 
 		private static final FloatType type = new FloatType();
 
@@ -254,4 +319,62 @@ public class TestTPSFusion
 		@Override
 		public int numDimensions() { return 3; }
 	}
+	
+	public static Interval corners( RealTransform xfm, Interval interval )
+	{
+		if( xfm == null )
+			return new FinalInterval( interval );
+
+		int nd = interval.numDimensions();
+		double[] pt = new double[ nd ];
+		double[] ptxfm = new double[ nd ];
+
+		long[] min = new long[ nd ];
+		long[] max = new long[ nd ];
+		Arrays.fill( min, Long.MAX_VALUE );
+		Arrays.fill( max, Long.MIN_VALUE );
+
+		long[] unitInterval = new long[ nd ];
+		Arrays.fill( unitInterval, 2 );
+
+		IntervalIterator it = new IntervalIterator( unitInterval );
+		while( it.hasNext() )
+		{
+			it.fwd();
+			for( int d = 0; d < nd; d++ )
+			{
+				if( it.getLongPosition( d ) == 0 )
+					pt[ d ] = interval.realMin( d );
+				else
+					pt[ d ] = interval.realMax( d );
+			}
+
+			xfm.apply( pt, ptxfm );
+
+			for( int d = 0; d < nd; d++ )
+			{
+				long lo = (long)Math.floor( ptxfm[d] );
+				long hi = (long)Math.ceil( ptxfm[d] );
+
+				if( lo < min[ d ])
+					min[ d ] = lo;
+
+				if( hi > max[ d ])
+					max[ d ] = hi;
+			}
+		}
+		return new FinalInterval( min, max );
+	}
+	
+	
+	public static Interval downsample(final Interval itvl, final double[] downsample ) {
+
+		final long[] dims = IntStream.of(0, 1, 2).mapToLong( i -> {
+			return (long)Math.ceil(itvl.dimension(i) / downsample[i]);
+		}).toArray();
+
+		return new FinalInterval(dims);
+	}
+
+
 }
