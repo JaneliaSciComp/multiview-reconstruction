@@ -11,6 +11,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -85,6 +86,8 @@ public class TestTPSDfieldFusion
 {
 	
 	static boolean writeDontShow = true;
+	static boolean wiggleLandmarks = true;
+	static double wiggleAmount = 10;
 	
 	public static HashMap< ViewId, Pair< double[][], double[][] > > getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
@@ -106,6 +109,9 @@ public class TestTPSDfieldFusion
 					BlkThinPlateSplineFusion.getCoefficients(splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId, anisotropyFactor, downsampling);
 
 			underlyingViewId2TPSCoefficients.put( underlyingViewId, coeff );
+
+			if( wiggleLandmarks )
+				TestTPSFusion.wiggle(coeff.getB(), wiggleAmount, new Random(1));
 
 			System.out.println( "source: " + Arrays.deepToString( coeff.getA() ) );
 			System.out.println( "target: " + Arrays.deepToString( coeff.getB() ) );
