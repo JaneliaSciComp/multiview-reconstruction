@@ -22,85 +22,145 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
-import java.util.Arrays;
-
-import bdv.util.ConstantRandomAccessible;
-import net.imglib2.FinalInterval;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.blocks.BlockAlgoUtils;
+import net.imglib2.algorithm.blocks.BlockSupplier;
+import net.imglib2.cache.img.CachedCellImg;
+import net.imglib2.converter.RealTypeConverters;
+import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
 
+/**
+ * Factory methods for creating flatfield-corrected images.
+ *
+ * All methods use efficient block-based processing internally via
+ * {@link FlatfieldCorrectionBlockSupplier}, backed by a {@link CachedCellImg}.
+ */
 public class FlatFieldCorrectedRandomAccessibleIntervals
 {
-	public static < R extends RealType< R >, S extends RealType< S >, T extends RealType< T >> RandomAccessibleInterval< R > create(
-			RandomAccessibleInterval< R > sourceImg,
-			RandomAccessibleInterval< S > brightImg,
-			RandomAccessibleInterval< T > darkImg )
+	/** Default cell size for block-based flatfield correction */
+	private static final int[] DEFAULT_CELL_SIZE = new int[] {64, 64, 64};
+
+	/**
+	 * Create a flatfield-corrected image with the same type as the source.
+	 * Uses efficient block-based processing internally.
+	 *
+	 * @param sourceImg source image
+	 * @param brightImg bright (flatfield) image, can be null
+	 * @param darkImg dark image, can be null
+	 * @return corrected image with same type as source
+	 */
+	public static <R extends RealType<R> & NativeType<R>, S extends RealType<S>, T extends RealType<T>>
+	RandomAccessibleInterval<R> create(
+			final RandomAccessibleInterval<R> sourceImg,
+			final RandomAccessibleInterval<S> brightImg,
+			final RandomAccessibleInterval<T> darkImg)
 	{
-		R type = sourceImg.firstElement().createVariable();
-		return create( sourceImg, brightImg, darkImg, type );
+		final R type = sourceImg.getType().createVariable();
+		return create(sourceImg, brightImg, darkImg, type);
 	}
-	public static <O extends RealType< O >, R extends RealType< R >, S extends RealType< S >, T extends RealType< T >> RandomAccessibleInterval< O > create(
-			RandomAccessibleInterval< R > sourceImg,
-			RandomAccessibleInterval< S > brightImg,
-			RandomAccessibleInterval< T > darkImg,
-			O outputType)
+
+	/**
+	 * Create a flatfield-corrected image with a specified output type.
+	 * Uses efficient block-based processing internally.
+	 *
+	 * @param sourceImg source image
+	 * @param brightImg bright (flatfield) image, can be null
+	 * @param darkImg dark image, can be null
+	 * @param outputType the desired output type
+	 * @return corrected image with specified output type
+	 */
+	@SuppressWarnings("unchecked")
+	public static <O extends RealType<O>, R extends RealType<R> & NativeType<R>, S extends RealType<S>, T extends RealType<T>>
+	RandomAccessibleInterval<O> create(
+			final RandomAccessibleInterval<R> sourceImg,
+			final RandomAccessibleInterval<S> brightImg,
+			final RandomAccessibleInterval<T> darkImg,
+			final O outputType)
 	{
+		// Create block-based corrected image (always FloatType internally)
+		final RandomAccessibleInterval<FloatType> correctedFloat = createBlockBased(
+				sourceImg, brightImg, darkImg, DEFAULT_CELL_SIZE);
 
-		// get intervals for bright and/or dark imgs: interval of source img, but only for dimensionality of bright/dark
-		final long[] minsBright;
-		final long[] maxsBright;
-		FinalInterval intervalBright = null;
-		if (brightImg != null)
-		{
-			minsBright = new long[brightImg.numDimensions()];
-			maxsBright = new long[brightImg.numDimensions()];
-			Arrays.fill( maxsBright, 1 );
-			for (int d = 0; d < brightImg.numDimensions(); ++d)
-			{
-				minsBright[d] = sourceImg.min( d );
-				maxsBright[d] = sourceImg.max( d );
-			}
-			intervalBright = new FinalInterval( minsBright, maxsBright );
-		}
-		final long[] minsDark;
-		final long[] maxsDark;
-		FinalInterval intervalDark = null;
-		if (darkImg != null)
-		{
-			minsDark = new long[darkImg.numDimensions()];
-			maxsDark = new long[darkImg.numDimensions()];
-			Arrays.fill( maxsDark, 1 );
-			for (int d = 0; d < darkImg.numDimensions(); ++d)
-			{
-				minsDark[d] = sourceImg.min( d );
-				maxsDark[d] = sourceImg.max( d );
-			}
-			intervalDark = new FinalInterval( minsDark, maxsDark );
-		}
+		// If output type is FloatType, return directly
+		if (outputType instanceof FloatType)
+			return (RandomAccessibleInterval<O>) correctedFloat;
 
+		// Otherwise, convert to the requested output type
+		return RealTypeConverters.convert(correctedFloat, outputType);
+	}
+
+	/**
+	 * Create a flatfield-corrected FloatType image using efficient block-based processing.
+	 * The result is backed by a CachedCellImg that computes correction on-demand.
+	 *
+	 * @param sourceImg source image (can be any RealType)
+	 * @param brightImg bright (flatfield) image, can be null
+	 * @param darkImg dark image, can be null
+	 * @return FloatType RandomAccessibleInterval with flatfield correction applied
+	 */
+	public static <R extends RealType<R> & NativeType<R>, S extends RealType<S>, T extends RealType<T>>
+	RandomAccessibleInterval<FloatType> createBlockBased(
+			final RandomAccessibleInterval<R> sourceImg,
+			final RandomAccessibleInterval<S> brightImg,
+			final RandomAccessibleInterval<T> darkImg)
+	{
+		return createBlockBased(sourceImg, brightImg, darkImg, DEFAULT_CELL_SIZE);
+	}
+
+	/**
+	 * Create a flatfield-corrected FloatType image using efficient block-based processing.
+	 * The result is backed by a CachedCellImg that computes correction on-demand.
+	 *
+	 * @param sourceImg source image (can be any RealType)
+	 * @param brightImg bright (flatfield) image, can be null
+	 * @param darkImg dark image, can be null
+	 * @param cellSize cell size for the cached image
+	 * @return FloatType RandomAccessibleInterval with flatfield correction applied
+	 */
+	public static <R extends RealType<R> & NativeType<R>, S extends RealType<S>, T extends RealType<T>>
+	RandomAccessibleInterval<FloatType> createBlockBased(
+			final RandomAccessibleInterval<R> sourceImg,
+			final RandomAccessibleInterval<S> brightImg,
+			final RandomAccessibleInterval<T> darkImg,
+			final int[] cellSize)
+	{
+		// Handle null bright/dark - if both null, just convert source to float
 		if (brightImg == null && darkImg == null)
 		{
-			// assume bright and dark images constant -> should return original
-			// TODO: 'optimize' by really returning sourceImg?
-			final ConstantRandomAccessible< FloatType > constantBright = new ConstantRandomAccessible<>( new FloatType(1.0f), sourceImg.numDimensions() );
-			final ConstantRandomAccessible< FloatType > constantDark = new ConstantRandomAccessible<>( new FloatType(0.0f), sourceImg.numDimensions() );
-			return new FlatFieldCorrectedRandomAccessibleInterval<>(outputType, sourceImg, Views.interval( constantBright, sourceImg ), Views.interval( constantDark, sourceImg ) );
+			final BlockSupplier<FloatType> blocks = BlockSupplier
+					.of(Views.extendBorder(sourceImg))
+					.andThen(net.imglib2.algorithm.blocks.convert.Convert.convert(new FloatType()));
+			return wrapWithOffset(blocks, sourceImg, cellSize);
 		}
-		else if (brightImg == null)
-		{
-			// assume bright image == constant
-			final ConstantRandomAccessible< FloatType > constantBright = new ConstantRandomAccessible<>( new FloatType(1.0f), sourceImg.numDimensions() );
-			return new FlatFieldCorrectedRandomAccessibleInterval<>(outputType, sourceImg, Views.interval( constantBright, sourceImg ), Views.interval( Views.extendBorder( darkImg ), intervalDark ) );
-		}
-		else if (darkImg == null)
-		{
-			// assume dark image == constant == 0;
-			final ConstantRandomAccessible< FloatType > constantDark = new ConstantRandomAccessible<>( new FloatType(0.0f), sourceImg.numDimensions() );
-			return new FlatFieldCorrectedRandomAccessibleInterval<>(outputType, sourceImg, Views.interval( Views.extendBorder( brightImg ), intervalBright ), Views.interval( constantDark, sourceImg ) );
-		}
-			
-		return new FlatFieldCorrectedRandomAccessibleInterval<>(outputType, sourceImg, Views.interval( Views.extendBorder( brightImg ), intervalBright ), Views.interval( Views.extendBorder( darkImg ), intervalDark ) );
+
+		// Create the block supplier with flatfield correction
+		final BlockSupplier<FloatType> blocks = FlatfieldCorrectionBlockSupplier.of(
+				sourceImg, brightImg, darkImg);
+
+		return wrapWithOffset(blocks, sourceImg, cellSize);
+	}
+
+	/**
+	 * Wrap a BlockSupplier in a CachedCellImg and translate to match source interval.
+	 */
+	private static <R extends RealType<R>> RandomAccessibleInterval<FloatType> wrapWithOffset(
+			final BlockSupplier<FloatType> blocks,
+			final RandomAccessibleInterval<R> sourceImg,
+			final int[] cellSize)
+	{
+		// Create CachedCellImg (zero-min)
+		final CachedCellImg<FloatType, ?> cellImg = BlockAlgoUtils.cellImg(
+				blocks.threadSafe(),
+				sourceImg.dimensionsAsLongArray(),
+				cellSize);
+
+		// Translate to match source interval if not zero-min
+		if (Views.isZeroMin(sourceImg))
+			return cellImg;
+		else
+			return Views.translate(cellImg, sourceImg.minAsLongArray());
 	}
 }
