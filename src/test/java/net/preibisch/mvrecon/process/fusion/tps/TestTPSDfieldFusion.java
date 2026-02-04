@@ -273,7 +273,7 @@ public class TestTPSDfieldFusion
 
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
 	
-				final Scale3D transformFromSource = new Scale3D(8,8,8);
+				final Scale3D transformFromSource = new Scale3D(spacing);
 				final DisplacementField< DoubleType > dfield = new DisplacementField<>(
 						BlockSupplier.of( dfieldImg ), spacing, new double[] { 0, 0, 0 } );
 
