@@ -9,6 +9,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
@@ -64,6 +65,8 @@ import net.preibisch.mvrecon.process.splitting.SplittingTools;
 public class TestTPSFusion
 {
 	static boolean writeDontShow = true;
+	static boolean wiggleLandmarks = true;
+	static double wiggleAmount = 10;
 
 	public static HashMap< ViewId, Pair< double[][], double[][] > > getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
@@ -85,6 +88,9 @@ public class TestTPSFusion
 					BlkThinPlateSplineFusion.getCoefficients(splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId, anisotropyFactor, downsampling);
 
 			underlyingViewId2TPSCoefficients.put( underlyingViewId, coeff );
+
+			if( wiggleLandmarks )
+				TestTPSFusion.wiggle(coeff.getB(), wiggleAmount, new Random(1));
 
 			System.out.println( "source: " + Arrays.deepToString( coeff.getA() ) );
 			System.out.println( "target: " + Arrays.deepToString( coeff.getB() ) );
@@ -174,10 +180,10 @@ public class TestTPSFusion
 		CachedCellImg<FloatType, ?> fused =
 				BlockAlgoUtils.cellImg( tpsSupplier, boundingBox.dimensionsAsLongArray(), new int[] { 256, 256, 1 } );
 
-		if( writeDontShow)
+		if( writeDontShow )
 		{
 			ImagePlus imp = ImageJFunctions.wrap(fused, "fused", Executors.newFixedThreadPool( 8 ));
-			IJ.save(imp, "TpsDfieldFusion.tif");
+			IJ.save(imp, "TpsFusion.tif");
 			System.out.println("done");
 		}
 		else
@@ -253,5 +259,12 @@ public class TestTPSFusion
 
 		@Override
 		public int numDimensions() { return 3; }
+	}
+
+	public static void wiggle( double[][] points, double mult, Random random ) {
+
+		for( int i = 0; i < points.length; i++ )
+			for( int j = 0; j < points[0].length; j++ )
+				points[i][j] += random.nextDouble() * mult;
 	}
 }
