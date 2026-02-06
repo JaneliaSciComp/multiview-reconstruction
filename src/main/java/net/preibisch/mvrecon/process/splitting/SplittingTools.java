@@ -37,6 +37,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import bdv.ViewerImgLoader;
+import mpicbg.spim.data.generic.AbstractSpimData;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.registration.ViewTransform;
@@ -59,7 +62,6 @@ import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.KDTree;
-import net.imglib2.iterator.LocalizingZeroMinIntervalIterator;
 import net.imglib2.neighborsearch.RadiusNeighborSearch;
 import net.imglib2.neighborsearch.RadiusNeighborSearchOnKDTree;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -88,6 +90,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 public class SplittingTools
 {
 	public static final String IMAGE_SPLITTING_NAME = "Image Splitting";
+	public static boolean roundMipmapResolutions = false;
 
 	//public static boolean assingIlluminationsFromTileIds = false;
 	//public static double error = 0.5;
@@ -112,11 +115,8 @@ public class SplittingTools
 	 */
 	public static SpimData2 splitImages(
 			final SpimData2 spimData,
-			final long[] overlapPx,
-			final long[] targetSize,
-			final long[] minStepSize,
+			final SplitInterval splitting,
 			final boolean assingIlluminationsFromTileIds,
-			final boolean optimize,
 			final InterestPointAdding ipAdding,
 			final double pointDensity,
 			final int minPoints,
@@ -150,7 +150,7 @@ public class SplittingTools
 		// new tileId is locally computed based on the old tile ids
 		// by multiplying it with maxspread and then +1 for each new tile
 		// so each new one has to be the same across channel & illumination!
-		final int maxIntervalSpread = maxIntervalSpread( oldSetups, overlapPx, targetSize, minStepSize, optimize );
+		final int maxIntervalSpread = splitting.maxIntervalSpread( oldSetups );
 
 		// check that there is only one illumination
 		if ( assingIlluminationsFromTileIds )
@@ -181,7 +181,7 @@ public class SplittingTools
 
 			IOFunctions.println( "ViewId " + oldSetup.getId() + " with interval " + Util.printInterval( input ) + " will be split as follows: " );
 
-			final ArrayList< Interval > intervals = distributeIntervalsFixedOverlap( input, overlapPx, targetSize, minStepSize, optimize );
+			final ArrayList< Interval > intervals = splitting.split(input);// SplitDistributeEvenly.distributeIntervalsFixedOverlap( input, overlapPx, targetSize, minStepSize, optimize );
 
 			final HashMap< Integer, ViewSetup > intervalId2ViewSetup = new HashMap<>();
 
@@ -411,10 +411,7 @@ public class SplittingTools
 							newIpl.setInterestPoints( newIp );
 							newIpl.setParameters(
 									( ipAdding == InterestPointAdding.CORR ? "Fake corresponding points " : "Fake points " ) + 
-									"for image splitting: overlapPx=" + Arrays.toString( overlapPx ) +
-									", targetSize=" + Arrays.toString( targetSize ) +
-									", minStepSize=" + Arrays.toString( minStepSize ) +
-									", optimize=" + optimize +
+									"for image splitting: " + splitting.description() +
 									", pointDensity=" + pointDensity +
 									", minPoints=" + minPoints +
 									", maxPoints=" + maxPoints +
@@ -566,21 +563,6 @@ public class SplittingTools
 		return spimDataNew;
 	}
 
-	private static final int maxIntervalSpread( final List< ViewSetup > oldSetups, final long[] overlapPx, final long[] targetSize, final long[] minStepSize, final boolean optimize  )
-	{
-		int max = 1;
-
-		for ( final ViewSetup oldSetup : oldSetups )
-		{
-			final Interval input = new FinalInterval( oldSetup.getSize() );
-			final ArrayList< Interval > intervals = distributeIntervalsFixedOverlap( input, overlapPx, targetSize, minStepSize, optimize );
-
-			max = Math.max( max, intervals.size() );
-		}
-
-		return max;
-	}
-
 	private static final boolean contains( final double[] l, final Interval interval )
 	{
 		for ( int d = 0; d < l.length; ++d )
@@ -590,220 +572,99 @@ public class SplittingTools
 		return true;
 	}
 
-	/*
-	 * computes a set of overlapping intervals with desired target size and overlap. Importantly, minStepSize is computed from the multi-resolution pyramid and constrains 
-	 * that intervals need to be divisible by minStepSize (except the last one) AND that the offsets where images start are divisble by minStepSize.
-	 * 
-	 * Otherwise one would need to recompute the multi-resolution pyramid.
-	 * 
-	 * @param input
-	 * @param overlapPx
-	 * @param targetSize
-	 * @param minStepSize
-	 * @param optimize - optimize targetsize to make tiles as equal as possible
-	 * @return
-	 */
-	public static ArrayList< Interval > distributeIntervalsFixedOverlap( final Interval input, final long[] overlapPx, final long[] targetSize, final long[] minStepSize, final boolean optimize )
+	public static long[] findMinStepSize( final AbstractSpimData< ? > data )
 	{
-		for ( int d = 0; d < input.numDimensions(); ++d )
-		{
-			if ( targetSize[ d ] % minStepSize[ d ] != 0 )
-			{
-				IOFunctions.printErr( "targetSize " + targetSize[ d ] + " not divisible by minStepSize " + minStepSize[ d ] + " for dim=" + d + ". stopping." );
-				return null;
-			}
+		final BasicImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
 
-			if ( overlapPx[ d ] % minStepSize[ d ] != 0 )
+		final long[] minStepSize = new long[] { 1, 1, 1 };
+
+		if ( MultiResolutionImgLoader.class.isInstance( imgLoader ) )
+		{
+			IOFunctions.println( "We have a multi-resolution image loader: " + imgLoader.getClass().getName() + ", finding resolution steps");
+
+			final MultiResolutionImgLoader mrImgLoader = ( MultiResolutionImgLoader ) imgLoader;
+
+			for ( final BasicViewSetup vs : data.getSequenceDescription().getViewSetupsOrdered() )
 			{
-				IOFunctions.printErr( "overlapPx " + overlapPx[ d ] + " not divisible by minStepSize " + minStepSize[ d ] + " for dim=" + d + ". stopping." );
-				return null;
+				final double[][] mipmapResolutions = mrImgLoader.getSetupImgLoader( vs.getId() ).getMipmapResolutions();
+
+				IOFunctions.println( "ViewSetup: " + vs.getName() + " (id=" + vs.getId() + "): " + Arrays.deepToString( mipmapResolutions ) );
+
+				// lowest resolution defines the minimal steps size 
+				final double[] lowestResolution = mipmapResolutions[ mipmapResolutions.length - 1 ];
+
+				IOFunctions.println( "lowest resolution: " + Arrays.toString( lowestResolution ) );
+
+				for ( int d = 0; d < minStepSize.length; ++d )
+				{
+					if ( Math.abs( lowestResolution[ d ] % 1 ) > 0.001 && ( 1.0 - Math.abs( lowestResolution[ d ] % 1 ) ) > 0.001 )
+						if ( !roundMipmapResolutions )
+							throw new RuntimeException( "Downsampling has a fraction > 0.001, cannot split dataset since it does not seem to be a rounding error." );
+
+					minStepSize[ d ] = lowestCommonMultiplier( minStepSize[ d ], Math.round( lowestResolution[ d ] ) );
+				}
+
+				IOFunctions.println( "updated min step size: " + Arrays.toString( minStepSize ) );
+
 			}
 		}
-
-		final ArrayList< ArrayList< Pair< Long, Long > > > intervalBasis = new ArrayList<>();
-
-		for ( int d = 0; d < input.numDimensions(); ++d )
+		else
 		{
-			//System.out.println( "dim="+ d);
-			final ArrayList< Pair< Long, Long > > dimIntervals = new ArrayList<>();
-	
-			final long length = input.dimension( d );
+			IOFunctions.println( "Not a multi-resolution image loader, all data splits are possible." );
+		}
 
-			// can I use just 1 block?
-			if ( length <= targetSize[ d ] )
+		IOFunctions.println( "Final minimal step size: " + Arrays.toString( minStepSize ) );
+
+		return minStepSize;
+	}
+
+	public static long greatestCommonDivisor( long a, long b )
+	{
+		while (b > 0)
+		{
+			long temp = b;
+			b = a % b;
+			a = temp;
+		}
+		return a;
+	}
+
+	public static long lowestCommonMultiplier( final long a, final long b )
+	{
+		return a * (b / greatestCommonDivisor(a, b));
+	}
+
+	public static Pair< HashMap< String, Integer >, long[] > collectImageSizes( final AbstractSpimData< ? > data )
+	{
+		final HashMap< String, Integer > sizes = new HashMap<>();
+
+		long[] minSize = null;
+
+		for ( final BasicViewSetup vs : data.getSequenceDescription().getViewSetupsOrdered() )
+		{
+			final Dimensions dim = vs.getSize();
+
+			String size = Long.toString( dim.dimension( 0 ) );
+			for ( int d = 1; d < dim.numDimensions(); ++d )
+				size += "x" + dim.dimension( d );
+
+			if ( sizes.containsKey( size ) )
+				sizes.put( size, sizes.get( size ) + 1 );
+			else
+				sizes.put( size, 1 );
+
+			if ( minSize == null )
 			{
-				final long min = input.min( d );
-				final long max = input.max( d );
-
-				dimIntervals.add( new ValuePair< Long, Long >( min, max ) );
-				//System.out.println( "one block from " + min + " to " + max );
+				minSize = new long[ dim.numDimensions() ];
+				dim.dimensions( minSize );
 			}
 			else
 			{
-				final long l = length;
-				final long s = targetSize[ d ];
-				final long o = overlapPx[ d ];
-
-				// now we iterate the targetsize until we are as close as possible to an equal distribution (ideally 0.0 fraction)
-
-				long lastImageSize = lastImageSize(l, s, o);// o + ( l - 2 * ( s-o ) - o ) % ( s - 2 * o + o );
-
-				//System.out.println( "length: " + l );
-				//System.out.println( "overlap: " + o );
-				//System.out.println( "targetSize: " + s );
-				//System.out.println( "lastImageSize: " + lastImageSize );
-
-				final long finalSize;
-
-				if ( optimize && lastImageSize != s )
-				{
-					long lastSize = s;
-					long delta, currentLastImageSize;
-
-					if ( lastImageSize <= s / 2 )
-					{
-						// increase image size until lastImageSize goes towards zero, then large
-						//System.out.println( "small" );
-
-						do
-						{
-							lastSize += minStepSize[ d ];
-							currentLastImageSize = lastImageSize(l, lastSize, o);
-							delta = lastImageSize - currentLastImageSize;
-
-							lastImageSize = currentLastImageSize;
-							//System.out.println( lastSize + ": " + lastImageSize + ", delta=" + delta );
-						}
-						while ( delta > 0 );
-
-						finalSize = lastSize;
-					}
-					else
-					{
-						// decrease image size until lastImageSize is maximal 
-						//System.out.println( "large" );
-
-						do
-						{
-							lastSize -= minStepSize[ d ];
-							currentLastImageSize = lastImageSize(l, lastSize, o);
-							delta = lastImageSize - currentLastImageSize;
-
-							lastImageSize = currentLastImageSize;
-							//System.out.println( lastSize + ": " + lastImageSize + ", delta=" + delta );
-						}
-						while ( delta < 0 );
-
-						finalSize = lastSize + minStepSize[ d ];
-					}
-				}
-				else
-				{
-					finalSize = s;
-				}
-
-				//System.out.println( "finalSize: " + finalSize );
-				//System.out.println( "finalLastImageSize: " + lastImageSize(l, finalSize, o) );
-
-				dimIntervals.addAll( splitDim( input, d, finalSize, overlapPx[ d ] ) );
+				for ( int d = 0; d < dim.numDimensions(); ++d )
+					minSize[ d ] = Math.min( minSize[ d ], dim.dimension( d ) );
 			}
-
-			intervalBasis.add( dimIntervals );
 		}
 
-		final long[] numIntervals = new long[ input.numDimensions() ];
-
-		for ( int d = 0; d < input.numDimensions(); ++d )
-			numIntervals[ d ] = intervalBasis.get( d ).size();
-
-		final LocalizingZeroMinIntervalIterator cursor = new LocalizingZeroMinIntervalIterator( numIntervals );
-		final ArrayList< Interval > intervalList = new ArrayList<>();
-
-		final int[] currentInterval = new int[ input.numDimensions() ];
-
-		while ( cursor.hasNext() )
-		{
-			cursor.fwd();
-			cursor.localize( currentInterval );
-
-			final long[] min = new long[ input.numDimensions() ];
-			final long[] max = new long[ input.numDimensions() ];
-
-			for ( int d = 0; d < input.numDimensions(); ++d )
-			{
-				final Pair< Long, Long > minMax = intervalBasis.get( d ).get( currentInterval[ d ] );
-				min[ d ] = minMax.getA();
-				max[ d ] = minMax.getB();
-			}
-
-			intervalList.add( new FinalInterval( min, max ) );
-		}
-
-		return intervalList;
-	}
-
-	public static long lastImageSize( final long l, final long s, final long o)
-	{
-		long size = o + ( l - 2 * ( s-o ) - o ) % ( s - 2 * o + o );
-
-		// this happens when it is only two overlapping images
-		if ( size < 0 )
-			size = l + size;
-
-		return size;
-	}
-
-	//public static double numCenterBlocks( final double l, final double s, final double o )
-	//{
-	//	return 	( l - 2.0 * ( s-o ) - o ) / ( s - 2.0 * o + o );
-	//}
-
-	public static ArrayList< Pair< Long, Long > > splitDim(
-			final Interval input,
-			final int d,
-			final long s,
-			final long o )
-	{
-		//System.out.println( "min=" + input.min( d ) + ", max=" + input.max( d ) );
-
-		final ArrayList< Pair< Long, Long > > dimIntervals = new ArrayList<>();
-
-		long from = input.min( d );
-		long to;
-
-		do
-		{
-			to = Math.min( input.max( d ), from + s - 1 );
-			dimIntervals.add( new ValuePair<>( from, to ) );
-
-			//System.out.println( "block " + (dimIntervals.size() - 1) + ": " + from + " " + to + " (size=" + (to-from+1) + ")" );
-
-			//SimpleMultiThreading.threadWait( 100 );
-			from = to - o + 1;
-		}
-		while ( to < input.max( d ) );
-
-		return dimIntervals;
-	}
-
-	public static void main( String[] args )
-	{
-		Interval input = new FinalInterval( new long[]{ 0 }, new long[] { 14192 - 1 } );
-
-		long[] overlapPx = new long[] { 128 };
-		long[] targetSize = new long[] { 6000 };
-		long[] minStepSize = new long[] { 64 };
-
-		targetSize[ 0 ] = Split_Views.closestLongDivisableBy( targetSize[ 0 ], minStepSize[ 0 ] );
-		overlapPx[ 0 ] = Split_Views.closestLargerLongDivisableBy( overlapPx[ 0 ], minStepSize[ 0 ] );
-
-		boolean optimize = true;
-
-		ArrayList< Interval > intervals = distributeIntervalsFixedOverlap( input, overlapPx, targetSize, minStepSize, optimize );
-
-		System.out.println();
-
-		for ( final Interval interval : intervals )
-			System.out.println( Util.printInterval( interval ) );
+		return new ValuePair<HashMap<String,Integer>, long[]>( sizes, minSize );
 	}
 }

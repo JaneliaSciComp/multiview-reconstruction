@@ -73,20 +73,21 @@ public class SplittingExample
 		// load drosophila
 		spimData = new XmlIoSpimData2().load( uri );
 
-		final long[] minStepSize = Split_Views.findMinStepSize( spimData );
+		final long[] minStepSize = SplittingTools.findMinStepSize( spimData );
 
 		//SpimData2 newSD = SplittingTools.splitImages( spimData, new long[] { 30, 30, 15 }, new long[] { 600, 600, 300 } );
 		SpimData2 newSD =
 				SplittingTools.splitImages(
 						spimData,
-						new long[] { 30, 30, 10 },
-						new long[] {
-								Split_Views.closestLongDivisableBy( 200, minStepSize[ 0 ] ),
-								Split_Views.closestLongDivisableBy( 200, minStepSize[ 1 ] ),
-								Split_Views.closestLongDivisableBy( 40, minStepSize[ 2 ] ) },
-						minStepSize,
+						new SplitDistributeEvenly(
+								new long[] { 30, 30, 10 },
+								new long[] {
+										SplitDistributeEvenly.closestLongDivisableBy( 200, minStepSize[ 0 ] ),
+										SplitDistributeEvenly.closestLongDivisableBy( 200, minStepSize[ 1 ] ),
+										SplitDistributeEvenly.closestLongDivisableBy( 40, minStepSize[ 2 ] ) },
+								minStepSize,
+								true ),
 						true, // assingIlluminationsFromTileIds
-						true, // optimize
 						InterestPointAdding.CORR, // addIPs
 						100,
 						20,
