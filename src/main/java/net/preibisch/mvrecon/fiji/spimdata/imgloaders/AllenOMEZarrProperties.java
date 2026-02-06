@@ -88,6 +88,10 @@ public class AllenOMEZarrProperties implements N5Properties
 	// static methods
 	//
 
+	/**
+	 * Get the first available (non-missing) timepoint for a setup.
+	 * @return timepoint ID, or -1 if all timepoints are missing for this setup
+	 */
 	private static int getFirstAvailableTimepointId( final AbstractSequenceDescription< ?, ?, ? > seq, final int setupId )
 	{
 		for ( final TimePoint tp : seq.getTimePoints().getTimePointsOrdered() )
@@ -96,18 +100,28 @@ public class AllenOMEZarrProperties implements N5Properties
 				return tp.getId();
 		}
 
-		throw new RuntimeException( "All timepoints for setupId " + setupId + " are declared missing. Stopping." );
+		// All timepoints are missing for this setup
+		return -1;
 	}
 
 	private static DataType getDataType( final AllenOMEZarrProperties n5properties, final N5Reader n5, final int setupId )
 	{
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
+
+		// If all timepoints are missing, return a default data type
+		if ( timePointId < 0 )
+			return DataType.UINT16;
+
 		return n5.getDatasetAttributes( n5properties.getDatasetPath( setupId, timePointId, 0 ) ).getDataType();
 	}
 
 	private static double[][] getMipMapResolutions( final AllenOMEZarrProperties n5properties, final N5Reader n5, final int setupId )
 	{
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
+
+		// If all timepoints are missing, return default single-level resolution
+		if ( timePointId < 0 )
+			return new double[][] { { 1.0, 1.0, 1.0 } };
 
 		// multiresolution pyramid
 
