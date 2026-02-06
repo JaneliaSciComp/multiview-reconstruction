@@ -102,9 +102,12 @@ public class TestTPSFusion
 
 	public static void main( String[] args ) throws SpimDataException
 	{
-		final SpimData2 data = 
+		final SpimData2 data =
 				new XmlIoSpimData2().load(
-						URI.create("file:/home/john/data/bigstitcher/split_dataset/dataset.split.xml") );
+						URI.create("file:/Users/pietzsch/Desktop/data/Janelia/split_dataset/dataset.split.xml"));
+//		final SpimData2 data =
+//				new XmlIoSpimData2().load(
+//						URI.create("file:/home/john/data/bigstitcher/split_dataset/dataset.split.xml") );
 
 		final ViewerImgLoader underlyingImgLoader = BlkThinPlateSplineFusion.getUnderlyingImageLoader(data);
 
@@ -115,7 +118,7 @@ public class TestTPSFusion
 		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
 
 		// get all underlying ViewIds with channelId == 0
-		final List< ViewId > underlyingViewIds = 
+		final List< ViewId > underlyingViewIds =
 				underlyingSD.getViewDescriptions().values().stream()
 				.filter( vd -> vd.isPresent() )
 				.filter( vd -> vd.getViewSetup().getChannel().getId() == 0 /*&& vd.getViewSetupId() == 0*/ )
@@ -149,10 +152,10 @@ public class TestTPSFusion
 			// prepare downsampled boundingbox
 			final long[] minBB = boundingBox.minAsLongArray();
 			final long[] maxBB = boundingBox.maxAsLongArray();
-	
+
 			minBB[ 2 ] = Math.round( Math.floor( minBB[ 2 ] / anisotropyFactor ) );
 			maxBB[ 2 ] = Math.round( Math.ceil( maxBB[ 2 ] / anisotropyFactor ) );
-	
+
 			boundingBox = new BoundingBox( new FinalInterval( minBB, maxBB ) );
 			System.out.println( boundingBox );
 		}
@@ -166,7 +169,7 @@ public class TestTPSFusion
 				coeff.get( new ViewId( 0, 0 )).getA() );
 
 		final RandomAccessibleInterval img = underlyingImgLoader.getSetupImgLoader( 0 ).getImage( 0 );
-		final RealRandomAccessibleView interp = 
+		final RealRandomAccessibleView interp =
 				img.view().extend(Extension.zero()).interpolate(Interpolation.clampingNLinear());
 		final RandomAccessibleInterval< UnsignedByteType > tformedImg =
 				new RealTransformRealRandomAccessible<>(interp, transform).realView().raster().interval(boundingBox);
@@ -183,7 +186,7 @@ public class TestTPSFusion
 		if( writeDontShow )
 		{
 			ImagePlus imp = ImageJFunctions.wrap(fused, "fused", Executors.newFixedThreadPool( 8 ));
-			IJ.save(imp, "TpsFusion.tif");
+			IJ.save(imp, "/Users/pietzsch/Desktop/TpsFusion.tif");
 			System.out.println("done");
 		}
 		else
@@ -224,7 +227,7 @@ public class TestTPSFusion
 
 				transformed.put(v, tformedImg);
 			});
-			
+
 		}
 
 		@Override
