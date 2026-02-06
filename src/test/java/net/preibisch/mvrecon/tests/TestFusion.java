@@ -93,7 +93,7 @@ public class TestFusion
 		assertEquals( 11, blks.getB().max( 2 ), "Downsampled, anisotropic bounding box should have a specific max Z." );
 
 		final RandomAccessibleInterval<UnsignedShortType> img =
-				Views.translate( 
+				Views.translate(
 						BlockAlgoUtils.cellImg( blks.getA(), blks.getB().dimensionsAsLongArray(), new int[] { 32, 32, 32 } ),
 						blks.getB().minAsLongArray() ); // offset
 
@@ -103,6 +103,34 @@ public class TestFusion
 		assertEquals( 44, img.getAt( 39, 41, 3 ).get(), "Expecting specific pixel intensities." );
 
 		System.out.println( "✓ Fusion test passed, output interval: " + Util.printInterval( blks.getB() ) );
+	}
+
+	/**
+	 * Tests fusion with isotropic 2x2x2 downsampling and verifies non-zero pixel intensities.
+	 */
+	@Test
+	public void testFusionWith2x2x2Downsampling()
+	{
+		final double downsampling = 2.0;
+		final double anisotropyFactor = 1.0; // isotropic
+
+		final Pair<BlockSupplier<UnsignedShortType>, Interval> blks =
+				testFusion( spimData, bb, FusionType.AVG_BLEND, downsampling, anisotropyFactor );
+
+		final RandomAccessibleInterval<UnsignedShortType> img =
+				Views.translate(
+						BlockAlgoUtils.cellImg( blks.getA(), blks.getB().dimensionsAsLongArray(), new int[] { 32, 32, 32 } ),
+						blks.getB().minAsLongArray() );
+
+		System.out.println( "2x2x2 fusion output interval: " + Util.printInterval( blks.getB() ) );
+
+		// Scaled coordinates from testFusion (which uses anisotropyFactor=4.0, so Z was /4)
+		// With anisotropyFactor=1.0, Z coordinates are now at full scale relative to XY
+		// Z scales by 4x: z=1 -> z=4, z=3 -> z=12
+		assertEquals( 45, img.getAt( 3, 22, 4 ).get(), "Expecting specific pixel intensity at scaled coordinates." );
+		assertEquals( 45, img.getAt( 39, 41, 12 ).get(), "Expecting specific pixel intensity at scaled coordinates." );
+
+		System.out.println( "✓ 2x2x2 downsampling fusion test passed" );
 	}
 
 	public static Pair< BlockSupplier<UnsignedShortType>, Interval > testFusion(
