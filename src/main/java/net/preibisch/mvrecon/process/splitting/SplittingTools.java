@@ -179,6 +179,38 @@ public class SplittingTools
 
 			final Interval input = new FinalInterval( oldSetup.getSize() );
 
+			// Set context for oct-tree splitting (needs ViewId for interest point access)
+			// Find first present (non-missing) timepoint for this setup
+			if ( splitting instanceof SplitOctTree )
+			{
+				ViewId viewId = null;
+				int timepointId = -1;
+
+				for ( final TimePoint tp : timepoints.getTimePointsOrdered() )
+				{
+					final ViewId candidate = new ViewId( tp.getId(), oldSetup.getId() );
+					if ( spimData.getSequenceDescription().getMissingViews() == null ||
+						 spimData.getSequenceDescription().getMissingViews().getMissingViews() == null ||
+						 !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( candidate ) )
+					{
+						viewId = candidate;
+						timepointId = tp.getId();
+						break;
+					}
+				}
+
+				// If all timepoints are missing for this setup, use the first timepoint anyway
+				// (the criterion will return false for missing views)
+				if ( viewId == null )
+				{
+					final TimePoint firstTP = timepoints.getTimePointsOrdered().get( 0 );
+					viewId = new ViewId( firstTP.getId(), oldSetup.getId() );
+					timepointId = firstTP.getId();
+				}
+
+				( (SplitOctTree) splitting ).setCurrentContext( viewId, timepointId );
+			}
+
 			IOFunctions.println( "ViewId " + oldSetup.getId() + " with interval " + Util.printInterval( input ) + " will be split as follows: " );
 
 			final ArrayList< Interval > intervals = splitting.split(input);// SplitDistributeEvenly.distributeIntervalsFixedOverlap( input, overlapPx, targetSize, minStepSize, optimize );

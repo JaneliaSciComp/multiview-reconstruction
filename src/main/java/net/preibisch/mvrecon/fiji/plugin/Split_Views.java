@@ -49,6 +49,7 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
 import net.preibisch.mvrecon.process.splitting.SplitDistributeEvenly;
 import net.preibisch.mvrecon.process.splitting.SplitInterval;
+import net.preibisch.mvrecon.process.splitting.SplitOctTree;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
 import util.URITools;
 
@@ -129,8 +130,13 @@ public class Split_Views implements PlugIn
 
 		if ( method == 0 )
 			SplitDistributeEvenly.setupGUI( gd, data, minStepSize );
+		else if ( method == 1 )
+		{
+			if ( !SplitOctTree.setupGUI( gd, data, minStepSize ) )
+				return false;
+		}
 		else
-			throw new RuntimeException( "not implemented yet." );
+			throw new RuntimeException( "Unknown splitting method: " + method );
 
 		gd.addChoice( "Interest_points", ipChoices, ipChoices[ defaultIPChoice ] );
 
@@ -161,8 +167,10 @@ public class Split_Views implements PlugIn
 
 		if ( method == 0 )
 			splittingMethod = SplitDistributeEvenly.queryGUI( gd, minStepSize );
+		else if ( method == 1 )
+			splittingMethod = SplitOctTree.queryGUI( gd, data, minStepSize );
 		else
-			throw new RuntimeException( "not implemented yet." );
+			throw new RuntimeException( "Unknown splitting method: " + method );
 
 		final int ipChoice = defaultIPChoice = gd.getNextChoiceIndex();
 
