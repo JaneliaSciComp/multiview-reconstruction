@@ -58,12 +58,14 @@ public class SplitOctTree implements SplitInterval
 	public static int defaultCriterionChoice = 0;
 	public static int defaultMinSizeMultiplier = 4;
 	public static boolean defaultEnableMerge = true;
+	public static int defaultMinSplitLevels = 0;
 
 	// Instance fields
 	private final long[] minStepSize;
 	private final int minSizeMultiplier;
 	private final OctTreeSplitCriterion criterion;
 	private final boolean enableMerge;
+	private final int minSplitLevels;
 
 	// Current context for split() method (set per ViewSetup iteration)
 	private ViewId currentViewId;
@@ -81,17 +83,20 @@ public class SplitOctTree implements SplitInterval
 	 * @param minSizeMultiplier Multiplier for minimum split size (e.g., 4 means min size = 4 * minStepSize)
 	 * @param criterion The splitting criterion (determines when to stop splitting)
 	 * @param enableMerge If true, attempt to merge blocks back when combined count is below threshold
+	 * @param minSplitLevels Minimum number of split levels to always perform (0 = fully adaptive)
 	 */
 	public SplitOctTree(
 			final long[] minStepSize,
 			final int minSizeMultiplier,
 			final OctTreeSplitCriterion criterion,
-			final boolean enableMerge )
+			final boolean enableMerge,
+			final int minSplitLevels )
 	{
 		this.minStepSize = minStepSize.clone();
 		this.minSizeMultiplier = minSizeMultiplier;
 		this.criterion = criterion;
 		this.enableMerge = enableMerge;
+		this.minSplitLevels = minSplitLevels;
 	}
 
 	/**
@@ -162,11 +167,12 @@ public class SplitOctTree implements SplitInterval
 		leafCount = 0;
 
 		final ArrayList< Interval > result = new ArrayList<>();
-		splitRecursive( input, result );
+		splitRecursive( input, result, 0 );
 
 		// Log statistics
 		IOFunctions.println( "Oct-tree split statistics: " + splitCount + " splits, " +
-				mergeCount + " merges, " + leafCount + " leaves → " + result.size() + " final blocks" );
+				mergeCount + " merges, " + leafCount + " leaves → " + result.size() + " final blocks" +
+				( minSplitLevels > 0 ? " (minSplitLevels=" + minSplitLevels + ")" : "" ) );
 
 		return result;
 	}
@@ -176,19 +182,25 @@ public class SplitOctTree implements SplitInterval
 	 *
 	 * @param interval Current interval to potentially split
 	 * @param result List to collect final intervals
+	 * @param depth Current recursion depth (0 = root)
 	 */
-	private void splitRecursive( final Interval interval, final ArrayList< Interval > result )
+	private void splitRecursive( final Interval interval, final ArrayList< Interval > result, final int depth )
 	{
-		// Check if CURRENT interval exceeds threshold (not octants!)
-		if ( !criterion.shouldSplit( interval, currentViewId, currentTimepointId ) )
+		// Determine if we should split:
+		// 1. Force split if we haven't reached minSplitLevels yet
+		// 2. Otherwise, check criterion
+		final boolean forceSplit = depth < minSplitLevels;
+		final boolean criterionSplit = criterion.shouldSplit( interval, currentViewId, currentTimepointId );
+
+		if ( !forceSplit && !criterionSplit )
 		{
-			// Current interval is within threshold, add as leaf
+			// Current interval is within threshold and we've reached min levels, add as leaf
 			result.add( interval );
 			leafCount++;
 			return;
 		}
 
-		// Current interval exceeds threshold - check if we can split further
+		// Want to split - check if we can split further (size constraint)
 		if ( !canSplitFurther( interval ) )
 		{
 			// Can't split further due to size constraint, add anyway
@@ -206,12 +218,13 @@ public class SplitOctTree implements SplitInterval
 		for ( final Interval octant : octants )
 		{
 			final ArrayList< Interval > leaves = new ArrayList<>();
-			splitRecursive( octant, leaves );
+			splitRecursive( octant, leaves, depth + 1 );
 			octantLeaves.add( leaves );
 		}
 
 		// Try to merge sibling octant results (bottom-up merge phase) if enabled
-		if ( enableMerge )
+		// Note: only merge if we're past the forced split levels
+		if ( enableMerge && depth >= minSplitLevels )
 		{
 			final List< Interval > merged = mergeOctantResults( octantLeaves, interval );
 			result.addAll( merged );
@@ -641,7 +654,8 @@ public class SplitOctTree implements SplitInterval
 		return "OctTree adaptive splitting: " + criterion.description() +
 				", minStepSize=" + Arrays.toString( minStepSize ) +
 				", minSizeMultiplier=" + minSizeMultiplier +
-				", merge=" + enableMerge;
+				", merge=" + enableMerge +
+				", minSplitLevels=" + minSplitLevels;
 	}
 
 	// ==================== Static GUI Methods ====================
@@ -696,6 +710,12 @@ public class SplitOctTree implements SplitInterval
 				"\n(Increase multiplier to prevent small tiles, minimum value is 4)",
 				GUIHelper.smallStatusFont, Color.DARK_GRAY );
 
+		gd.addSlider( "Min_split_levels", 0, 5, defaultMinSplitLevels );
+		gd.addMessage(
+				"Minimum split levels: 0=fully adaptive, 1=always split at least once (8 tiles),\n" +
+				"2=always split twice (up to 64 tiles), etc. Overridden by tile size constraint.",
+				GUIHelper.smallStatusFont, Color.DARK_GRAY );
+
 		gd.addCheckbox( "Enable_block_merging (reduces tile count)", defaultEnableMerge );
 
 		return true;
@@ -728,11 +748,13 @@ public class SplitOctTree implements SplitInterval
 
 		// Get common oct-tree parameters
 		final int minSizeMultiplier = defaultMinSizeMultiplier = Math.max( 4, (int) Math.round( gd.getNextNumber() ) );
+		final int minSplitLevels = defaultMinSplitLevels = Math.max( 0, (int) Math.round( gd.getNextNumber() ) );
 		final boolean enableMerge = defaultEnableMerge = gd.getNextBoolean();
 
-		IOFunctions.println( "Created oct-tree splitter: " + criterion.description() + ", merge=" + enableMerge );
+		IOFunctions.println( "Created oct-tree splitter: " + criterion.description() +
+				", merge=" + enableMerge + ", minSplitLevels=" + minSplitLevels );
 
-		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, enableMerge );
+		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, enableMerge, minSplitLevels );
 	}
 
 	// Getters for testing
@@ -741,4 +763,5 @@ public class SplitOctTree implements SplitInterval
 	public OctTreeSplitCriterion getCriterion() { return criterion; }
 	public ViewId getCurrentViewId() { return currentViewId; }
 	public boolean isEnableMerge() { return enableMerge; }
+	public int getMinSplitLevels() { return minSplitLevels; }
 }
