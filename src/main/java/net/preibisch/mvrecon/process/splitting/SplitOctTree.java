@@ -53,7 +53,7 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 public class SplitOctTree implements SplitInterval
 {
 	// Static defaults for GUI persistence
-	public static int defaultMaxCorrespondences = 500;
+	public static int defaultMaxCorrespondences = 20;
 	public static int[] defaultLabelChoices = null;
 	public static int defaultMinSizeMultiplier = 4;
 
@@ -158,36 +158,24 @@ public class SplitOctTree implements SplitInterval
 	 */
 	private void splitRecursive( final Interval interval, final ArrayList< Interval > result )
 	{
-		// First check if we can split further (size constraint)
+		// Check if CURRENT interval exceeds threshold (not octants!)
+		if ( !criterion.shouldSplit( interval, currentViewId, currentTimepointId ) )
+		{
+			// Current interval is within threshold, add as leaf
+			result.add( interval );
+			return;
+		}
+
+		// Current interval exceeds threshold - check if we can split further
 		if ( !canSplitFurther( interval ) )
 		{
+			// Can't split further due to size constraint, add anyway
 			result.add( interval );
 			return;
 		}
 
-		// Create octants with overlap
+		// Split into octants and recurse
 		final List< Interval > octants = createOctantsWithOverlap( interval );
-
-		// Check if ANY octant exceeds the threshold
-		boolean anyOctantExceedsThreshold = false;
-
-		for ( final Interval octant : octants )
-		{
-			if ( criterion.shouldSplit( octant, currentViewId, currentTimepointId ) )
-			{
-				anyOctantExceedsThreshold = true;
-				break;
-			}
-		}
-
-		// If no octant exceeds threshold, add current interval as leaf
-		if ( !anyOctantExceedsThreshold )
-		{
-			result.add( interval );
-			return;
-		}
-
-		// Recursively split each octant
 		for ( final Interval octant : octants )
 		{
 			splitRecursive( octant, result );
