@@ -25,13 +25,10 @@ package net.preibisch.mvrecon.process.splitting;
 import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.TimePoint;
-import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.FinalInterval;
@@ -39,7 +36,6 @@ import net.imglib2.Interval;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
  * Adaptive oct-tree based image splitting.
@@ -52,9 +48,14 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
  */
 public class SplitOctTree implements SplitInterval
 {
+	// Available criterion types for GUI selection
+	public static final String[] CRITERION_NAMES = new String[] {
+		CrossViewCorrespondenceCriterion.CRITERION_NAME
+		// Add more criteria here as they are implemented
+	};
+
 	// Static defaults for GUI persistence
-	public static int defaultMaxCorrespondences = 20;
-	public static int[] defaultLabelChoices = null;
+	public static int defaultCriterionChoice = 0;
 	public static int defaultMinSizeMultiplier = 4;
 
 	// Instance fields
@@ -102,7 +103,7 @@ public class SplitOctTree implements SplitInterval
 		int max = 1;
 
 		// Get spimData from criterion to access timepoints
-		final SpimData2 spimData = ( (CrossViewCorrespondenceCriterion) criterion ).getSpimData();
+		final SpimData2 spimData = criterion.getSpimData();
 		final List< TimePoint > timepoints = spimData.getSequenceDescription().getTimePoints().getTimePointsOrdered();
 
 		for ( final ViewSetup oldSetup : oldSetups )
@@ -270,47 +271,42 @@ public class SplitOctTree implements SplitInterval
 
 	/**
 	 * Setup GUI components for oct-tree splitting parameters.
-	 * Following the pattern of SplitDistributeEvenly.setupGUI()
+	 * First shows criterion selection dialog, then delegates to criterion-specific GUI.
 	 *
 	 * @param gd The GenericDialog to add components to
 	 * @param data The SpimData2
 	 * @param minStepSize The minimum step size constraint
-	 * @return true if setup successful, false if no interest points available
+	 * @return true if setup successful, false if cancelled or criterion setup fails
 	 */
 	public static boolean setupGUI( final GenericDialog gd, final SpimData2 data, final long[] minStepSize )
 	{
-		// Get available interest point labels
-		final List< ViewId > allViewIds = new ArrayList<>();
-		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
-			if ( vd.isPresent() )
-				allViewIds.add( vd );
+		// First dialog: select criterion type
+		final GenericDialog gdCriterion = new GenericDialog( "Oct-Tree Split Criterion" );
+		gdCriterion.addChoice( "Split_criterion", CRITERION_NAMES, CRITERION_NAMES[ defaultCriterionChoice ] );
+		gdCriterion.showDialog();
 
-		final String[] labels = InterestPointTools.getAllInterestPointLabels( data, allViewIds );
-
-		if ( labels.length == 0 )
-		{
-			IOFunctions.printErr( "No interest points available for oct-tree splitting. Please detect interest points first." );
+		if ( gdCriterion.wasCanceled() )
 			return false;
-		}
 
-		gd.addMessage( "Oct-tree adaptive splitting based on cross-view correspondences",
+		defaultCriterionChoice = gdCriterion.getNextChoiceIndex();
+		final String selectedCriterion = CRITERION_NAMES[ defaultCriterionChoice ];
+
+		// Main dialog: criterion-specific options + common parameters
+		gd.addMessage( "Oct-tree adaptive splitting: " + selectedCriterion,
 				GUIHelper.mediumstatusfont, Color.BLACK );
 
-		// Label selection (multi-select via checkboxes)
-		gd.addMessage( "Select interest point labels to consider:" );
-		final boolean[] defaultSelection = new boolean[ labels.length ];
+		// Delegate to selected criterion's GUI
+		boolean success = false;
+		if ( selectedCriterion.equals( CrossViewCorrespondenceCriterion.CRITERION_NAME ) )
+		{
+			success = CrossViewCorrespondenceCriterion.setupGUI( gd, data );
+		}
+		// Add more criteria here as they are implemented
 
-		if ( defaultLabelChoices == null || defaultLabelChoices.length != labels.length )
-			for ( int i = 0; i < labels.length; i++ )
-				defaultSelection[ i ] = ( i == 0 );
-		else
-			for ( int i = 0; i < defaultLabelChoices.length && i < labels.length; i++ )
-				defaultSelection[ i ] = ( defaultLabelChoices[ i ] == 1 );
+		if ( !success )
+			return false;
 
-		for ( int i = 0; i < labels.length; i++ )
-			gd.addCheckbox( labels[ i ], defaultSelection[ i ] );
-
-		gd.addNumericField( "Correspondences required for further split", defaultMaxCorrespondences, 0 );
+		// Common oct-tree parameters
 		gd.addSlider( "Min_size_multiplier", 4, 32, defaultMinSizeMultiplier );
 
 		// Calculate and display actual minimum tile size
@@ -318,19 +314,16 @@ public class SplitOctTree implements SplitInterval
 		for ( int d = 0; d < minStepSize.length; d++ )
 			defaultMinTileSize[ d ] = defaultMinSizeMultiplier * minStepSize[ d ];
 		gd.addMessage(
-				"Min split tile size = multiplier × minStepSize (allowed multipliers of dimensions) = " + defaultMinSizeMultiplier + " × " +
+				"Min split tile size = multiplier × minStepSize = " + defaultMinSizeMultiplier + " × " +
 				Arrays.toString( minStepSize ) + " = " + Arrays.toString( defaultMinTileSize ) +
 				"\n(Increase multiplier to prevent small tiles, minimum value is 4)",
 				GUIHelper.smallStatusFont, Color.DARK_GRAY );
-
-		//gd.addMessage( "Note: Tiles overlap by minStepSize=" + Arrays.toString( minStepSize ), GUIHelper.mediumstatusfont, Color.DARK_GRAY );
 
 		return true;
 	}
 
 	/**
 	 * Query GUI components and create SplitOctTree instance.
-	 * Following the pattern of SplitDistributeEvenly.queryGUI()
 	 *
 	 * @param gd The GenericDialog with user input
 	 * @param data The SpimData2
@@ -339,48 +332,23 @@ public class SplitOctTree implements SplitInterval
 	 */
 	public static SplitOctTree queryGUI( final GenericDialog gd, final SpimData2 data, final long[] minStepSize )
 	{
-		// Get labels again for parsing
-		final List< ViewId > allViewIds = new ArrayList<>();
-		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
-			if ( vd.isPresent() )
-				allViewIds.add( vd );
+		// Criterion was already selected in setupGUI and stored in defaultCriterionChoice
+		final String criterionName = CRITERION_NAMES[ defaultCriterionChoice ];
 
-		final String[] labelsRaw = InterestPointTools.getAllInterestPointLabels( data, allViewIds );
+		// Create criterion based on selection
+		OctTreeSplitCriterion criterion = null;
 
-		if ( labelsRaw.length == 0 )
+		if ( criterionName.equals( CrossViewCorrespondenceCriterion.CRITERION_NAME ) )
 		{
-			IOFunctions.printErr( "No interest points available for oct-tree splitting." );
+			criterion = CrossViewCorrespondenceCriterion.queryGUI( gd, data );
+		}
+		// Add more criteria here as they are implemented
+
+		if ( criterion == null )
 			return null;
-		}
 
-		// Parse label selections
-		final Set< String > selectedLabels = new HashSet<>();
-		defaultLabelChoices = new int[ labelsRaw.length ];
-
-		for ( int i = 0; i < labelsRaw.length; i++ )
-		{
-			final boolean selected = gd.getNextBoolean();
-			defaultLabelChoices[ i ] = selected ? 1 : 0;
-			if ( selected )
-			{
-				// Extract clean label (remove warning text if present)
-				selectedLabels.add( InterestPointTools.getSelectedLabel( labelsRaw, i ) );
-			}
-		}
-
-		if ( selectedLabels.isEmpty() )
-		{
-			IOFunctions.printErr( "At least one interest point label must be selected." );
-			return null;
-		}
-
-		final int maxCorrespondences = defaultMaxCorrespondences = (int) Math.round( gd.getNextNumber() );
-
+		// Get common oct-tree parameters
 		final int minSizeMultiplier = defaultMinSizeMultiplier = Math.max( 4, (int) Math.round( gd.getNextNumber() ) );
-
-		// Create criterion
-		final CrossViewCorrespondenceCriterion criterion = new CrossViewCorrespondenceCriterion(
-				data, selectedLabels, maxCorrespondences );
 
 		IOFunctions.println( "Created oct-tree splitter: " + criterion.description() );
 

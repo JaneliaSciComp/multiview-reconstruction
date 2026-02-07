@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.process.splitting;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Interval;
+import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 
 /**
  * Generic criterion interface for deciding whether to continue splitting
@@ -48,4 +49,9 @@ public interface OctTreeSplitCriterion
 	 * @return A description of this criterion and its parameters for logging/display
 	 */
 	String description();
+
+	/**
+	 * @return The SpimData2 used by this criterion (needed for accessing timepoints, views, etc.)
+	 */
+	SpimData2 getSpimData();
 }
