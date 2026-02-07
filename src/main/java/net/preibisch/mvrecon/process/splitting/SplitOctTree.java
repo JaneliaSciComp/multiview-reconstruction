@@ -161,6 +161,23 @@ public class SplitOctTree implements SplitInterval
 	@Override
 	public ArrayList< Interval > split( final Interval input )
 	{
+		// Validate that minSplitLevels is achievable given input size and minimum tile constraints
+		if ( minSplitLevels > 0 )
+		{
+			final int maxAchievableLevels = computeMaxSplitLevels( input );
+			if ( maxAchievableLevels < minSplitLevels )
+			{
+				IOFunctions.printErr( "ERROR: Cannot achieve " + minSplitLevels + " split levels with current parameters." );
+				IOFunctions.printErr( "  Input dimensions: " + intervalToString( input ) );
+				IOFunctions.printErr( "  Min tile size (minSizeMultiplier=" + minSizeMultiplier + " × minStepSize): " +
+						Arrays.toString( getMinTileSize() ) );
+				IOFunctions.printErr( "  Maximum achievable split levels: " + maxAchievableLevels );
+				IOFunctions.printErr( "  Please reduce minSplitLevels to " + maxAchievableLevels +
+						" or decrease minSizeMultiplier." );
+				return null;
+			}
+		}
+
 		// Reset statistics
 		splitCount = 0;
 		mergeCount = 0;
@@ -175,6 +192,65 @@ public class SplitOctTree implements SplitInterval
 				( minSplitLevels > 0 ? " (minSplitLevels=" + minSplitLevels + ")" : "" ) );
 
 		return result;
+	}
+
+	/**
+	 * Compute the maximum number of split levels achievable for an interval
+	 * given the minimum tile size constraints.
+	 *
+	 * @param interval The input interval
+	 * @return Maximum number of split levels (0 if can't split at all)
+	 */
+	private int computeMaxSplitLevels( final Interval interval )
+	{
+		int maxLevels = Integer.MAX_VALUE;
+
+		for ( int d = 0; d < interval.numDimensions(); d++ )
+		{
+			final long dim = interval.dimension( d );
+			final long minSize = minSizeMultiplier * minStepSize[ d ];
+
+			// After L splits, dimension becomes roughly dim / 2^L
+			// We need dim / 2^L >= minSize, so 2^L <= dim / minSize
+			// L <= log2(dim / minSize)
+			if ( dim < minSize )
+			{
+				maxLevels = 0;
+			}
+			else
+			{
+				final int levelsForDim = (int) Math.floor( Math.log( (double) dim / minSize ) / Math.log( 2 ) );
+				maxLevels = Math.min( maxLevels, levelsForDim );
+			}
+		}
+
+		return maxLevels == Integer.MAX_VALUE ? 0 : maxLevels;
+	}
+
+	/**
+	 * Get the minimum tile size array.
+	 */
+	private long[] getMinTileSize()
+	{
+		final long[] minTileSize = new long[ minStepSize.length ];
+		for ( int d = 0; d < minStepSize.length; d++ )
+			minTileSize[ d ] = minSizeMultiplier * minStepSize[ d ];
+		return minTileSize;
+	}
+
+	/**
+	 * Convert interval to readable string.
+	 */
+	private static String intervalToString( final Interval interval )
+	{
+		final StringBuilder sb = new StringBuilder( "[" );
+		for ( int d = 0; d < interval.numDimensions(); d++ )
+		{
+			if ( d > 0 ) sb.append( ", " );
+			sb.append( interval.dimension( d ) );
+		}
+		sb.append( "]" );
+		return sb.toString();
 	}
 
 	/**
@@ -203,7 +279,13 @@ public class SplitOctTree implements SplitInterval
 		// Want to split - check if we can split further (size constraint)
 		if ( !canSplitFurther( interval ) )
 		{
-			// Can't split further due to size constraint, add anyway
+			if ( forceSplit )
+			{
+				// This should not happen - we validated upfront in split()
+				throw new RuntimeException( "BUG: Cannot split further at depth " + depth +
+						" but minSplitLevels=" + minSplitLevels + ". Interval: " + intervalToString( interval ) );
+			}
+			// Can't split further due to size constraint, add as leaf
 			result.add( interval );
 			leafCount++;
 			return;
