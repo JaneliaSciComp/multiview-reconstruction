@@ -294,52 +294,36 @@ public class SplitOctTree implements SplitInterval
 		}
 
 		gd.addMessage( "Oct-tree adaptive splitting based on cross-view correspondences",
-				GUIHelper.mediumstatusfont, Color.BLUE );
-		gd.addMessage( "" );
+				GUIHelper.mediumstatusfont, Color.BLACK );
 
 		// Label selection (multi-select via checkboxes)
 		gd.addMessage( "Select interest point labels to consider:" );
 		final boolean[] defaultSelection = new boolean[ labels.length ];
+
 		if ( defaultLabelChoices == null || defaultLabelChoices.length != labels.length )
-		{
-			// Default: select first label
 			for ( int i = 0; i < labels.length; i++ )
-			{
 				defaultSelection[ i ] = ( i == 0 );
-			}
-		}
 		else
-		{
 			for ( int i = 0; i < defaultLabelChoices.length && i < labels.length; i++ )
 				defaultSelection[ i ] = ( defaultLabelChoices[ i ] == 1 );
-		}
 
 		for ( int i = 0; i < labels.length; i++ )
-		{
-			gd.addCheckbox( "Label:_" + labels[ i ], defaultSelection[ i ] );
-		}
+			gd.addCheckbox( labels[ i ], defaultSelection[ i ] );
 
-		gd.addMessage( "" );
-		gd.addNumericField( "Max_correspondences_per_region", defaultMaxCorrespondences, 0 );
-		gd.addMessage( "(Regions with more cross-view correspondences will be split further)",
-				GUIHelper.smallStatusFont, Color.DARK_GRAY );
-
-		gd.addMessage( "" );
-		gd.addNumericField( "Min_size_multiplier", defaultMinSizeMultiplier, 0 );
+		gd.addNumericField( "Correspondences required for further split", defaultMaxCorrespondences, 0 );
+		gd.addSlider( "Min_size_multiplier", 4, 32, defaultMinSizeMultiplier );
 
 		// Calculate and display actual minimum tile size
 		final long[] defaultMinTileSize = new long[ minStepSize.length ];
 		for ( int d = 0; d < minStepSize.length; d++ )
 			defaultMinTileSize[ d ] = defaultMinSizeMultiplier * minStepSize[ d ];
-		gd.addMessage( "Min tile size = multiplier × minStepSize = " + defaultMinSizeMultiplier + " × " +
-				Arrays.toString( minStepSize ) + " = " + Arrays.toString( defaultMinTileSize ),
-				GUIHelper.smallStatusFont, Color.DARK_GRAY );
-		gd.addMessage( "(Increase multiplier to prevent small tiles, minimum value is 4)",
+		gd.addMessage(
+				"Min split tile size = multiplier × minStepSize (allowed multipliers of dimensions) = " + defaultMinSizeMultiplier + " × " +
+				Arrays.toString( minStepSize ) + " = " + Arrays.toString( defaultMinTileSize ) +
+				"\n(Increase multiplier to prevent small tiles, minimum value is 4)",
 				GUIHelper.smallStatusFont, Color.DARK_GRAY );
 
-		gd.addMessage( "" );
-		gd.addMessage( "Note: Tiles overlap by minStepSize=" + Arrays.toString( minStepSize ),
-				GUIHelper.mediumstatusfont, Color.DARK_GRAY );
+		//gd.addMessage( "Note: Tiles overlap by minStepSize=" + Arrays.toString( minStepSize ), GUIHelper.mediumstatusfont, Color.DARK_GRAY );
 
 		return true;
 	}
