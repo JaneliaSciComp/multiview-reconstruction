@@ -58,6 +58,7 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 	Map<Class<? extends Entity>, List<? extends Entity>> filters;
 	List<Class<? extends Entity>> columnClasses;
 	List<Class<? extends Entity>> sortingFactors;
+	boolean hideMissingViews = false;
 
 	/* (non-Javadoc)
 	 * @see gui.ISpimDataTableModel#getPanel()
@@ -175,9 +176,20 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 		if (!forceUpdate && elements != null)
 			return elements;
 
-		final List<BasicViewDescription< ? > > ungroupedElements =
+		List<BasicViewDescription< ? > > ungroupedElements =
 				SpimDataTools.getFilteredViewDescriptions( panel.getSpimData().getSequenceDescription(), filters, false);
-		final List< Group< BasicViewDescription< ? > > > elementsNew = 
+
+		// Filter out missing views if requested
+		if ( hideMissingViews )
+		{
+			final List<BasicViewDescription< ? > > presentViews = new ArrayList<>();
+			for ( final BasicViewDescription< ? > vd : ungroupedElements )
+				if ( vd.isPresent() )
+					presentViews.add( vd );
+			ungroupedElements = presentViews;
+		}
+
+		final List< Group< BasicViewDescription< ? > > > elementsNew =
 				Group.combineBy(ungroupedElements, groupingFactors);
 
 		final List< List< BasicViewDescription< ? > > > elementsOut = new ArrayList<>();
@@ -303,9 +315,25 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 		return filters;
 	}
 
+	public boolean isHideMissingViews()
+	{
+		return hideMissingViews;
+	}
+
+	public void setHideMissingViews( final boolean hideMissingViews )
+	{
+		if ( this.hideMissingViews != hideMissingViews )
+		{
+			this.hideMissingViews = hideMissingViews;
+			elements = null;
+			fireTableDataChanged();
+		}
+	}
+
 	@Override
 	public void updateElements()
 	{
 		elements(true);
+		fireTableDataChanged();
 	}
 }

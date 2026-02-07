@@ -108,6 +108,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ResavePopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.Separator;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.SimpleHyperlinkPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.SpecifyCalibrationPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.MissingViewsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.VisualizeDetectionsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.VisualizeNonRigid;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.util.ColorStream;
@@ -128,6 +129,8 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 
 	public JCheckBox groupTilesCheckbox;
 	public JCheckBox groupIllumsCheckbox;
+	public JCheckBox hideMissingViewsCheckbox;
+	private FilteredAndGroupedTableModel< AS > filteredTableModel; // underlying model before decorators
 	private static long colorOffset = 0;
 
 	@Override
@@ -186,7 +189,8 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 
 	public void initComponent()
 	{
-		tableModel = new FilteredAndGroupedTableModel< AS >( this );
+		filteredTableModel = new FilteredAndGroupedTableModel< AS >( this );
+		tableModel = filteredTableModel;
 		tableModel = new MultiViewTableModelDecorator<>( tableModel );
 		tableModel = new MissingViewsTableModelDecorator<>( tableModel );
 		tableModel.setColumnClasses( FilteredAndGroupedTableModel.defaultColumnClassesMV() );
@@ -293,9 +297,14 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		final JPanel footer = new JPanel(new BorderLayout());
 		this.groupTilesCheckbox = new JCheckBox("Group Tiles", false);
 		this.groupIllumsCheckbox = new JCheckBox("Group Illuminations", true);
+		this.hideMissingViewsCheckbox = new JCheckBox("Hide Missing Views", false);
 		footer.add(groupTilesCheckbox, BorderLayout.EAST);
+		footer.add(hideMissingViewsCheckbox, BorderLayout.CENTER);
 		footer.add(groupIllumsCheckbox, BorderLayout.WEST);
 		this.add(footer, BorderLayout.SOUTH);
+
+		// Enable checkbox only if there are missing views
+		updateHideMissingViewsCheckbox();
 		
 		groupTilesCheckbox.addActionListener(e -> {
 			if (groupTilesCheckbox.isSelected())
@@ -318,6 +327,11 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 				if (groupTilesCheckbox.isSelected())
 					tableModel.addGroupingFactor(Tile.class);
 			}
+			updateContent();
+		});
+
+		hideMissingViewsCheckbox.addActionListener(e -> {
+			filteredTableModel.setHideMissingViews(hideMissingViewsCheckbox.isSelected());
 			updateContent();
 		});
 
@@ -435,6 +449,51 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 			groupTilesCheckbox.setSelected( false );
 		if ( groupIllumsCheckbox != null )
 			groupIllumsCheckbox.setSelected( false );
+	}
+
+	/**
+	 * Updates the enabled state and label of the "Hide Missing Views" checkbox.
+	 * The checkbox is only enabled when there are missing views in the dataset.
+	 */
+	public void updateHideMissingViewsCheckbox()
+	{
+		if ( hideMissingViewsCheckbox == null )
+			return;
+
+		final int missingCount = getMissingViewsCount();
+		final boolean hasMissingViews = missingCount > 0;
+
+		// Update label with count
+		if ( hasMissingViews )
+			hideMissingViewsCheckbox.setText( "Hide Missing Views (" + missingCount + ")" );
+		else
+			hideMissingViewsCheckbox.setText( "Hide Missing Views" );
+
+		hideMissingViewsCheckbox.setEnabled( hasMissingViews );
+
+		// If no missing views and checkbox was checked, uncheck it
+		if ( !hasMissingViews && hideMissingViewsCheckbox.isSelected() )
+		{
+			hideMissingViewsCheckbox.setSelected( false );
+			filteredTableModel.setHideMissingViews( false );
+		}
+	}
+
+	/**
+	 * Gets the count of missing views in the dataset.
+	 */
+	private int getMissingViewsCount()
+	{
+		if ( getSpimData() == null || getSpimData().getSequenceDescription() == null )
+			return 0;
+
+		if ( getSpimData().getSequenceDescription().getMissingViews() == null )
+			return 0;
+
+		if ( getSpimData().getSequenceDescription().getMissingViews().getMissingViews() == null )
+			return 0;
+
+		return getSpimData().getSequenceDescription().getMissingViews().getMissingViews().size();
 	}
 
 	public static void updateBDV(final BigDataViewer bdv, final boolean colorMode, final AbstractSpimData< ? > data,
@@ -732,6 +791,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		popups.add( new LabelPopUp( " Modifications" ) );
 		popups.add( new ResavePopup() );
 		popups.add( new FlatFieldCorrectionPopup() );
+		popups.add( new MissingViewsPopup() );
 
 		popups.add( new Separator() );
 
