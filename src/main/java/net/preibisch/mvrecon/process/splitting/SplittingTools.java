@@ -166,6 +166,10 @@ public class SplittingTools
 		// TODO: because we need to know what the new corresponding point(s) is/are, 1:1 correspondence mappings become 1:n since the corresponding point
 		// TODO: may be in an overlapping area and are thus multiplied
 
+		// Reset aggregate statistics for oct-tree splitting
+		if ( splitting instanceof SplitOctTree )
+			( (SplitOctTree) splitting ).resetTotalStatistics();
+
 		for ( final ViewSetup oldSetup : oldSetups )
 		{
 			final int oldID = oldSetup.getId();
@@ -463,6 +467,10 @@ public class SplittingTools
 				newId++;
 			}
 		}
+
+		// Print aggregate oct-tree statistics
+		if ( splitting instanceof SplitOctTree )
+			( (SplitOctTree) splitting ).printTotalStatistics();
 
 		// missing views
 		final MissingViews oldMissingViews = spimData.getSequenceDescription().getMissingViews();

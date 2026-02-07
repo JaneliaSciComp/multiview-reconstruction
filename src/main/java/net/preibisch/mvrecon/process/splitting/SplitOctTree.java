@@ -76,6 +76,13 @@ public class SplitOctTree implements SplitInterval
 	private int mergeCount;
 	private int leafCount;
 
+	// Aggregate statistics (accumulated across all split() calls)
+	private int totalSplitCount;
+	private int totalMergeCount;
+	private int totalLeafCount;
+	private int totalFinalBlocks;
+	private int totalViewsProcessed;
+
 	/**
 	 * Constructor with all parameters.
 	 *
@@ -186,12 +193,45 @@ public class SplitOctTree implements SplitInterval
 		final ArrayList< Interval > result = new ArrayList<>();
 		splitRecursive( input, result, 0 );
 
-		// Log statistics
+		// Log statistics for this split
 		IOFunctions.println( "Oct-tree split statistics: " + splitCount + " splits, " +
 				mergeCount + " merges, " + leafCount + " leaves → " + result.size() + " final blocks" +
 				( minSplitLevels > 0 ? " (minSplitLevels=" + minSplitLevels + ")" : "" ) );
 
+		// Accumulate to totals
+		totalSplitCount += splitCount;
+		totalMergeCount += mergeCount;
+		totalLeafCount += leafCount;
+		totalFinalBlocks += result.size();
+		totalViewsProcessed++;
+
 		return result;
+	}
+
+	/**
+	 * Reset aggregate statistics. Call before starting a batch of split() calls.
+	 */
+	public void resetTotalStatistics()
+	{
+		totalSplitCount = 0;
+		totalMergeCount = 0;
+		totalLeafCount = 0;
+		totalFinalBlocks = 0;
+		totalViewsProcessed = 0;
+	}
+
+	/**
+	 * Print aggregate statistics summary.
+	 */
+	public void printTotalStatistics()
+	{
+		IOFunctions.println( "===== Oct-tree splitting summary =====" );
+		IOFunctions.println( "Total views processed: " + totalViewsProcessed );
+		IOFunctions.println( "Total splits: " + totalSplitCount );
+		IOFunctions.println( "Total merges: " + totalMergeCount );
+		IOFunctions.println( "Total leaves: " + totalLeafCount );
+		IOFunctions.println( "Total final blocks: " + totalFinalBlocks );
+		IOFunctions.println( "======================================" );
 	}
 
 	/**
