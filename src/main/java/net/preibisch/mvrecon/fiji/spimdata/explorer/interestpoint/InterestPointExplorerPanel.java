@@ -38,7 +38,6 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
@@ -64,7 +63,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.ImgLib2Temp.Pair;
 import net.preibisch.mvrecon.fiji.ImgLib2Temp.ValuePair;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorer;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
@@ -543,70 +542,14 @@ public class InterestPointExplorerPanel extends JPanel
 	
 				final String label = InterestPointTableModel.label( labels, row );
 	
-				IOFunctions.println( "Removing label '' for timepoint_id " + vd.getTimePointId() + " viewsetup_id " + vd.getViewSetupId() + " -- Parsing through all correspondences to remove any links to this interest point list." );
-	
-				final List< CorrespondingInterestPoints > correspondencesList = new ArrayList<>(
-						vip.getViewInterestPointLists( vd ).getInterestPointList( label ).getCorrespondingInterestPointsCopy());
+				IOFunctions.println( "Removing label '" + label + "' for timepoint_id " + vd.getTimePointId() + " viewsetup_id " + vd.getViewSetupId() );
 
-				// sort by timepointid, setupid, and detectionid 
-				Collections.sort( correspondencesList );
-	
-				ViewId lastViewIdCorr = null;
-				//String lastLabelCorr = null;
-				List< CorrespondingInterestPoints > cList = null;
-				int size = 0;
-	
-				for ( final CorrespondingInterestPoints pair : correspondencesList )
-				{
-					// the next corresponding detection
-					final ViewId viewIdCorr = pair.getCorrespondingViewId();
-					final String labelCorr = pair.getCorrespodingLabel();
-					final int idCorr = pair.getCorrespondingDetectionId();
-	
-					// is it a new viewId? The load correspondence list for it
-					if ( lastViewIdCorr == null || !lastViewIdCorr.equals( viewIdCorr ) )
-					{
-						// but first remember the previous list for saving
-						if ( lastViewIdCorr != null )
-						{
-							IOFunctions.println( "Correspondences: " + size + " >>> " + cList.size() );
-							//this.save.add( new ValuePair< InterestPointList, ViewId >(
-							//				vip.getViewInterestPointLists( lastViewIdCorr ).getInterestPointList( lastLabelCorr ),
-							//				lastViewIdCorr ) );
-						}
-	
-						// remove in the new one
-						IOFunctions.println( "Removing correspondences in timepointid=" + viewIdCorr.getTimePointId() + ", viewid=" + viewIdCorr.getViewSetupId() );
-						lastViewIdCorr = viewIdCorr;
-						//lastLabelCorr = labelCorr;
-						cList = new ArrayList<>( vip.getViewInterestPointLists( viewIdCorr ).getInterestPointList( labelCorr ).getCorrespondingInterestPointsCopy() );
-						size = cList.size();
-					}
-	
-					// find the counterpart in the list that corresponds with pair.getDetectionId() and vd
-					for ( int i = 0; i < cList.size(); ++i )
-					{
-						final CorrespondingInterestPoints cc = cList.get( i );
-						
-						if ( cc.getDetectionId() == idCorr && cc.getCorrespondingDetectionId() == pair.getDetectionId() && cc.getCorrespondingViewId().equals( vd ) )
-						{
-							// remove it here
-							cList.remove( i );
-							break;
-						}
-					}
-				}
-	
-				// remember the list for saving
-				if ( lastViewIdCorr != null )
-				{
-					IOFunctions.println( "Correspondences: " + size + " >>> " + cList.size() );
-					//this.save.add( new ValuePair< InterestPointList, ViewId >(
-					//				vip.getViewInterestPointLists( lastViewIdCorr ).getInterestPointList( lastLabelCorr ),
-					//				lastViewIdCorr ) );
-				}
-	
-				// remember to deleted the files
+				// Remove symmetric correspondences from other views (multithreaded)
+				final int removed = CorrespondenceTools.removeCorrespondencesForViewLabel(
+						vip, vd, label, Runtime.getRuntime().availableProcessors() );
+				IOFunctions.println( "Removed " + removed + " corresponding entries from other views." );
+
+				// remember to delete the files
 				this.delete.add( new ValuePair< InterestPoints, ViewId >(
 						vip.getViewInterestPointLists( vd ).getInterestPointList( label ),
 						vd ) );
