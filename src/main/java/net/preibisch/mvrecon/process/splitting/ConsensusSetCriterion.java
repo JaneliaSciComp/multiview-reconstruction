@@ -68,6 +68,9 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	private final Set< String > labels;
 	private final int minCorrespondences;
 
+	// Cached set of missing view keys for O(1) lookups
+	private Set< String > missingViewKeys = null;
+
 	/**
 	 * Constructor.
 	 *
@@ -83,6 +86,22 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		this.spimData = spimData;
 		this.labels = labels;
 		this.minCorrespondences = minCorrespondences;
+	}
+
+	/**
+	 * Build cached set of missing view keys for O(1) lookups.
+	 */
+	private void buildMissingViewCache()
+	{
+		missingViewKeys = new HashSet<>();
+		if ( spimData.getSequenceDescription().getMissingViews() != null &&
+			 spimData.getSequenceDescription().getMissingViews().getMissingViews() != null )
+		{
+			for ( final ViewId missing : spimData.getSequenceDescription().getMissingViews().getMissingViews() )
+			{
+				missingViewKeys.add( missing.getTimePointId() + "_" + missing.getViewSetupId() );
+			}
+		}
 	}
 
 	@Override
@@ -156,20 +175,16 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 
 	/**
 	 * Check if a view is present (not missing).
+	 * Uses cached Set for O(1) lookups.
 	 */
 	private boolean isViewPresent( final ViewId viewId )
 	{
-		if ( spimData.getSequenceDescription().getMissingViews() == null ||
-			 spimData.getSequenceDescription().getMissingViews().getMissingViews() == null )
-			return true;
+		// Build cache on first use
+		if ( missingViewKeys == null )
+			buildMissingViewCache();
 
-		for ( final ViewId missing : spimData.getSequenceDescription().getMissingViews().getMissingViews() )
-		{
-			if ( missing.getTimePointId() == viewId.getTimePointId() &&
-				 missing.getViewSetupId() == viewId.getViewSetupId() )
-				return false;
-		}
-		return true;
+		final String key = viewId.getTimePointId() + "_" + viewId.getViewSetupId();
+		return !missingViewKeys.contains( key );
 	}
 
 	/**
