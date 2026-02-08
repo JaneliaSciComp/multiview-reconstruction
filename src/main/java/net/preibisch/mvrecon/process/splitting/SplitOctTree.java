@@ -50,8 +50,8 @@ public class SplitOctTree implements SplitInterval
 {
 	// Available criterion types for GUI selection
 	public static final String[] CRITERION_NAMES = new String[] {
-		CrossViewCorrespondenceCriterion.CRITERION_NAME
-		// Add more criteria here as they are implemented
+		CrossViewCorrespondenceCriterion.CRITERION_NAME,
+		ConsensusSetCriterion.CRITERION_NAME
 	};
 
 	// Static defaults for GUI persistence
@@ -814,7 +814,10 @@ public class SplitOctTree implements SplitInterval
 		{
 			success = CrossViewCorrespondenceCriterion.setupGUI( gd, data );
 		}
-		// Add more criteria here as they are implemented
+		else if ( selectedCriterion.equals( ConsensusSetCriterion.CRITERION_NAME ) )
+		{
+			success = ConsensusSetCriterion.setupGUI( gd, data );
+		}
 
 		if ( !success )
 			return false;
@@ -863,7 +866,10 @@ public class SplitOctTree implements SplitInterval
 		{
 			criterion = CrossViewCorrespondenceCriterion.queryGUI( gd, data );
 		}
-		// Add more criteria here as they are implemented
+		else if ( criterionName.equals( ConsensusSetCriterion.CRITERION_NAME ) )
+		{
+			criterion = ConsensusSetCriterion.queryGUI( gd, data );
+		}
 
 		if ( criterion == null )
 			return null;
