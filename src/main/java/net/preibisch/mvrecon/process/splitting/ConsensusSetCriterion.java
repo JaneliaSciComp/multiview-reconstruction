@@ -71,6 +71,26 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	// Cached set of missing view keys for O(1) lookups
 	private Set< String > missingViewKeys = null;
 
+	// Cached pre-processed correspondence data per view: viewKey -> list of (location, corrViewKey, consensusSetId)
+	private final Map< String, List< CorrespondenceEntry > > cachedCorrespondences = new HashMap<>();
+
+	/**
+	 * Pre-processed correspondence entry with just the data we need for interval queries.
+	 */
+	private static class CorrespondenceEntry
+	{
+		final double[] location;
+		final String corrViewKey;
+		final int consensusSetId;
+
+		CorrespondenceEntry( final double[] location, final String corrViewKey, final int consensusSetId )
+		{
+			this.location = location;
+			this.corrViewKey = corrViewKey;
+			this.consensusSetId = consensusSetId;
+		}
+	}
+
 	/**
 	 * Constructor.
 	 *
@@ -104,6 +124,60 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		}
 	}
 
+	/**
+	 * Get or build the pre-processed correspondence list for a view.
+	 */
+	private List< CorrespondenceEntry > getCorrespondencesForView( final ViewId viewId )
+	{
+		final String viewKey = viewId.getTimePointId() + "_" + viewId.getViewSetupId();
+
+		if ( cachedCorrespondences.containsKey( viewKey ) )
+			return cachedCorrespondences.get( viewKey );
+
+		// Build the cache for this view
+		final List< CorrespondenceEntry > entries = new ArrayList<>();
+		final int currentSetupId = viewId.getViewSetupId();
+
+		final ViewInterestPointLists vipl = spimData.getViewInterestPoints().getViewInterestPointLists( viewId );
+		if ( vipl != null )
+		{
+			for ( final String label : labels )
+			{
+				if ( !vipl.contains( label ) )
+					continue;
+
+				final InterestPoints ips = vipl.getInterestPointList( label );
+				final Map< Integer, InterestPoint > ipMap = ips.getInterestPointsCopy();
+				final Collection< CorrespondingInterestPoints > corrs = ips.getCorrespondingInterestPointsCopy();
+
+				for ( final CorrespondingInterestPoints cip : corrs )
+				{
+					// Skip correspondences to same view (self)
+					final ViewId corrViewId = cip.getCorrespondingViewId();
+					if ( corrViewId.getViewSetupId() == currentSetupId )
+						continue;
+
+					// Skip if corresponding view is missing
+					if ( !isViewPresent( corrViewId ) )
+						continue;
+
+					// Get the interest point location
+					final InterestPoint ip = ipMap.get( cip.getDetectionId() );
+					if ( ip == null )
+						continue;
+
+					// Store pre-processed entry
+					final String corrKey = corrViewId.getTimePointId() + "_" + corrViewId.getViewSetupId();
+					entries.add( new CorrespondenceEntry( ip.getL(), corrKey, cip.getConsensusSetId() ) );
+				}
+			}
+		}
+
+		cachedCorrespondences.put( viewKey, entries );
+		IOFunctions.println( "Cached " + entries.size() + " correspondences for view " + viewKey );
+		return entries;
+	}
+
 	@Override
 	public boolean shouldSplit( final Interval interval, final ViewId viewId, final int timepointId )
 	{
@@ -111,49 +185,23 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		if ( !isViewPresent( viewId ) )
 			return false;
 
-		final ViewInterestPointLists vipl = spimData.getViewInterestPoints().getViewInterestPointLists( viewId );
-		if ( vipl == null )
-			return false;
+		// Get pre-processed correspondence data (cached)
+		final List< CorrespondenceEntry > entries = getCorrespondencesForView( viewId );
 
 		int totalCorrespondences = 0;
-		final int currentSetupId = viewId.getViewSetupId();
 
-		// Map: "timepointId_setupId" → Set of consensusSetIds seen for that view
-		// Using String key for O(1) lookups instead of O(n) with ViewId iteration
+		// Map: corrViewKey → Set of consensusSetIds seen
 		final Map< String, Set< Integer > > consensusSetsPerView = new HashMap<>();
 
-		for ( final String label : labels )
+		// Simple iteration through pre-processed data
+		for ( final CorrespondenceEntry entry : entries )
 		{
-			if ( !vipl.contains( label ) )
+			// Check if this point is within the interval
+			if ( !contains( entry.location, interval ) )
 				continue;
 
-			final InterestPoints ips = vipl.getInterestPointList( label );
-			final Map< Integer, InterestPoint > ipMap = ips.getInterestPointsCopy();
-			final Collection< CorrespondingInterestPoints > corrs = ips.getCorrespondingInterestPointsCopy();
-
-			for ( final CorrespondingInterestPoints cip : corrs )
-			{
-				// Skip correspondences to same view (self)
-				final ViewId corrViewId = cip.getCorrespondingViewId();
-				if ( corrViewId.getViewSetupId() == currentSetupId )
-					continue;
-
-				// Skip if corresponding view is missing
-				if ( !isViewPresent( corrViewId ) )
-					continue;
-
-				// Check if this detection is within the interval
-				final InterestPoint ip = ipMap.get( cip.getDetectionId() );
-				if ( ip == null || !contains( ip.getL(), interval ) )
-					continue;
-
-				// Count this correspondence
-				totalCorrespondences++;
-
-				// Track consensus set for this corresponding view
-				final String viewKey = corrViewId.getTimePointId() + "_" + corrViewId.getViewSetupId();
-				consensusSetsPerView.computeIfAbsent( viewKey, k -> new HashSet<>() ).add( cip.getConsensusSetId() );
-			}
+			totalCorrespondences++;
+			consensusSetsPerView.computeIfAbsent( entry.corrViewKey, k -> new HashSet<>() ).add( entry.consensusSetId );
 		}
 
 		// Check stop conditions (AND logic - both must be true to STOP splitting)
