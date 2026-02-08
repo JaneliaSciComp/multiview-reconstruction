@@ -192,7 +192,7 @@ public class TestTPSDfieldFusion
 		if( writeDontShow )
 		{
 			ImagePlus imp = ImageJFunctions.wrap(fused, "fused", Executors.newFixedThreadPool( 8 ));
-			IJ.save(imp, "/Users/pietzsch/Desktop/TpsDfieldFusion_4_bbox.tif");
+			IJ.save(imp, "/Users/pietzsch/Desktop/TpsDfieldFusion_8.tif");
 			System.out.println("done");
 		}
 		else
@@ -244,13 +244,13 @@ public class TestTPSDfieldFusion
 				RealTransform invTransform = new WrappedIterativeInvertibleRealTransform<>(transform).inverse();
 
 				// dimensions of the viewId in original space
-				final Dimensions viewIdBoundingBox = idToDimensions.get(v);
+				final Dimensions viewIdBoundingBox = getDimensions( imgLoader, v );
 				final FinalInterval origInterval = new FinalInterval( viewIdBoundingBox);
 				// origInterval is in pixel space (zero-min is correct)
 
 				// we need rendered space
 				// estimated bounding box of origInterval transformed into global space
-				final Interval transformedInterval = boundingBox; //corners(invTransform, origInterval);
+				final Interval transformedInterval = corners(invTransform, origInterval);
 
 
 				// smaller interval over which to rasterize the TPS
