@@ -99,8 +99,9 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		int totalCorrespondences = 0;
 		final int currentSetupId = viewId.getViewSetupId();
 
-		// Map: correspondingViewId → Set of consensusSetIds seen for that view
-		final Map< ViewId, Set< Integer > > consensusSetsPerView = new HashMap<>();
+		// Map: "timepointId_setupId" → Set of consensusSetIds seen for that view
+		// Using String key for O(1) lookups instead of O(n) with ViewId iteration
+		final Map< String, Set< Integer > > consensusSetsPerView = new HashMap<>();
 
 		for ( final String label : labels )
 		{
@@ -131,9 +132,8 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 				totalCorrespondences++;
 
 				// Track consensus set for this corresponding view
-				// Note: We need to use a normalized ViewId key (same timepoint/setup may have different object instances)
-				ViewId normalizedViewId = findOrCreateKey( consensusSetsPerView, corrViewId );
-				consensusSetsPerView.get( normalizedViewId ).add( cip.getConsensusSetId() );
+				final String viewKey = corrViewId.getTimePointId() + "_" + corrViewId.getViewSetupId();
+				consensusSetsPerView.computeIfAbsent( viewKey, k -> new HashSet<>() ).add( cip.getConsensusSetId() );
 			}
 		}
 
@@ -152,25 +152,6 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 
 		// All conditions met to stop splitting (low count AND single consensus set per view)
 		return false;
-	}
-
-	/**
-	 * Find existing key with same timepoint/setup, or add new entry.
-	 * This handles the case where ViewId instances may differ but represent the same view.
-	 */
-	private ViewId findOrCreateKey( final Map< ViewId, Set< Integer > > map, final ViewId viewId )
-	{
-		for ( final ViewId existing : map.keySet() )
-		{
-			if ( existing.getTimePointId() == viewId.getTimePointId() &&
-				 existing.getViewSetupId() == viewId.getViewSetupId() )
-			{
-				return existing;
-			}
-		}
-		// Not found, add new entry
-		map.put( viewId, new HashSet<>() );
-		return viewId;
 	}
 
 	/**
