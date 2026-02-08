@@ -7,9 +7,11 @@ import ij.ImagePlus;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
+import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
@@ -373,6 +375,15 @@ public class TestTPSDfieldFusion
 		return new FinalInterval( min, max );
 	}
 
+	private static Dimensions getDimensions( final BasicImgLoader imgLoader, final ViewId viewId )
+	{
+		final int setup = viewId.getViewSetupId();
+		final int timepoint = viewId.getTimePointId();
+		if ( imgLoader instanceof ImgLoader )
+			return ( ( ImgLoader ) imgLoader ).getSetupImgLoader( setup ).getImageSize( timepoint );
+		else
+			return new FinalDimensions( imgLoader.getSetupImgLoader( setup ).getImage( timepoint ) );
+	}
 
 	public static Interval downsample(final Interval itvl, final double[] downsample ) {
 
