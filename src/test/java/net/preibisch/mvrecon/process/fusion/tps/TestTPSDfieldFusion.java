@@ -206,6 +206,16 @@ public class TestTPSDfieldFusion
 		final HashMap< ViewId, BlockSupplier<FloatType> > transformed;
 		private HashMap<ViewId, Dimensions> idToDimensions;
 
+		private TPSMaxFusionBlockSupplier(TPSMaxFusionBlockSupplier supplier)
+		{
+			this.boundingBox = supplier.boundingBox;
+			this.coeff = supplier.coeff;
+			this.imgLoader = supplier.imgLoader;
+			this.transformed = new HashMap<>();
+			supplier.transformed.forEach( ( viewId, blockSupplier ) -> this.transformed.put( viewId, blockSupplier.independentCopy() ) );
+			this.idToDimensions = supplier.idToDimensions;
+		}
+
 		public TPSMaxFusionBlockSupplier(
 				final BoundingBox boundingBox,
 				final HashMap< ViewId, Pair< double[][], double[][] > > coeff,
@@ -305,7 +315,7 @@ public class TestTPSDfieldFusion
 		}
 
 		@Override
-		public BlockSupplier<FloatType> independentCopy() { return new TPSMaxFusionBlockSupplier( boundingBox, coeff, idToDimensions, imgLoader); }
+		public BlockSupplier<FloatType> independentCopy() { return new TPSMaxFusionBlockSupplier(this); }
 
 		private static final FloatType type = new FloatType();
 
