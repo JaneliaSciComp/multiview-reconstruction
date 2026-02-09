@@ -1,6 +1,7 @@
 package net.preibisch.mvrecon.process.fusion.tps;
 
 import bdv.ViewerImgLoader;
+import bdv.tools.boundingbox.IntervalCorners;
 import ij.IJ;
 import ij.ImageJ;
 import ij.ImagePlus;
@@ -310,42 +311,27 @@ public class TestTPSDfieldFusion
 		if( xfm == null )
 			return new FinalInterval( interval );
 
-		int nd = interval.numDimensions();
-		double[] pt = new double[ nd ];
-		double[] ptxfm = new double[ nd ];
+		final int nd = interval.numDimensions();
+		final double[] ptxfm = new double[ nd ];
 
 		long[] min = new long[ nd ];
 		long[] max = new long[ nd ];
 		Arrays.fill( min, Long.MAX_VALUE );
 		Arrays.fill( max, Long.MIN_VALUE );
 
-		long[] unitInterval = new long[ nd ];
-		Arrays.fill( unitInterval, 2 );
-
-		// TODO: reuse IntervalCorners from BDV instead of this IntervalIterator loop
-		IntervalIterator it = new IntervalIterator( unitInterval );
-		while( it.hasNext() )
+		final double[][] corners = IntervalCorners.corners( interval );
+		for ( int i = 0; i < corners.length; i++ )
 		{
-			it.fwd();
-			for( int d = 0; d < nd; d++ )
+			xfm.apply( corners[ i ], ptxfm );
+			for ( int d = 0; d < nd; d++ )
 			{
-				if( it.getLongPosition( d ) == 0 )
-					pt[ d ] = interval.realMin( d );
-				else
-					pt[ d ] = interval.realMax( d );
-			}
+				long lo = ( long ) Math.floor( ptxfm[ d ] );
+				long hi = ( long ) Math.ceil( ptxfm[ d ] );
 
-			xfm.apply( pt, ptxfm );
-
-			for( int d = 0; d < nd; d++ )
-			{
-				long lo = (long)Math.floor( ptxfm[d] );
-				long hi = (long)Math.ceil( ptxfm[d] );
-
-				if( lo < min[ d ])
+				if ( lo < min[ d ] )
 					min[ d ] = lo;
 
-				if( hi > max[ d ])
+				if ( hi > max[ d ] )
 					max[ d ] = hi;
 			}
 		}
