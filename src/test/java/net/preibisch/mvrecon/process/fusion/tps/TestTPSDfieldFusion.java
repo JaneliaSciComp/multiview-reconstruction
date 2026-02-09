@@ -168,23 +168,9 @@ public class TestTPSDfieldFusion
 
 		new ImageJ();
 
-		// show a single first image transformed
-		/*
-		final ThinplateSplineTransform transform = new ThinplateSplineTransform(
-				coeff.get( new ViewId( 0, 0 )).getB(),
-				coeff.get( new ViewId( 0, 0 )).getA() );
-
-		final RandomAccessibleInterval img = underlyingImgLoader.getSetupImgLoader( 0 ).getImage( 0 );
-		final RealRandomAccessibleView interp =
-				img.view().extend(Extension.zero()).interpolate(Interpolation.clampingNLinear());
-		final RandomAccessibleInterval< UnsignedByteType > tformedImg =
-				new RealTransformRealRandomAccessible<>(interp, transform).realView().raster().interval(boundingBox);
-		ImageJFunctions.show( img );
-		ImageJFunctions.show(tformedImg);
-		*/
-
 		// use BlockSupplier
-		final TPSMaxFusionBlockSupplier tpsSupplier = new TPSMaxFusionBlockSupplier( boundingBox, coeff, idToDimensions, underlyingImgLoader );
+		final double[] downsamplingFactors = {8,8,8};
+		final TPSMaxFusionBlockSupplier tpsSupplier = new TPSMaxFusionBlockSupplier( boundingBox, downsamplingFactors, coeff, underlyingImgLoader );
 
 		CachedCellImg<FloatType, ?> fused =
 				BlockAlgoUtils.cellImg( tpsSupplier, boundingBox.dimensionsAsLongArray(), new int[] { 256, 256, 1 } );
@@ -215,22 +201,19 @@ public class TestTPSDfieldFusion
 			this.imgLoader = supplier.imgLoader;
 			this.transformed = new HashMap<>();
 			supplier.transformed.forEach( ( viewId, blockSupplier ) -> this.transformed.put( viewId, blockSupplier.independentCopy() ) );
-			this.idToDimensions = supplier.idToDimensions;
 		}
 
 		public TPSMaxFusionBlockSupplier(
 				final BoundingBox boundingBox,
+				final double[] downsamplingFactors,
 				final HashMap< ViewId, Pair< double[][], double[][] > > coeff,
-				final HashMap< ViewId, Dimensions > idToDimensions,
 				final BasicImgLoader imgLoader )
 		{
 			this.boundingBox = boundingBox;
 			this.coeff = coeff;
-			this.idToDimensions = idToDimensions;
 			this.imgLoader = imgLoader;
 			this.transformed = new HashMap<>();
-
-			final double[] spacing = {8,8,8}; // TODO make a parameter
+			this.idToInterval = new HashMap<>();
 
 			this.coeff.forEach( ( v,c ) -> {
 
@@ -245,31 +228,25 @@ public class TestTPSDfieldFusion
 
 				// dimensions of the viewId in original space
 				final Dimensions viewIdBoundingBox = getDimensions( imgLoader, v );
-				final FinalInterval origInterval = new FinalInterval( viewIdBoundingBox);
+				final FinalInterval origInterval = new FinalInterval( viewIdBoundingBox );
 				// origInterval is in pixel space (zero-min is correct)
 
 				// we need rendered space
 				// estimated bounding box of origInterval transformed into global space
+				// estimate the bounding box of the transformed source
 				final Interval transformedInterval = corners(invTransform, origInterval);
 
 
-				// smaller interval over which to rasterize the TPS
-				Interval downsampledTransformInterval = downsample(transformedInterval, spacing);
-
-				System.out.println( "view id itvl: " + origInterval);
-				System.out.println( "transformed itvl: " + transformedInterval);
-				System.out.println( "down transformed itvl: " + downsampledTransformInterval);
-
-				// estimate the bounding box of the TPS
-				// then downsample the resulting interval
+				// smaller / downsampled interval over which to rasterize the TPS
+				Interval downsampledTransformInterval = downsample(transformedInterval, downsamplingFactors);
 
 				double[] offset = transformedInterval.minAsDoubleArray(); // use this when creating displacement field?
 				final RandomAccessibleInterval<DoubleType> dfieldV = DisplacementFieldTransform.createDisplacementField(
-						transform, downsampledTransformInterval, spacing, offset);
+						transform, downsampledTransformInterval, downsamplingFactors, offset);
 
 				final ArrayImg<DoubleType, DoubleArray> dfieldImg = ArrayImgs.doubles(dfieldV.dimensionsAsLongArray());
 				for (int i = 0; i < viewIdBoundingBox.numDimensions(); i++) {
-					final double f = spacing[i];
+					final double f = downsamplingFactors[i];
 					LoopBuilder.setImages(dfieldV.view().slice(0, i), dfieldImg.view().slice(0, i))
 							.forEachPixel((x, y) -> y.set(x.get() / f));
 				}
@@ -278,12 +255,13 @@ public class TestTPSDfieldFusion
 
 				final AffineTransform3D transformFromSource = new AffineTransform3D();
 				transformFromSource.set(
-						spacing[0], 0, 0, offset[0],
-						0, spacing[1], 0, offset[1],
-						0, 0, spacing[2], offset[2]
+						downsamplingFactors[0], 0, 0, offset[0],
+						0, downsamplingFactors[1], 0, offset[1],
+						0, 0, downsamplingFactors[2], offset[2]
 				);
+
 				final DisplacementField< DoubleType > dfield = new DisplacementField<>(
-						BlockSupplier.of( dfieldImg ), spacing, offset );
+						BlockSupplier.of( dfieldImg ), downsamplingFactors, offset );
 
 				final BlockSupplier< FloatType > blocks = BlockSupplier
 						.of( img.view().extend(zero()) )
