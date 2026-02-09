@@ -22,12 +22,19 @@
  */
 package net.preibisch.mvrecon.process.splitting;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.FinalInterval;
-import net.imglib2.Interval;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 
 /**
  * Generic criterion interface for deciding whether to continue splitting
@@ -35,18 +42,124 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
  *
  * Implementations determine based on some metric (e.g., interest point
  * correspondence count) whether a region should be further subdivided.
+ *
+ * The splitting algorithm uses recursive correspondence partitioning:
+ * correspondences are loaded once per view, then partitioned as intervals
+ * are split, so each recursive call only processes its subset.
  */
 public interface OctTreeSplitCriterion
 {
 	/**
-	 * Evaluates whether the given interval should be split further.
-	 *
-	 * @param interval The interval (region) to evaluate in local coordinates
-	 * @param viewId The ViewId being processed (for accessing view-specific data)
-	 * @param timepointId The timepoint being evaluated
-	 * @return true if this interval should be split further, false if it should remain as-is
+	 * Lightweight structure for correspondence data during splitting.
+	 * Contains only the information needed for partitioning and evaluation.
 	 */
-	boolean shouldSplit( Interval interval, ViewId viewId, int timepointId );
+	public static class SplitCorrespondence
+	{
+		/** Detection location in local coordinates (for spatial partitioning) */
+		public final double[] location;
+
+		/** Detection ID (for counting unique detections) */
+		public final int detectionId;
+
+		/** Key identifying the corresponding view: "timepointId_setupId" */
+		public final String corrViewKey;
+
+		/** Consensus set ID (-1 for single-consensus mode) */
+		public final int consensusSetId;
+
+		public SplitCorrespondence( final double[] location, final int detectionId, final String corrViewKey, final int consensusSetId )
+		{
+			this.location = location;
+			this.detectionId = detectionId;
+			this.corrViewKey = corrViewKey;
+			this.consensusSetId = consensusSetId;
+		}
+	}
+
+	/**
+	 * Load all correspondences for a view. Called once at the start of splitting.
+	 * The returned list will be partitioned as the oct-tree recurses.
+	 *
+	 * Default implementation loads cross-view correspondences for all labels.
+	 *
+	 * @param viewId The ViewId to load correspondences for
+	 * @return List of correspondences for this view
+	 */
+	default List< SplitCorrespondence > loadCorrespondences( final ViewId viewId )
+	{
+		final List< SplitCorrespondence > result = new ArrayList<>();
+
+		final ViewInterestPointLists vipl = getSpimData().getViewInterestPoints().getViewInterestPointLists( viewId );
+		if ( vipl == null )
+			return result;
+
+		final int currentSetupId = viewId.getViewSetupId();
+
+		// Offset consensusSetId per label to avoid collisions across labels
+		int consensusSetOffset = 0;
+
+		for ( final String label : getLabels() )
+		{
+			if ( !vipl.contains( label ) )
+				continue;
+
+			final InterestPoints ips = vipl.getInterestPointList( label );
+			final Map< Integer, InterestPoint > ipMap = ips.getInterestPointsCopy();
+			final Collection< CorrespondingInterestPoints > corrs = ips.getCorrespondingInterestPointsCopy();
+
+			int maxConsensusSetId = 0;
+
+			for ( final CorrespondingInterestPoints cip : corrs )
+			{
+				// Only include correspondences to DIFFERENT views
+				final ViewId corrViewId = cip.getCorrespondingViewId();
+				if ( corrViewId.getViewSetupId() == currentSetupId )
+					continue;
+
+				// Get the detection location
+				final InterestPoint ip = ipMap.get( cip.getDetectionId() );
+				if ( ip == null )
+					continue;
+
+				// Track max consensusSetId for offset calculation
+				maxConsensusSetId = Math.max( maxConsensusSetId, cip.getConsensusSetId() );
+
+				// Create SplitCorrespondence with offset consensusSetId
+				final String corrViewKey = corrViewId.getTimePointId() + "_" + corrViewId.getViewSetupId();
+				final int adjustedConsensusSetId = cip.getConsensusSetId() + consensusSetOffset;
+				result.add( new SplitCorrespondence( ip.getL(), cip.getDetectionId(), corrViewKey, adjustedConsensusSetId ) );
+			}
+
+			// Offset for next label
+			consensusSetOffset += maxConsensusSetId + 1;
+		}
+
+		IOFunctions.println( "Loaded " + result.size() + " correspondences for view " +
+				viewId.getTimePointId() + "_" + viewId.getViewSetupId() );
+
+		return result;
+	}
+
+	/**
+	 * Evaluates whether to continue splitting based on pre-filtered correspondences.
+	 * The correspondences have already been filtered to only include those
+	 * within the current interval.
+	 *
+	 * @param correspondences The correspondences within the current interval
+	 * @return true if this region should be split further, false if it should remain as-is
+	 */
+	boolean shouldSplit( List< SplitCorrespondence > correspondences );
+
+	/**
+	 * Check if a set of correspondences can be merged (combined metric below threshold).
+	 *
+	 * @param correspondences The correspondences from all children being merged
+	 * @return true if merging is allowed (combined metric ≤ threshold)
+	 */
+	default boolean canMerge( List< SplitCorrespondence > correspondences )
+	{
+		return !shouldSplit( correspondences );
+	}
 
 	/**
 	 * @return A description of this criterion and its parameters for logging/display
@@ -59,59 +172,7 @@ public interface OctTreeSplitCriterion
 	SpimData2 getSpimData();
 
 	/**
-	 * Check if a set of intervals can be merged (combined metric below threshold).
-	 * Default implementation: check if bounding box doesn't need splitting.
-	 *
-	 * @param intervals The intervals to potentially merge
-	 * @param viewId The ViewId being processed
-	 * @param timepointId The timepoint being evaluated
-	 * @return true if merging is allowed (combined metric ≤ threshold)
+	 * @return The set of interest point labels to consider for correspondences
 	 */
-	default boolean canMerge( List< Interval > intervals, ViewId viewId, int timepointId )
-	{
-		if ( intervals == null || intervals.size() <= 1 )
-			return true;
-
-		final Interval bbox = boundingBox( intervals );
-		return !shouldSplit( bbox, viewId, timepointId );
-	}
-
-	/**
-	 * Compute the bounding box (union) of multiple intervals.
-	 *
-	 * @param intervals List of intervals to compute bounding box for
-	 * @return The bounding box containing all intervals
-	 */
-	static Interval boundingBox( final List< Interval > intervals )
-	{
-		if ( intervals == null || intervals.isEmpty() )
-			return null;
-
-		if ( intervals.size() == 1 )
-			return intervals.get( 0 );
-
-		final int n = intervals.get( 0 ).numDimensions();
-		final long[] min = new long[ n ];
-		final long[] max = new long[ n ];
-
-		// Initialize with first interval
-		for ( int d = 0; d < n; d++ )
-		{
-			min[ d ] = intervals.get( 0 ).min( d );
-			max[ d ] = intervals.get( 0 ).max( d );
-		}
-
-		// Expand to include all other intervals
-		for ( int i = 1; i < intervals.size(); i++ )
-		{
-			final Interval interval = intervals.get( i );
-			for ( int d = 0; d < n; d++ )
-			{
-				min[ d ] = Math.min( min[ d ], interval.min( d ) );
-				max[ d ] = Math.max( max[ d ], interval.max( d ) );
-			}
-		}
-
-		return new FinalInterval( min, max );
-	}
+	Set< String > getLabels();
 }

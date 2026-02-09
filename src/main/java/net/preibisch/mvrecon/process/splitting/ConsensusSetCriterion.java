@@ -23,7 +23,6 @@
 package net.preibisch.mvrecon.process.splitting;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -33,25 +32,20 @@ import java.util.Set;
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Interval;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
  * Criterion based on multi-consensus RANSAC sets.
  *
- * Stops splitting when BOTH conditions are met:
- * 1. Each corresponding view in the interval has correspondences from at most ONE consensus set
- * 2. AND the total number of correspondences is below a threshold (e.g., 12)
+ * Stops splitting when EITHER:
+ * 1. The number of unique detections is at or below a threshold (e.g., 12), OR
+ * 2. All corresponding views have correspondences from only ONE consensus set
+ *    (even if many detections, they belong to a single coherent transformation)
  *
- * Continues splitting if:
- * - Any corresponding view has >1 consensus sets in the interval
- * - OR total correspondences >= threshold
+ * Continues splitting only if:
+ * - Unique detections > threshold AND any view has >1 consensus set
  *
  * Note: consensusSetId = -1 (single-consensus mode) is treated as its own set.
  */
@@ -61,137 +55,75 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	public static final String CRITERION_NAME = "Multi-consensus sets";
 
 	// Static defaults for GUI persistence
-	public static int defaultMinCorrespondences = 12;
+	public static int defaultMaxCorrespondences = 12;
 	public static int[] defaultLabelChoices = null;
 
 	private final SpimData2 spimData;
 	private final Set< String > labels;
-	private final int minCorrespondences;
+	private final int maxCorrespondences;
 
 	/**
 	 * Constructor.
 	 *
 	 * @param spimData The SpimData2 containing interest points
 	 * @param labels Set of interest point labels to consider
-	 * @param minCorrespondences Threshold - regions with fewer correspondences AND single consensus sets stop splitting
+	 * @param maxCorrespondences Threshold - regions with more correspondences OR multiple consensus sets should be split
 	 */
 	public ConsensusSetCriterion(
 			final SpimData2 spimData,
 			final Set< String > labels,
-			final int minCorrespondences )
+			final int maxCorrespondences )
 	{
 		this.spimData = spimData;
 		this.labels = labels;
-		this.minCorrespondences = minCorrespondences;
+		this.maxCorrespondences = maxCorrespondences;
 	}
 
 	@Override
-	public boolean shouldSplit( final Interval interval, final ViewId viewId, final int timepointId )
+	public boolean shouldSplit( final List< SplitCorrespondence > correspondences )
 	{
-		// Don't split for missing views
-		if ( !isViewPresent( viewId ) )
+		// Count unique detections (a detection may have correspondences to multiple views)
+		final Set< Integer > uniqueDetections = new HashSet<>();
+		for ( final SplitCorrespondence corr : correspondences )
+			uniqueDetections.add( corr.detectionId );
+
+		// If unique detections <= threshold, don't split (few enough points)
+		if ( uniqueDetections.size() <= maxCorrespondences )
 			return false;
 
-		final ViewInterestPointLists vipl = spimData.getViewInterestPoints().getViewInterestPointLists( viewId );
-		if ( vipl == null )
-			return false;
-
-		int totalCorrespondences = 0;
-		final int currentSetupId = viewId.getViewSetupId();
-
-		// Map: "timepointId_setupId" → Set of consensusSetIds seen for that view
+		// Too many detections - check if any view has multiple consensus sets
+		// Map: corrViewKey → Set of consensusSetIds seen for that view
 		final Map< String, Set< Integer > > consensusSetsPerView = new HashMap<>();
-
-		for ( final String label : labels )
+		for ( final SplitCorrespondence corr : correspondences )
 		{
-			if ( !vipl.contains( label ) )
-				continue;
-
-			final InterestPoints ips = vipl.getInterestPointList( label );
-			final Map< Integer, InterestPoint > ipMap = ips.getInterestPointsCopy();
-			final Collection< CorrespondingInterestPoints > corrs = ips.getCorrespondingInterestPointsCopy();
-
-			for ( final CorrespondingInterestPoints cip : corrs )
-			{
-				// Skip correspondences to same view (self)
-				final ViewId corrViewId = cip.getCorrespondingViewId();
-				if ( corrViewId.getViewSetupId() == currentSetupId )
-					continue;
-
-				// Skip if corresponding view is missing
-				if ( !isViewPresent( corrViewId ) )
-					continue;
-
-				// Check if this detection is within the interval
-				final InterestPoint ip = ipMap.get( cip.getDetectionId() );
-				if ( ip == null || !contains( ip.getL(), interval ) )
-					continue;
-
-				// Count this correspondence
-				totalCorrespondences++;
-
-				// Track consensus set for this corresponding view
-				final String viewKey = corrViewId.getTimePointId() + "_" + corrViewId.getViewSetupId();
-				consensusSetsPerView.computeIfAbsent( viewKey, k -> new HashSet<>() ).add( cip.getConsensusSetId() );
-			}
+			consensusSetsPerView
+				.computeIfAbsent( corr.corrViewKey, k -> new HashSet<>() )
+				.add( corr.consensusSetId );
 		}
 
-		// Check stop conditions (AND logic - both must be true to STOP splitting)
-
-		// If total >= threshold, must split
-		if ( totalCorrespondences >= minCorrespondences )
-			return true;
-
-		// If any corresponding view has >1 consensus set, must split
+		// Only split if any corresponding view has >1 consensus set
 		for ( final Set< Integer > setIds : consensusSetsPerView.values() )
 		{
 			if ( setIds.size() > 1 )
 				return true;
 		}
 
-		// All conditions met to stop splitting (low count AND single consensus set per view)
+		// Many detections but all from single consensus set per view - don't split
 		return false;
-	}
-
-	/**
-	 * Check if a view is present (not missing).
-	 */
-	private boolean isViewPresent( final ViewId viewId )
-	{
-		if ( spimData.getSequenceDescription().getMissingViews() == null ||
-			 spimData.getSequenceDescription().getMissingViews().getMissingViews() == null )
-			return true;
-
-		for ( final ViewId missing : spimData.getSequenceDescription().getMissingViews().getMissingViews() )
-		{
-			if ( missing.getTimePointId() == viewId.getTimePointId() &&
-				 missing.getViewSetupId() == viewId.getViewSetupId() )
-				return false;
-		}
-		return true;
-	}
-
-	/**
-	 * Check if a point is within an interval.
-	 */
-	private static boolean contains( final double[] l, final Interval interval )
-	{
-		for ( int d = 0; d < l.length; ++d )
-			if ( l[ d ] < interval.min( d ) || l[ d ] > interval.max( d ) )
-				return false;
-		return true;
 	}
 
 	@Override
 	public String description()
 	{
 		return "ConsensusSetCriterion[labels=" + labels +
-				", minCorrespondences=" + minCorrespondences + "]";
+				", maxCorrespondences=" + maxCorrespondences + "]";
 	}
 
 	// Getters for GUI display and testing
-	public int getMinCorrespondences() { return minCorrespondences; }
+	public int getMaxCorrespondences() { return maxCorrespondences; }
+	@Override
 	public Set< String > getLabels() { return labels; }
+	@Override
 	public SpimData2 getSpimData() { return spimData; }
 
 	// ==================== Static GUI Methods ====================
@@ -233,8 +165,8 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		for ( int i = 0; i < labels.length; i++ )
 			gd.addCheckbox( labels[ i ], defaultSelection[ i ] );
 
-		gd.addNumericField( "Min_correspondences_for_further_split", defaultMinCorrespondences, 0 );
-		gd.addMessage( "(Splits if >=N correspondences OR multiple consensus sets per view-pair)" );
+		gd.addNumericField( "Max_detections_per_tile", defaultMaxCorrespondences, 0 );
+		gd.addMessage( "(Splits only if >N unique detections AND multiple consensus sets per view-pair)" );
 
 		return true;
 	}
@@ -283,8 +215,8 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 			return null;
 		}
 
-		final int minCorrespondences = defaultMinCorrespondences = (int) Math.round( gd.getNextNumber() );
+		final int maxCorrespondences = defaultMaxCorrespondences = (int) Math.round( gd.getNextNumber() );
 
-		return new ConsensusSetCriterion( data, selectedLabels, minCorrespondences );
+		return new ConsensusSetCriterion( data, selectedLabels, maxCorrespondences );
 	}
 }

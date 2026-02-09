@@ -23,32 +23,24 @@
 package net.preibisch.mvrecon.process.splitting;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Interval;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
  * Criterion that counts cross-view corresponding interest points within a region.
  *
- * An interest point is counted as a "cross-view correspondence" if:
- * 1. It is within the spatial bounding box being evaluated
- * 2. It has at least one correspondence to a DIFFERENT view (not within the same original view)
+ * An interest point is counted as a "cross-view correspondence" if it has
+ * at least one correspondence to a DIFFERENT view (not within the same original view).
  *
- * If the count exceeds the threshold, the region should be split further.
+ * If the count of unique detections exceeds the threshold, the region should be split further.
  */
 public class CrossViewCorrespondenceCriterion implements OctTreeSplitCriterion
 {
@@ -68,7 +60,7 @@ public class CrossViewCorrespondenceCriterion implements OctTreeSplitCriterion
 	 *
 	 * @param spimData The SpimData2 containing interest points
 	 * @param labels Set of interest point labels to consider
-	 * @param maxCorrespondences Threshold - regions with more correspondences should be split
+	 * @param maxCorrespondences Threshold - regions with more unique detections should be split
 	 */
 	public CrossViewCorrespondenceCriterion(
 			final SpimData2 spimData,
@@ -81,97 +73,14 @@ public class CrossViewCorrespondenceCriterion implements OctTreeSplitCriterion
 	}
 
 	@Override
-	public boolean shouldSplit( final Interval interval, final ViewId viewId, final int timepointId )
+	public boolean shouldSplit( final List< SplitCorrespondence > correspondences )
 	{
-		// Don't split for missing views
-		if ( !isViewPresent( viewId ) )
-			return false;
+		// Count unique detection IDs (a detection may have correspondences to multiple views)
+		final Set< Integer > uniqueDetections = new HashSet<>();
+		for ( final SplitCorrespondence corr : correspondences )
+			uniqueDetections.add( corr.detectionId );
 
-		final int crossViewCorrespondenceCount = countCrossViewCorrespondences( interval, viewId, timepointId );
-		return crossViewCorrespondenceCount > maxCorrespondences;
-	}
-
-	/**
-	 * Check if a view is present (not missing).
-	 */
-	private boolean isViewPresent( final ViewId viewId )
-	{
-		if ( spimData.getSequenceDescription().getMissingViews() == null ||
-			 spimData.getSequenceDescription().getMissingViews().getMissingViews() == null )
-			return true;
-
-		for ( final ViewId missing : spimData.getSequenceDescription().getMissingViews().getMissingViews() )
-		{
-			if ( missing.getTimePointId() == viewId.getTimePointId() &&
-				 missing.getViewSetupId() == viewId.getViewSetupId() )
-				return false;
-		}
-		return true;
-	}
-
-	/**
-	 * Counts interest points that have correspondences to OTHER views within the interval.
-	 *
-	 * @param interval The spatial region to count within (local coordinates)
-	 * @param viewId The ViewId being evaluated
-	 * @param timepointId The timepoint
-	 * @return Number of interest points with cross-view correspondences in this region
-	 */
-	public int countCrossViewCorrespondences( final Interval interval, final ViewId viewId, final int timepointId )
-	{
-		final ViewInterestPointLists vipl = spimData.getViewInterestPoints().getViewInterestPointLists( viewId );
-		if ( vipl == null )
-			return 0;
-
-		int count = 0;
-		final int currentSetupId = viewId.getViewSetupId();
-
-		for ( final String label : labels )
-		{
-			if ( !vipl.contains( label ) )
-				continue;
-
-			final InterestPoints ips = vipl.getInterestPointList( label );
-			final Map< Integer, InterestPoint > ipMap = ips.getInterestPointsCopy();
-			final Collection< CorrespondingInterestPoints > corrs = ips.getCorrespondingInterestPointsCopy();
-
-			// Build set of detection IDs that have cross-view correspondences
-			final Set< Integer > crossViewDetectionIds = new HashSet<>();
-
-			for ( final CorrespondingInterestPoints cip : corrs )
-			{
-				// Only count if correspondence is to a DIFFERENT view (different ViewSetup)
-				// and that corresponding view is not missing
-				final ViewId correspondingViewId = cip.getCorrespondingViewId();
-				if ( correspondingViewId.getViewSetupId() != currentSetupId && isViewPresent( correspondingViewId ) )
-				{
-					crossViewDetectionIds.add( cip.getDetectionId() );
-				}
-			}
-
-			// Count interest points with cross-view correspondences that are within the interval
-			for ( final Integer detId : crossViewDetectionIds )
-			{
-				final InterestPoint ip = ipMap.get( detId );
-				if ( ip != null && contains( ip.getL(), interval ) )
-				{
-					count++;
-				}
-			}
-		}
-
-		return count;
-	}
-
-	/**
-	 * Check if a point is within an interval.
-	 */
-	private static boolean contains( final double[] l, final Interval interval )
-	{
-		for ( int d = 0; d < l.length; ++d )
-			if ( l[ d ] < interval.min( d ) || l[ d ] > interval.max( d ) )
-				return false;
-		return true;
+		return uniqueDetections.size() > maxCorrespondences;
 	}
 
 	@Override
@@ -183,7 +92,9 @@ public class CrossViewCorrespondenceCriterion implements OctTreeSplitCriterion
 
 	// Getters for GUI display and testing
 	public int getMaxCorrespondences() { return maxCorrespondences; }
+	@Override
 	public Set< String > getLabels() { return labels; }
+	@Override
 	public SpimData2 getSpimData() { return spimData; }
 
 	// ==================== Static GUI Methods ====================
