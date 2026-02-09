@@ -29,7 +29,6 @@ import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.DoubleArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.iterator.IntervalIterator;
 import net.imglib2.loops.LoopBuilder;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.DisplacementFieldTransform;
@@ -152,8 +151,6 @@ public class TestTPSDfieldFusion
 		BoundingBox boundingBox = boundingBoxMaximal.estimate( "Full Bounding Box" );
 		System.out.println( boundingBox );
 
-		HashMap<ViewId, Dimensions> idToDimensions = boundingBoxMaximal.dimensions;
-
 		if ( !Double.isNaN( anisotropyFactor ) )
 		{
 			// prepare downsampled boundingbox
@@ -189,17 +186,18 @@ public class TestTPSDfieldFusion
 	private static class TPSMaxFusionBlockSupplier extends AbstractBlockSupplier< FloatType >
 	{
 		final BoundingBox boundingBox;
-		final HashMap< ViewId, Pair< double[][], double[][] > > coeff;
 		final BasicImgLoader imgLoader;
 
+		final HashMap< ViewId, Pair< double[][], double[][] > > coeff;
 		final HashMap< ViewId, BlockSupplier<FloatType> > transformed;
-		private HashMap<ViewId, Dimensions> idToDimensions;
+		final HashMap< ViewId, Interval > transformedIntervals;
 
 		private TPSMaxFusionBlockSupplier(TPSMaxFusionBlockSupplier supplier)
 		{
 			this.boundingBox = supplier.boundingBox;
 			this.coeff = supplier.coeff;
 			this.imgLoader = supplier.imgLoader;
+			this.transformedIntervals = supplier.transformedIntervals;
 			this.transformed = new HashMap<>();
 			supplier.transformed.forEach( ( viewId, blockSupplier ) -> this.transformed.put( viewId, blockSupplier.independentCopy() ) );
 		}
@@ -214,6 +212,7 @@ public class TestTPSDfieldFusion
 			this.coeff = coeff;
 			this.imgLoader = imgLoader;
 			this.transformed = new HashMap<>();
+			this.transformedIntervals = new HashMap<>();
 
 			this.coeff.forEach( ( v,c ) -> {
 
@@ -235,7 +234,7 @@ public class TestTPSDfieldFusion
 				// estimated bounding box of origInterval transformed into global space
 				// estimate the bounding box of the transformed source
 				final Interval transformedInterval = corners(invTransform, origInterval);
-
+				transformedIntervals.put( v, transformedInterval );
 
 				// smaller / downsampled interval over which to rasterize the TPS
 				Interval downsampledTransformInterval = downsample(transformedInterval, downsamplingFactors);
@@ -282,15 +281,19 @@ public class TestTPSDfieldFusion
 
 			final int[] size = blockInterval.size();
 			final int len = safeInt( Intervals.numElements( size ) );
+			final float[] fdest = Cast.unchecked( dest );
 
 			transformed.forEach( (v,blocks) -> {
 
-				final ArrayImg<FloatType, ?> img = BlockAlgoUtils.arrayImg( blocks, blockInterval );
-				final ArrayCursor<FloatType> c = img.cursor();
-				final float[] fdest = Cast.unchecked( dest );
+				final Interval transformedInterval = transformedIntervals.get( v );
+				if ( !Intervals.isEmpty( Intervals.intersect( transformedInterval, blockInterval ) ) )
+				{
+					final ArrayImg<FloatType, ?> img = BlockAlgoUtils.arrayImg( blocks, blockInterval );
+					final ArrayCursor<FloatType> c = img.cursor();
+					for ( int x = 0; x < len; ++x )
+						fdest[ x ] = Math.max( c.next().getRealFloat(), fdest[ x ] );
+				}
 
-				for ( int x = 0; x < len; ++x )
-					fdest[ x ] = Math.max( c.next().getRealFloat(), fdest[ x ] );
 			});
 		}
 
