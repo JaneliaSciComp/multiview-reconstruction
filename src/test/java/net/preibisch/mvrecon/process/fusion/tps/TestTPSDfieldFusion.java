@@ -213,7 +213,6 @@ public class TestTPSDfieldFusion
 			this.coeff = coeff;
 			this.imgLoader = imgLoader;
 			this.transformed = new HashMap<>();
-			this.idToInterval = new HashMap<>();
 
 			this.coeff.forEach( ( v,c ) -> {
 
