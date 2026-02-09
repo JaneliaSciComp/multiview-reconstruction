@@ -60,7 +60,7 @@ public class SplitOctTree implements SplitInterval
 
 	// Static defaults for GUI persistence
 	public static int defaultCriterionChoice = 0;
-	public static int defaultMinSizeMultiplier = 4;
+	public static long[] defaultMinTileSize = null;  // initialized in setupGUI based on minStepSize
 	public static boolean defaultEnableMerge = true;
 	public static int defaultMinSplitLevels = 0;
 
@@ -891,16 +891,27 @@ public class SplitOctTree implements SplitInterval
 		if ( !success )
 			return false;
 
-		gd.addSlider( "Min_size_multiplier", 4, 32, defaultMinSizeMultiplier );
+		// Initialize defaults if not set or wrong dimension
+		if ( defaultMinTileSize == null || defaultMinTileSize.length != minStepSize.length )
+		{
+			defaultMinTileSize = new long[ minStepSize.length ];
+			for ( int d = 0; d < minStepSize.length; d++ )
+				defaultMinTileSize[ d ] = 4 * minStepSize[ d ];  // default multiplier = 4
+		}
 
-		final long[] defaultMinTileSize = new long[ minStepSize.length ];
-		for ( int d = 0; d < minStepSize.length; d++ )
-			defaultMinTileSize[ d ] = defaultMinSizeMultiplier * minStepSize[ d ];
-		gd.addMessage(
-				"Min split tile size = multiplier × minStepSize = " + defaultMinSizeMultiplier + " × " +
-				Arrays.toString( minStepSize ) + " = " + Arrays.toString( defaultMinTileSize ) +
-				"\n(Increase multiplier to prevent small tiles, minimum value is 4)",
+		// Add per-dimension sliders for minimum tile size
+		final String[] dimNames = { "X", "Y", "Z" };
+		gd.addMessage( "Minimum tile size per dimension (must be >= 4 × minStepSize and divisible by minStepSize):",
 				GUIHelper.smallStatusFont, Color.DARK_GRAY );
+
+		for ( int d = 0; d < minStepSize.length; d++ )
+		{
+			final long step = minStepSize[ d ];
+			final long minVal = 4 * step;
+			final long maxVal = 32 * step;
+			final String label = "Min_tile_size_" + dimNames[ d ] + " (step=" + step + ")";
+			gd.addSlider( label, minVal, maxVal, defaultMinTileSize[ d ], step );
+		}
 
 		gd.addSlider( "Min_split_levels", 0, 5, defaultMinSplitLevels );
 		gd.addMessage(
@@ -930,11 +941,49 @@ public class SplitOctTree implements SplitInterval
 		if ( criterion == null )
 			return null;
 
-		final int minSizeMultiplier = defaultMinSizeMultiplier = Math.max( 4, (int) Math.round( gd.getNextNumber() ) );
+		// Read per-dimension tile sizes
+		final long[] tileSizes = new long[ minStepSize.length ];
+		final String[] dimNames = { "X", "Y", "Z" };
+
+		for ( int d = 0; d < minStepSize.length; d++ )
+		{
+			tileSizes[ d ] = Math.round( gd.getNextNumber() );
+
+			// Validate: must be divisible by minStepSize
+			if ( tileSizes[ d ] % minStepSize[ d ] != 0 )
+			{
+				IOFunctions.printErr( "ERROR: Min tile size " + dimNames[ d ] + " (" + tileSizes[ d ] +
+						") must be divisible by minStepSize (" + minStepSize[ d ] + ")" );
+				return null;
+			}
+
+			// Validate: must be >= 4 * minStepSize
+			final long minAllowed = 4 * minStepSize[ d ];
+			if ( tileSizes[ d ] < minAllowed )
+			{
+				IOFunctions.printErr( "ERROR: Min tile size " + dimNames[ d ] + " (" + tileSizes[ d ] +
+						") must be >= " + minAllowed + " (4 × minStepSize)" );
+				return null;
+			}
+
+			// Store as default for next time
+			defaultMinTileSize[ d ] = tileSizes[ d ];
+		}
+
+		// Compute multiplier as minimum ratio across dimensions
+		int minSizeMultiplier = Integer.MAX_VALUE;
+		for ( int d = 0; d < minStepSize.length; d++ )
+		{
+			final int multiplier = ( int ) ( tileSizes[ d ] / minStepSize[ d ] );
+			minSizeMultiplier = Math.min( minSizeMultiplier, multiplier );
+		}
+
 		final int minSplitLevels = defaultMinSplitLevels = Math.max( 0, (int) Math.round( gd.getNextNumber() ) );
 		final boolean enableMerge = defaultEnableMerge = gd.getNextBoolean();
 
 		IOFunctions.println( "Created oct-tree splitter: " + criterion.description() +
+				", minTileSize=" + Arrays.toString( tileSizes ) +
+				", multiplier=" + minSizeMultiplier +
 				", merge=" + enableMerge + ", minSplitLevels=" + minSplitLevels );
 
 		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, enableMerge, minSplitLevels );
