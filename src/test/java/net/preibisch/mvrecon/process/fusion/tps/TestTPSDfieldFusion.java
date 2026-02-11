@@ -46,6 +46,7 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -176,7 +177,7 @@ public class TestTPSDfieldFusion
 		if( writeDontShow )
 		{
 			ImagePlus imp = ImageJFunctions.wrap(fused, "fused", Executors.newFixedThreadPool( 8 ));
-			IJ.save(imp, "/Users/pietzsch/Desktop/TpsDfieldFusion_8.tif");
+			IJ.save(imp, "/Users/pietzsch/Desktop/TpsDfieldFusion_8_v01.tif");
 			System.out.println("done");
 		}
 		else
@@ -222,45 +223,16 @@ public class TestTPSDfieldFusion
 						c.getB(),
 						c.getA() );
 
-				// from original to rendered
-				RealTransform invTransform = new WrappedIterativeInvertibleRealTransform<>(transform).inverse();
-
 				// dimensions of the viewId in original space
 				final Dimensions viewIdBoundingBox = getDimensions( imgLoader, v );
 				final FinalInterval origInterval = new FinalInterval( viewIdBoundingBox );
-				// origInterval is in pixel space (zero-min is correct)
 
-				// we need rendered space
-				// estimated bounding box of origInterval transformed into global space
-				// estimate the bounding box of the transformed source
-				final Interval transformedInterval = corners(invTransform, origInterval);
-				transformedIntervals.put( v, transformedInterval );
-
-				// smaller / downsampled interval over which to rasterize the TPS
-				Interval downsampledTransformInterval = downsample(transformedInterval, downsamplingFactors);
-
-				double[] offset = transformedInterval.minAsDoubleArray(); // use this when creating displacement field?
-				final RandomAccessibleInterval<DoubleType> dfieldV = DisplacementFieldTransform.createDisplacementField(
-						transform, downsampledTransformInterval, downsamplingFactors, offset);
-
-				final ArrayImg<DoubleType, DoubleArray> dfieldImg = ArrayImgs.doubles(dfieldV.dimensionsAsLongArray());
-				for (int i = 0; i < viewIdBoundingBox.numDimensions(); i++) {
-					final double f = downsamplingFactors[i];
-					LoopBuilder.setImages(dfieldV.view().slice(0, i), dfieldImg.view().slice(0, i))
-							.forEachPixel((x, y) -> y.set(x.get() / f));
-				}
+				final SampleTPS sampledTPS = SampleTPS.sample( transform, origInterval, downsamplingFactors );
+				final AffineTransform3D transformFromSource = sampledTPS.transformFromSource;
+				final DisplacementField< DoubleType > dfield = sampledTPS.dfield;
+				transformedIntervals.put( v, sampledTPS.transformedInterval );
 
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
-
-				final AffineTransform3D transformFromSource = new AffineTransform3D();
-				transformFromSource.set(
-						downsamplingFactors[0], 0, 0, offset[0],
-						0, downsamplingFactors[1], 0, offset[1],
-						0, 0, downsamplingFactors[2], offset[2]
-				);
-
-				final DisplacementField< DoubleType > dfield = new DisplacementField<>(
-						BlockSupplier.of( dfieldImg ), downsamplingFactors, offset );
 
 				final BlockSupplier< FloatType > blocks = BlockSupplier
 						.of( img.view().extend(zero()) )
@@ -309,38 +281,6 @@ public class TestTPSDfieldFusion
 		public int numDimensions() { return 3; }
 	}
 
-	public static Interval corners( RealTransform xfm, Interval interval )
-	{
-		if( xfm == null )
-			return new FinalInterval( interval );
-
-		final int nd = interval.numDimensions();
-		final double[] ptxfm = new double[ nd ];
-
-		long[] min = new long[ nd ];
-		long[] max = new long[ nd ];
-		Arrays.fill( min, Long.MAX_VALUE );
-		Arrays.fill( max, Long.MIN_VALUE );
-
-		final double[][] corners = IntervalCorners.corners( interval );
-		for ( int i = 0; i < corners.length; i++ )
-		{
-			xfm.apply( corners[ i ], ptxfm );
-			for ( int d = 0; d < nd; d++ )
-			{
-				long lo = ( long ) Math.floor( ptxfm[ d ] );
-				long hi = ( long ) Math.ceil( ptxfm[ d ] );
-
-				if ( lo < min[ d ] )
-					min[ d ] = lo;
-
-				if ( hi > max[ d ] )
-					max[ d ] = hi;
-			}
-		}
-		return new FinalInterval( min, max );
-	}
-
 	private static Dimensions getDimensions( final BasicImgLoader imgLoader, final ViewId viewId )
 	{
 		final int setup = viewId.getViewSetupId();
@@ -350,15 +290,4 @@ public class TestTPSDfieldFusion
 		else
 			return new FinalDimensions( imgLoader.getSetupImgLoader( setup ).getImage( timepoint ) );
 	}
-
-	public static Interval downsample(final Interval itvl, final double[] downsample ) {
-
-		final long[] dims = IntStream.of(0, 1, 2).mapToLong( i -> {
-			return (long)Math.ceil(itvl.dimension(i) / downsample[i]);
-		}).toArray();
-
-		return new FinalInterval(dims);
-	}
-
-
 }
