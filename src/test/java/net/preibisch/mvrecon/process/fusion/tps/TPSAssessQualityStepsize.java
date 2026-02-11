@@ -15,11 +15,8 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.Localizable;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.img.basictypeaccess.array.DoubleArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.DisplacementFieldTransform;
 import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.ThinplateSplineTransform;
@@ -28,6 +25,7 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import net.imglib2.view.composite.Composite;
 import net.imglib2.view.composite.GenericComposite;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -85,13 +83,13 @@ public class TPSAssessQualityStepsize
 			final RandomAccessibleInterval<DoubleType> interpFieldCopy =
 					Views.translate( ArrayImgs.doubles( interpField.dimensionsAsLongArray() ), interpField.minAsLongArray() );
 
-			final Cursor<? extends GenericComposite<DoubleType>> cIn = Views.flatIterable( Views.collapse( interpField ) ).cursor();
-			final Cursor<? extends GenericComposite<DoubleType>> cOut = Views.flatIterable( Views.collapse( interpFieldCopy ) ).cursor();
+			final Cursor< ? extends Composite< DoubleType > > cIn = Views.flatIterable( Views.collapse( interpField ) ).cursor();
+			final Cursor< ? extends Composite< DoubleType > > cOut = Views.flatIterable( Views.collapse( interpFieldCopy ) ).cursor();
 
 			while ( cIn.hasNext() )
 			{
-				final GenericComposite<DoubleType> in = cIn.next();
-				final GenericComposite<DoubleType> out = cOut.next();
+				final Composite<DoubleType> in = cIn.next();
+				final Composite<DoubleType> out = cOut.next();
 
 				loc[ 0 ] = in.get( 0 ).get();
 				loc[ 1 ] = in.get( 1 ).get();
