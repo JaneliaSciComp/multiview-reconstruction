@@ -12,8 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import org.apache.solr.common.util.Hash;
-
 import bdv.ViewerImgLoader;
 import mpicbg.models.AffineModel3D;
 import mpicbg.models.IllDefinedDataPointsException;
@@ -29,7 +27,6 @@ import net.imglib2.Cursor;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.Localizable;
-import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealInterval;
 import net.imglib2.RealRandomAccess;
@@ -52,9 +49,7 @@ import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
-import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
-import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.imglib2.view.composite.CompositeView;
 import net.imglib2.view.composite.GenericComposite;
@@ -65,6 +60,7 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.FastLinearIntensityMap;
 import net.preibisch.mvrecon.process.fusion.lazy.LazyFusionTools;
@@ -102,6 +98,7 @@ public class BlkThinPlateSplineFusion
 		if ( BlkAffineFusion.is2d( splitViewIds, splitViewDescriptions ) )
 			throw new UnsupportedOperationException( "BlkThinPlateSplineFusion: 2D fusion not supported." );
 
+		// TODO: this restriciton shouldn't be necessary if we follow the (images, weights, overlap) scheme
 		if ( fusionType != FusionType.CLOSEST_PIXEL_WINS && fusionType != FusionType.AVG_BLEND )
 			throw new UnsupportedOperationException( "BlkThinPlateSplineFusion: only FusionType.CLOSEST_PIXEL_WINS and FusionType.AVG_BLEND supported right now." );
 
@@ -127,18 +124,18 @@ public class BlkThinPlateSplineFusion
 		final HashMap< ViewId, AffineTransform3D > underlyingViewIdToTransform = new HashMap<>();
 
 		// the coefficients (source > target) for each underlying view, used to construct the TPS
-		final HashMap< ViewId, Pair<double[][], double[][]> > underlyingViewIdToCoefficients = new HashMap<>();
+		final HashMap< ViewId, Landmarks > underlyingViewIdToCoefficients = new HashMap<>();
 
 		for ( final ViewId underlyingViewId : sortedUnderlyingViewIds )
 		{
 			// ignore downsampling for now
-			final Pair<double[][], double[][]> coeff =
+			final Landmarks coeff =
 					getCoefficients(splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewId, Double.NaN, Double.NaN );
 
 			// TODO: we may want to put extra coefficients in the overlapping areas based on "real correspondences"
 
 			// approx affine transform for adjusting blending weights
-			final AffineTransform3D t = getTransform( coeff.getA(), coeff.getB() );
+			final AffineTransform3D t = getTransform( coeff.getSourcePoints(), coeff.getTargetPoints() );
 			//System.out.println( Group.pvid( underlyingViewId ) + ": " + t );
 
 			underlyingViewIdToTransform.put( underlyingViewId, t );
@@ -161,7 +158,7 @@ public class BlkThinPlateSplineFusion
 
 		for ( final ViewId underlyingViewId : underlyingOverlap.getViewIds() )
 		{
-			final Pair<double[][], double[][]> coeff = underlyingViewIdToCoefficients.get( underlyingViewId );
+			final Landmarks coeff = underlyingViewIdToCoefficients.get( underlyingViewId );
 
 			final Coefficients coefficients =
 					(intensityAdjustmentCoefficients == null) ? null : intensityAdjustmentCoefficients.get( underlyingViewId );
@@ -179,7 +176,7 @@ public class BlkThinPlateSplineFusion
 
 			// TODO: we should re-use the thin plate spline coordinate transformations for image and weights
 			final TPSImageTransform imageTransform =
-					new TPSImageTransform( underlyingViewId, lastTransformMap, new FinalInterval( inputImg ), fusionInterval, coeff.getA(), coeff.getB(), null, intervalExpansion );
+					new TPSImageTransform( underlyingViewId, lastTransformMap, new FinalInterval( inputImg ), fusionInterval, coeff.getSourcePoints(), coeff.getTargetPoints(), null, intervalExpansion );
 			imageBlockSupplier = imageBlockSupplier.andThen( imageTransform );
 
 			images.add( imageBlockSupplier );
@@ -203,7 +200,7 @@ public class BlkThinPlateSplineFusion
 			{
 				case AVG_BLEND:
 				case CLOSEST_PIXEL_WINS: // we need to use the blending weights, whatever weight is highest wins
-					weightBlockSupplier = new TPSBlending( underlyingViewId, lastTransformMap, new FinalInterval( inputImg ), fusionInterval, coeff.getA(), coeff.getB(), null, border, blending );
+					weightBlockSupplier = new TPSBlending( underlyingViewId, lastTransformMap, new FinalInterval( inputImg ), fusionInterval, coeff.getSourcePoints(), coeff.getTargetPoints(), null, border, blending );
 					break;
 				default:
 					throw new IllegalStateException(); // unsupported weights
@@ -594,7 +591,7 @@ public class BlkThinPlateSplineFusion
 		return Views.stack( xInterp, yInterp, zInterp );
 	}
 
-	public static Pair< double[][], double[][] > getCoefficients(
+	public static Landmarks getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
 			final Map<Integer, List<Integer>> old2newSetupId,
 			final Map<ViewId, ViewRegistration> splitRegMap,
@@ -654,7 +651,7 @@ public class BlkThinPlateSplineFusion
 			//System.out.println( "\tCenter point: " + Arrays.toString( p ) + " maps into global output space to: " + Arrays.toString( q ) );
 		}
 
-		return new ValuePair<>( source, target );
+		return new Landmarks( source, target );
 	}
 
 	private static AffineTransform3D getTransform( final double[][] source, final double[][] target )

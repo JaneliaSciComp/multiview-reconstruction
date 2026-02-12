@@ -1,7 +1,6 @@
 package net.preibisch.mvrecon.process.fusion.tps;
 
 import java.net.URI;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -23,7 +22,6 @@ import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
-import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.imglib2.view.composite.Composite;
@@ -34,6 +32,7 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 
 public class TPSAssessQualityStepsize
 {
@@ -201,7 +200,7 @@ public class TPSAssessQualityStepsize
 		BoundingBox boundingBox = new BoundingBoxMaximal( splitViewIds, data ).estimate( "Full Bounding Box" );
 		System.out.println( boundingBox );
 
-		final HashMap< ViewId, Pair< double[][], double[][] > > coeff =
+		final Map< ViewId, Landmarks > coeff =
 				TestTPSFusion.getCoefficients( splitImgLoader, data.getViewRegistrations().getViewRegistrations(), underlyingViewIds, Double.NaN, Double.NaN );
 
 		new ImageJ();
@@ -211,7 +210,7 @@ public class TPSAssessQualityStepsize
 				new long[] { boundingBox.min( 0 ), boundingBox.min( 1 ), (boundingBox.min( 2 )+ boundingBox.max( 2 ))/2 },
 				new long[] { boundingBox.max( 0 ), boundingBox.max( 1 ), (boundingBox.min( 2 )+ boundingBox.max( 2 ))/2 } );
 
-		visualize( slice, coeff.get( v ).getA(), coeff.get( v ).getB(), new long[] { 10, 10, 10 } );
+		visualize( slice, coeff.get( v ).getSourcePoints(), coeff.get( v ).getTargetPoints(), new long[] { 10, 10, 10 } );
 		/*visualize(
 				new FinalInterval( underlyingSD.getViewDescription( v ).getViewSetup().getSize() ),
 				slice, coeff.get( v ).getA(), coeff.get( v ).getB(), new long[] { 10, 10, 10 } );*/
