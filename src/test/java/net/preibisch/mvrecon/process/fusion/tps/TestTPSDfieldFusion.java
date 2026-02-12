@@ -177,7 +177,7 @@ public class TestTPSDfieldFusion
 		if( writeDontShow )
 		{
 			ImagePlus imp = ImageJFunctions.wrap(fused, "fused", Executors.newFixedThreadPool( 8 ));
-			IJ.save(imp, "/Users/pietzsch/Desktop/TpsDfieldFusion_8_v01.tif");
+			IJ.save(imp, "/Users/pietzsch/Desktop/TpsDfieldFusion_8_v03.tif");
 			System.out.println("done");
 		}
 		else
