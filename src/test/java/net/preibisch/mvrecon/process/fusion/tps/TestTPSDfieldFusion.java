@@ -46,13 +46,13 @@ import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
-import net.imglib2.util.Pair;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -67,7 +67,7 @@ public class TestTPSDfieldFusion
 	static boolean wiggleLandmarks = true;
 	static double wiggleAmount = 10;
 
-	public static HashMap< ViewId, Pair< double[][], double[][] > > getCoefficients(
+	public static Map< ViewId, Landmarks > getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
 			final Map<ViewId, ViewRegistration> splitRegMap,
 			final Collection< ViewId > underlyingViewsToProcess,
@@ -77,22 +77,22 @@ public class TestTPSDfieldFusion
 		final Map<Integer, Integer> new2oldSetupId = splitImgLoader.new2oldSetupId();
 		final Map<Integer, List<Integer>> old2newSetupId = BlkThinPlateSplineFusion.old2newSetupId( new2oldSetupId );
 
-		final HashMap< ViewId, Pair< double[][], double[][] > > underlyingViewId2TPSCoefficients = new HashMap<>();
+		final Map< ViewId, Landmarks > underlyingViewId2TPSCoefficients = new HashMap<>();
 
 		for ( final ViewId underlyingViewId : underlyingViewsToProcess )
 		{
 			System.out.println( "\nProcessing underlyingViewId: " + Group.pvid( underlyingViewId ) + ", which was split into " + old2newSetupId.get( underlyingViewId.getViewSetupId() ).size() + " pieces." );
 
-			final Pair<double[][], double[][]> coeff =
+			final Landmarks coeff =
 					BlkThinPlateSplineFusion.getCoefficients(splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId, anisotropyFactor, downsampling);
 
 			underlyingViewId2TPSCoefficients.put( underlyingViewId, coeff );
 
 			if( wiggleLandmarks )
-				TestTPSFusion.wiggle(coeff.getB(), wiggleAmount, new Random(1));
+				TestTPSFusion.wiggle(coeff.getTargetPoints(), wiggleAmount, new Random(1));
 
-			System.out.println( "source: " + Arrays.deepToString( coeff.getA() ) );
-			System.out.println( "target: " + Arrays.deepToString( coeff.getB() ) );
+			System.out.println( "source: " + Arrays.deepToString( coeff.getSourcePoints() ) );
+			System.out.println( "target: " + Arrays.deepToString( coeff.getTargetPoints() ) );
 		}
 
 		return underlyingViewId2TPSCoefficients;
@@ -136,7 +136,7 @@ public class TestTPSDfieldFusion
 		final double downsampling = Double.NaN;
 		final double anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( data, underlyingViewIds );
 
-		final HashMap< ViewId, Pair< double[][], double[][] > > coeff =
+		final Map< ViewId, Landmarks > coeff =
 				getCoefficients( splitImgLoader, data.getViewRegistrations().getViewRegistrations(), underlyingViewIds, anisotropyFactor, downsampling );
 
 		// we estimate the bounding box using the split imagel loader, which will be closer to real bounding box
@@ -181,9 +181,9 @@ public class TestTPSDfieldFusion
 		final BoundingBox boundingBox;
 		final BasicImgLoader imgLoader;
 
-		final HashMap< ViewId, Pair< double[][], double[][] > > coeff;
-		final HashMap< ViewId, BlockSupplier<FloatType> > transformed;
-		final HashMap< ViewId, Interval > transformedIntervals;
+		final Map< ViewId, Landmarks > coeff;
+		final Map< ViewId, BlockSupplier<FloatType> > transformed;
+		final Map< ViewId, Interval > transformedIntervals;
 
 		private TPSMaxFusionBlockSupplier(TPSMaxFusionBlockSupplier supplier)
 		{
@@ -198,7 +198,7 @@ public class TestTPSDfieldFusion
 		public TPSMaxFusionBlockSupplier(
 				final BoundingBox boundingBox,
 				final double[] downsamplingFactors,
-				final HashMap< ViewId, Pair< double[][], double[][] > > coeff,
+				final Map< ViewId, Landmarks > coeff,
 				final BasicImgLoader imgLoader )
 		{
 			this.boundingBox = boundingBox;
@@ -212,8 +212,8 @@ public class TestTPSDfieldFusion
 				// from rendered to original
 				final ThinplateSplineTransform transform = new ThinplateSplineTransform(
 						// we go from output to input
-						c.getB(),
-						c.getA() );
+						c.getTargetPoints(),
+						c.getSourcePoints() );
 
 				// dimensions of the viewId in original space
 				final Dimensions viewIdBoundingBox = getDimensions( imgLoader, v );

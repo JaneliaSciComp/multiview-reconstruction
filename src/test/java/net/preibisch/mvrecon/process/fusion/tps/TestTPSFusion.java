@@ -3,7 +3,6 @@ package net.preibisch.mvrecon.process.fusion.tps;
 import static net.imglib2.util.Util.safeInt;
 
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -20,7 +19,6 @@ import ij.ImagePlus;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
-import mpicbg.spim.data.registration.ViewTransform;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Cursor;
@@ -34,7 +32,6 @@ import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.blocks.BlockInterval;
 import net.imglib2.cache.img.CachedCellImg;
 import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealTransformRealRandomAccessible;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.type.numeric.RealType;
@@ -42,8 +39,6 @@ import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
-import net.imglib2.util.Pair;
-import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension;
 import net.imglib2.view.fluent.RandomAccessibleView.Interpolation;
@@ -54,10 +49,9 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
-import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
+import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
-import net.preibisch.mvrecon.process.splitting.SplittingTools;
 
 /**
  * This needs a minimal grid size of 2x2x2, otherwise we get 'funny' transformations
@@ -68,7 +62,7 @@ public class TestTPSFusion
 	static boolean wiggleLandmarks = true;
 	static double wiggleAmount = 10;
 
-	public static HashMap< ViewId, Pair< double[][], double[][] > > getCoefficients(
+	public static Map< ViewId, Landmarks > getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
 			final Map<ViewId, ViewRegistration> splitRegMap,
 			final Collection< ViewId > underlyingViewsToProcess,
@@ -78,22 +72,22 @@ public class TestTPSFusion
 		final Map<Integer, Integer> new2oldSetupId = splitImgLoader.new2oldSetupId();
 		final Map<Integer, List<Integer>> old2newSetupId = BlkThinPlateSplineFusion.old2newSetupId( new2oldSetupId );
 
-		final HashMap< ViewId, Pair< double[][], double[][] > > underlyingViewId2TPSCoefficients = new HashMap<>();
+		final HashMap< ViewId, Landmarks > underlyingViewId2TPSCoefficients = new HashMap<>();
 
 		for ( final ViewId underlyingViewId : underlyingViewsToProcess )
 		{
 			System.out.println( "\nProcessing underlyingViewId: " + Group.pvid( underlyingViewId ) + ", which was split into " + old2newSetupId.get( underlyingViewId.getViewSetupId() ).size() + " pieces." );
 
-			final Pair<double[][], double[][]> coeff =
+			final Landmarks coeff =
 					BlkThinPlateSplineFusion.getCoefficients(splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId, anisotropyFactor, downsampling);
 
 			underlyingViewId2TPSCoefficients.put( underlyingViewId, coeff );
 
 			if( wiggleLandmarks )
-				TestTPSFusion.wiggle(coeff.getB(), wiggleAmount, new Random(1));
+				TestTPSFusion.wiggle(coeff.getTargetPoints(), wiggleAmount, new Random(1));
 
-			System.out.println( "source: " + Arrays.deepToString( coeff.getA() ) );
-			System.out.println( "target: " + Arrays.deepToString( coeff.getB() ) );
+			System.out.println( "source: " + Arrays.deepToString( coeff.getSourcePoints() ) );
+			System.out.println( "target: " + Arrays.deepToString( coeff.getTargetPoints() ) );
 		}
 
 		return underlyingViewId2TPSCoefficients;
@@ -140,7 +134,7 @@ public class TestTPSFusion
 		final double downsampling = Double.NaN;
 		final double anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( data, underlyingViewIds );
 
-		final HashMap< ViewId, Pair< double[][], double[][] > > coeff =
+		final Map< ViewId,Landmarks > coeff =
 				getCoefficients( splitImgLoader, data.getViewRegistrations().getViewRegistrations(), underlyingViewIds, anisotropyFactor, downsampling );
 
 		// we estimate the bounding box using the split imagel loader, which will be closer to real bounding box
@@ -196,14 +190,14 @@ public class TestTPSFusion
 	private static class TPSMaxFusionBlockSupplier extends AbstractBlockSupplier< FloatType >
 	{
 		final Interval boundingBox;
-		final HashMap< ViewId, Pair< double[][], double[][] > > coeff;
+		final Map< ViewId, Landmarks > coeff;
 		final BasicImgLoader imgLoader;
 
-		final HashMap< ViewId, RandomAccessible > transformed;
+		final Map< ViewId, RandomAccessible > transformed;
 
 		public TPSMaxFusionBlockSupplier(
 				final Interval boundingBox,
-				final HashMap< ViewId, Pair< double[][], double[][] > > coeff,
+				final Map< ViewId, Landmarks > coeff,
 				final BasicImgLoader imgLoader )
 		{
 			this.boundingBox = boundingBox;
@@ -215,8 +209,8 @@ public class TestTPSFusion
 
 				final ThinplateSplineTransform transform = new ThinplateSplineTransform(
 					// we go from output to input
-					c.getB(),
-					c.getA() );
+					c.getTargetPoints(),
+					c.getSourcePoints() );
 
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
 				final RealRandomAccessibleView< UnsignedByteType > interp =
