@@ -1,7 +1,20 @@
 package net.preibisch.mvrecon.process.fusion.tps;
 
+import static net.imglib2.algorithm.blocks.dfield.DisplacementFieldTransform.displacementFieldAffine;
+import static net.imglib2.util.Util.safeInt;
+import static net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension.zero;
+
+import java.net.URI;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
+
 import bdv.ViewerImgLoader;
-import bdv.tools.boundingbox.IntervalCorners;
 import ij.IJ;
 import ij.ImageJ;
 import ij.ImagePlus;
@@ -26,15 +39,9 @@ import net.imglib2.blocks.BlockInterval;
 import net.imglib2.cache.img.CachedCellImg;
 import net.imglib2.img.array.ArrayCursor;
 import net.imglib2.img.array.ArrayImg;
-import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.img.basictypeaccess.array.DoubleArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.loops.LoopBuilder;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.realtransform.DisplacementFieldTransform;
-import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.ThinplateSplineTransform;
-import net.imglib2.realtransform.inverse.WrappedIterativeInvertibleRealTransform;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
@@ -49,21 +56,6 @@ import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
 import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
-
-import java.net.URI;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-
-import static net.imglib2.algorithm.blocks.dfield.DisplacementFieldTransform.displacementFieldAffine;
-import static net.imglib2.util.Util.safeInt;
-import static net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension.zero;
 
 /**
  * This needs a minimal grid size of 2x2x2, otherwise we get 'funny' transformations
