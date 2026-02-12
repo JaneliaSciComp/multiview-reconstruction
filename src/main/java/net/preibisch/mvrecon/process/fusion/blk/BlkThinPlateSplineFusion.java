@@ -96,7 +96,7 @@ public class BlkThinPlateSplineFusion
 	{
 		// assemble all underlying viewIds (which will expand the list of splitViews to all the underlying viewids consist of)
 		final List< ViewId > underlyingViewIds = underlyingViewIds( splitViewIdsInput, splitImgLoader.new2oldSetupId() );
-		final HashMap<Integer, List<Integer>> old2newSetupId = old2newSetupId( splitImgLoader.new2oldSetupId() );
+		final Map<Integer, List<Integer>> old2newSetupId = old2newSetupId( splitImgLoader.new2oldSetupId() );
 		final List< ViewId > splitViewIds = splitViewIds( underlyingViewIds, old2newSetupId );
 
 		if ( BlkAffineFusion.is2d( splitViewIds, splitViewDescriptions ) )
@@ -306,7 +306,7 @@ public class BlkThinPlateSplineFusion
 				{
 					cursor.next().localize( loc );
 					transform.apply( loc, loc );
-	
+
 					if ( contains3d( sourceImageInterval, loc ))
 					{
 						rra.setPosition( loc );
@@ -544,7 +544,7 @@ public class BlkThinPlateSplineFusion
 				Views.subsample(
 						Intervals.positions( new FinalInterval( min, max ) ),
 						stepSize );
-		
+
 		final int elements = (int)subsampledPositionsExtended.size();
 
 		final double[] x = new double[ elements ];
@@ -596,7 +596,7 @@ public class BlkThinPlateSplineFusion
 
 	public static Pair< double[][], double[][] > getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
-			final HashMap<Integer, List<Integer>> old2newSetupId,
+			final Map<Integer, List<Integer>> old2newSetupId,
 			final Map<ViewId, ViewRegistration> splitRegMap,
 			final ViewId underlyingViewId,
 			final double anisotropyFactor,
@@ -708,7 +708,7 @@ public class BlkThinPlateSplineFusion
 		return true;
 	}
 
-	public static List<ViewId> underlyingViewIds( final Collection< ? extends ViewId > splitViewIds, final HashMap< Integer, Integer > new2oldSetupId )
+	public static List<ViewId> underlyingViewIds( final Collection< ? extends ViewId > splitViewIds, final Map< Integer, Integer > new2oldSetupId )
 	{
 		return splitViewIds.stream()
 				.map( splitViewId ->
@@ -717,7 +717,7 @@ public class BlkThinPlateSplineFusion
 				.collect( Collectors.toList());
 	}
 
-	public static List<ViewId> splitViewIds( final Collection< ? extends ViewId > underlyingViewIds, final HashMap< Integer, List<Integer>> old2newSetupId )
+	public static List<ViewId> splitViewIds( final Collection< ? extends ViewId > underlyingViewIds, final Map< Integer, List<Integer>> old2newSetupId )
 	{
 		return underlyingViewIds.stream().flatMap( underlyingViewId ->
 			old2newSetupId.get( underlyingViewId.getViewSetupId() ).stream().map( splitSetupId ->
@@ -725,11 +725,11 @@ public class BlkThinPlateSplineFusion
 		).collect( Collectors.toList());
 	}
 
-	public static HashMap<Integer, List<Integer>> old2newSetupId( final HashMap<Integer, Integer> new2oldSetupId )
+	public static Map<Integer, List<Integer>> old2newSetupId( final Map<Integer, Integer> new2oldSetupId )
 	{
-		final HashMap<Integer, List<Integer>> old2newSetupId = new HashMap<>();
+		final Map< Integer, List< Integer > > old2newSetupId = new HashMap<>();
 
-		new2oldSetupId.forEach( (k,v) -> old2newSetupId.computeIfAbsent( v, newKey -> new ArrayList<>() ).add( k ) );
+		new2oldSetupId.forEach( ( k, v ) -> old2newSetupId.computeIfAbsent( v, newKey -> new ArrayList<>() ).add( k ) );
 
 		return old2newSetupId;
 	}

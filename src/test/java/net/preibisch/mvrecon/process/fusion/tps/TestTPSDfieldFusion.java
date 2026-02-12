@@ -82,8 +82,8 @@ public class TestTPSDfieldFusion
 			final double anisotropyFactor,
 			final double downsampling )
 	{
-		final HashMap<Integer, Integer> new2oldSetupId = splitImgLoader.new2oldSetupId();
-		final HashMap<Integer, List<Integer>> old2newSetupId = BlkThinPlateSplineFusion.old2newSetupId( new2oldSetupId );
+		final Map<Integer, Integer> new2oldSetupId = splitImgLoader.new2oldSetupId();
+		final Map<Integer, List<Integer>> old2newSetupId = BlkThinPlateSplineFusion.old2newSetupId( new2oldSetupId );
 
 		final HashMap< ViewId, Pair< double[][], double[][] > > underlyingViewId2TPSCoefficients = new HashMap<>();
 
