@@ -9,12 +9,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 
@@ -46,12 +47,12 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 	/**
 	 * Maps the newly assigned ViewSetupId to the old ViewSetupId
 	 */
-	final HashMap< Integer, Integer > new2oldSetupId;
+	final Map< Integer, Integer > new2oldSetupId;
 
 	/**
 	 * Maps the newly assigned ViewSetupId to Interval inside the old ViewSetupId
 	 */
-	final HashMap< Integer, Interval > newSetupId2Interval;
+	final Map< Integer, Interval > newSetupId2Interval;
 
 	/**
 	 * The old SequenceDescription is be needed for the underlying imgloader
@@ -61,7 +62,7 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 	/**
 	 * Remembers instances of SplitSetupImgLoader
 	 */
-	private final HashMap< Integer, SplitViewerSetupImgLoader<?,?> > splitSetupImgLoaders;
+	private final Map< Integer, SplitViewerSetupImgLoader<?,?> > splitSetupImgLoaders;
 
 	/**
 	 * Its own cell cache
@@ -72,8 +73,8 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 
 	public SplitViewerImgLoader(
 			final ViewerImgLoader underlyingImgLoader,
-			final HashMap< Integer, Integer > new2oldSetupId,
-			final HashMap< Integer, Interval > newSetupId2Interval,
+			final Map< Integer, Integer > new2oldSetupId,
+			final Map< Integer, Interval > newSetupId2Interval,
 			final SequenceDescription oldSD )
 	{
 		this.underlyingImgLoader = underlyingImgLoader;
@@ -85,8 +86,8 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 
 	private boolean isOpen = false;
 
-	public HashMap< Integer, Integer > new2oldSetupId() { return new2oldSetupId; }
-	public HashMap< Integer, Interval > newSetupId2Interval() { return newSetupId2Interval; }
+	public Map< Integer, Integer > new2oldSetupId() { return new2oldSetupId; }
+	public Map< Integer, Interval > newSetupId2Interval() { return newSetupId2Interval; }
 	public SequenceDescription underlyingSequenceDescription() { return oldSD; }
 
 	@Override
