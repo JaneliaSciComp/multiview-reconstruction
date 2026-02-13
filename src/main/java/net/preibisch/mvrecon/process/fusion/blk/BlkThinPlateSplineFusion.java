@@ -23,6 +23,7 @@ import mpicbg.spim.data.registration.ViewTransform;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Cursor;
+import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.Localizable;
@@ -122,8 +123,16 @@ public class BlkThinPlateSplineFusion
 		// we need an approximate transform for every underlying view composed from the split views
 		final HashMap< ViewId, AffineTransform3D > underlyingViewIdToTransform = new HashMap<>();
 
+
+		// image dimensions for every underlying view
+		final Map< ViewId, Dimensions > underlyingViewIdToDimensions = LazyFusionTools.assembleDimensions( sortedUnderlyingViewIds, underlyingSD.getViewDescriptions() );
+
 		// the coefficients (source > target) for each underlying view, used to construct the TPS
-		final HashMap< ViewId, Landmarks > underlyingViewIdToCoefficients = new HashMap<>();
+		final Map< ViewId, Landmarks > underlyingViewIdToCoefficients = new HashMap<>();
+
+		// TODO NEXT:
+		//  [ ] map underlyingViewId to inverse-transformed bounding box
+		//  [ ] find that back-projection code and extract it...
 
 		for ( final ViewId underlyingViewId : sortedUnderlyingViewIds )
 		{
@@ -141,10 +150,11 @@ public class BlkThinPlateSplineFusion
 			underlyingViewIdToCoefficients.put( underlyingViewId, coeff );
 		}
 
+
 		final Overlap underlyingOverlap = new Overlap(
 				sortedUnderlyingViewIds,
 				underlyingViewIdToTransform,
-				LazyFusionTools.assembleDimensions( sortedUnderlyingViewIds, underlyingSD.getViewDescriptions() ),
+				underlyingViewIdToDimensions,
 				intervalExpansion, // TODO: the default expansion should be computed from the difference of the split overlap and underlying overlap
 				3 )
 				.filter( fusionInterval )
