@@ -216,10 +216,9 @@ public class TestTPSDfieldFusion
 						c.getSourcePoints() );
 
 				// dimensions of the viewId in original space
-				final Dimensions viewIdBoundingBox = getDimensions( imgLoader, v );
-				final FinalInterval origInterval = new FinalInterval( viewIdBoundingBox );
+				final Dimensions viewIdDimensions = getDimensions( imgLoader, v );
 
-				final SampleTPS sampledTPS = SampleTPS.sample( transform, origInterval, downsamplingFactors );
+				final SampleTPS sampledTPS = SampleTPS.sample( transform, viewIdDimensions, downsamplingFactors );
 				final AffineTransform3D transformFromSource = sampledTPS.transformFromSource;
 				final DisplacementField< DoubleType > dfield = sampledTPS.dfield;
 				transformedIntervals.put( v, sampledTPS.transformedInterval );
