@@ -262,7 +262,6 @@ public class TestTPSDfieldFusion
 
 			transformed.forEach( (v,blocks) -> {
 
-				System.out.println( "v.getViewSetupId() = " + v.getViewSetupId() );
 				final Interval transformedInterval = transformedIntervals.get( v );
 				if ( !Intervals.isEmpty( Intervals.intersect( transformedInterval, blockInterval ) ) )
 				{
