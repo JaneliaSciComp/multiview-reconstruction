@@ -33,7 +33,6 @@ import net.imglib2.algorithm.blocks.AbstractBlockSupplier;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.convert.Convert;
-import net.imglib2.algorithm.blocks.dfield.BlendingFunction3D;
 import net.imglib2.algorithm.blocks.dfield.DisplacementField;
 import net.imglib2.algorithm.blocks.dfield.DisplacementFieldBlockSupplier;
 import net.imglib2.algorithm.blocks.transform.Transform;
@@ -54,6 +53,7 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
@@ -240,8 +240,7 @@ public class TestTPSDfieldFusion
 						dfield,
 						BlendingFunction3D.of(
 								dfield.getType().getNativeTypeFactory().getPrimitiveType(),
-								img,
-								border, blending ) );
+								viewIdDimensions, border, blending ) );
 
 				transformed.put(v, blocks);
 //				transformed.put(v, blend);
