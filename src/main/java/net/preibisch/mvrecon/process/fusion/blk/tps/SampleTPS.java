@@ -3,11 +3,8 @@ package net.preibisch.mvrecon.process.fusion.blk.tps;
 import java.util.Arrays;
 
 import net.imglib2.Dimensions;
-import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
-import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.dfield.DisplacementField;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealTransform;
@@ -16,6 +13,7 @@ import net.imglib2.realtransform.interval.IntervalSamplingMethod;
 import net.imglib2.realtransform.inverse.WrappedIterativeInvertibleRealTransform;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
+import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields.TransformedDisplacementField;
 
 public class SampleTPS
 {
@@ -62,35 +60,9 @@ public class SampleTPS
 						IntervalSamplingMethod.CORNERS ) );
 	}
 
-	public static SampleTPS sample(
-			final RealTransform transform,
-			final Interval interval,
-			final double[] spacing
-	)
-	{
-		// smaller / downsampled interval over which to rasterize the TPS
-		final long[] gridSize = gridSize( interval, spacing );
-		final double[] offset = interval.minAsDoubleArray();
-
-		final RandomAccessibleInterval< DoubleType > dfieldImg = DisplacementFields.createNormalized( transform, FinalDimensions.wrap( gridSize ), spacing, offset );
-
-		final AffineTransform3D transformFromSource = new AffineTransform3D();
-		transformFromSource.set(
-				spacing[ 0 ], 0, 0, offset[ 0 ],
-				0, spacing[ 1 ], 0, offset[ 1 ],
-				0, 0, spacing[ 2 ], offset[ 2 ]
-		);
-
-		final DisplacementField< DoubleType > dfield = new DisplacementField<>( BlockSupplier.of( dfieldImg ), spacing, offset );
-
-		return new SampleTPS( transformFromSource, dfield, interval );
-	}
-
-
 	// TODO: instead of TPS take RealTransform
 	//       and check for known-good subtypes
 	public static SampleTPS sample(
-
 
 			// transforms from render coordinates to source img pixels
 			final ThinplateSplineTransform transform, // TODO rename
@@ -104,23 +76,9 @@ public class SampleTPS
 	{
 		// estimated bounding box of the source img transformed to render coordinates
 		final Interval transformedInterval = inverseTransformedBoundingBox( transform, origDimensions );
-
-		// smaller / downsampled interval over which to rasterize the TPS
-		final long[] gridSize = gridSize( transformedInterval, spacing );
-		final double[] offset = transformedInterval.minAsDoubleArray();
-
-		final RandomAccessibleInterval< DoubleType > dfieldImg = DisplacementFields.createNormalized( transform, FinalDimensions.wrap( gridSize ), spacing, offset );
-
-		final AffineTransform3D transformFromSource = new AffineTransform3D();
-		transformFromSource.set(
-				spacing[ 0 ], 0, 0, offset[ 0 ],
-				0, spacing[ 1 ], 0, offset[ 1 ],
-				0, 0, spacing[ 2 ], offset[ 2 ]
-		);
-
-		final DisplacementField< DoubleType > dfield = new DisplacementField<>( BlockSupplier.of( dfieldImg ), spacing, offset );
-
-		return new SampleTPS( transformFromSource, dfield, transformedInterval );
+		final TransformedDisplacementField< DoubleType > field = DisplacementFields.sample( transform, transformedInterval, spacing );
+		final AffineTransform3D transformFromSource = ( AffineTransform3D ) field.transformFromSource();
+		return new SampleTPS( transformFromSource, field.displacementField(), transformedInterval );
 	}
 
 	private static long[] gridSize( final Dimensions size, final double[] spacing )
