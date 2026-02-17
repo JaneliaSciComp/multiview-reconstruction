@@ -9,12 +9,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -39,6 +39,7 @@ import net.imglib2.util.Intervals;
  * Compute and cache the expanded bounding boxes of all transformed views for per-block overlap determination.
  * Sort order of {@code viewIds} is maintained for per-block queries. (for FIRST-WINS strategy)
  */
+public // TODO: revert to packages private
 class Overlap
 {
 	private final List< ? extends ViewId > viewIds;
@@ -48,6 +49,24 @@ class Overlap
 	private final int numDimensions;
 
 	private final int numViews;
+
+	/**
+	 * @param viewIds ViewIds in the desired order
+	 * @param viewBounds transformed bounding boxes for all ViewIds
+	 * @param numDimensions number of dimensions
+	 */
+	public Overlap(
+			final List< ? extends ViewId > viewIds,
+			final Map< ? extends ViewId, ? extends Interval > viewBounds,
+			final int numDimensions )
+	{
+		this.viewIds = viewIds;
+		this.numDimensions = numDimensions;
+		numViews = viewIds.size();
+		bb = new long[ numViews * numDimensions * 2 ];
+		for ( int i = 0; i < numViews; ++i )
+			setBounds( i, viewBounds.get( viewIds.get( i ) ) );
+	}
 
 	public Overlap(
 			final List< ? extends ViewId > viewIds,

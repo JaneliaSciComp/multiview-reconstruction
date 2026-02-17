@@ -60,7 +60,10 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields;
+import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields.TransformedDisplacementField;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
+import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.FastLinearIntensityMap;
 import net.preibisch.mvrecon.process.fusion.lazy.LazyFusionTools;
@@ -127,12 +130,66 @@ public class BlkThinPlateSplineFusion
 		// image dimensions for every underlying view
 		final Map< ViewId, Dimensions > underlyingViewIdToDimensions = LazyFusionTools.assembleDimensions( sortedUnderlyingViewIds, underlyingSD.getViewDescriptions() );
 
+
+		// TODO: combine Map<ViewId, ...> maps into one single map with a value class holding everything
+		//       These for all underlyingViewIds
+		//         landmarks
+		//         image dimensions
+		//         bbox
+		//       and these only for Overlap filtered ViewIds
+		//         dfield
+		//         approximate affine transform
+
 		// the coefficients (source > target) for each underlying view, used to construct the TPS
 		final Map< ViewId, Landmarks > underlyingViewIdToCoefficients = new HashMap<>();
 
-		// TODO NEXT:
-		//  [ ] map underlyingViewId to inverse-transformed bounding box
-		//  [ ] find that back-projection code and extract it...
+		// back-projected bounding box (render coordinates) for every underlying view
+		final Map< ViewId, Interval > underlyingViewIdToBoundingBox = new HashMap<>();
+
+		final Map< ViewId, TransformedDisplacementField< DoubleType > > underlyingViewIdToDisplacementField = new HashMap<>();
+
+		for ( final ViewId underlyingViewId : sortedUnderlyingViewIds )
+		{
+			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewId, Double.NaN, Double.NaN );
+			underlyingViewIdToCoefficients.put( underlyingViewId, landmarks );
+
+			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
+					// we go from output to input
+					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
+			final Dimensions dims = underlyingViewIdToDimensions.get( underlyingViewId );
+			final Interval bbox = SampleTPS.inverseTransformedBoundingBox( tps, dims );
+			underlyingViewIdToBoundingBox.put( underlyingViewId, bbox );
+		}
+
+		final Overlap underlyingOverlap = new Overlap( sortedUnderlyingViewIds, underlyingViewIdToBoundingBox, 3 )
+				.filter( fusionInterval )
+				.offset( fusionInterval.minAsLongArray() );
+
+		// TODO: should be an argument
+		final double[] spacing = { 8, 8, 8 };
+
+		for ( final ViewId underlyingViewId : underlyingOverlap.getViewIds() )
+		{
+			final Landmarks landmarks = underlyingViewIdToCoefficients.get( underlyingViewId );
+			final Interval bbox = underlyingViewIdToBoundingBox.get( underlyingViewId );
+
+			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
+					// we go from output to input
+					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
+			final TransformedDisplacementField< DoubleType > dfield = DisplacementFields.sample( tps, bbox, spacing );
+			underlyingViewIdToDisplacementField.put( underlyingViewId, dfield );
+
+			// approx affine transform for adjusting blending weights
+			final AffineTransform3D t = getTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() );
+			underlyingViewIdToTransform.put( underlyingViewId, t );
+		}
+
+		// TODO:
+		//   [ ] apply dfield to input image
+		//   [ ] apply dfield to weights image
+		//       [ ] create masking image
+		//       [ ] create blending image
+
 
 		for ( final ViewId underlyingViewId : sortedUnderlyingViewIds )
 		{
@@ -151,14 +208,14 @@ public class BlkThinPlateSplineFusion
 		}
 
 
-		final Overlap underlyingOverlap = new Overlap(
-				sortedUnderlyingViewIds,
-				underlyingViewIdToTransform,
-				underlyingViewIdToDimensions,
-				intervalExpansion, // TODO: the default expansion should be computed from the difference of the split overlap and underlying overlap
-				3 )
-				.filter( fusionInterval )
-				.offset( fusionInterval.minAsLongArray() );
+//		final Overlap underlyingOverlap = new Overlap(
+//				sortedUnderlyingViewIds,
+//				underlyingViewIdToTransform,
+//				underlyingViewIdToDimensions,
+//				intervalExpansion, // TODO: the default expansion should be computed from the difference of the split overlap and underlying overlap
+//				3 )
+//				.filter( fusionInterval )
+//				.offset( fusionInterval.minAsLongArray() );
 
 		final List< BlockSupplier< FloatType > > images = new ArrayList<>( underlyingOverlap.numViews() );
 		final List< BlockSupplier< FloatType > > weights = new ArrayList<>( underlyingOverlap.numViews() );

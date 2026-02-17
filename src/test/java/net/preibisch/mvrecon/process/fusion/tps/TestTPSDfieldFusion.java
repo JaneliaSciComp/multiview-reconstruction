@@ -33,7 +33,9 @@ import net.imglib2.algorithm.blocks.AbstractBlockSupplier;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.convert.Convert;
+import net.imglib2.algorithm.blocks.dfield.BlendingFunction3D;
 import net.imglib2.algorithm.blocks.dfield.DisplacementField;
+import net.imglib2.algorithm.blocks.dfield.DisplacementFieldBlockSupplier;
 import net.imglib2.algorithm.blocks.transform.Transform;
 import net.imglib2.blocks.BlockInterval;
 import net.imglib2.cache.img.CachedCellImg;
@@ -63,7 +65,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 public class TestTPSDfieldFusion
 {
 
-	static boolean writeDontShow = true;
+	static boolean writeDontShow = false;
 	static boolean wiggleLandmarks = true;
 	static double wiggleAmount = 10;
 
@@ -230,7 +232,19 @@ public class TestTPSDfieldFusion
 						.andThen(Convert.convert(new FloatType()))
 						.andThen( displacementFieldAffine( transformFromSource, dfield, Transform.Interpolation.NLINEAR ) );
 
+				final float[] border = { 0, 0, 0 };
+				final float[] blending = { 40, 40, 5 };
+				final BlockSupplier< FloatType > blend = DisplacementFieldBlockSupplier.create(
+						new FloatType(),
+						transformFromSource,
+						dfield,
+						BlendingFunction3D.of(
+								dfield.getType().getNativeTypeFactory().getPrimitiveType(),
+								img,
+								border, blending ) );
+
 				transformed.put(v, blocks);
+//				transformed.put(v, blend);
 			});
 
 		}
@@ -248,6 +262,7 @@ public class TestTPSDfieldFusion
 
 			transformed.forEach( (v,blocks) -> {
 
+				System.out.println( "v.getViewSetupId() = " + v.getViewSetupId() );
 				final Interval transformedInterval = transformedIntervals.get( v );
 				if ( !Intervals.isEmpty( Intervals.intersect( transformedInterval, blockInterval ) ) )
 				{
