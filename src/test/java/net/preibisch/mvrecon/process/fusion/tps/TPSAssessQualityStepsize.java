@@ -1,6 +1,7 @@
 package net.preibisch.mvrecon.process.fusion.tps;
 
 import java.net.URI;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -15,10 +16,14 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.Localizable;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.basictypeaccess.array.DoubleArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.realtransform.DisplacementFieldTransform;
 import net.imglib2.realtransform.RealTransform;
+import net.imglib2.realtransform.RealViews;
+import net.imglib2.realtransform.Scale3D;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
@@ -26,6 +31,8 @@ import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.imglib2.view.composite.Composite;
 import net.imglib2.view.composite.GenericComposite;
+import net.imglib2.view.fluent.RandomAccessibleIntervalView;
+import net.imglib2.view.fluent.RandomAccessibleView;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
@@ -45,6 +52,70 @@ public class TPSAssessQualityStepsize
 		visualize(null, boundingBox, source, target, stepSize);
 	}
 
+	public static RandomAccessibleInterval<DoubleType> interpolatedField(
+			final ThinplateSplineTransform transform,
+			final Interval blockInterval,
+			final long[] stepSize )
+	{
+		// create a stepSize bigger interval to make sure the last pixel is interpolated properly
+		final long[] min = blockInterval.minAsLongArray();
+		final long[] max = blockInterval.maxAsLongArray();
+		Arrays.setAll( max, d -> max[ d ] + stepSize[ d ] );
+
+		final RandomAccessibleInterval<Localizable> subsampledPositionsExtended =
+				Views.subsample(
+						Intervals.positions( new FinalInterval( min, max ) ),
+						stepSize );
+
+		final int elements = (int)subsampledPositionsExtended.size();
+
+		final double[] x = new double[ elements ];
+		final double[] y = new double[ elements ];
+		final double[] z = new double[ elements ];
+
+		final double[] loc = new double[ 3 ];
+
+		int i = 0;
+		for ( final Localizable l : Views.flatIterable( subsampledPositionsExtended ) )
+		{
+			l.localize( loc );
+			transform.apply( loc, loc );
+
+			x[ i ] = loc[ 0 ];
+			y[ i ] = loc[ 1 ];
+			z[ i ] = loc[ 2 ];
+
+			++i;
+			//System.out.println( Util.printCoordinates( l ) );
+		}
+
+		final ArrayImg<DoubleType, DoubleArray > xImg = ArrayImgs.doubles( x, subsampledPositionsExtended.dimensionsAsLongArray() );
+		final ArrayImg<DoubleType, DoubleArray> yImg = ArrayImgs.doubles( y, subsampledPositionsExtended.dimensionsAsLongArray() );
+		final ArrayImg<DoubleType, DoubleArray> zImg = ArrayImgs.doubles( z, subsampledPositionsExtended.dimensionsAsLongArray() );
+
+		//ImageJFunctions.show( xImg ).setTitle( "xImg" );
+
+		final RandomAccessibleInterval<DoubleType> xInterp = Views.interval(
+				RealViews.affine(
+						xImg.view().extend( RandomAccessibleIntervalView.Extension.border()).interpolate( RandomAccessibleView.Interpolation.nLinear()),
+						new Scale3D( stepSize[ 0 ], stepSize[ 1 ], stepSize[ 2 ] )),
+				new FinalInterval(blockInterval.dimensionsAsLongArray()));
+
+		final RandomAccessibleInterval<DoubleType> yInterp = Views.interval(
+				RealViews.affine(
+						yImg.view().extend( RandomAccessibleIntervalView.Extension.border()).interpolate( RandomAccessibleView.Interpolation.nLinear()),
+						new Scale3D( stepSize[ 0 ], stepSize[ 1 ], stepSize[ 2 ] )),
+				new FinalInterval(blockInterval.dimensionsAsLongArray()));
+
+		final RandomAccessibleInterval<DoubleType> zInterp = Views.interval(
+				RealViews.affine(
+						zImg.view().extend( RandomAccessibleIntervalView.Extension.border()).interpolate( RandomAccessibleView.Interpolation.nLinear()),
+						new Scale3D( stepSize[ 0 ], stepSize[ 1 ], stepSize[ 2 ] )),
+				new FinalInterval(blockInterval.dimensionsAsLongArray()));
+
+		return Views.stack( xInterp, yInterp, zInterp );
+	}
+
 	public static void visualize(
 			final Interval sourceImageInterval,
 			final Interval boundingBox,
@@ -55,7 +126,7 @@ public class TPSAssessQualityStepsize
 		final ThinplateSplineTransform transform = new ThinplateSplineTransform( target, source ); // we go from output to input
 
 		RandomAccessibleInterval<DoubleType> interpField =
-				BlkThinPlateSplineFusion.interpolatedField( transform, boundingBox, stepSize );
+				interpolatedField( transform, boundingBox, stepSize );
 
 		final RandomAccessibleInterval<DoubleType> fullField =
 				fullDeformationField( transform, boundingBox );

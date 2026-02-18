@@ -3,7 +3,6 @@ package net.preibisch.mvrecon.process.fusion.blk;
 import static net.imglib2.util.Util.safeInt;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -35,12 +34,8 @@ import net.imglib2.algorithm.blocks.UnaryBlockOperator;
 import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.blocks.BlockInterval;
 import net.imglib2.converter.Converter;
-import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.img.basictypeaccess.array.DoubleArray;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.realtransform.RealViews;
-import net.imglib2.realtransform.Scale3D;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.realtransform.interval.IntervalSamplingMethod;
 import net.imglib2.type.NativeType;
@@ -511,69 +506,6 @@ public class BlkThinPlateSplineFusion
 		public UnaryBlockOperator<FloatType, FloatType> independentCopy() { return new TPSImageTransform( viewId, sourceImageInterval, boundingBox, source, target, transform, intervalExpansion ); }
 	}
 
-	public static RandomAccessibleInterval<DoubleType> interpolatedField(
-			final ThinplateSplineTransform transform,
-			final Interval blockInterval,
-			final long[] stepSize )
-	{
-		// create a stepSize bigger interval to make sure the last pixel is interpolated properly
-		final long[] min = blockInterval.minAsLongArray();
-		final long[] max = blockInterval.maxAsLongArray();
-		Arrays.setAll( max, d -> max[ d ] + stepSize[ d ] );
-
-		final RandomAccessibleInterval<Localizable> subsampledPositionsExtended =
-				Views.subsample(
-						Intervals.positions( new FinalInterval( min, max ) ),
-						stepSize );
-
-		final int elements = (int)subsampledPositionsExtended.size();
-
-		final double[] x = new double[ elements ];
-		final double[] y = new double[ elements ];
-		final double[] z = new double[ elements ];
-
-		final double[] loc = new double[ 3 ];
-
-		int i = 0;
-		for ( final Localizable l : Views.flatIterable( subsampledPositionsExtended ) )
-		{
-			l.localize( loc );
-			transform.apply( loc, loc );
-
-			x[ i ] = loc[ 0 ];
-			y[ i ] = loc[ 1 ];
-			z[ i ] = loc[ 2 ];
-
-			++i;
-			//System.out.println( Util.printCoordinates( l ) );
-		}
-
-		final ArrayImg<DoubleType, DoubleArray> xImg = ArrayImgs.doubles( x, subsampledPositionsExtended.dimensionsAsLongArray() );
-		final ArrayImg<DoubleType, DoubleArray> yImg = ArrayImgs.doubles( y, subsampledPositionsExtended.dimensionsAsLongArray() );
-		final ArrayImg<DoubleType, DoubleArray> zImg = ArrayImgs.doubles( z, subsampledPositionsExtended.dimensionsAsLongArray() );
-
-		//ImageJFunctions.show( xImg ).setTitle( "xImg" );
-
-		final RandomAccessibleInterval<DoubleType> xInterp = Views.interval(
-				RealViews.affine(
-						xImg.view().extend(Extension.border()).interpolate(Interpolation.nLinear()),
-						new Scale3D( stepSize[ 0 ], stepSize[ 1 ], stepSize[ 2 ] )),
-				new FinalInterval(blockInterval.dimensionsAsLongArray()));
-
-		final RandomAccessibleInterval<DoubleType> yInterp = Views.interval(
-				RealViews.affine(
-						yImg.view().extend(Extension.border()).interpolate(Interpolation.nLinear()),
-						new Scale3D( stepSize[ 0 ], stepSize[ 1 ], stepSize[ 2 ] )),
-				new FinalInterval(blockInterval.dimensionsAsLongArray()));
-
-		final RandomAccessibleInterval<DoubleType> zInterp = Views.interval(
-				RealViews.affine(
-						zImg.view().extend(Extension.border()).interpolate(Interpolation.nLinear()),
-						new Scale3D( stepSize[ 0 ], stepSize[ 1 ], stepSize[ 2 ] )),
-				new FinalInterval(blockInterval.dimensionsAsLongArray()));
-
-		return Views.stack( xInterp, yInterp, zInterp );
-	}
 
 	public static Landmarks getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
