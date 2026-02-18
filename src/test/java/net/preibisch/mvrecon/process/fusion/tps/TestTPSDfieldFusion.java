@@ -43,6 +43,7 @@ import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.ThinplateSplineTransform;
+import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
@@ -55,6 +56,7 @@ import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
 import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
+import net.preibisch.mvrecon.process.fusion.blk.tps.MaskingFunction3D;
 import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -241,9 +243,17 @@ public class TestTPSDfieldFusion
 						BlendingFunction3D.of(
 								dfield.getType().getNativeTypeFactory().getPrimitiveType(),
 								viewIdDimensions, border, blending ) );
+				final BlockSupplier< UnsignedByteType > mask = DisplacementFieldBlockSupplier.create(
+								new UnsignedByteType(),
+								transformFromSource,
+								dfield,
+								MaskingFunction3D.of(
+										dfield.getType().getNativeTypeFactory().getPrimitiveType(),
+										viewIdDimensions, border ) );
 
-				transformed.put(v, blocks);
-//				transformed.put(v, blend);
+				transformed.put( v, blocks );
+//				transformed.put( v, blend );
+//				transformed.put( v, mask.andThen( Convert.convert( new FloatType() ) ) );
 			});
 
 		}
