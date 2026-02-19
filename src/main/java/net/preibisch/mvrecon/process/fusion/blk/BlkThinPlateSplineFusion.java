@@ -3,9 +3,6 @@ package net.preibisch.mvrecon.process.fusion.blk;
 import static net.imglib2.algorithm.blocks.dfield.DisplacementFieldTransform.displacementFieldAffine;
 import static net.imglib2.algorithm.blocks.transform.Transform.Interpolation.NEARESTNEIGHBOR;
 import static net.imglib2.algorithm.blocks.transform.Transform.Interpolation.NLINEAR;
-import static net.imglib2.util.Util.safeInt;
-import static net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension.zero;
-import static net.imglib2.view.fluent.RandomAccessibleView.Interpolation.clampingNLinear;
 import static net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion.convertToOutputType;
 import static net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion.extendInput;
 
@@ -28,40 +25,25 @@ import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransform;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Cursor;
 import net.imglib2.Dimensions;
-import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
-import net.imglib2.Localizable;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.RealInterval;
-import net.imglib2.RealRandomAccess;
 import net.imglib2.algorithm.blocks.BlockSupplier;
-import net.imglib2.algorithm.blocks.UnaryBlockOperator;
 import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.algorithm.blocks.dfield.DisplacementField;
 import net.imglib2.algorithm.blocks.dfield.DisplacementFieldBlockSupplier;
-import net.imglib2.algorithm.blocks.transform.Transform;
 import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
-import net.imglib2.blocks.BlockInterval;
 import net.imglib2.converter.Converter;
-import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.realtransform.AffineGet;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.ThinplateSplineTransform;
-import net.imglib2.realtransform.interval.IntervalSamplingMethod;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
-import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
-import net.imglib2.view.Views;
-import net.imglib2.view.composite.CompositeView;
-import net.imglib2.view.composite.GenericComposite;
-import net.imglib2.view.fluent.RealRandomAccessibleView;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
@@ -76,10 +58,8 @@ import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.FastLinearIntensityMap;
 import net.preibisch.mvrecon.process.fusion.lazy.LazyFusionTools;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
-import net.preibisch.mvrecon.process.fusion.transformed.weights.BlendingRealRandomAccessible;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
-import util.BlockSupplierUtils;
 
 public class BlkThinPlateSplineFusion
 {
@@ -461,20 +441,6 @@ public class BlkThinPlateSplineFusion
 				mm[2][0], mm[2][1], mm[2][2], mm[2][3] );
 
 		return t;
-	}
-
-	public static boolean contains3d( final RealInterval containing, final double[] contained )
-	{
-		if ( contained[ 0 ] < containing.realMin( 0 ) || contained[ 0 ] > containing.realMax( 0 ) )
-			return false;
-
-		if ( contained[ 1 ] < containing.realMin( 1 ) || contained[ 1 ] > containing.realMax( 1 ) )
-			return false;
-
-		if ( contained[ 2 ] < containing.realMin( 2 ) || contained[ 2 ] > containing.realMax( 2 ) )
-			return false;
-
-		return true;
 	}
 
 	public static List<ViewId> underlyingViewIds( final Collection< ? extends ViewId > splitViewIds, final Map< Integer, Integer > new2oldSetupId )

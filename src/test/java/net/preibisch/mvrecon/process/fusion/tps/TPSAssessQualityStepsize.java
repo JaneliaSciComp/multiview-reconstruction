@@ -16,6 +16,7 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.Localizable;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.RealInterval;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.DoubleArray;
@@ -143,7 +144,7 @@ public class TPSAssessQualityStepsize
 				loc[ 1 ] = gct.get( 1 ).get();
 				loc[ 2 ] = gct.get( 2 ).get();
 
-				if ( !BlkThinPlateSplineFusion.contains3d( sourceImageInterval, loc ) )
+				if ( !contains3d( sourceImageInterval, loc ) )
 				{
 					gct.get( 0 ).set( 0 );
 					gct.get( 1 ).set( 0 );
@@ -166,7 +167,7 @@ public class TPSAssessQualityStepsize
 				loc[ 1 ] = in.get( 1 ).get();
 				loc[ 2 ] = in.get( 2 ).get();
 
-				if ( BlkThinPlateSplineFusion.contains3d( sourceImageInterval, loc ) )
+				if ( contains3d( sourceImageInterval, loc ) )
 				{
 					out.get( 0 ).set( loc[ 0 ] );
 					out.get( 1 ).set( loc[ 1 ] );
@@ -179,6 +180,20 @@ public class TPSAssessQualityStepsize
 
 		ImageJFunctions.show( interpField ).setTitle( "interpolated_"+sourceImageInterval );
 		ImageJFunctions.show( fullField ).setTitle( "full_"+sourceImageInterval );
+	}
+
+	public static boolean contains3d( final RealInterval containing, final double[] contained )
+	{
+		if ( contained[ 0 ] < containing.realMin( 0 ) || contained[ 0 ] > containing.realMax( 0 ) )
+			return false;
+
+		if ( contained[ 1 ] < containing.realMin( 1 ) || contained[ 1 ] > containing.realMax( 1 ) )
+			return false;
+
+		if ( contained[ 2 ] < containing.realMin( 2 ) || contained[ 2 ] > containing.realMax( 2 ) )
+			return false;
+
+		return true;
 	}
 
 	public static DisplacementFieldTransform interpolateTransform(
