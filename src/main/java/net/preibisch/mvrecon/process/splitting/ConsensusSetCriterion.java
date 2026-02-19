@@ -65,14 +65,14 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	};
 
 	// Static defaults for GUI persistence
-	public static int defaultMaxCorrespondences = 12;
+	public static int defaultMinCorrespondences = 12;
 	public static int[] defaultLabelChoices = null;
 	public static int defaultToleranceMode = TOLERANCE_NONE;
 	public static double defaultToleranceValue = 10.0;  // 10% or 10 correspondences
 
 	private final SpimData2 spimData;
 	private final Set< String > labels;
-	private final int maxCorrespondences;
+	private final int minCorrespondences;
 	private final int toleranceMode;
 	private final double toleranceValue;
 
@@ -81,20 +81,20 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	 *
 	 * @param spimData The SpimData2 containing interest points
 	 * @param labels Set of interest point labels to consider
-	 * @param maxCorrespondences Threshold - regions with more unique detections should be split
+	 * @param minCorrespondences Threshold - regions with more unique detections should be split
 	 * @param toleranceMode How to handle multiple consensus sets (TOLERANCE_NONE, TOLERANCE_PERCENTAGE, TOLERANCE_COUNT)
 	 * @param toleranceValue The tolerance value (percentage or count, depending on mode)
 	 */
 	public ConsensusSetCriterion(
 			final SpimData2 spimData,
 			final Set< String > labels,
-			final int maxCorrespondences,
+			final int minCorrespondences,
 			final int toleranceMode,
 			final double toleranceValue )
 	{
 		this.spimData = spimData;
 		this.labels = labels;
-		this.maxCorrespondences = maxCorrespondences;
+		this.minCorrespondences = minCorrespondences;
 		this.toleranceMode = toleranceMode;
 		this.toleranceValue = toleranceValue;
 	}
@@ -108,7 +108,7 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 			uniqueDetections.add( corr.detectionId );
 
 		// If unique detections <= threshold, don't split (few enough points)
-		if ( uniqueDetections.size() <= maxCorrespondences )
+		if ( uniqueDetections.size() <= minCorrespondences )
 			return false;
 
 		// Too many detections - check if any view has multiple consensus sets
@@ -173,12 +173,12 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 			toleranceDesc = "tolerance=" + (int) toleranceValue + " correspondences";
 
 		return "ConsensusSetCriterion[labels=" + labels +
-				", maxCorrespondences=" + maxCorrespondences +
+				", minCorrespondences=" + minCorrespondences +
 				", " + toleranceDesc + "]";
 	}
 
 	// Getters for GUI display and testing
-	public int getMaxCorrespondences() { return maxCorrespondences; }
+	public int getMinCorrespondences() { return minCorrespondences; }
 	public int getToleranceMode() { return toleranceMode; }
 	public double getToleranceValue() { return toleranceValue; }
 	@Override
@@ -225,7 +225,7 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		for ( int i = 0; i < labels.length; i++ )
 			gd.addCheckbox( labels[ i ], defaultSelection[ i ] );
 
-		gd.addNumericField( "Max_detections_per_tile", defaultMaxCorrespondences, 0 );
+		gd.addNumericField( "Min_detections/correspondences per tile", defaultMinCorrespondences, 0 );
 		gd.addMessage( "(Splits only if >N unique detections AND multiple consensus sets per view-pair)" );
 
 		gd.addChoice( "Tolerance_for_other_sets", TOLERANCE_CHOICES, TOLERANCE_CHOICES[ defaultToleranceMode ] );
@@ -277,7 +277,7 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 			return null;
 		}
 
-		final int maxCorrespondences = defaultMaxCorrespondences = (int) Math.round( gd.getNextNumber() );
+		final int minCorrespondences = defaultMinCorrespondences = (int) Math.round( gd.getNextNumber() );
 		final int toleranceMode = defaultToleranceMode = gd.getNextChoiceIndex();
 
 		// If tolerance mode requires a value, show second dialog
@@ -304,6 +304,6 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 			toleranceValue = defaultToleranceValue = gdTolerance.getNextNumber();
 		}
 
-		return new ConsensusSetCriterion( data, selectedLabels, maxCorrespondences, toleranceMode, toleranceValue );
+		return new ConsensusSetCriterion( data, selectedLabels, minCorrespondences, toleranceMode, toleranceValue );
 	}
 }
