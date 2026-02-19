@@ -241,14 +241,15 @@ public class TestTPSDfieldFusion
 						transformFromSource,
 						dfield,
 						BlendingFunction3D.of(
-								dfield.getType().getNativeTypeFactory().getPrimitiveType(),
+								dfield.getType(),
 								viewIdDimensions, border, blending ) );
 				final BlockSupplier< UnsignedByteType > mask = DisplacementFieldBlockSupplier.create(
 								new UnsignedByteType(),
 								transformFromSource,
 								dfield,
 								MaskingFunction3D.of(
-										dfield.getType().getNativeTypeFactory().getPrimitiveType(),
+										dfield.getType(),
+										new UnsignedByteType(),
 										viewIdDimensions, border ) );
 
 				transformed.put( v, blocks );

@@ -18,17 +18,18 @@ public abstract class BlendingFunction3D< D extends NativeType< D > & RealType< 
 	 * Then weights transition from {@code 0<=w<=1} over {@code blending} pixels.
 	 * Weights are {@code w=1} inside {@code border+blending} from the {@code interval} bounds.
 	 *
-	 * @param dfieldPrimitiveType
+	 * @param dfieldType
 	 * @param dimensions
 	 * @param border
 	 * @param blending
 	 */
 	public static < D extends NativeType< D > & RealType< D >, F > BlendingFunction3D< D, F > of(
-			final PrimitiveType dfieldPrimitiveType,
+			final D dfieldType,
 			final Dimensions dimensions,
 			final float[] border,
 			final float[] blending )
 	{
+		final PrimitiveType dfieldPrimitiveType = dfieldType.getNativeTypeFactory().getPrimitiveType();
 		switch ( dfieldPrimitiveType )
 		{
 		case FLOAT:

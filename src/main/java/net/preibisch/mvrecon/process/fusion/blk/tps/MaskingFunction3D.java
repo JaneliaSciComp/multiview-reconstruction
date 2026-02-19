@@ -10,27 +10,39 @@ import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 
-public abstract class MaskingFunction3D< D extends NativeType< D > & RealType< D >, F > implements PositionFieldFunction< D, UnsignedByteType, F, byte[] >
+public abstract class MaskingFunction3D< D extends NativeType< D > & RealType< D >, T extends NativeType< T >, F, P > implements PositionFieldFunction< D, T, F, P >
 {
 	/**
 	 * Weights are {@code w=0} for the outermost {@code border} pixels of {@code interval}.
 	 * Weights are {@code w=1} inside {@code border} from the {@code interval} bounds.
 	 *
-	 * @param dfieldPrimitiveType
+	 * @param dfieldType
 	 * @param dimensions
 	 * @param border
 	 */
-	public static < D extends NativeType< D > & RealType< D >, F > MaskingFunction3D< D, F > of(
-			final PrimitiveType dfieldPrimitiveType,
+	public static < D extends NativeType< D > & RealType< D >, T extends NativeType< T >, F, P > MaskingFunction3D< D, T, F, P > of(
+			final D dfieldType,
+			final T targetType,
 			final Dimensions dimensions,
 			final float[] border )
 	{
+		final PrimitiveType dfieldPrimitiveType = dfieldType.getNativeTypeFactory().getPrimitiveType();
 		switch ( dfieldPrimitiveType )
 		{
 		case FLOAT:
-			return Cast.unchecked( new Float_( dimensions, border ) );
+			if ( targetType instanceof FloatType )
+				return Cast.unchecked( new Float_to_Float( dimensions, border ) );
+			else if ( targetType instanceof UnsignedByteType )
+				return Cast.unchecked( new Float_to_UnsignedByte( dimensions, border ) );
+			else
+				throw new IllegalArgumentException();
 		case DOUBLE:
-			return Cast.unchecked( new Double_( dimensions, border ) );
+			if ( targetType instanceof FloatType )
+				return Cast.unchecked( new Double_to_Float( dimensions, border ) );
+			else if ( targetType instanceof UnsignedByteType )
+				return Cast.unchecked( new Double_to_UnsignedByte( dimensions, border ) );
+			else
+				throw new IllegalArgumentException();
 		default:
 			throw new IllegalArgumentException();
 		}
@@ -78,14 +90,14 @@ public abstract class MaskingFunction3D< D extends NativeType< D > & RealType< D
 	}
 
 	@Override
-	public PositionFieldFunction< D, UnsignedByteType, F, byte[] > independentCopy()
+	public PositionFieldFunction< D, T, F, P > independentCopy()
 	{
 		return this;
 	}
 
-	private static class Float_ extends MaskingFunction3D< FloatType, float[] >
+	private static class Float_to_UnsignedByte extends MaskingFunction3D< FloatType, UnsignedByteType, float[], byte[] >
 	{
-		Float_( final Dimensions dimensions, final float[] border )
+		Float_to_UnsignedByte( final Dimensions dimensions, final float[] border )
 		{
 			super( dimensions, border );
 		}
@@ -109,9 +121,35 @@ public abstract class MaskingFunction3D< D extends NativeType< D > & RealType< D
 		}
 	}
 
-	private static class Double_ extends MaskingFunction3D< DoubleType, double[] >
+	private static class Float_to_Float extends MaskingFunction3D< FloatType, FloatType, float[], float[] >
 	{
-		Double_( final Dimensions dimensions, final float[] border )
+		Float_to_Float( final Dimensions dimensions, final float[] border )
+		{
+			super( dimensions, border );
+		}
+
+		@Override
+		public void compute( final float[] dest, final int length, final float[] pfield, final double[] positionOffset )
+		{
+			final float d0 = ( float ) positionOffset[ 0 ];
+			final float d1 = ( float ) positionOffset[ 1 ];
+			final float d2 = ( float ) positionOffset[ 2 ];
+			for ( int x = 0; x < length; ++x )
+			{
+				final float sf0 = pfield[ 3 * x ] + d0;
+				final float sf1 = pfield[ 3 * x + 1 ] + d1;
+				final float sf2 = pfield[ 3 * x + 2 ] + d2;
+				dest[ x ] = ( sf0 >= b0d0 && sf0 < b3d0
+						&& sf1 >= b0d1 && sf1 < b3d1
+						&& sf2 >= b0d2 && sf2 < b3d2 )
+						? 1 : 0;
+			}
+		}
+	}
+
+	private static class Double_to_UnsignedByte extends MaskingFunction3D< DoubleType, UnsignedByteType, double[], byte[] >
+	{
+		Double_to_UnsignedByte( final Dimensions dimensions, final float[] border )
 		{
 			super( dimensions, border );
 		}
@@ -131,6 +169,32 @@ public abstract class MaskingFunction3D< D extends NativeType< D > & RealType< D
 						&& sf1 >= b0d1 && sf1 < b3d1
 						&& sf2 >= b0d2 && sf2 < b3d2 )
 						? ( byte ) 1 : ( byte ) 0;
+			}
+		}
+	}
+
+	private static class Double_to_Float extends MaskingFunction3D< DoubleType, FloatType, double[], float[] >
+	{
+		Double_to_Float( final Dimensions dimensions, final float[] border )
+		{
+			super( dimensions, border );
+		}
+
+		@Override
+		public void compute( final float[] dest, final int length, final double[] pfield, final double[] positionOffset )
+		{
+			final double d0 = positionOffset[ 0 ];
+			final double d1 = positionOffset[ 1 ];
+			final double d2 = positionOffset[ 2 ];
+			for ( int x = 0; x < length; ++x )
+			{
+				final float sf0 = ( float ) ( pfield[ 3 * x ] + d0 );
+				final float sf1 = ( float ) ( pfield[ 3 * x + 1 ] + d1 );
+				final float sf2 = ( float ) ( pfield[ 3 * x + 2 ] + d2 );
+				dest[ x ] = ( sf0 >= b0d0 && sf0 < b3d0
+						&& sf1 >= b0d1 && sf1 < b3d1
+						&& sf2 >= b0d2 && sf2 < b3d2 )
+						? 1 : 0;
 			}
 		}
 	}

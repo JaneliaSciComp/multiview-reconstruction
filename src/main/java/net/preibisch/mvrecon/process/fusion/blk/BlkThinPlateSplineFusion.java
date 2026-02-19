@@ -6,6 +6,7 @@ import static net.imglib2.algorithm.blocks.transform.Transform.Interpolation.NLI
 import static net.imglib2.util.Util.safeInt;
 import static net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension.zero;
 import static net.imglib2.view.fluent.RandomAccessibleView.Interpolation.clampingNLinear;
+import static net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion.convertToOutputType;
 import static net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion.extendInput;
 
 import java.util.ArrayList;
@@ -38,6 +39,7 @@ import net.imglib2.RealRandomAccess;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.UnaryBlockOperator;
 import net.imglib2.algorithm.blocks.convert.Convert;
+import net.imglib2.algorithm.blocks.dfield.DisplacementField;
 import net.imglib2.algorithm.blocks.dfield.DisplacementFieldBlockSupplier;
 import net.imglib2.algorithm.blocks.transform.Transform;
 import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
@@ -142,15 +144,7 @@ public class BlkThinPlateSplineFusion
 		if ( BlkAffineFusion.is2d( splitViewIds, splitViewDescriptions ) )
 			throw new UnsupportedOperationException( "BlkThinPlateSplineFusion: 2D fusion not supported." );
 
-		// TODO: this restricton shouldn't be necessary if we follow the (images, weights, overlap) scheme
-		if ( fusionType != FusionType.CLOSEST_PIXEL_WINS && fusionType != FusionType.AVG_BLEND )
-			throw new UnsupportedOperationException( "BlkThinPlateSplineFusion: only FusionType.CLOSEST_PIXEL_WINS and FusionType.AVG_BLEND supported right now." );
-
 		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
-
-		//System.out.println( "Split viewIds: " + splitViewIdsInput.size() );
-		//System.out.println( "Underlying viewIds: " + underlyingViewIds.size() );
-		//System.out.println( "Complete split viewIds: " + splitViewIds.size() );
 
 		// to be able to use the "lowest ViewId" wins strategy
 		final List< ? extends ViewId > sortedUnderlyingViewIds = new ArrayList<>( underlyingViewIds );
@@ -163,11 +157,6 @@ public class BlkThinPlateSplineFusion
 		//
 		// build the overlap for the underlying views so they can be used later
 		//
-
-		// we need an approximate transform for every underlying view composed from the split views
-		// TODO: Note that this is from source to target points, whereas TPS is from target to source points
-		final HashMap< ViewId, AffineTransform3D > underlyingViewIdToTransform = new HashMap<>();
-
 
 		// image dimensions for every underlying view
 		// TODO: rename to "viewDimensions"
@@ -189,8 +178,6 @@ public class BlkThinPlateSplineFusion
 
 		// back-projected bounding box (render coordinates) for every underlying view
 		final Map< ViewId, Interval > underlyingViewIdToBoundingBox = new HashMap<>();
-
-		final Map< ViewId, TransformedDisplacementField< DoubleType > > underlyingViewIdToDisplacementField = new HashMap<>();
 
 		for ( final ViewId underlyingViewId : sortedUnderlyingViewIds )
 		{
@@ -216,15 +203,6 @@ public class BlkThinPlateSplineFusion
 		// TODO: should be an argument
 		final double[] spacing = { 8, 8, 8 };
 
-
-		// TODO:
-		//   [ ] apply dfield to input image
-		//   [ ] apply dfield to weights image
-		//       [ ] create masking image
-		//       [ ] create blending image
-
-
-
 		final List< BlockSupplier< FloatType > > images = new ArrayList<>( underlyingOverlap.numViews() );
 		final List< BlockSupplier< FloatType > > weights = new ArrayList<>( underlyingOverlap.numViews() );
 		final List< BlockSupplier< UnsignedByteType > > masks = new ArrayList<>( underlyingOverlap.numViews() );
@@ -243,9 +221,6 @@ public class BlkThinPlateSplineFusion
 					DisplacementFields.sample( tps, bbox, spacing ),
 					fusionInterval );
 
-			// approx affine transform for adjusting blending weights
-			final AffineTransform3D approximateAffine = getTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() );
-
 			final Coefficients coefficients = intensityAdjustmentCoefficients == null ? null : intensityAdjustmentCoefficients.get( viewId );
 
 			// TODO: support loading downsampled images, but this means we will need to update the source[][] coefficients too
@@ -263,10 +238,12 @@ public class BlkThinPlateSplineFusion
 			final float[] blending = Util.getArrayFromValue( FusionTools.defaultBlendingRange, 3 );
 			final float[] border = Util.getArrayFromValue( FusionTools.defaultBlendingBorder, 3 );
 
+			// Approximate affine transform for adjusting blending weights.
+			// Note that this is from source to target points, whereas TPS is from target to source point!
+			final AffineTransform3D approximateAffine = getTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() );
+
 			// adjust both for z-scaling (anisotropy), downsampling, and registrations itself
 			FusionTools.adjustBlending( underlyingViewIdToDimensions.get( viewId ), Group.pvid( viewId ), blending, border, approximateAffine );
-
-
 
 			// TODO support content-based
 			// adjust content-based for downsampling
@@ -274,47 +251,19 @@ public class BlkThinPlateSplineFusion
 //			final double[] sigma2 = Util.getArrayFromValue( ContentBased.defaultContentBasedSigma2, 3 );
 //			FusionTools.adjustContentBased( viewDescriptions.get( viewId ), sigma1, sigma2, usedDownsampleFactors, anisotropyFactor );
 
-
-			// TODO NEXT
-			// TODO NEXT
-			// TODO NEXT
-			// TODO NEXT
-			// TODO NEXT: This is approximately how to create Blending and Masking
-			final BlockSupplier< FloatType > blend = DisplacementFieldBlockSupplier.create(
-					new FloatType(),
-					transformFromSource,
-					dfield,
-					BlendingFunction3D.of(
-							dfield.getType().getNativeTypeFactory().getPrimitiveType(),
-							viewIdDimensions, border, blending ) );
-
-
-			final BlockSupplier< UnsignedByteType > mask = DisplacementFieldBlockSupplier.create(
-					new UnsignedByteType(),
-					transformFromSource,
-					dfield,
-					MaskingFunction3D.of(
-							dfield.getType().getNativeTypeFactory().getPrimitiveType(),
-							viewIdDimensions, border ) );
-
 			switch ( fusionType )
 			{
 			case AVG:
-				weights.add( Masking.create( inputImg, border, transform ).andThen( Convert.convert( new FloatType() ) ) );
-				break;
-			case AVG_BLEND:
-				weights.add( Blending.create( inputImg, border, blending, transform ) );
+				weights.add( createMasking( inputImg, border, dfield, new FloatType() ) );
 				break;
 			case MAX_INTENSITY:
 			case LOWEST_VIEWID_WINS:
-				masks.add( Masking.create( inputImg, border, transform ) );
-				break;
 			case HIGHEST_VIEWID_WINS:
-				masks.add( Masking.create( inputImg, border, transform ) );
+				masks.add( createMasking( inputImg, border, dfield, new UnsignedByteType() ) );
 				break;
-			case CLOSEST_PIXEL_WINS:
-				// we need to use the blending weights, whatever weight is highest wins
-				weights.add( Blending.create( inputImg, border, blending, transform ) );
+			case AVG_BLEND:
+			case CLOSEST_PIXEL_WINS: // we need to use the blending weights, whatever weight is highest wins
+				weights.add( createBlending( inputImg, border, blending, dfield ) );
 				break;
 			case AVG_BLEND_CONTENT:
 			case AVG_CONTENT:
@@ -324,61 +273,35 @@ public class BlkThinPlateSplineFusion
 				// should never happen
 				throw new IllegalStateException();
 			}
-
-
-
-			// TODO: continue --> See BlkAffineFusion : 285ff
-
-
-
-
-			// TODO: maybe we don't need those:
-			underlyingViewIdToDisplacementField.put( viewId, dfield );
-			underlyingViewIdToTransform.put( viewId, approximateAffine );
-
-
-
-
-
-
-			// ------------------------------------------  	o l d  -------------------------------------------------
-
-
-
-
-
-
-			// TODO: we should re-use the thin plate spline coordinate transformations for image and weights
-			final BlockSupplier< FloatType > weightBlockSupplier;
-
-			switch ( fusionType )
-			{
-				case AVG_BLEND:
-				case CLOSEST_PIXEL_WINS: // we need to use the blending weights, whatever weight is highest wins
-					weightBlockSupplier = new TPSBlending( viewId, new FinalInterval( inputImg ), fusionInterval, coeff.getSourcePoints(), coeff.getTargetPoints(), null, border, blending );
-					break;
-				default:
-					throw new IllegalStateException(); // unsupported weights
-			}
-
-			weights.add( weightBlockSupplier );
 		}
 
 		final BlockSupplier< FloatType > floatBlocks;
 		switch ( fusionType )
 		{
-			case AVG_BLEND:
-				floatBlocks = WeightedAverage.of( images, weights, underlyingOverlap );
-				break;
-			case CLOSEST_PIXEL_WINS:
-				floatBlocks = ClosestPixelWins.of( images, weights, underlyingOverlap );
-				break;
-			default:
-				// should never happen
-				throw new IllegalStateException();
+		case AVG:
+		case AVG_CONTENT:
+		case AVG_BLEND_CONTENT:
+		case AVG_BLEND:
+			floatBlocks = WeightedAverage.of( images, weights, underlyingOverlap );
+			break;
+		case MAX_INTENSITY:
+			floatBlocks = MaxIntensity.of( images, masks, underlyingOverlap );
+			break;
+		case LOWEST_VIEWID_WINS:
+			floatBlocks = LowestViewIdWins.of( images, masks, underlyingOverlap );
+			break;
+		case HIGHEST_VIEWID_WINS:
+			floatBlocks = HighestViewIdWins.of( images, masks, underlyingOverlap );
+			break;
+		case CLOSEST_PIXEL_WINS:
+			floatBlocks = ClosestPixelWins.of( images, weights, underlyingOverlap );
+			break;
+		default:
+			// should never happen
+			throw new IllegalStateException();
 		}
 
-		final BlockSupplier< T > blocks = BlkAffineFusion.convertToOutputType(
+		final BlockSupplier< T > blocks = convertToOutputType(
 				floatBlocks,
 				converter, type )
 				.tile( blockSize );
@@ -416,7 +339,29 @@ public class BlkThinPlateSplineFusion
 		return blocks.andThen( displacementFieldAffine( dfield.transformFromSource(), dfield.displacementField(), interpolation ) );
 	}
 
+	private static < D extends NativeType< D > & RealType< D >, T extends NativeType< T > > BlockSupplier< T > createMasking(
+			final Interval interval,
+			final float[] border,
+			final TransformedDisplacementField< D > transformedDisplacementField,
+			final T maskType )
+	{
+		final AffineGet transformFromSource = transformedDisplacementField.transformFromSource();
+		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
+		return DisplacementFieldBlockSupplier.create( maskType, transformFromSource, dfield,
+				MaskingFunction3D.of( dfield.getType(), maskType, interval, border ) );
+	}
 
+	private static < D extends NativeType< D > & RealType< D > > BlockSupplier< FloatType > createBlending(
+			final Interval interval,
+			final float[] border,
+			final float[] blending,
+			final TransformedDisplacementField< D > transformedDisplacementField )
+	{
+		final AffineGet transformFromSource = transformedDisplacementField.transformFromSource();
+		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
+		return DisplacementFieldBlockSupplier.create( new FloatType(), transformFromSource, dfield,
+				BlendingFunction3D.of( dfield.getType(), interval, border, blending ) );
+	}
 
 
 
