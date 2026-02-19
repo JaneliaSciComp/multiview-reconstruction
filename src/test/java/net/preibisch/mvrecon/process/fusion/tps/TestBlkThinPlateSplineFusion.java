@@ -79,6 +79,7 @@ public class TestBlkThinPlateSplineFusion
 				FusionType.CLOSEST_PIXEL_WINS,
 				intervalExpansion,
 				Double.NaN,
+				1,
 				null,
 				null,
 				boundingBox, // already adjusted for anisotropy???
