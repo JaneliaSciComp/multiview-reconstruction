@@ -35,6 +35,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
+import net.preibisch.mvrecon.process.splitting.OctTreeSplitCriterion.SplitCorrespondence;
 
 /**
  * Criterion based on multi-consensus RANSAC sets.
@@ -98,6 +99,13 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		this.toleranceMode = toleranceMode;
 		this.toleranceValue = toleranceValue;
 	}
+
+	/*
+	default boolean canMerge( List< SplitCorrespondence > correspondences )
+	{
+		return !shouldSplit( correspondences );
+	}
+	*/
 
 	@Override
 	public boolean shouldSplit( final List< SplitCorrespondence > correspondences )
