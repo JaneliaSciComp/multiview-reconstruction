@@ -5,6 +5,7 @@ import static net.imglib2.util.Util.safeInt;
 import static net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension.zero;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -55,6 +56,8 @@ import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLo
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
 import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
+import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields;
+import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields.TransformedDisplacementField;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.blk.tps.MaskingFunction3D;
 import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
@@ -201,7 +204,7 @@ public class TestTPSDfieldFusion
 
 		public TPSMaxFusionBlockSupplier(
 				final BoundingBox boundingBox,
-				final double[] downsamplingFactors,
+				final double[] downsamplingFactors, // TODO rename to "spacing"
 				final Map< ViewId, Landmarks > coeff,
 				final BasicImgLoader imgLoader )
 		{
@@ -210,6 +213,11 @@ public class TestTPSDfieldFusion
 			this.imgLoader = imgLoader;
 			this.transformed = new HashMap<>();
 			this.transformedIntervals = new HashMap<>();
+
+
+			final List< BlockSupplier< FloatType > > images = new ArrayList<>( this.coeff.size() );
+			final List< BlockSupplier< FloatType > > weights = new ArrayList<>( this.coeff.size() );
+			final List< BlockSupplier< UnsignedByteType > > masks = new ArrayList<>( this.coeff.size() );
 
 			this.coeff.forEach( ( v,c ) -> {
 
@@ -222,10 +230,15 @@ public class TestTPSDfieldFusion
 				// dimensions of the viewId in original space
 				final Dimensions viewIdDimensions = getDimensions( imgLoader, v );
 
-				final SampleTPS sampledTPS = SampleTPS.sample( transform, viewIdDimensions, downsamplingFactors );
-				final AffineTransform3D transformFromSource = sampledTPS.transformFromSource;
-				final DisplacementField< DoubleType > dfield = sampledTPS.dfield;
-				transformedIntervals.put( v, sampledTPS.transformedInterval );
+				final Interval transformedInterval = SampleTPS.inverseTransformedBoundingBox( transform, viewIdDimensions );
+				final TransformedDisplacementField< DoubleType > field = DisplacementFields.sample( transform, transformedInterval, downsamplingFactors );
+				// TODO: concatenateBoundingBoxOffset(...)
+//				final DisplacementFields.TransformedDisplacementField< DoubleType > field = concatenateBoundingBoxOffset(
+//						DisplacementFields.sample( transform, transformedInterval, downsamplingFactors ),
+//						fusionInterval );
+				final AffineTransform3D transformFromSource = ( AffineTransform3D ) field.transformFromSource();
+				final DisplacementField< DoubleType > dfield = field.displacementField();
+				transformedIntervals.put( v, transformedInterval );
 
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
 
