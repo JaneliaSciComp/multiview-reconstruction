@@ -33,6 +33,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -70,6 +74,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.Split_Views;
 import net.preibisch.mvrecon.fiji.plugin.Split_Views.InterestPointAdding;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -166,10 +171,136 @@ public class SplittingTools
 		// TODO: because we need to know what the new corresponding point(s) is/are, 1:1 correspondence mappings become 1:n since the corresponding point
 		// TODO: may be in an overlapping area and are thus multiplied
 
-		// Reset aggregate statistics for oct-tree splitting
-		if ( splitting instanceof SplitOctTree )
-			( (SplitOctTree) splitting ).resetTotalStatistics();
+		// ==================== Parallel Splitting ====================
+		// For SplitOctTree, we use the static method for thread-safe parallel execution.
+		// For other splitters, we fall back to sequential execution.
 
+		final Map< ViewSetup, ArrayList< Interval > > splitResults = new HashMap<>();
+
+		if ( splitting instanceof SplitOctTree )
+		{
+			final SplitOctTree octTreeSplitter = (SplitOctTree) splitting;
+			final int nThreads = Threads.numThreads();
+			IOFunctions.println( "Parallel oct-tree splitting with " + nThreads + " threads for " + oldSetups.size() + " setups..." );
+
+			// Prepare tasks: for each setup, find ViewId and create splitting task
+			final List< Callable< SplitOctTree.SplitStatistics > > tasks = new ArrayList<>();
+			final List< ViewSetup > taskSetups = new ArrayList<>();  // parallel list to track which setup each task belongs to
+			final List< Interval > taskInputs = new ArrayList<>();   // parallel list for input intervals
+
+			for ( final ViewSetup oldSetup : oldSetups )
+			{
+				final Interval input = new FinalInterval( oldSetup.getSize() );
+
+				// Find first present (non-missing) timepoint for this setup
+				ViewId viewId = null;
+				for ( final TimePoint tp : timepoints.getTimePointsOrdered() )
+				{
+					final ViewId candidate = new ViewId( tp.getId(), oldSetup.getId() );
+					if ( spimData.getSequenceDescription().getMissingViews() == null ||
+						 spimData.getSequenceDescription().getMissingViews().getMissingViews() == null ||
+						 !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( candidate ) )
+					{
+						viewId = candidate;
+						break;
+					}
+				}
+
+				// If all timepoints are missing for this setup, use the first timepoint anyway
+				if ( viewId == null )
+				{
+					final TimePoint firstTP = timepoints.getTimePointsOrdered().get( 0 );
+					viewId = new ViewId( firstTP.getId(), oldSetup.getId() );
+				}
+
+				final ViewId finalViewId = viewId;
+				tasks.add( () -> SplitOctTree.splitStatic(
+						input,
+						finalViewId,
+						octTreeSplitter.getCriterion(),
+						octTreeSplitter.getMinStepSize(),
+						octTreeSplitter.getMinSizeMultiplier(),
+						octTreeSplitter.isEnableMerge(),
+						octTreeSplitter.getMinSplitLevels() ) );
+				taskSetups.add( oldSetup );
+				taskInputs.add( input );
+			}
+
+			// Execute all tasks in parallel
+			final ExecutorService taskExecutor = Executors.newFixedThreadPool( nThreads );
+			try
+			{
+				final List< Future< SplitOctTree.SplitStatistics > > futures = taskExecutor.invokeAll( tasks );
+
+				// Collect results and aggregate statistics
+				int totalSplitCount = 0, totalMergeCount = 0, totalLeafCount = 0, totalFinalBlocks = 0;
+
+				for ( int i = 0; i < futures.size(); i++ )
+				{
+					final ViewSetup setup = taskSetups.get( i );
+					final Interval input = taskInputs.get( i );
+					final SplitOctTree.SplitStatistics result = futures.get( i ).get();
+
+					if ( result == null )
+					{
+						IOFunctions.printErr( "ERROR: Splitting failed for ViewSetup " + setup.getId() );
+						taskExecutor.shutdown();
+						return null;
+					}
+
+					IOFunctions.println( "ViewId " + setup.getId() + " with interval " + Util.printInterval( input ) +
+							": " + result.intervals.size() + " tiles (" + result.splitCount + " splits, " +
+							result.mergeCount + " merges, " + result.leafCount + " leaves)" );
+
+					splitResults.put( setup, result.intervals );
+
+					totalSplitCount += result.splitCount;
+					totalMergeCount += result.mergeCount;
+					totalLeafCount += result.leafCount;
+					totalFinalBlocks += result.intervals.size();
+				}
+
+				// Print aggregate statistics
+				IOFunctions.println( "===== Oct-tree splitting summary =====" );
+				IOFunctions.println( "Total views processed: " + oldSetups.size() );
+				IOFunctions.println( "Total splits: " + totalSplitCount );
+				IOFunctions.println( "Total merges: " + totalMergeCount );
+				IOFunctions.println( "Total leaves: " + totalLeafCount );
+				IOFunctions.println( "Total final blocks: " + totalFinalBlocks );
+				IOFunctions.println( "======================================" );
+			}
+			catch ( final Exception e )
+			{
+				IOFunctions.printErr( "ERROR during parallel splitting: " + e.getMessage() );
+				e.printStackTrace();
+				taskExecutor.shutdown();
+				return null;
+			}
+			finally
+			{
+				taskExecutor.shutdown();
+			}
+		}
+		else
+		{
+			// Sequential splitting for non-OctTree splitters
+			for ( final ViewSetup oldSetup : oldSetups )
+			{
+				final Interval input = new FinalInterval( oldSetup.getSize() );
+				IOFunctions.println( "ViewId " + oldSetup.getId() + " with interval " + Util.printInterval( input ) + " will be split as follows: " );
+
+				final ArrayList< Interval > intervals = splitting.split( input );
+				if ( intervals == null )
+				{
+					IOFunctions.printErr( "ERROR: Splitting failed for ViewSetup " + oldSetup.getId() );
+					return null;
+				}
+
+				splitResults.put( oldSetup, intervals );
+			}
+		}
+
+		// ==================== Process Split Results Sequentially ====================
 		for ( final ViewSetup oldSetup : oldSetups )
 		{
 			final int oldID = oldSetup.getId();
@@ -181,43 +312,7 @@ public class SplittingTools
 			final Illumination illum = oldSetup.getIllumination();
 			final VoxelDimensions voxDim = oldSetup.getVoxelSize();
 
-			final Interval input = new FinalInterval( oldSetup.getSize() );
-
-			// Set context for oct-tree splitting (needs ViewId for interest point access)
-			// Find first present (non-missing) timepoint for this setup
-			if ( splitting instanceof SplitOctTree )
-			{
-				ViewId viewId = null;
-				int timepointId = -1;
-
-				for ( final TimePoint tp : timepoints.getTimePointsOrdered() )
-				{
-					final ViewId candidate = new ViewId( tp.getId(), oldSetup.getId() );
-					if ( spimData.getSequenceDescription().getMissingViews() == null ||
-						 spimData.getSequenceDescription().getMissingViews().getMissingViews() == null ||
-						 !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( candidate ) )
-					{
-						viewId = candidate;
-						timepointId = tp.getId();
-						break;
-					}
-				}
-
-				// If all timepoints are missing for this setup, use the first timepoint anyway
-				// (the criterion will return false for missing views)
-				if ( viewId == null )
-				{
-					final TimePoint firstTP = timepoints.getTimePointsOrdered().get( 0 );
-					viewId = new ViewId( firstTP.getId(), oldSetup.getId() );
-					timepointId = firstTP.getId();
-				}
-
-				( (SplitOctTree) splitting ).setCurrentContext( viewId, timepointId );
-			}
-
-			IOFunctions.println( "ViewId " + oldSetup.getId() + " with interval " + Util.printInterval( input ) + " will be split as follows: " );
-
-			final ArrayList< Interval > intervals = splitting.split(input);// SplitDistributeEvenly.distributeIntervalsFixedOverlap( input, overlapPx, targetSize, minStepSize, optimize );
+			final ArrayList< Interval > intervals = splitResults.get( oldSetup );
 
 			final HashMap< Integer, ViewSetup > intervalId2ViewSetup = new HashMap<>();
 
@@ -467,10 +562,6 @@ public class SplittingTools
 				newId++;
 			}
 		}
-
-		// Print aggregate oct-tree statistics
-		if ( splitting instanceof SplitOctTree )
-			( (SplitOctTree) splitting ).printTotalStatistics();
 
 		// missing views
 		final MissingViews oldMissingViews = spimData.getSequenceDescription().getMissingViews();
