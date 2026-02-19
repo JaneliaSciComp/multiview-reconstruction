@@ -176,6 +176,10 @@ public class SplitOctTree implements SplitInterval
 			final boolean enableMerge,
 			final int minSplitLevels )
 	{
+		final long startTime = System.currentTimeMillis();
+		IOFunctions.println( Thread.currentThread().getName() + ": Starting view " +
+				viewId.getTimePointId() + "_" + viewId.getViewSetupId() + " at " + startTime );
+
 		// Validate minSplitLevels is achievable
 		if ( minSplitLevels > 0 )
 		{
@@ -203,6 +207,11 @@ public class SplitOctTree implements SplitInterval
 		final ArrayList< Interval > intervals = new ArrayList<>();
 		for ( final InternalSplitResult sr : results )
 			intervals.add( sr.interval );
+
+		final long endTime = System.currentTimeMillis();
+		IOFunctions.println( Thread.currentThread().getName() + ": Finished view " +
+				viewId.getTimePointId() + "_" + viewId.getViewSetupId() + " at " + endTime +
+				" (took " + ( endTime - startTime ) + " ms)" );
 
 		return new SplitStatistics( intervals, stats[ 0 ], stats[ 1 ], stats[ 2 ] );
 	}
