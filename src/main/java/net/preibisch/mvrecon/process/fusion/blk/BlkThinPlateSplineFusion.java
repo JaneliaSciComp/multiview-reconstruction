@@ -350,7 +350,7 @@ public class BlkThinPlateSplineFusion
 	{
 		final AffineGet transformFromSource = transformedDisplacementField.transformFromSource();
 		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
-		return DisplacementFieldBlockSupplier.create( maskType, transformFromSource, dfield,
+		return DisplacementFieldBlockSupplier.create( transformFromSource, dfield,
 				MaskingFunction3D.of( dfield.getType(), maskType, interval, border ) );
 	}
 
@@ -362,7 +362,7 @@ public class BlkThinPlateSplineFusion
 	{
 		final AffineGet transformFromSource = transformedDisplacementField.transformFromSource();
 		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
-		return DisplacementFieldBlockSupplier.create( new FloatType(), transformFromSource, dfield,
+		return DisplacementFieldBlockSupplier.create( transformFromSource, dfield,
 				BlendingFunction3D.of( dfield.getType(), interval, border, blending ) );
 	}
 

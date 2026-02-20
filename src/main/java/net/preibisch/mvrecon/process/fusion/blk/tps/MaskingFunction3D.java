@@ -119,6 +119,12 @@ public abstract class MaskingFunction3D< D extends NativeType< D > & RealType< D
 						? ( byte ) 1 : ( byte ) 0;
 			}
 		}
+
+		@Override
+		public UnsignedByteType getType()
+		{
+			return new UnsignedByteType();
+		}
 	}
 
 	private static class Float_to_Float extends MaskingFunction3D< FloatType, FloatType, float[], float[] >
@@ -144,6 +150,12 @@ public abstract class MaskingFunction3D< D extends NativeType< D > & RealType< D
 						&& sf2 >= b0d2 && sf2 < b3d2 )
 						? 1 : 0;
 			}
+		}
+
+		@Override
+		public FloatType getType()
+		{
+			return new FloatType();
 		}
 	}
 
@@ -171,6 +183,12 @@ public abstract class MaskingFunction3D< D extends NativeType< D > & RealType< D
 						? ( byte ) 1 : ( byte ) 0;
 			}
 		}
+
+		@Override
+		public UnsignedByteType getType()
+		{
+			return new UnsignedByteType();
+		}
 	}
 
 	private static class Double_to_Float extends MaskingFunction3D< DoubleType, FloatType, double[], float[] >
@@ -196,6 +214,12 @@ public abstract class MaskingFunction3D< D extends NativeType< D > & RealType< D
 						&& sf2 >= b0d2 && sf2 < b3d2 )
 						? 1 : 0;
 			}
+		}
+
+		@Override
+		public FloatType getType()
+		{
+			return new FloatType();
 		}
 	}
 }

@@ -57,7 +57,7 @@ public final class DisplacementFields
 		Arrays.setAll( gridSize, d -> ( long ) Math.ceil( interval.dimension( d ) / spacing[ d ] ) );
 
 		final double[] offset = interval.minAsDoubleArray();
-		final RandomAccessibleInterval< DoubleType > dfieldImg = DisplacementFields.createNormalized( transform, FinalDimensions.wrap( gridSize ), spacing, offset );
+		final RandomAccessibleInterval< DoubleType > dfieldImg = createNormalized( transform, FinalDimensions.wrap( gridSize ), spacing, offset );
 
 		final AffineTransform3D transformFromSource = new AffineTransform3D();
 		transformFromSource.set(

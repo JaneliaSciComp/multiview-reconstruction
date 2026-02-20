@@ -132,6 +132,12 @@ public abstract class BlendingFunction3D< D extends NativeType< D > & RealType< 
 		return this;
 	}
 
+	@Override
+	public FloatType getType()
+	{
+		return new FloatType();
+	}
+
 	private static class Float_ extends BlendingFunction3D< FloatType, float[] >
 	{
 		Float_( final Dimensions dimensions, final float[] border, final float[] blending )
