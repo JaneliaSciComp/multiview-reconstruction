@@ -341,7 +341,10 @@ public class BlkThinPlateSplineFusion
 				MaskingFunction3D.of( dfield.getType(), maskType, interval, border ) );
 	}
 
-	private static < D extends NativeType< D > & RealType< D > > BlockSupplier< FloatType > createBlending(
+	public
+	// TODO: revert to private after testing is done...
+	// private
+	static < D extends NativeType< D > & RealType< D > > BlockSupplier< FloatType > createBlending(
 			final Interval interval,
 			final float[] border,
 			final float[] blending,

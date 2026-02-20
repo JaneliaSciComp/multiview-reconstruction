@@ -44,6 +44,7 @@ import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
 import net.preibisch.mvrecon.process.fusion.blk.MaxIntensity;
 import net.preibisch.mvrecon.process.fusion.blk.Overlap;
+import net.preibisch.mvrecon.process.fusion.blk.WeightedAverage;
 import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
@@ -255,10 +256,19 @@ public class TestTPSDfieldFusion
 				images.add( blocks );
 
 				// (case MAX_INTENSITY:)
-				masks.add( BlkThinPlateSplineFusion.createMasking( img, border, field, new UnsignedByteType() ) );
+//				masks.add( BlkThinPlateSplineFusion.createMasking( img, border, field, new UnsignedByteType() ) );
+
+				// (case AVG_BLEND:)
+				weights.add( BlkThinPlateSplineFusion.createBlending( img, border, blending, field ) );
+
 			} );
 
-			this.floatBlocks = MaxIntensity.of( images, masks, overlap );
+			// (case MAX_INTENSITY:)
+//			this.floatBlocks = MaxIntensity.of( images, masks, overlap );
+
+			// (case AVG_BLEND:)
+			this.floatBlocks = WeightedAverage.of( images, weights, overlap );
+
 //			final BlockSupplier< T > blocks = convertToOutputType(
 //					floatBlocks,
 //					converter, type )
