@@ -991,7 +991,6 @@ public class SplittingTools
 				newIpl.setCorrespondingInterestPoints(
 						// for each corresponding interest point entry
 						corr.stream()
-							.parallel()
 							.filter( c -> newIpList.containsKey( c.getDetectionId() ) ) // only look at those that are in the current new viewid
 							.map( c ->
 								// find all new setups we have correspondences with,
