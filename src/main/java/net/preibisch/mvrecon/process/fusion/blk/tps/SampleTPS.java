@@ -1,39 +1,16 @@
 package net.preibisch.mvrecon.process.fusion.blk.tps;
 
-import java.util.Arrays;
-
 import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
-import net.imglib2.algorithm.blocks.dfield.DisplacementField;
-import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.realtransform.interval.IntervalSamplingMethod;
 import net.imglib2.realtransform.inverse.WrappedIterativeInvertibleRealTransform;
-import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
-import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields.TransformedDisplacementField;
 
 public class SampleTPS
 {
-	// TODO: rename, getter, javadoc
-	public final AffineTransform3D transformFromSource;
-
-	// TODO: rename, getter, javadoc
-	public final DisplacementField< DoubleType > dfield;
-
-	// TODO: rename, getter, javadoc
-	// estimated bounding box of the source img transformed to render coordinates
-	public final Interval transformedInterval;
-
-	SampleTPS( final AffineTransform3D transformFromSource, final DisplacementField< DoubleType > dfield, final Interval transformedInterval )
-	{
-		this.transformFromSource = transformFromSource;
-		this.dfield = dfield;
-		this.transformedInterval = transformedInterval;
-	}
-
 	/**
 	 * Get the bounding box in render coordinates of an image of the given
 	 * {@code dimension} when back-projected through the inverse of the given
@@ -59,34 +36,4 @@ public class SampleTPS
 						new FinalInterval( dimensions ),
 						IntervalSamplingMethod.CORNERS ) );
 	}
-
-	// TODO: instead of TPS take RealTransform
-	//       and check for known-good subtypes
-	public static SampleTPS sample(
-
-			// transforms from render coordinates to source img pixels
-			final ThinplateSplineTransform transform, // TODO rename
-
-			// dimensions of the source img (in pixels)
-			final Dimensions origDimensions, // TODO rename
-
-			// spacing of the grid on which the transform is sampled (in render coordinates)
-			final double[] spacing
-	)
-	{
-		// estimated bounding box of the source img transformed to render coordinates
-		final Interval transformedInterval = inverseTransformedBoundingBox( transform, origDimensions );
-		final TransformedDisplacementField< DoubleType > field = DisplacementFields.sample( transform, transformedInterval, spacing );
-		final AffineTransform3D transformFromSource = ( AffineTransform3D ) field.transformFromSource();
-		return new SampleTPS( transformFromSource, field.displacementField(), transformedInterval );
-	}
-
-	private static long[] gridSize( final Dimensions size, final double[] spacing )
-	{
-		final int n = size.numDimensions();
-		final long[] gridSize = new long[ n ];
-		Arrays.setAll( gridSize, d -> ( long ) Math.ceil( size.dimension( d ) / spacing[ d ] ) );
-		return gridSize;
-	}
-
 }
