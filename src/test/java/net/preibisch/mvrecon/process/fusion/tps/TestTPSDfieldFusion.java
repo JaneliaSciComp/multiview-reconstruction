@@ -1,8 +1,6 @@
 package net.preibisch.mvrecon.process.fusion.tps;
 
-import static net.imglib2.algorithm.blocks.dfield.DisplacementFieldTransform.displacementFieldAffine;
 import static net.imglib2.util.Util.safeInt;
-import static net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension.zero;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -33,7 +31,6 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.AbstractBlockSupplier;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
-import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.algorithm.blocks.dfield.DisplacementField;
 import net.imglib2.algorithm.blocks.dfield.DisplacementFieldBlockSupplier;
 import net.imglib2.algorithm.blocks.transform.Transform;
@@ -204,7 +201,7 @@ public class TestTPSDfieldFusion
 
 		public TPSMaxFusionBlockSupplier(
 				final BoundingBox boundingBox,
-				final double[] downsamplingFactors, // TODO rename to "spacing"
+				final double[] spacing,
 				final Map< ViewId, Landmarks > coeff,
 				final BasicImgLoader imgLoader )
 		{
@@ -231,21 +228,24 @@ public class TestTPSDfieldFusion
 				final Dimensions viewIdDimensions = getDimensions( imgLoader, v );
 
 				final Interval transformedInterval = SampleTPS.inverseTransformedBoundingBox( transform, viewIdDimensions );
-				final TransformedDisplacementField< DoubleType > field = DisplacementFields.sample( transform, transformedInterval, downsamplingFactors );
-				// TODO: concatenateBoundingBoxOffset(...)
-//				final DisplacementFields.TransformedDisplacementField< DoubleType > field = concatenateBoundingBoxOffset(
-//						DisplacementFields.sample( transform, transformedInterval, downsamplingFactors ),
-//						fusionInterval );
+				final DisplacementFields.TransformedDisplacementField< DoubleType > field = BlkThinPlateSplineFusion.concatenateBoundingBoxOffset(
+						DisplacementFields.sample( transform, transformedInterval, spacing ),
+						boundingBox );
 				final AffineTransform3D transformFromSource = ( AffineTransform3D ) field.transformFromSource();
 				final DisplacementField< DoubleType > dfield = field.displacementField();
+
+				// TODO: This also needs to be shifted by boundingBox.min
+				//       Maybe it is simpler to just use Overlap instead
 				transformedIntervals.put( v, transformedInterval );
 
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
 
-				final BlockSupplier< FloatType > blocks = BlockSupplier
-						.of( img.view().extend(zero()) )
-						.andThen(Convert.convert(new FloatType()))
-						.andThen( displacementFieldAffine( transformFromSource, dfield, Transform.Interpolation.NLINEAR ) );
+				final BlockSupplier< FloatType > blocks =
+						BlkThinPlateSplineFusion.transformedBlocks( img, null, field, Transform.Interpolation.NLINEAR );
+//						BlockSupplier
+//						.of( img.view().extend(zero()) )
+//						.andThen(Convert.convert(new FloatType()))
+//						.andThen( displacementFieldAffine( transformFromSource, dfield, Transform.Interpolation.NLINEAR ) );
 
 				final float[] border = { 0, 0, 0 };
 				final float[] blending = { 40, 40, 5 };
@@ -275,10 +275,7 @@ public class TestTPSDfieldFusion
 		@Override
 		public void copy( final Interval interval, final Object dest )
 		{
-			final BlockInterval blockInterval =
-					BlockInterval.asBlockInterval(
-							Intervals.translate( interval, boundingBox.minAsLongArray() ) );
-
+			final BlockInterval blockInterval = BlockInterval.asBlockInterval( interval );
 			final int[] size = blockInterval.size();
 			final int len = safeInt( Intervals.numElements( size ) );
 			final float[] fdest = Cast.unchecked( dest );

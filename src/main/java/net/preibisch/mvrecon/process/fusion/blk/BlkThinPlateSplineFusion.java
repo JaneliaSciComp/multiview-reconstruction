@@ -291,7 +291,10 @@ public class BlkThinPlateSplineFusion
 		return blocks;
 	}
 
-	private static < D extends NativeType< D > & RealType< D > > TransformedDisplacementField< D > concatenateBoundingBoxOffset(
+	public
+	// TODO: revert to private after testing is done...
+	// private
+	static < D extends NativeType< D > & RealType< D > > TransformedDisplacementField< D > concatenateBoundingBoxOffset(
 			final TransformedDisplacementField< D > dfield,
 			final Interval boundingBoxInTarget )
 	{
@@ -306,7 +309,11 @@ public class BlkThinPlateSplineFusion
 		return new TransformedDisplacementField<>( transformFromSource, dfield.displacementField() );
 	}
 
-	private static < T extends NativeType< T > > BlockSupplier< FloatType > transformedBlocks(
+
+	public
+	// TODO: revert to private after testing is done...
+	// private
+	static < T extends NativeType< T > > BlockSupplier< FloatType > transformedBlocks(
 			final RandomAccessibleInterval< T > inputImg,
 			final Coefficients coefficients,
 			TransformedDisplacementField< ? > dfield,
