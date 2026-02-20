@@ -313,10 +313,7 @@ public class BlkThinPlateSplineFusion
 		return blocks;
 	}
 
-	public
-	// TODO: revert to private after testing is done...
-	// private
-	static < D extends NativeType< D > & RealType< D > > TransformedDisplacementField< D > concatenateBoundingBoxOffset(
+	private static < D extends NativeType< D > & RealType< D > > TransformedDisplacementField< D > concatenateBoundingBoxOffset(
 			final TransformedDisplacementField< D > dfield,
 			final Interval boundingBoxInTarget )
 	{
@@ -332,10 +329,7 @@ public class BlkThinPlateSplineFusion
 	}
 
 
-	public
-	// TODO: revert to private after testing is done...
-	// private
-	static < T extends NativeType< T > > BlockSupplier< FloatType > transformedBlocks(
+	private static < T extends NativeType< T > > BlockSupplier< FloatType > transformedBlocks(
 			final RandomAccessibleInterval< T > inputImg,
 			final Coefficients coefficients,
 			TransformedDisplacementField< ? > dfield,
@@ -348,10 +342,7 @@ public class BlkThinPlateSplineFusion
 		return blocks.andThen( displacementFieldAffine( dfield.transformFromSource(), dfield.displacementField(), interpolation ) );
 	}
 
-	public
-	// TODO: revert to private after testing is done...
-	// private
-	static < D extends NativeType< D > & RealType< D >, T extends NativeType< T > > BlockSupplier< T > createMasking(
+	private static < D extends NativeType< D > & RealType< D >, T extends NativeType< T > > BlockSupplier< T > createMasking(
 			final Interval interval,
 			final float[] border,
 			final TransformedDisplacementField< D > transformedDisplacementField,
@@ -363,10 +354,7 @@ public class BlkThinPlateSplineFusion
 				MaskingFunction3D.of( dfield.getType(), maskType, interval, border ) );
 	}
 
-	public
-	// TODO: revert to private after testing is done...
-	// private
-	static < D extends NativeType< D > & RealType< D > > BlockSupplier< FloatType > createBlending(
+	private static < D extends NativeType< D > & RealType< D > > BlockSupplier< FloatType > createBlending(
 			final Interval interval,
 			final float[] border,
 			final float[] blending,

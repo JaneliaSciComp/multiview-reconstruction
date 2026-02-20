@@ -39,7 +39,6 @@ import net.imglib2.util.Intervals;
  * Compute and cache the expanded bounding boxes of all transformed views for per-block overlap determination.
  * Sort order of {@code viewIds} is maintained for per-block queries. (for FIRST-WINS strategy)
  */
-public // TODO: revert to packages private
 class Overlap
 {
 	private final List< ? extends ViewId > viewIds;

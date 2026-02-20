@@ -38,8 +38,6 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
 
-public
-// TODO: revert to package after testing is done...
 class WeightedAverage
 {
 	public static BlockSupplier< FloatType > of(
