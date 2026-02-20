@@ -8,7 +8,7 @@ import static net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion.extendInp
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,10 +20,12 @@ import mpicbg.models.IllDefinedDataPointsException;
 import mpicbg.models.NotEnoughDataPointsException;
 import mpicbg.models.Point;
 import mpicbg.models.PointMatch;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransform;
 import mpicbg.spim.data.sequence.SequenceDescription;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
 import net.imglib2.Interval;
@@ -66,40 +68,6 @@ public class BlkThinPlateSplineFusion
 	// TODO: the default expansion should be computed from the difference of the split overlap and underlying overlap
 	public static int defaultIntervalExpansion = LazyFusionTools.defaultNonrigidExpansion;
 
-	/**
-	 * TODO javadoc
-	 *
-	 *
-	 *
-	 * @param converter
-	 * 		converts from FloatType to the output type. Maybe null,
-	 * 		in which case a default converter (clamp to output type range) is used.
-	 * @param splitImgLoader
-	 * 		TODO
-	 * @param splitViewIdsInput
-	 * 		TODO
-	 * @param splitViewRegistrations
-	 * 		TODO
-	 * @param splitViewDescriptions
-	 * 		TODO
-	 * @param fusionType
-	 * 		how to combine pixels
-	 * @param anisotropyFactor
-	 * @param interpolationMethod
-	 * 		1==linear, 0==nearest neighbor
-	 * @param intensityAdjustmentCoefficients
-	 * 		intensity adjustments, can be null
-	 * @param fusionInterval
-	 * 		TODO
-	 * @param type
-	 * 		instance of the output type
-	 * @param blockSize
-	 * 		TODO
-	 * @param <T>
-	 * 		output type
-	 *
-	 * @return
-	 */
 	public static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > init(
 			final Converter< FloatType, T > converter,
 			final SplitViewerImgLoader splitImgLoader,
@@ -124,75 +92,125 @@ public class BlkThinPlateSplineFusion
 		if ( BlkAffineFusion.is2d( splitViewIds, splitViewDescriptions ) )
 			throw new UnsupportedOperationException( "BlkThinPlateSplineFusion: 2D fusion not supported." );
 
+		final ViewerImgLoader underlyingImgLoader = splitImgLoader.getUnderlyingImgLoader();
 		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
-
-		// to be able to use the "lowest ViewId" wins strategy
-		final List< ? extends ViewId > sortedUnderlyingViewIds = new ArrayList<>( underlyingViewIds );
-
-		if ( fusionMap == null || fusionMap.size() == 0 )
-			Collections.sort( sortedUnderlyingViewIds );
-		else
-			Collections.sort( sortedUnderlyingViewIds, (c1,c2) -> Integer.compare( fusionMap.get( c1.getViewSetupId() ), fusionMap.get( c2.getViewSetupId() ) ) );
-
-		//
-		// build the overlap for the underlying views so they can be used later
-		//
-
-		// image dimensions for every underlying view
-		// TODO: rename to "viewDimensions"
-		final Map< ViewId, Dimensions > underlyingViewIdToDimensions = LazyFusionTools.assembleDimensions( sortedUnderlyingViewIds, underlyingSD.getViewDescriptions() );
-
-		final Interpolation interpolation = ( interpolationMethod == 1 ) ? NLINEAR : NEARESTNEIGHBOR;
-
-		// TODO: combine Map<ViewId, ...> maps into one single map with a value class holding everything
-		//       These for all underlyingViewIds
-		//         landmarks
-		//         image dimensions
-		//         bbox
-		//       and these only for Overlap filtered ViewIds
-		//         dfield
-		//         approximate affine transform
+		final Map< ViewId, ViewDescription > underlyingViewDescription = underlyingSD.getViewDescriptions();
 
 		// the coefficients (source > target) for each underlying view, used to construct the TPS
-		final Map< ViewId, Landmarks > underlyingViewIdToCoefficients = new HashMap<>();
-
-		// back-projected bounding box (render coordinates) for every underlying view
-		final Map< ViewId, Interval > underlyingViewIdToBoundingBox = new HashMap<>();
-
-		for ( final ViewId underlyingViewId : sortedUnderlyingViewIds )
+		final Map< ViewId, Landmarks > underlyingViewLandmarks = new HashMap<>();
+		for ( final ViewId underlyingViewId : underlyingViewIds )
 		{
 			// ignore downsampling for now
 			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewId, Double.NaN, Double.NaN );
-			underlyingViewIdToCoefficients.put( underlyingViewId, landmarks );
+			underlyingViewLandmarks.put( underlyingViewId, landmarks );
 
 			// TODO: we may want to put extra coefficients in the overlapping areas based on "real correspondences"
+		}
 
+		final Comparator< ViewId > fusionOrder = Comparator.comparingInt( c -> fusionMap.get( c.getViewSetupId() ) );
+
+		return init(
+				converter,
+				underlyingImgLoader,
+				underlyingViewIds,
+				underlyingViewDescription,
+				underlyingViewLandmarks,
+				fusionType,
+				anisotropyFactor,
+				interpolationMethod,
+				fusionOrder,
+				intensityAdjustmentCoefficients,
+				fusionInterval,
+				type,
+				blockSize );
+	}
+
+
+	/**
+	 * TODO javadoc
+	 *
+	 * @param converter
+	 * 		converts from FloatType to the output type. Maybe null,
+	 * 		in which case a default converter (clamp to output type range) is used.
+	 * @param imgLoader
+	 * 		TODO
+	 * @param viewIds
+	 * 		TODO
+	 * @param viewDescriptions
+	 * 		TODO
+	 * @param viewLandmarks
+	 * 		TODO
+	 * @param fusionType
+	 * 		how to combine pixels
+	 * @param anisotropyFactor
+	 * @param interpolationMethod
+	 * 		1==linear, 0==nearest neighbor
+	 * @param intensityAdjustmentCoefficients
+	 * 		intensity adjustments, can be null
+	 * @param fusionInterval
+	 * 		TODO
+	 * @param type
+	 * 		instance of the output type
+	 * @param blockSize
+	 * 		TODO
+	 * @param <T>
+	 * 		output type
+	 *
+	 * @return
+	 */
+	public static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > init(
+			final Converter< FloatType, T > converter,
+			final BasicImgLoader imgLoader,
+			final Collection< ? extends ViewId > viewIds,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions,
+			final Map< ViewId, Landmarks > viewLandmarks,
+			final FusionType fusionType,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Comparator< ViewId > fusionOrder, // old setupId > new setupId for fusion order, only makes sense with FusionType.FIRST_LOW or FusionType.FIRST_HIGH
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients, // from underlying viewids
+			final Interval fusionInterval,  // already adjusted for anisotropy???
+			final T type,
+			final int[] blockSize )
+	{
+		final Map< ViewId, Dimensions > viewDimensions = LazyFusionTools.assembleDimensions( viewIds, viewDescriptions );
+		final Interpolation interpolation = ( interpolationMethod == 1 ) ? NLINEAR : NEARESTNEIGHBOR;
+
+		// to be able to use the "lowest ViewId" wins strategy
+		final List< ? extends ViewId > sortedViewIds = new ArrayList<>( viewIds );
+		sortedViewIds.sort( fusionOrder != null ? fusionOrder : Comparator.naturalOrder() );
+
+		// back-projected bounding box (render coordinates) for every underlying view
+		final Map< ViewId, Interval > viewBounds = new HashMap<>();
+		for ( final ViewId viewId : sortedViewIds )
+		{
+			final Landmarks landmarks = viewLandmarks.get( viewId );
 			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
 					// we go from output to input
 					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
-			final Dimensions dims = underlyingViewIdToDimensions.get( underlyingViewId );
+			final Dimensions dims = viewDimensions.get( viewId );
 			final Interval bbox = SampleTPS.inverseTransformedBoundingBox( tps, dims );
-			underlyingViewIdToBoundingBox.put( underlyingViewId, bbox );
+			viewBounds.put( viewId, bbox );
 		}
 
-		// TODO: rename "overlap". (And also rename other "underlying..." things, if possible without causing confusion)
-		final Overlap underlyingOverlap = new Overlap( sortedUnderlyingViewIds, underlyingViewIdToBoundingBox, 3 )
+		// Which views to process (use un-altered bounding box and registrations).
+		// Final filtering happens per Cell.
+		// Here we just pre-filter everything outside the fusionInterval.
+		final Overlap overlap = new Overlap( sortedViewIds, viewBounds, 3 )
 				.filter( fusionInterval )
 				.offset( fusionInterval.minAsLongArray() );
 
 		// TODO: should be an argument
 		final double[] spacing = { 8, 8, 8 };
 
-		final List< BlockSupplier< FloatType > > images = new ArrayList<>( underlyingOverlap.numViews() );
-		final List< BlockSupplier< FloatType > > weights = new ArrayList<>( underlyingOverlap.numViews() );
-		final List< BlockSupplier< UnsignedByteType > > masks = new ArrayList<>( underlyingOverlap.numViews() );
+		final List< BlockSupplier< FloatType > > images = new ArrayList<>( overlap.numViews() );
+		final List< BlockSupplier< FloatType > > weights = new ArrayList<>( overlap.numViews() );
+		final List< BlockSupplier< UnsignedByteType > > masks = new ArrayList<>( overlap.numViews() );
 
-
-		for ( final ViewId viewId : underlyingOverlap.getViewIds() )
-//		for ( final ViewId underlyingViewId : underlyingOverlap.getViewIds() )
+		for ( final ViewId viewId : overlap.getViewIds() )
 		{
-			final Landmarks landmarks = underlyingViewIdToCoefficients.get( viewId );
-			final Interval bbox = underlyingViewIdToBoundingBox.get( viewId );
+			final Landmarks landmarks = viewLandmarks.get( viewId );
+			final Interval bbox = viewBounds.get( viewId );
 
 			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
 					// we go from output to input
@@ -206,7 +224,7 @@ public class BlkThinPlateSplineFusion
 			// TODO: support loading downsampled images, but this means we will need to update the source[][] coefficients too
 			final RandomAccessibleInterval inputImg =
 					//DownsampleTools.openDownsampled( under, viewId, model, usedDownsampleFactors );
-					splitImgLoader.getUnderlyingImgLoader().getSetupImgLoader( viewId.getViewSetupId() ).getImage( viewId.getTimePointId() );
+					imgLoader.getSetupImgLoader( viewId.getViewSetupId() ).getImage( viewId.getTimePointId() );
 
 			final BlockSupplier< FloatType > viewBlocks = transformedBlocks(
 					Cast.unchecked( inputImg ),
@@ -223,7 +241,7 @@ public class BlkThinPlateSplineFusion
 			final AffineTransform3D approximateAffine = getTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() );
 
 			// adjust both for z-scaling (anisotropy), downsampling, and registrations itself
-			FusionTools.adjustBlending( underlyingViewIdToDimensions.get( viewId ), Group.pvid( viewId ), blending, border, approximateAffine );
+			FusionTools.adjustBlending( viewDimensions.get( viewId ), Group.pvid( viewId ), blending, border, approximateAffine );
 
 			// TODO support content-based
 			// adjust content-based for downsampling
@@ -262,19 +280,19 @@ public class BlkThinPlateSplineFusion
 		case AVG_CONTENT:
 		case AVG_BLEND_CONTENT:
 		case AVG_BLEND:
-			floatBlocks = WeightedAverage.of( images, weights, underlyingOverlap );
+			floatBlocks = WeightedAverage.of( images, weights, overlap );
 			break;
 		case MAX_INTENSITY:
-			floatBlocks = MaxIntensity.of( images, masks, underlyingOverlap );
+			floatBlocks = MaxIntensity.of( images, masks, overlap );
 			break;
 		case LOWEST_VIEWID_WINS:
-			floatBlocks = LowestViewIdWins.of( images, masks, underlyingOverlap );
+			floatBlocks = LowestViewIdWins.of( images, masks, overlap );
 			break;
 		case HIGHEST_VIEWID_WINS:
-			floatBlocks = HighestViewIdWins.of( images, masks, underlyingOverlap );
+			floatBlocks = HighestViewIdWins.of( images, masks, overlap );
 			break;
 		case CLOSEST_PIXEL_WINS:
-			floatBlocks = ClosestPixelWins.of( images, weights, underlyingOverlap );
+			floatBlocks = ClosestPixelWins.of( images, weights, overlap );
 			break;
 		default:
 			// should never happen
