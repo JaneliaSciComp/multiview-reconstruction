@@ -326,7 +326,10 @@ public class BlkThinPlateSplineFusion
 		return blocks.andThen( displacementFieldAffine( dfield.transformFromSource(), dfield.displacementField(), interpolation ) );
 	}
 
-	private static < D extends NativeType< D > & RealType< D >, T extends NativeType< T > > BlockSupplier< T > createMasking(
+	public
+	// TODO: revert to private after testing is done...
+	// private
+	static < D extends NativeType< D > & RealType< D >, T extends NativeType< T > > BlockSupplier< T > createMasking(
 			final Interval interval,
 			final float[] border,
 			final TransformedDisplacementField< D > transformedDisplacementField,
