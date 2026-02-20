@@ -1,7 +1,5 @@
 package net.preibisch.mvrecon.process.fusion.tps;
 
-import static net.imglib2.util.Util.safeInt;
-
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,32 +29,23 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.AbstractBlockSupplier;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
-import net.imglib2.algorithm.blocks.dfield.DisplacementField;
-import net.imglib2.algorithm.blocks.dfield.DisplacementFieldBlockSupplier;
 import net.imglib2.algorithm.blocks.transform.Transform;
-import net.imglib2.blocks.BlockInterval;
 import net.imglib2.cache.img.CachedCellImg;
-import net.imglib2.img.array.ArrayCursor;
-import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.util.Cast;
-import net.imglib2.util.Intervals;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.MaxIntensity;
 import net.preibisch.mvrecon.process.fusion.blk.Overlap;
-import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
 import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
-import net.preibisch.mvrecon.process.fusion.blk.tps.MaskingFunction3D;
 import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -164,8 +153,11 @@ public class TestTPSDfieldFusion
 		new ImageJ();
 
 		// use BlockSupplier
-		final double[] downsamplingFactors = {8,8,8};
+		final double[] downsamplingFactors = { 8, 8, 8 };
 		final TPSMaxFusionBlockSupplier tpsSupplier = new TPSMaxFusionBlockSupplier( boundingBox, downsamplingFactors, coeff, underlyingImgLoader );
+
+		final float[] border = { 0, 0, 0 };
+		final float[] blending = { 40, 40, 5 };
 
 		CachedCellImg<FloatType, ?> fused =
 				BlockAlgoUtils.cellImg( tpsSupplier, boundingBox.dimensionsAsLongArray(), new int[] { 256, 256, 1 } );
@@ -186,10 +178,10 @@ public class TestTPSDfieldFusion
 		final BasicImgLoader imgLoader;
 
 		final Map< ViewId, Landmarks > coeff;
-		final Map< ViewId, BlockSupplier<FloatType> > transformed;
 		final Map< ViewId, Interval > transformedIntervals;
 
 		final Overlap overlap;
+		final BlockSupplier< FloatType > floatBlocks;
 
 		private TPSMaxFusionBlockSupplier(TPSMaxFusionBlockSupplier supplier)
 		{
@@ -197,9 +189,8 @@ public class TestTPSDfieldFusion
 			this.coeff = supplier.coeff;
 			this.imgLoader = supplier.imgLoader;
 			this.transformedIntervals = supplier.transformedIntervals;
-			this.transformed = new HashMap<>();
-			supplier.transformed.forEach( ( viewId, blockSupplier ) -> this.transformed.put( viewId, blockSupplier.independentCopy() ) );
 			this.overlap = supplier.overlap;
+			this.floatBlocks = supplier.floatBlocks.independentCopy();
 		}
 
 		public TPSMaxFusionBlockSupplier(
@@ -211,21 +202,39 @@ public class TestTPSDfieldFusion
 			this.boundingBox = boundingBox;
 			this.coeff = coeff;
 			this.imgLoader = imgLoader;
-			this.transformed = new HashMap<>();
 			this.transformedIntervals = new HashMap<>();
 
-			final List< BlockSupplier< FloatType > > images = new ArrayList<>( this.coeff.size() );
-			final List< BlockSupplier< FloatType > > weights = new ArrayList<>( this.coeff.size() );
-			final List< BlockSupplier< UnsignedByteType > > masks = new ArrayList<>( this.coeff.size() );
-
 			final Map< ViewId, Interval > viewBounds = new HashMap<>();
-			this.coeff.forEach( ( v,c ) -> {
-
-				// from rendered to original
+			coeff.forEach( ( v,c ) -> {
 				final ThinplateSplineTransform transform = new ThinplateSplineTransform(
 						// we go from output to input
 						c.getTargetPoints(),
 						c.getSourcePoints() );
+
+				// dimensions of the viewId in original space
+				final Dimensions viewIdDimensions = getDimensions( imgLoader, v );
+				final Interval transformedInterval = SampleTPS.inverseTransformedBoundingBox( transform, viewIdDimensions );
+				viewBounds.put( v, transformedInterval );
+			} );
+			this.overlap = new Overlap( new ArrayList<>( coeff.keySet() ), viewBounds, 3 )
+				.filter( boundingBox )
+				.offset( boundingBox.minAsLongArray() );
+
+
+			final float[] border = { 0, 0, 0 };
+			final float[] blending = { 40, 40, 5 };
+
+			final List< BlockSupplier< FloatType > > images = new ArrayList<>( overlap.numViews() );
+			final List< BlockSupplier< FloatType > > weights = new ArrayList<>( overlap.numViews() );
+			final List< BlockSupplier< UnsignedByteType > > masks = new ArrayList<>( overlap.numViews() );
+			overlap.getViewIds().forEach( v -> {
+
+				// from rendered to original
+				final Landmarks landmarks = coeff.get( v );
+				final ThinplateSplineTransform transform = new ThinplateSplineTransform(
+						// we go from output to input
+						landmarks.getTargetPoints(),
+						landmarks.getSourcePoints() );
 
 				// dimensions of the viewId in original space
 				final Dimensions viewIdDimensions = getDimensions( imgLoader, v );
@@ -235,8 +244,6 @@ public class TestTPSDfieldFusion
 				final DisplacementFields.TransformedDisplacementField< DoubleType > field = BlkThinPlateSplineFusion.concatenateBoundingBoxOffset(
 						DisplacementFields.sample( transform, transformedInterval, spacing ),
 						boundingBox );
-				final AffineTransform3D transformFromSource = ( AffineTransform3D ) field.transformFromSource();
-				final DisplacementField< DoubleType > dfield = field.displacementField();
 
 				// TODO: This also needs to be shifted by boundingBox.min
 				//       Maybe it is simpler to just use Overlap instead
@@ -244,56 +251,25 @@ public class TestTPSDfieldFusion
 
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
 
-				final BlockSupplier< FloatType > blocks =
-						BlkThinPlateSplineFusion.transformedBlocks( img, null, field, Transform.Interpolation.NLINEAR );
-//						BlockSupplier
-//						.of( img.view().extend(zero()) )
-//						.andThen(Convert.convert(new FloatType()))
-//						.andThen( displacementFieldAffine( transformFromSource, dfield, Transform.Interpolation.NLINEAR ) );
+				final BlockSupplier< FloatType > blocks = BlkThinPlateSplineFusion.transformedBlocks( img, null, field, Transform.Interpolation.NLINEAR );
+				images.add( blocks );
 
-				final float[] border = { 0, 0, 0 };
-				final float[] blending = { 40, 40, 5 };
-				final BlockSupplier< FloatType > blend = DisplacementFieldBlockSupplier.create(
-						new FloatType(),
-						transformFromSource,
-						dfield,
-						BlendingFunction3D.of(
-								dfield.getType(),
-								viewIdDimensions, border, blending ) );
-				final BlockSupplier< UnsignedByteType > mask = DisplacementFieldBlockSupplier.create(
-								new UnsignedByteType(),
-								transformFromSource,
-								dfield,
-								MaskingFunction3D.of(
-										dfield.getType(),
-										new UnsignedByteType(),
-										viewIdDimensions, border ) );
+				// (case MAX_INTENSITY:)
+				masks.add( BlkThinPlateSplineFusion.createMasking( img, border, field, new UnsignedByteType() ) );
+			} );
 
-				transformed.put( v, blocks );
-//				transformed.put( v, blend );
-//				transformed.put( v, mask.andThen( Convert.convert( new FloatType() ) ) );
-			});
+			this.floatBlocks = MaxIntensity.of( images, masks, overlap );
+//			final BlockSupplier< T > blocks = convertToOutputType(
+//					floatBlocks,
+//					converter, type )
+//					.tile( blockSize );
 
-			this.overlap = new Overlap( new ArrayList<>( coeff.keySet() ), viewBounds, 3 )
-					.filter( boundingBox )
-					.offset( boundingBox.minAsLongArray() );
 		}
 
 		@Override
 		public void copy( final Interval interval, final Object dest )
 		{
-			final BlockInterval blockInterval = BlockInterval.asBlockInterval( interval );
-			final int[] size = blockInterval.size();
-			final int len = safeInt( Intervals.numElements( size ) );
-			final float[] fdest = Cast.unchecked( dest );
-
-			overlap.getViewIds().forEach( v -> {
-				final BlockSupplier< FloatType > blocks = transformed.get( v );
-				final ArrayImg< FloatType, ? > img = BlockAlgoUtils.arrayImg( blocks, blockInterval );
-				final ArrayCursor< FloatType > c = img.cursor();
-				for ( int x = 0; x < len; ++x )
-					fdest[ x ] = Math.max( c.next().getRealFloat(), fdest[ x ] );
-			});
+			floatBlocks.copy( interval, dest );
 		}
 
 		@Override
