@@ -89,6 +89,10 @@ public class BlkThinPlateSplineFusion
 		final Map<Integer, List<Integer>> old2newSetupId = old2newSetupId( splitImgLoader.new2oldSetupId() );
 		final List< ViewId > splitViewIds = splitViewIds( underlyingViewIds, old2newSetupId );
 
+		// TODO: do something more like this:
+		//  // go through the views and check if they are all 2-dimensional
+		//     final boolean is2d = is2d( viewIds, viewDescriptions );
+		//  and reuse is2d for Overlap numDimensions (see BlkAffineFusion)
 		if ( BlkAffineFusion.is2d( splitViewIds, splitViewDescriptions ) )
 			throw new UnsupportedOperationException( "BlkThinPlateSplineFusion: 2D fusion not supported." );
 
