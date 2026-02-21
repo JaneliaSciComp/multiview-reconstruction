@@ -1,7 +1,6 @@
 package net.preibisch.mvrecon.process.fusion.tps;
 
 import java.net.URI;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -22,7 +21,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
-import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion;
 
 public class TestBlkThinPlateSplineFusion
 {
@@ -33,7 +32,7 @@ public class TestBlkThinPlateSplineFusion
 				new XmlIoSpimData2().load(
 						URI.create("file:/Users/preibischs/SparkTest/Stitching/dataset.split.xml") );
 
-		final ViewerImgLoader underlyingImgLoader = BlkThinPlateSplineFusion.getUnderlyingImageLoader(data);
+		final ViewerImgLoader underlyingImgLoader = SplitImgLoaderThinPlateSplineFusion.getUnderlyingImageLoader(data);
 
 		if ( underlyingImgLoader == null )
 			return;
@@ -55,8 +54,8 @@ public class TestBlkThinPlateSplineFusion
 			return;
 		}
 
-		final Map<Integer, List<Integer>> old2newSetupId = BlkThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() );
-		final List< ViewId > splitViewIds = BlkThinPlateSplineFusion.splitViewIds( underlyingViewIds, old2newSetupId );
+		final Map<Integer, List<Integer>> old2newSetupId = SplitImgLoaderThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() );
+		final List< ViewId > splitViewIds = SplitImgLoaderThinPlateSplineFusion.splitViewIds( underlyingViewIds, old2newSetupId );
 
 		// we estimate the bounding box using the split imagel loader, which will be closer to real bounding box
 		Interval boundingBox = new BoundingBoxMaximal( splitViewIds, data ).estimate( "Full Bounding Box" );
@@ -70,7 +69,7 @@ public class TestBlkThinPlateSplineFusion
 		final int[] blockSize = new int[] { 128, 128, 4 };
 		final int intervalExpansion = 10;
 
-		final BlockSupplier<UnsignedByteType> supplier = BlkThinPlateSplineFusion.init(
+		final BlockSupplier<UnsignedByteType> supplier = SplitImgLoaderThinPlateSplineFusion.init(
 				(i,o) -> { o.set( Math.round( i.get() )); },
 				splitImgLoader,
 				splitViewIds,

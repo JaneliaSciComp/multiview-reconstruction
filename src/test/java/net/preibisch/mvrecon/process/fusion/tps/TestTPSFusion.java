@@ -48,7 +48,7 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
-import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -70,7 +70,7 @@ public class TestTPSFusion
 			final double downsampling )
 	{
 		final Map<Integer, Integer> new2oldSetupId = splitImgLoader.new2oldSetupId();
-		final Map<Integer, List<Integer>> old2newSetupId = BlkThinPlateSplineFusion.old2newSetupId( new2oldSetupId );
+		final Map<Integer, List<Integer>> old2newSetupId = SplitImgLoaderThinPlateSplineFusion.old2newSetupId( new2oldSetupId );
 
 		final HashMap< ViewId, Landmarks > underlyingViewId2TPSCoefficients = new HashMap<>();
 
@@ -79,7 +79,7 @@ public class TestTPSFusion
 			System.out.println( "\nProcessing underlyingViewId: " + Group.pvid( underlyingViewId ) + ", which was split into " + old2newSetupId.get( underlyingViewId.getViewSetupId() ).size() + " pieces." );
 
 			final Landmarks coeff =
-					BlkThinPlateSplineFusion.getCoefficients(splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId, anisotropyFactor, downsampling);
+					SplitImgLoaderThinPlateSplineFusion.getCoefficients(splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId, anisotropyFactor, downsampling);
 
 			underlyingViewId2TPSCoefficients.put( underlyingViewId, coeff );
 
@@ -103,7 +103,7 @@ public class TestTPSFusion
 //				new XmlIoSpimData2().load(
 //						URI.create("file:/home/john/data/bigstitcher/split_dataset/dataset.split.xml") );
 
-		final ViewerImgLoader underlyingImgLoader = BlkThinPlateSplineFusion.getUnderlyingImageLoader(data);
+		final ViewerImgLoader underlyingImgLoader = SplitImgLoaderThinPlateSplineFusion.getUnderlyingImageLoader(data);
 
 		if ( underlyingImgLoader == null )
 			return;
@@ -127,7 +127,7 @@ public class TestTPSFusion
 
 		// get all split ViewIds for the set of underlying ViewIds
 		final List<ViewId> splitViewIds =
-				BlkThinPlateSplineFusion.splitViewIds( underlyingViewIds, BlkThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() ) );
+				SplitImgLoaderThinPlateSplineFusion.splitViewIds( underlyingViewIds, SplitImgLoaderThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() ) );
 
 		System.out.println( "Split viewIds: " + splitViewIds.size() );
 

@@ -39,7 +39,7 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
-import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 
 public class TPSAssessQualityStepsize
@@ -257,7 +257,7 @@ public class TPSAssessQualityStepsize
 				new XmlIoSpimData2().load(
 						URI.create("file:/Users/preibischs/SparkTest/Stitching/dataset.split.xml") );
 
-		final ViewerImgLoader underlyingImgLoader = BlkThinPlateSplineFusion.getUnderlyingImageLoader(data);
+		final ViewerImgLoader underlyingImgLoader = SplitImgLoaderThinPlateSplineFusion.getUnderlyingImageLoader(data);
 
 		if ( underlyingImgLoader == null )
 			return;
@@ -279,8 +279,8 @@ public class TPSAssessQualityStepsize
 			return;
 		}
 
-		final Map<Integer, List<Integer>> old2newSetupId = BlkThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() );
-		final List< ViewId > splitViewIds = BlkThinPlateSplineFusion.splitViewIds( underlyingViewIds, old2newSetupId );
+		final Map<Integer, List<Integer>> old2newSetupId = SplitImgLoaderThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() );
+		final List< ViewId > splitViewIds = SplitImgLoaderThinPlateSplineFusion.splitViewIds( underlyingViewIds, old2newSetupId );
 
 		// we estimate the bounding box using the split imagel loader, which will be closer to real bounding box
 		BoundingBox boundingBox = new BoundingBoxMaximal( splitViewIds, data ).estimate( "Full Bounding Box" );
