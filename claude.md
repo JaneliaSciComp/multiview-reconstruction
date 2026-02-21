@@ -672,3 +672,102 @@ dataset.zarr/
 <zgroup setup="1" tp="1" path="dataset.zarr" indicies="[0 1]"/>  <!-- Channel 0, Time 1 -->
 ```
 
+## BigDataViewer Performance Optimization
+
+### Problem: Slow Data_Explorer Opening for Large Datasets
+
+Opening datasets with ~12,000+ views took 6+ minutes before the GUI appeared.
+
+**Root Cause**: BDV source visibility and coloring operations used per-source API calls, each triggering event listeners (~28ms per call × 12,000 sources = 6 minutes).
+
+### Solution: Use BDV's Batch APIs
+
+**ViewerState Batch API** (recommended by BDV author Tobias Pietzsch):
+- `state.setSourcesActive(Collection<SourceAndConverter>, boolean)` - batch activate/deactivate
+- Access via `bdv.getViewer().state()`
+- Thread-safe with `synchronized(state)` when iterating sources
+
+**ConverterSetups API for Coloring**:
+- Access via `bdv.getViewerFrame().getConverterSetups()` (NOT `bdv.getSetupAssignments()`)
+- `converterSetups.getConverterSetup(SourceAndConverter)` - get setup for a source
+- Then call `setup.setColor(ARGBType)` on each
+
+### Key Files
+
+**util/BDVTools.java** - Consolidated BDV helper methods:
+```java
+// Display Mode
+setFusedModeSimple(BigDataViewer, AbstractSpimData)
+
+// Source Visibility (batch API)
+setVisibleSources(ViewerState, Collection<SourceAndConverter>)
+setVisibleSourcesBatch(BigDataViewer, Set<Integer> activeSetupIds)
+
+// Source Coloring (via ConverterSetups)
+whiteSourcesBatch(BigDataViewer)
+colorSourcesBatch(BigDataViewer, long colorOffset)
+colorByFactors(BigDataViewer, AbstractSpimData, Set<Class>, long colorOffset)
+
+// Legacy (deprecated, keep for compatibility)
+whiteSources(List<ConverterSetup>)
+sameColorSources(List<ConverterSetup>, r, g, b, a)
+
+// Transform Control
+resetBDVManualTransformations(BigDataViewer)
+
+// Index Utilities
+getBDVTimePointIndex(TimePoint, AbstractSpimData)
+getBDVSourceIndex(BasicViewSetup, AbstractSpimData)
+```
+
+### Implementation Pattern
+
+```java
+// CORRECT: Batch API for visibility
+final ViewerState state = bdv.getViewer().state();
+final List<SourceAndConverter<?>> active = new ArrayList<>();
+synchronized (state) {
+    BDVUtils.forEachAbstractSpimSource(
+        state.getSources(),
+        (soc, source) -> {
+            if (activeSetupIds.contains(source.getSetupId()))
+                active.add(soc);
+        });
+}
+final List<SourceAndConverter<?>> inactive = new ArrayList<>(state.getSources());
+inactive.removeAll(active);
+state.setSourcesActive(inactive, false);  // Batch deactivate
+state.setSourcesActive(active, true);     // Batch activate
+
+// CORRECT: ConverterSetups API for coloring
+final ConverterSetups converterSetups = bdv.getViewerFrame().getConverterSetups();
+final ViewerState state = bdv.getViewer().state();
+synchronized (state) {
+    for (SourceAndConverter<?> soc : state.getSources()) {
+        ConverterSetup cs = converterSetups.getConverterSetup(soc);
+        if (cs != null)
+            cs.setColor(color);
+    }
+}
+
+// WRONG: Per-source calls (slow!)
+for (int i = 0; i < numSources; i++)
+    vag.setSourceActive(i, active[i]);  // ~28ms per call!
+```
+
+### Performance Results
+
+- **Before**: ~6 minutes to open dataset with 12,903 views
+- **After**: <1 second
+
+### API Reference (BDV Core)
+
+- **ViewerState**: https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ViewerState.java
+- **ConverterSetups**: https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ConverterSetups.java
+
+### Deprecated APIs (Avoid)
+
+- `bdv.getSetupAssignments().getConverterSetups()` - old API
+- `VisibilityAndGrouping.setSourceActive(int, boolean)` - per-source, slow
+- Direct instantiation of N5ZarrWriter - use `URITools.instantiateN5Writer()`
+
