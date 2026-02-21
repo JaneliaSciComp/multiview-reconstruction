@@ -34,6 +34,8 @@ import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.algorithm.blocks.dfield.DisplacementField;
 import net.imglib2.algorithm.blocks.dfield.DisplacementFieldBlockSupplier;
+import net.imglib2.algorithm.blocks.dfield.DisplacementFields;
+import net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField;
 import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
 import net.imglib2.converter.Converter;
 import net.imglib2.realtransform.AffineGet;
@@ -51,8 +53,6 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
-import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields;
-import net.preibisch.mvrecon.process.fusion.blk.tps.DisplacementFields.TransformedDisplacementField;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.blk.tps.MaskingFunction3D;
 import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
@@ -317,17 +317,16 @@ public class BlkThinPlateSplineFusion
 			final TransformedDisplacementField< D > dfield,
 			final Interval boundingBoxInTarget )
 	{
-		final AffineTransform3D transformFromSource = new AffineTransform3D();
+		final AffineTransform3D transformFromField = new AffineTransform3D();
 		final double[] translationVector = {
 				-boundingBoxInTarget.min( 0 ),
 				-boundingBoxInTarget.min( 1 ),
 				-boundingBoxInTarget.min( 2 )
 		};
-		transformFromSource.setTranslation( translationVector );
-		transformFromSource.concatenate( dfield.transformFromSource() );
-		return new TransformedDisplacementField<>( transformFromSource, dfield.displacementField() );
+		transformFromField.setTranslation( translationVector );
+		transformFromField.concatenate( dfield.transformFromField() );
+		return new TransformedDisplacementField<>( transformFromField, dfield.displacementField() );
 	}
-
 
 	private static < T extends NativeType< T > > BlockSupplier< FloatType > transformedBlocks(
 			final RandomAccessibleInterval< T > inputImg,
@@ -339,7 +338,7 @@ public class BlkThinPlateSplineFusion
 				.andThen( Convert.convert( new FloatType() ) );
 		if ( coefficients != null )
 			blocks = blocks.andThen( FastLinearIntensityMap.linearIntensityMap( coefficients, inputImg ) );
-		return blocks.andThen( displacementFieldAffine( dfield.transformFromSource(), dfield.displacementField(), interpolation ) );
+		return blocks.andThen( displacementFieldAffine( dfield.transformFromField(), dfield.displacementField(), interpolation ) );
 	}
 
 	private static < D extends NativeType< D > & RealType< D >, T extends NativeType< T > > BlockSupplier< T > createMasking(
@@ -348,9 +347,9 @@ public class BlkThinPlateSplineFusion
 			final TransformedDisplacementField< D > transformedDisplacementField,
 			final T maskType )
 	{
-		final AffineGet transformFromSource = transformedDisplacementField.transformFromSource();
+		final AffineGet transformFromField = transformedDisplacementField.transformFromField();
 		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
-		return DisplacementFieldBlockSupplier.create( transformFromSource, dfield,
+		return DisplacementFieldBlockSupplier.create( transformFromField, dfield,
 				MaskingFunction3D.of( dfield.getType(), maskType, interval, border ) );
 	}
 
@@ -360,9 +359,9 @@ public class BlkThinPlateSplineFusion
 			final float[] blending,
 			final TransformedDisplacementField< D > transformedDisplacementField )
 	{
-		final AffineGet transformFromSource = transformedDisplacementField.transformFromSource();
+		final AffineGet transformFromField = transformedDisplacementField.transformFromField();
 		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
-		return DisplacementFieldBlockSupplier.create( transformFromSource, dfield,
+		return DisplacementFieldBlockSupplier.create( transformFromField, dfield,
 				BlendingFunction3D.of( dfield.getType(), interval, border, blending ) );
 	}
 
