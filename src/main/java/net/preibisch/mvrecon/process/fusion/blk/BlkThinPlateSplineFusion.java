@@ -28,6 +28,7 @@ import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
+import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockSupplier;
@@ -40,13 +41,17 @@ import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
 import net.imglib2.converter.Converter;
 import net.imglib2.realtransform.AffineGet;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.ThinplateSplineTransform;
+import net.imglib2.realtransform.interval.IntervalSamplingMethod;
+import net.imglib2.realtransform.inverse.WrappedIterativeInvertibleRealTransform;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
+import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -55,7 +60,6 @@ import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
 import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.blk.tps.MaskingFunction3D;
-import net.preibisch.mvrecon.process.fusion.blk.tps.SampleTPS;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.FastLinearIntensityMap;
 import net.preibisch.mvrecon.process.fusion.lazy.LazyFusionTools;
@@ -193,7 +197,7 @@ public class BlkThinPlateSplineFusion
 					// we go from output to input
 					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
 			final Dimensions dims = viewDimensions.get( viewId );
-			final Interval bbox = SampleTPS.inverseTransformedBoundingBox( tps, dims );
+			final Interval bbox = inverseTransformedBoundingBox( tps, dims );
 			viewBounds.put( viewId, bbox );
 		}
 
@@ -499,4 +503,29 @@ public class BlkThinPlateSplineFusion
 			return null;
 	}
 
+	/**
+	 * Get the bounding box in render coordinates of an image of the given
+	 * {@code dimension} when back-projected through the inverse of the given
+	 * {@code transform} from rendered to image coordinates.
+	 *
+	 * @param transform
+	 * 		forward transform (from rendered to image coordinates)
+	 * @param dimensions
+	 * 		image dimensions
+	 *
+	 * @return bounding box in render coordinates
+	 */
+	public static Interval inverseTransformedBoundingBox(
+			final ThinplateSplineTransform transform,
+			final Dimensions dimensions )
+	{
+		// transforms from source img pixels to render coordinates
+		final RealTransform invTransform = new WrappedIterativeInvertibleRealTransform<>( transform ).inverse();
+
+		// estimated bounding box of the source img transformed to render coordinates
+		return Intervals.smallestContainingInterval(
+				invTransform.boundingInterval(
+						new FinalInterval( dimensions ),
+						IntervalSamplingMethod.CORNERS ) );
+	}
 }
