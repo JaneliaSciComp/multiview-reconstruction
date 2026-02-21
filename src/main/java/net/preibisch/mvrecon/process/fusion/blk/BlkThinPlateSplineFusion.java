@@ -50,7 +50,7 @@ import net.imglib2.util.Util;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
-import net.preibisch.mvrecon.process.fusion.blk.tps.Landmarks;
+import net.preibisch.mvrecon.process.fusion.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.blk.tps.MaskingFunction3D;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.FastLinearIntensityMap;

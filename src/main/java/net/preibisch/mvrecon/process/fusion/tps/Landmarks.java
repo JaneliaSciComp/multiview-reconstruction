@@ -1,4 +1,4 @@
-package net.preibisch.mvrecon.process.fusion.blk.tps;
+package net.preibisch.mvrecon.process.fusion.tps;
 
 import net.imglib2.realtransform.ThinplateSplineTransform;
 
