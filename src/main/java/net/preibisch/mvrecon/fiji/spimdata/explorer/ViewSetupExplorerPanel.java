@@ -95,6 +95,8 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.SpecifyCalibrationPopu
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.VisualizeDetectionsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.VisualizeNonRigid;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapImgLoaderLOCI2;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitMultiResolutionImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import util.BDVTools;
 import util.URITools;
 
@@ -134,6 +136,16 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 
 	@Override
 	public boolean channelsGrouped() { return false; }
+
+	/**
+	 * Detects if the dataset is a Split dataset (created by splitting large images into tiles)
+	 * @return true if the imgLoader is a SplitViewerImgLoader or SplitMultiResolutionImgLoader
+	 */
+	protected boolean isSplitDataset()
+	{
+		final Object imgLoader = data.getSequenceDescription().getImgLoader();
+		return imgLoader instanceof SplitViewerImgLoader || imgLoader instanceof SplitMultiResolutionImgLoader;
+	}
 
 	public ViewSetupExplorerPanel( final FilteredAndGroupedExplorer< AS > explorer, final AS data, final URI xml, final XmlIoSpimData2 io, boolean requestStartBDV )
 	{
@@ -191,7 +203,11 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		tableModel = new MissingViewsTableModelDecorator<>( tableModel );
 		tableModel.setColumnClasses( FilteredAndGroupedTableModel.defaultColumnClassesMV() );
 
-		tableModel.addGroupingFactor( Illumination.class );
+		// For Split datasets, default to grouping Tiles; otherwise group Illuminations
+		if ( isSplitDataset() )
+			tableModel.addGroupingFactor( Tile.class );
+		else
+			tableModel.addGroupingFactor( Illumination.class );
 
 		table = new JTable();
 		table.setModel( tableModel );
@@ -291,8 +307,10 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		this.add( new JScrollPane( table ), BorderLayout.CENTER );
 		
 		final JPanel footer = new JPanel(new BorderLayout());
-		this.groupTilesCheckbox = new JCheckBox("Group Tiles", false);
-		this.groupIllumsCheckbox = new JCheckBox("Group Illuminations", true);
+		// For Split datasets, default to grouping Tiles; otherwise group Illuminations
+		final boolean isSplit = isSplitDataset();
+		this.groupTilesCheckbox = new JCheckBox("Group Tiles", isSplit);
+		this.groupIllumsCheckbox = new JCheckBox("Group Illuminations", !isSplit);
 		this.hideMissingViewsCheckbox = new JCheckBox("Hide Missing Views", false);
 		footer.add(groupTilesCheckbox, BorderLayout.EAST);
 		footer.add(hideMissingViewsCheckbox, BorderLayout.CENTER);
