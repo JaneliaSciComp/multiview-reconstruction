@@ -70,11 +70,15 @@ public class Data_Explorer implements PlugIn
 		if ( !result.queryXML( "XML Explorer", "", false, false, false, false, false ) )
 			return;
 
+		long start = System.currentTimeMillis();
 		final SpimData2 data = result.getData();
 		final URI xml = result.getXMLURI();
 		final XmlIoSpimData2 io = result.getIO();
+		net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] getData/XML/IO took " + (System.currentTimeMillis() - start) + " ms" );
 
+		start = System.currentTimeMillis();
 		final ViewSetupExplorer< SpimData2 > explorer = new ViewSetupExplorer<>( data, xml, io );
+		net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] ViewSetupExplorer creation took " + (System.currentTimeMillis() - start) + " ms" );
 
 		explorer.getFrame().toFront();
 	}

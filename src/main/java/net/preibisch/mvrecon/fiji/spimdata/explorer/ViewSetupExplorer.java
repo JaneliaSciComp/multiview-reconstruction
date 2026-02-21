@@ -44,8 +44,12 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 	public ViewSetupExplorer( final AS data, final URI xml, final XmlIoSpimData2 io )
 	{
 		frame = new JFrame( "ViewSetup Explorer (Press F1 for help)" );
-		panel = new ViewSetupExplorerPanel< AS >( this, data, xml, io, true );
 
+		long start = System.currentTimeMillis();
+		panel = new ViewSetupExplorerPanel< AS >( this, data, xml, io, true );
+		net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] ViewSetupExplorerPanel creation took " + (System.currentTimeMillis() - start) + " ms" );
+
+		start = System.currentTimeMillis();
 		frame.add( panel, BorderLayout.CENTER );
 		frame.setSize( panel.getPreferredSize() );
 
@@ -58,9 +62,15 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 						quit();
 					}
 				});
+		net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame setup took " + (System.currentTimeMillis() - start) + " ms" );
 
+		start = System.currentTimeMillis();
 		frame.pack();
+		net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame.pack() took " + (System.currentTimeMillis() - start) + " ms" );
+
+		start = System.currentTimeMillis();
 		frame.setVisible( true );
+		net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame.setVisible() took " + (System.currentTimeMillis() - start) + " ms" );
 
 		// move explorer window and log to initial positions
 		MultiWindowLayoutHelper.moveToScreenFraction( frame, xPos, yPos );

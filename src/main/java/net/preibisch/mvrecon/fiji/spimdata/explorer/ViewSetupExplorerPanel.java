@@ -31,22 +31,16 @@ import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.io.File;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JLabel;
-import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
@@ -60,24 +54,13 @@ import javax.swing.table.TableCellRenderer;
 
 import bdv.BigDataViewer;
 import bdv.ViewerImgLoader;
-import bdv.img.hdf5.Hdf5ImageLoader;
-import bdv.img.n5.N5ImageLoader;
-import bdv.tools.brightness.ConverterSetup;
-import bdv.viewer.DisplayMode;
-import bdv.viewer.VisibilityAndGrouping;
-import fiji.util.gui.GenericDialogPlus;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.base.Entity;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
-import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.sequence.Illumination;
-import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
-import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.type.numeric.ARGBType;
 import net.preibisch.legacy.io.IOFunctions;
-import net.preibisch.mvrecon.fiji.plugin.XMLSaveAs;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.ScrollableBrightnessDialog;
@@ -97,6 +80,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.IntensityAdjustmentPop
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.InterestPointsExplorerPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.LabelPopUp;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.MaxProjectPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.MissingViewsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.PointSpreadFunctionsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.QualityPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.RegisterInterestPointsPopup;
@@ -108,13 +92,10 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ResavePopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.Separator;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.SimpleHyperlinkPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.SpecifyCalibrationPopup;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.MissingViewsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.VisualizeDetectionsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.VisualizeNonRigid;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.util.ColorStream;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapImgLoaderLOCI2;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import util.BDVTools;
 import util.URITools;
 
 
@@ -160,26 +141,41 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 
 		data.gridMoveRequested = false;
 
+		long start = System.currentTimeMillis();
 		popups = initPopups();
-		initComponent();
+		IOFunctions.println( "PERF: [ViewSetupExplorerPanel] initPopups() took " + (System.currentTimeMillis() - start) + " ms" );
 
-		if ( requestStartBDV && 
-				(ViewerImgLoader.class.isInstance( data.getSequenceDescription().getImgLoader() ) 
+		start = System.currentTimeMillis();
+		initComponent();
+		IOFunctions.println( "PERF: [ViewSetupExplorerPanel] initComponent() took " + (System.currentTimeMillis() - start) + " ms" );
+
+		if ( requestStartBDV &&
+				(ViewerImgLoader.class.isInstance( data.getSequenceDescription().getImgLoader() )
 				|| data.getSequenceDescription().getImgLoader().getClass().getSimpleName().equals( "FractalImgLoader" )
 				|| FileMapImgLoaderLOCI2.class.isInstance( data.getSequenceDescription().getImgLoader() ) ) )
 		{
 			final BDVPopup bdvpopup = bdvPopup();
-			
+
 			if ( bdvpopup != null )
 			{
 				if (!bdvPopup().bdvRunning())
+				{
+					start = System.currentTimeMillis();
 					bdvpopup.bdv = BDVPopup.createBDV( getSpimData(), xml() );
+					IOFunctions.println( "PERF: [ViewSetupExplorerPanel] BDVPopup.createBDV() took " + (System.currentTimeMillis() - start) + " ms" );
+				}
 
-				setFusedModeSimple( bdvpopup.bdv, data );
-				
+				start = System.currentTimeMillis();
+				BDVTools.setFusedModeSimple( bdvpopup.bdv, data );
+				IOFunctions.println( "PERF: [ViewSetupExplorerPanel] setFusedModeSimple() took " + (System.currentTimeMillis() - start) + " ms" );
+
 				// Update BDV to show all grouped tiles based on initial table selection
 				if ( !selectedRows.isEmpty() )
+				{
+					start = System.currentTimeMillis();
 					updateBDV( bdvpopup.bdv, colorMode, data, firstSelectedVD, selectedRows );
+					IOFunctions.println( "PERF: [ViewSetupExplorerPanel] updateBDV() took " + (System.currentTimeMillis() - start) + " ms" );
+				}
 			}
 		}
 
@@ -501,7 +497,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 			final Collection< List< BasicViewDescription< ? >> > selectedRows)
 	{
 		// we always set the fused mode
-		setFusedModeSimple( bdv, data );
+		BDVTools.setFusedModeSimple( bdv, data );
 
 		if ( selectedRows == null || selectedRows.size() == 0 )
 			return;
@@ -511,13 +507,14 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 
 		// always use the first timepoint
 		final TimePoint firstTP = firstVD.getTimePoint();
-		bdv.getViewer().setTimepoint( getBDVTimePointIndex( firstTP, data ) );
+		bdv.getViewer().setTimepoint( BDVTools.getBDVTimePointIndex( firstTP, data ) );
 
-		final boolean[] active = new boolean[ data.getSequenceDescription().getViewSetupsOrdered().size() ];
+		// Collect setup IDs of sources that should be active
+		final HashSet<Integer> activeSetupIds = new HashSet<>();
 
 		// set selected views active
-		// also check whether at least one "group" of views is a real group (not just a single, wrapped, view) 
-		boolean anyGrouped = false;		
+		// also check whether at least one "group" of views is a real group (not just a single, wrapped, view)
+		boolean anyGrouped = false;
 		for ( final List<BasicViewDescription< ? >> vds : selectedRows )
 		{
 			if (vds.size() > 1)
@@ -525,7 +522,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 
 			for (BasicViewDescription< ? > vd : vds)
 				if ( vd.getTimePointId() == firstTP.getId() )
-					active[ getBDVSourceIndex( vd.getViewSetup(), data ) ] = true;
+					activeSetupIds.add( vd.getViewSetupId() );
 		}
 
 		if ( selectedRows.size() > 1 && colorMode )
@@ -536,128 +533,19 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 			{
 				Set< Class< ? extends Entity > > factors = new HashSet<>();
 				factors.add( Tile.class );
-				colorByFactors( bdv, data, factors );
+				BDVTools.colorByFactors( bdv, data, factors, colorOffset );
 			}
 			else
-				colorSources( bdv.getSetupAssignments().getConverterSetups(), colorOffset );
+				BDVTools.colorSourcesBatch( bdv, colorOffset );
 		}
 		else
-			whiteSources( bdv.getSetupAssignments().getConverterSetups() );
+			BDVTools.whiteSourcesBatch( bdv );
 
-		setVisibleSources( bdv.getViewer().getVisibilityAndGrouping(), active );
+		// Use batch API for setting source visibility (much faster than per-source calls)
+		BDVTools.setVisibleSourcesBatch( bdv, activeSetupIds );
 
 		ScrollableBrightnessDialog.updateBrightnessPanels( bdv );
 	}
-
-	/**
-	 * color the views displayed in bdv according to one or more Entity classes
-	 * @param bdv - the BigDataViewer instance
-	 * @param data - the SpimData
-	 * @param groupingFactors - the Entity classes to group by (each distinct combination of instances will receive its own color)
-	 */
-	public static void colorByFactors(BigDataViewer bdv, AbstractSpimData< ? > data, Set<Class<? extends Entity>> groupingFactors)
-	{
-		List<BasicViewDescription< ? > > vds = new ArrayList<>();
-		Map<BasicViewDescription< ? >, ConverterSetup> vdToCs = new HashMap<>();
-		
-		for (ConverterSetup cs : bdv.getSetupAssignments().getConverterSetups())
-		{
-			Integer timepointId = data.getSequenceDescription().getTimePoints().getTimePointsOrdered().get( bdv.getViewer().getState().getCurrentTimepoint()).getId();
-			BasicViewDescription< ? > vd = data.getSequenceDescription().getViewDescriptions().get( new ViewId( timepointId, cs.getSetupId() ) );
-			vds.add( vd );
-			vdToCs.put( vd, cs );
-		}
-		
-		List< Group< BasicViewDescription< ? > > > vdGroups = Group.combineBy( vds, groupingFactors );
-		
-		// nothing to group
-		if (vdGroups.size() < 1)
-			return;
-		
-		// one group -> white
-		if (vdGroups.size() == 1)
-		{
-			FilteredAndGroupedExplorerPanel.whiteSources(bdv.getSetupAssignments().getConverterSetups());
-			return;
-		}
-
-		List<ArrayList<ConverterSetup>> groups =  new ArrayList<>();
-
-		for (Group< BasicViewDescription< ? > > lVd : vdGroups)
-		{
-			ArrayList< ConverterSetup > lCs = new ArrayList<>();
-			for (BasicViewDescription< ? > vd : lVd)
-				lCs.add( vdToCs.get( vd ) );
-			groups.add( lCs );
-		}
-
-		Iterator< ARGBType > colorIt = ColorStream.iterator();
-		for (int i = 0; i<colorOffset; ++i)
-			colorIt.next();
-
-		for (ArrayList< ConverterSetup > csg : groups)
-		{
-			ARGBType color = colorIt.next();
-			for (ConverterSetup cs : csg)
-				cs.setColor( color );
-		}
-	}
-	
-	public static void setFusedModeSimple( final BigDataViewer bdv, final AbstractSpimData< ? > data )
-	{
-		if ( bdv == null )
-			return;
-
-		if ( bdv.getViewer().getVisibilityAndGrouping().getDisplayMode() != DisplayMode.FUSED )
-		{
-			final boolean[] active = new boolean[ data.getSequenceDescription().getViewSetupsOrdered().size() ];
-			active[ 0 ] = true;
-			setVisibleSources( bdv.getViewer().getVisibilityAndGrouping(), active );
-			bdv.getViewer().getVisibilityAndGrouping().setDisplayMode( DisplayMode.FUSED );
-		}
-	}
-
-	public static void colorSources( final List< ConverterSetup > cs, final long j )
-	{
-		for ( int i = 0; i < cs.size(); ++i )
-			cs.get( i ).setColor( new ARGBType( ColorStream.get( i + j ) ) );
-	}
-
-	public static void whiteSources( final List< ConverterSetup > cs )
-	{
-		for ( int i = 0; i < cs.size(); ++i )
-			cs.get( i ).setColor( new ARGBType( ARGBType.rgba( 255, 255, 255, 255 ) ) );
-	}
-
-	public static void setVisibleSources( final VisibilityAndGrouping vag, final boolean[] active )
-	{
-		for ( int i = 0; i < active.length; ++i )
-			vag.setSourceActive( i, active[ i ] );
-	}
-
-	public static int getBDVTimePointIndex( final TimePoint t, final AbstractSpimData< ? > data )
-	{
-		final List< TimePoint > list = data.getSequenceDescription().getTimePoints().getTimePointsOrdered();
-
-		for ( int i = 0; i < list.size(); ++i )
-			if ( list.get( i ).getId() == t.getId() )
-				return i;
-
-		return 0;
-	}
-
-	public static int getBDVSourceIndex( final BasicViewSetup vs, final AbstractSpimData< ? > data )
-	{
-		final List< ? extends BasicViewSetup > list = data.getSequenceDescription().getViewSetupsOrdered();
-		
-		for ( int i = 0; i < list.size(); ++i )
-			if ( list.get( i ).getId() == vs.getId() )
-				return i;
-
-		return 0;
-	}
-
-
 
 	public void showInfoBox()
 	{

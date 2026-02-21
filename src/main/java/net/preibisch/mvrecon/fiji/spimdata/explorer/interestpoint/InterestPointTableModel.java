@@ -48,6 +48,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import util.BDVTools;
 
 public class InterestPointTableModel extends AbstractTableModel implements InterestPointSource
 {
@@ -493,7 +494,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		final ArrayList< BasicViewDescription< ? > > currentlyVisible = new ArrayList<>();
 
 		for ( final BasicViewDescription< ? > viewId : currentVDs )
-			if ( timepointIndex == ViewSetupExplorerPanel.getBDVTimePointIndex( viewId.getTimePoint(), panel.viewSetupExplorer.getSpimData() ) )
+			if ( timepointIndex == BDVTools.getBDVTimePointIndex( viewId.getTimePoint(), panel.viewSetupExplorer.getSpimData() ) )
 				currentlyVisible.add( viewId );
 
 		return currentlyVisible;
