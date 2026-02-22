@@ -23,8 +23,11 @@
 package net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import net.imglib2.util.Pair;
@@ -97,38 +100,32 @@ public class Subset< V > extends Group< V >
 		// all views contained in groups (those that existed + new ones with cardinality==1)
 		final ArrayList< Group< V > > groups = createGroupsForAllViews( views, this.groups );
 
-		// stupid, crazy example:
-		// group0: v00, v01, v02, v03, v04
-		// group1: v00, v10, v20, v30, v40
-		//
-		// group2: v22, v10
-		//
-		// pairs: v00 <> v22; v01 <> v10
-		//
-		// so what happens for the pair: v00 <> v22?
-		// group0 vs group2 + group1 vs group2? <<< this one, you can merge later if you want
-		//
-		// so what happens for the pair: v01 <> v10?
-		// group0 vs group1
-		//
-		// NOTE: these pairs would never exist in real life since PairwiseSetup.removeRedundantPairs
-		//       removes them if they come from overlapping groups
+		// Pre-compute view → group indices mapping (O(g·k) where k = avg group size)
+		// This avoids O(g²) iteration per pair
+		final Map< V, List< Integer > > viewToGroupIndices = new HashMap<>();
+		for ( int i = 0; i < groups.size(); ++i )
+		{
+			final int groupIdx = i;
+			for ( final V view : groups.get( i ).getViews() )
+				viewToGroupIndices.computeIfAbsent( view, k -> new ArrayList<>() ).add( groupIdx );
+		}
+
+		// For each pair, look up groups directly and use canonical ordering (min,max)
+		// This is O(p·k²) where k = avg groups per view (typically 1-2), vs O(p·g²)
 		final HashSet< Pair< Integer, Integer > > groupPairs = new HashSet<>();
 
 		for ( final Pair< V, V > pair : pairs )
 		{
-			final V a = pair.getA();
-			final V b = pair.getB();
+			final List< Integer > groupsA = viewToGroupIndices.getOrDefault( pair.getA(), Collections.emptyList() );
+			final List< Integer > groupsB = viewToGroupIndices.getOrDefault( pair.getB(), Collections.emptyList() );
 
-			for ( int i = 0; i < groups.size(); ++i )
-				for ( int j = 0; j < groups.size(); ++j )
+			for ( final int i : groupsA )
+				for ( final int j : groupsB )
 				{
-					final Group< V > groupA = groups.get( i );
-					final Group< V > groupB = groups.get( j );
-
-					if ( groupA.contains( a ) && groupB.contains( b ) )
-						if ( !( groupPairs.contains( new ValuePair< Integer, Integer >( i, j ) ) || groupPairs.contains( new ValuePair< Integer, Integer >( j, i ) ) ) )
-							groupPairs.add( new ValuePair< Integer, Integer >( i, j ) );
+					// Use canonical ordering to avoid checking both (i,j) and (j,i)
+					final int minIdx = Math.min( i, j );
+					final int maxIdx = Math.max( i, j );
+					groupPairs.add( new ValuePair<>( minIdx, maxIdx ) );
 				}
 		}
 
@@ -139,7 +136,7 @@ public class Subset< V > extends Group< V >
 			final Group< V > groupA = groups.get( groupPair.getA() );
 			final Group< V > groupB = groups.get( groupPair.getB() );
 
-			result.add( new ValuePair< Group< V >, Group< V > >( groupA, groupB ) );
+			result.add( new ValuePair<>( groupA, groupB ) );
 		}
 
 		return result;

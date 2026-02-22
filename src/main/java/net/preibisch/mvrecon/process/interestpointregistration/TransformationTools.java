@@ -621,56 +621,87 @@ public class TransformationTools
 			final Map< ViewId, ViewRegistration > registrations,
 			final Map< ViewId, ViewDescription > viewDescriptions )
 	{
-		for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
+		// Pre-compute which view pairs share a group for O(1) lookup
+		// This avoids O(g) iteration per view pair
+		final Set< Pair< ViewId, ViewId > > sameGroupPairs = new HashSet<>();
+		for ( final Group< ViewId > group : groups )
 		{
-			final ViewId viewId = element.getKey();
+			final List< ViewId > members = new ArrayList<>( group.getViews() );
+			for ( int i = 0; i < members.size(); i++ )
+				for ( int j = i + 1; j < members.size(); j++ )
+					sameGroupPairs.add( new ValuePair<>( members.get( i ), members.get( j ) ) );
+		}
 
-			for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
-			{
-				final List< InterestPoint > points = new ArrayList<>( subElement.getValue() );
-				final List< InterestPoint > overlappingPoints = new ArrayList<>();
+		// Process each view in parallel
+		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
 
-				// for each pair (if it's not part of a group), test
-				// if there are any points that currently overlap with another view
-	A:			for ( final ViewId otherViewId : interestpoints.keySet() )
-				{
-					// if it's the same view continue
-					if ( otherViewId.equals( viewId ) )
-						continue;
+		try
+		{
+			pool.submit( () ->
+				interestpoints.entrySet().parallelStream().forEach( element -> {
+					final ViewId viewId = element.getKey();
 
-					// if they are part of the same group, continue
-					for ( final Group< ViewId > group : groups )
-						if ( group.contains( viewId ) && group.contains( otherViewId ) )
-							continue A;
-
-					// use the inverse affine transform of the other view
-					final AffineTransform3D tinv = TransformationTools.getTransform( otherViewId, registrations ).inverse();
-
-					// to map all interestpoints into the bounding box
-					final ViewDescription otherVD = viewDescriptions.get( otherViewId );
-					final Dimensions dim = otherVD.getViewSetup().getSize();
-					final Interval interval = new FinalInterval( dim );
-
-					final int n = tinv.numDimensions();
-					final RealPoint p = new RealPoint( n );
-
-					// and check if they do intersect
-					for ( int i = points.size() - 1; i >= 0; --i )
+					for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
 					{
-						final InterestPoint ip = points.get( i );
-						ip.localize( p );
-						tinv.apply(p, p);
-						if ( Intervals.contains( interval , p ) )
-						{
-							overlappingPoints.add( ip );
-							points.remove( i );
-						}
-					}
-				}
+						final List< InterestPoint > points = new ArrayList<>( subElement.getValue() );
+						final List< InterestPoint > overlappingPoints = new ArrayList<>();
 
-				// replace the list
-				subElement.setValue( overlappingPoints );
-			}
+						// for each pair (if it's not part of a group), test
+						// if there are any points that currently overlap with another view
+			A:			for ( final ViewId otherViewId : interestpoints.keySet() )
+						{
+							// if it's the same view continue
+							if ( otherViewId.equals( viewId ) )
+								continue;
+
+							// if they are part of the same group, continue (O(1) lookup)
+							if ( sameGroupPairs.contains( new ValuePair<>( viewId, otherViewId ) ) ||
+								 sameGroupPairs.contains( new ValuePair<>( otherViewId, viewId ) ) )
+								continue A;
+
+							// use the inverse affine transform of the other view
+							final AffineTransform3D tinv = TransformationTools.getTransform( otherViewId, registrations ).inverse();
+
+							// to map all interestpoints into the bounding box
+							final ViewDescription otherVD = viewDescriptions.get( otherViewId );
+							final Dimensions dim = otherVD.getViewSetup().getSize();
+							final Interval interval = new FinalInterval( dim );
+
+							final int n = tinv.numDimensions();
+							final RealPoint p = new RealPoint( n );
+
+							// and check if they do intersect
+							for ( int i = points.size() - 1; i >= 0; --i )
+							{
+								final InterestPoint ip = points.get( i );
+								ip.localize( p );
+								tinv.apply( p, p );
+								if ( Intervals.contains( interval, p ) )
+								{
+									overlappingPoints.add( ip );
+									points.remove( i );
+								}
+							}
+						}
+
+						// replace the list
+						subElement.setValue( overlappingPoints );
+					}
+				})
+			).get();
+		}
+		catch ( final InterruptedException e )
+		{
+			Thread.currentThread().interrupt();
+			throw new RuntimeException( "Overlap filtering was interrupted", e );
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to filter overlapping interest points", e );
+		}
+		finally
+		{
+			pool.shutdown();
 		}
 	}
 
