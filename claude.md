@@ -771,3 +771,159 @@ for (int i = 0; i < numSources; i++)
 - `VisibilityAndGrouping.setSourceActive(int, boolean)` - per-source, slow
 - Direct instantiation of N5ZarrWriter - use `URITools.instantiateN5Writer()`
 
+## Oct-Tree Adaptive Image Splitting
+
+### Overview
+
+The oct-tree splitting system adaptively subdivides large images into smaller tiles based on interest point correspondence density. This is useful for processing very large datasets where registration quality varies across the image - regions with many correspondences (potential conflicts) are split into smaller tiles, while regions with few correspondences remain large.
+
+### Key Files
+
+```
+src/main/java/net/preibisch/mvrecon/process/splitting/
+├── SplitOctTree.java                    # Main splitting algorithm
+├── OctTreeSplitCriterion.java           # Interface for split criteria
+├── CrossViewCorrespondenceCriterion.java # Simple correspondence count criterion
+├── ConsensusSetCriterion.java           # Multi-consensus RANSAC set criterion
+├── SplitDistributeEvenly.java           # Uniform grid splitting (alternative)
+└── SplittingTools.java                  # Entry point utilities
+```
+
+### Split Criteria
+
+#### OctTreeSplitCriterion Interface (OctTreeSplitCriterion.java)
+
+The interface that all split criteria implement:
+
+```java
+public interface OctTreeSplitCriterion {
+    // Load correspondences for a view (called once per view)
+    List<SplitCorrespondence> loadCorrespondences(ViewId viewId);
+
+    // Decide whether to split based on correspondences in current region
+    boolean shouldSplit(List<SplitCorrespondence> correspondences);
+
+    // Check if regions can be merged (default: !shouldSplit)
+    default boolean canMerge(List<SplitCorrespondence> correspondences);
+}
+```
+
+**SplitCorrespondence Structure**:
+- `double[] location` - Detection position in local coordinates (for spatial partitioning)
+- `int detectionId` - Unique ID within the view (for counting unique detections)
+- `String corrViewKey` - Key identifying corresponding view: "timepointId_setupId"
+- `int consensusSetId` - RANSAC consensus set ID (-1 for single-consensus mode)
+
+#### CrossViewCorrespondenceCriterion
+
+Simple criterion that counts unique cross-view corresponding detections:
+- **Splits when**: unique detections > threshold (default: 20)
+- **Use case**: Basic splitting based on correspondence density
+
+#### ConsensusSetCriterion (Multi-Consensus)
+
+Advanced criterion that considers RANSAC consensus sets:
+- **Stops splitting when EITHER**:
+  1. Unique detections ≤ threshold (default: 12), OR
+  2. All corresponding views have correspondences from only ONE consensus set
+- **Continues splitting only if**: detections > threshold AND any view has >1 consensus set
+
+**Tolerance Modes**:
+- `TOLERANCE_NONE` - Any correspondence from another set triggers split
+- `TOLERANCE_PERCENTAGE` - Allow up to X% from other sets
+- `TOLERANCE_COUNT` - Allow up to N correspondences from other sets
+
+**Why This Matters**: When multi-consensus RANSAC finds multiple transformation models in a view pair, it indicates the region contains parts of the sample that moved differently. Splitting isolates these regions for separate registration.
+
+### Splitting Algorithm (SplitOctTree.java)
+
+#### Recursive Correspondence Partitioning
+
+The algorithm uses O(n log n) recursive partitioning instead of O(n × intervals) naive approach:
+
+1. **Load correspondences once** per view at the start
+2. **Partition correspondences** as intervals are split (not re-query)
+3. **Overlap handling**: Correspondences in overlap regions go to BOTH adjacent children
+
+```java
+// Partition logic for each dimension
+if (corr.location[d] < splitPoint - minStepSize)
+    belongsTo[d] = 0;  // lower only
+else if (corr.location[d] >= splitPoint + minStepSize)
+    belongsTo[d] = 1;  // upper only
+else
+    belongsTo[d] = 2;  // overlap - both children
+```
+
+#### Tile Overlap
+
+All tiles overlap by `minStepSize` to support:
+- Fake corresponding points generation at tile boundaries
+- Proper stitching after per-tile processing
+
+#### Block Re-Merging
+
+After splitting, adjacent blocks can be merged back if their combined metric is below threshold:
+1. **Full merge**: All 8 octants → parent (if canMerge succeeds)
+2. **Half-space merges**: Try merging along each dimension (4+4 octants)
+3. **Quadrant merges**: Try merging quadrants (2+2+2+2 octants)
+4. **Individual octant merges**: Merge children within each octant
+
+#### Minimum Split Levels
+
+Force a minimum number of split operations regardless of correspondence count:
+- `minSplitLevels=0` - Fully adaptive (may not split at all)
+- `minSplitLevels=1` - Always split at least once (up to 8 tiles)
+- `minSplitLevels=2` - Always split twice (up to 64 tiles)
+
+Validated upfront against tile size constraints to prevent impossible configurations.
+
+### Static vs Instance Methods
+
+The splitting supports both sequential and parallel execution:
+
+```java
+// Instance method (sequential, accumulates statistics)
+SplitOctTree splitter = new SplitOctTree(...);
+splitter.setCurrentContext(viewId, timepointId);
+ArrayList<Interval> intervals = splitter.split(input);
+
+// Static method (parallel-safe, returns SplitStatistics)
+SplitStatistics result = SplitOctTree.splitStatic(
+    input, viewId, criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels
+);
+```
+
+### GUI Integration
+
+The splitting system integrates with the standard GenericDialog workflow:
+
+```java
+// In plugin setup
+GenericDialog gd = new GenericDialog("Split Settings");
+SplitOctTree.setupGUI(gd, data, minStepSize);  // Adds criterion selection + parameters
+gd.showDialog();
+SplitOctTree splitter = SplitOctTree.queryGUI(gd, data, minStepSize);
+```
+
+Features:
+- Per-dimension minimum tile size sliders (X, Y, Z independently)
+- Criterion selection (Cross-view correspondences vs Multi-consensus sets)
+- Interest point label multi-select
+- Tolerance mode configuration for multi-consensus
+
+### Performance Optimizations
+
+1. **Recursive partitioning**: O(n log n) instead of O(n × intervals)
+2. **Cached correspondence loading**: Load once per view, partition as needed
+3. **Parallel splitting**: Static methods enable parallel stream processing
+4. **Pre-validation**: minSplitLevels validated against tile size before splitting
+
+### Default Grouping for Split Datasets
+
+When opening a Split dataset in the Data Explorer:
+- **"Group Tiles"** is enabled by default
+- **"Group Illuminations"** is disabled by default
+
+Detection via `isSplitDataset()` method checking for `SplitViewerImgLoader` or `SplitMultiResolutionImgLoader`.
+
