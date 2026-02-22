@@ -927,3 +927,157 @@ When opening a Split dataset in the Data Explorer:
 
 Detection via `isSplitDataset()` method checking for `SplitViewerImgLoader` or `SplitMultiResolutionImgLoader`.
 
+## Registration Performance Optimization for Large Datasets (100K+ Views)
+
+### Overview
+
+The registration workflow was optimized to handle datasets with 100,000+ views. Key bottlenecks were identified and fixed in `TransformationTools.java` and `Subset.java`.
+
+### Optimizations Completed
+
+#### 1. Parallel Interest Point Loading (TransformationTools.java:685-724)
+
+**Problem**: `getAllInterestPoints()` loaded interest points sequentially.
+
+**Solution**: Parallelized using `ForkJoinPool` with controlled thread count:
+
+```java
+public static <V> Map<V, HashMap<String, Collection<InterestPoint>>> getAllInterestPoints(...)
+{
+    final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
+    try {
+        return (Map<V, HashMap<String, Collection<InterestPoint>>>) pool.submit(() ->
+            viewIds.parallelStream()
+                .collect(Collectors.toConcurrentMap(
+                    viewId -> viewId,
+                    viewId -> getInterestPoints((V) viewId, registrations, interestpoints, labelMap, transform)
+                ))
+        ).get();
+    } catch (final InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new RuntimeException("Interest point loading was interrupted", e);
+    } catch (final Exception e) {
+        throw new RuntimeException("Failed to load interest points", e);
+    } finally {
+        pool.shutdown();
+    }
+}
+```
+
+**Key decisions**:
+- Uses `Threads.numThreads()` for consistent parallelism control
+- Uses `Collectors.toConcurrentMap()` for thread-safe collection
+- No fallback code - if parallel fails due to I/O, sequential would fail too
+
+#### 2. Pre-computed Group Membership (TransformationTools.java:618-700)
+
+**Problem**: `filterForOverlappingInterestPoints()` checked group membership with O(g) loop per view pair:
+```java
+for (final Group<ViewId> group : groups)
+    if (group.contains(viewId) && group.contains(otherViewId))
+        continue A;
+```
+
+**Solution**: Pre-compute `sameGroupPairs` set for O(1) lookup:
+
+```java
+// Pre-compute which view pairs share a group (O(g·k²) where k = avg group size)
+final Set<Pair<ViewId, ViewId>> sameGroupPairs = new HashSet<>();
+for (final Group<ViewId> group : groups) {
+    final List<ViewId> members = new ArrayList<>(group.getViews());
+    for (int i = 0; i < members.size(); i++)
+        for (int j = i + 1; j < members.size(); j++)
+            sameGroupPairs.add(new ValuePair<>(members.get(i), members.get(j)));
+}
+
+// Then O(1) lookup:
+if (sameGroupPairs.contains(new ValuePair<>(viewId, otherViewId)) ||
+    sameGroupPairs.contains(new ValuePair<>(otherViewId, viewId)))
+    continue A;
+```
+
+#### 3. Parallel Overlap Filtering (TransformationTools.java:618-700)
+
+**Problem**: Sequential loop over views for overlap filtering.
+
+**Solution**: Process each view in parallel using `ForkJoinPool`:
+
+```java
+final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
+try {
+    pool.submit(() ->
+        interestpoints.entrySet().parallelStream().forEach(element -> {
+            // Process each view independently
+            // Each view's overlappingPoints list is independent
+        })
+    ).get();
+} finally {
+    pool.shutdown();
+}
+```
+
+#### 4. Optimized getGroupedPairs() (Subset.java:98-145)
+
+**Problem**: `getGroupedPairs()` iterated all groups × groups for each pair: O(p·g²)
+
+**Solution**: Pre-compute view→groupIndices mapping for O(p·k²) where k = avg groups per view (typically 1-2):
+
+```java
+// Pre-compute view → group indices mapping (O(g·k) where k = avg group size)
+final Map<V, List<Integer>> viewToGroupIndices = new HashMap<>();
+for (int i = 0; i < groups.size(); ++i) {
+    final int groupIdx = i;
+    for (final V view : groups.get(i).getViews())
+        viewToGroupIndices.computeIfAbsent(view, k -> new ArrayList<>()).add(groupIdx);
+}
+
+// For each pair, look up groups directly
+for (final Pair<V, V> pair : pairs) {
+    final List<Integer> groupsA = viewToGroupIndices.getOrDefault(pair.getA(), Collections.emptyList());
+    final List<Integer> groupsB = viewToGroupIndices.getOrDefault(pair.getB(), Collections.emptyList());
+
+    for (final int i : groupsA)
+        for (final int j : groupsB) {
+            // Use canonical ordering to avoid checking both (i,j) and (j,i)
+            final int minIdx = Math.min(i, j);
+            final int maxIdx = Math.max(i, j);
+            groupPairs.add(new ValuePair<>(minIdx, maxIdx));
+        }
+}
+```
+
+**Additional optimization**: Canonical pair ordering (min, max) eliminates bidirectional HashSet checks.
+
+### Files Modified
+
+1. **TransformationTools.java** (`src/main/java/net/preibisch/mvrecon/process/interestpointregistration/TransformationTools.java`)
+   - Lines 618-700: `filterForOverlappingInterestPoints()` with pre-computed group pairs and parallel processing
+   - Lines 685-724: `getAllInterestPoints()` with parallel loading
+
+2. **Subset.java** (`src/main/java/net/preibisch/mvrecon/process/interestpointregistration/pairwise/constellation/Subset.java`)
+   - Lines 98-145: `getGroupedPairs()` with view→groups mapping and canonical ordering
+
+### Complexity Improvements
+
+| Operation | Before | After |
+|-----------|--------|-------|
+| Interest point loading | O(n) sequential | O(n/threads) parallel |
+| Group membership check | O(g) per pair | O(1) lookup |
+| Overlap filtering | O(n) sequential | O(n/threads) parallel |
+| getGroupedPairs() | O(p·g²) | O(p·k²) where k ≈ 1-2 |
+
+### Potential Future Optimization: Lazy Correspondence Loading
+
+**Identified bottleneck**: `LoadCorrespondencesPairwise.match()` (line 97-98) triggers lazy I/O:
+```java
+final Collection<CorrespondingInterestPoints> corrA = ipA.getCorrespondingInterestPointsCopy();
+```
+
+This calls `InterestPointsN5.loadCorrespondences()` which:
+1. Opens N5Reader
+2. Reads N5 attributes
+3. Opens N5 dataset via `N5Utils.open()`
+4. Iterates through correspondence data
+
+Even though `computePairs()` is parallelized, each pair may trigger lazy I/O. Potential fix: pre-load all correspondences in parallel before `computePairs()` starts.
+
