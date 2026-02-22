@@ -32,7 +32,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
+
+import net.preibisch.mvrecon.Threads;
 
 import bdv.BigDataViewer;
 import mpicbg.models.AbstractAffineModel3D;
@@ -682,6 +685,7 @@ public class TransformationTools
 	}
 
 	/* call this method to load interestpoints and apply current transformation */
+	@SuppressWarnings("unchecked")
 	public static <V> Map< V, HashMap< String, Collection< InterestPoint > > > getAllInterestPoints(
 			final Collection< ? extends V > viewIds,
 			final Map< V, ViewRegistration > registrations,
@@ -689,12 +693,32 @@ public class TransformationTools
 			final Map< V, HashMap< String, Double > > labelMap,
 			final boolean transform )
 	{
-		final HashMap< V, HashMap< String, Collection< InterestPoint > > > transformedInterestpoints = new HashMap<>();
+		// Load interest points in parallel (I/O bound operation)
+		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
 
-		for ( final V viewId : viewIds )
-			transformedInterestpoints.put( viewId, getInterestPoints( viewId, registrations, interestpoints, labelMap, transform ) );
-
-		return transformedInterestpoints;
+		try
+		{
+			return (Map< V, HashMap< String, Collection< InterestPoint > > >) pool.submit( () ->
+				viewIds.parallelStream()
+					.collect( Collectors.toConcurrentMap(
+						viewId -> viewId,
+						viewId -> getInterestPoints( (V) viewId, registrations, interestpoints, labelMap, transform )
+					))
+			).get();
+		}
+		catch ( final InterruptedException e )
+		{
+			Thread.currentThread().interrupt();
+			throw new RuntimeException( "Interest point loading was interrupted", e );
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to load interest points", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
 	}
 
 	/* call this method to load interestpoints and apply current transformation if necessary */
