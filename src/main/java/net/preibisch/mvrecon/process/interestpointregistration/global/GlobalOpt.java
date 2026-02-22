@@ -44,6 +44,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.ConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.PointMatchCreator;
@@ -114,8 +115,18 @@ public class GlobalOpt
 
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): starting solve ..." );
 
-			tc.optimizeSilently(new ErrorStatistic( cs.getMaxPlateauWidth() + 1 ), cs.getMaxError(), cs.getMaxIterations(), cs.getMaxPlateauWidth() );
+			//tc.optimizeSilently(new ErrorStatistic( cs.getMaxPlateauWidth() + 1 ), cs.getMaxError(), cs.getMaxIterations(), cs.getMaxPlateauWidth() );
 			//tc.optimize( cs.getMaxError(), cs.getMaxIterations(), cs.getMaxPlateauWidth() );
+			//tc.optimizeSilentlyConcurrent(null, 0, 0, 0, 0);
+			TileUtil.optimizeConcurrently(
+					new ErrorStatistic( cs.getMaxPlateauWidth() + 1 ),
+					cs.getMaxError(),
+					cs.getMaxIterations(),
+					cs.getMaxPlateauWidth(),
+					1.0, // damp
+					tc, tc.getTiles(), tc.getFixedTiles(),
+					Threads.numThreads(),
+					true ); //verbose
 
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Global optimization of " + 
 				tc.getTiles().size() +  " view-tiles (Model=" + model.getClass().getSimpleName()  + "):" );
