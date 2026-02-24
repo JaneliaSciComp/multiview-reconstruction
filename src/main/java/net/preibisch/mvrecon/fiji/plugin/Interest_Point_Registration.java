@@ -675,15 +675,39 @@ public class Interest_Point_Registration implements PlugIn
 		return remove;
 	}
 
+	@SuppressWarnings("unchecked")
 	public void identifySubsets( final PairwiseSetup< ViewId > setup, final OverlapDetection< ViewId > overlapDetection )
 	{
-		long start = System.currentTimeMillis();
-		final int removedRedundant = setup.definePairs().size();
-		IOFunctions.println( "[TIMING]   definePairs(): " + (System.currentTimeMillis() - start) + " ms (removed " + removedRedundant + " redundant view pairs)" );
+		long start;
 
-		start = System.currentTimeMillis();
-		final int removedNonOverlapping = setup.removeNonOverlappingPairs( overlapDetection ).size();
-		IOFunctions.println( "[TIMING]   removeNonOverlappingPairs(): " + (System.currentTimeMillis() - start) + " ms (removed " + removedNonOverlapping + " non-overlapping, Strategy='" + overlapDetection.getClass().getSimpleName() + "')" );
+		// Use combined optimized approach for SimpleBoundingBoxOverlap (avoids creating millions of pairs just to discard them)
+		if (overlapDetection instanceof SimpleBoundingBoxOverlap)
+		{
+			start = System.currentTimeMillis();
+			final SimpleBoundingBoxOverlap<ViewId> sbbo = (SimpleBoundingBoxOverlap<ViewId>) overlapDetection;
+
+			// Generate only overlapping pairs directly (combines definePairs + removeNonOverlappingPairs)
+			final List<Pair<ViewId, ViewId>> overlappingPairs = sbbo.generateOverlappingPairs(
+					setup.getViews(),
+					(Collection<? extends Group<ViewId>>) (Collection<?>) setup.getGroups());
+
+			// Set the pairs directly in the setup
+			setup.setPairs(overlappingPairs);
+
+			IOFunctions.println( "[TIMING]   definePairs+removeNonOverlapping (combined): " + (System.currentTimeMillis() - start) +
+					" ms (" + overlappingPairs.size() + " overlapping pairs)" );
+		}
+		else
+		{
+			// Fallback to sequential approach for other OverlapDetection types
+			start = System.currentTimeMillis();
+			final int removedRedundant = setup.definePairs().size();
+			IOFunctions.println( "[TIMING]   definePairs(): " + (System.currentTimeMillis() - start) + " ms (removed " + removedRedundant + " redundant view pairs)" );
+
+			start = System.currentTimeMillis();
+			final int removedNonOverlapping = setup.removeNonOverlappingPairs( overlapDetection ).size();
+			IOFunctions.println( "[TIMING]   removeNonOverlappingPairs(): " + (System.currentTimeMillis() - start) + " ms (removed " + removedNonOverlapping + " non-overlapping, Strategy='" + overlapDetection.getClass().getSimpleName() + "')" );
+		}
 
 		start = System.currentTimeMillis();
 		setup.reorderPairs();

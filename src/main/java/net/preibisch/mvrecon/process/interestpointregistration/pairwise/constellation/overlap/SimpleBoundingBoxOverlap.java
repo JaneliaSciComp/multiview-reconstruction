@@ -24,11 +24,14 @@ package net.preibisch.mvrecon.process.interestpointregistration.pairwise.constel
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
@@ -44,6 +47,7 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDetection< V >
 {
@@ -299,6 +303,97 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 		catch (final Exception e)
 		{
 			throw new RuntimeException("Failed to filter overlapping pairs", e);
+		}
+		finally
+		{
+			pool.shutdown();
+		}
+	}
+
+	/**
+	 * Generate overlapping pairs directly without creating all n^2 pairs first.
+	 * This is MUCH faster for large datasets where most pairs don't overlap.
+	 *
+	 * @param views - list of views to generate pairs from
+	 * @param groups - groups (views in same group are skipped)
+	 * @return list of overlapping pairs only
+	 */
+	public List<Pair<V, V>> generateOverlappingPairs(
+			final List<V> views,
+			final Collection<? extends Group<V>> groups)
+	{
+		final int n = views.size();
+		if (n < 2) return new ArrayList<>();
+
+		final long totalStart = System.currentTimeMillis();
+
+		// Step 1: Pre-compute all bounding boxes
+		final Map<V, BoundingBox> boundingBoxes = precomputeBoundingBoxes(views);
+
+		// Step 2: Pre-compute group membership for O(1) lookup
+		final Map<V, Set<Integer>> viewToGroups = new ConcurrentHashMap<>();
+		int groupIdx = 0;
+		for (final Group<V> group : groups)
+		{
+			final int idx = groupIdx++;
+			for (final V view : group.getViews())
+			{
+				viewToGroups.computeIfAbsent(view, k -> new java.util.HashSet<>()).add(idx);
+			}
+		}
+		final Set<Integer> emptySet = Collections.emptySet();
+
+		// Step 3: Generate only overlapping pairs in parallel
+		final long pairStart = System.currentTimeMillis();
+		final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
+		try
+		{
+			final List<Pair<V, V>> overlappingPairs = pool.submit(() ->
+				IntStream.range(0, n - 1).parallel()
+					.boxed()
+					.<Pair<V, V>>flatMap(a -> {
+						final V viewIdA = views.get(a);
+						final BoundingBox bbA = boundingBoxes.get(viewIdA);
+						if (bbA == null) return java.util.stream.Stream.empty();
+
+						final Set<Integer> groupsA = viewToGroups.getOrDefault(viewIdA, emptySet);
+
+						return IntStream.range(a + 1, n)
+							.<Pair<V, V>>mapToObj(b -> {
+								final V viewIdB = views.get(b);
+
+								// Check if both in same group
+								if (!groupsA.isEmpty())
+								{
+									final Set<Integer> groupsB = viewToGroups.getOrDefault(viewIdB, emptySet);
+									for (final Integer g : groupsA)
+									{
+										if (groupsB.contains(g))
+											return null;
+									}
+								}
+
+								// Check bounding box overlap
+								final BoundingBox bbB = boundingBoxes.get(viewIdB);
+								if (bbB == null || !overlaps(bbA, bbB))
+									return null;
+
+								return new net.imglib2.util.ValuePair<>(viewIdA, viewIdB);
+							})
+							.filter(p -> p != null);
+					})
+					.collect(Collectors.toList())
+			).get();
+
+			System.out.println("[TIMING] generateOverlappingPairs(): " + (System.currentTimeMillis() - totalStart) +
+					" ms total (" + n + " views, " + overlappingPairs.size() + " overlapping pairs, pair generation: " +
+					(System.currentTimeMillis() - pairStart) + " ms)");
+
+			return overlappingPairs;
+		}
+		catch (final Exception e)
+		{
+			throw new RuntimeException("Failed to generate overlapping pairs", e);
 		}
 		finally
 		{

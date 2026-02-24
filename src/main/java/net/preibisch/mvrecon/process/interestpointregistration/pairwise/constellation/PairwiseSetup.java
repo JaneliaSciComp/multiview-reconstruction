@@ -79,6 +79,14 @@ public abstract class PairwiseSetup< V extends Comparable< V > >
 	public ArrayList< Subset< V > > getSubsets() { return subsets; }
 
 	/**
+	 * Directly set the pairs list (used for optimized pair generation that bypasses definePairs()).
+	 * After calling this, you should call detectSubsets() to build the subset structure.
+	 *
+	 * @param pairs - the list of pairs to set
+	 */
+	public void setPairs( final List< Pair< V, V > > pairs ) { this.pairs = pairs; }
+
+	/**
 	 * Given a list of views and their grouping, identify all pairs that need to be compared
 	 * 
 	 * @return - redundant pairs that were removed
