@@ -694,8 +694,13 @@ public class Interest_Point_Registration implements PlugIn
 			// Set the pairs directly in the setup
 			setup.setPairs(overlappingPairs);
 
+			// Calculate statistics: total possible pairs minus overlapping = non-overlapping (skipped)
+			final long n = setup.getViews().size();
+			final long totalPossiblePairs = n * (n - 1) / 2;
+			final long nonOverlapping = totalPossiblePairs - overlappingPairs.size();
+
 			IOFunctions.println( "[TIMING]   definePairs+removeNonOverlapping (combined): " + (System.currentTimeMillis() - start) +
-					" ms (" + overlappingPairs.size() + " overlapping pairs)" );
+					" ms (removed " + nonOverlapping + " non-overlapping, Strategy='SimpleBoundingBoxOverlap', kept " + overlappingPairs.size() + " pairs)" );
 		}
 		else
 		{
