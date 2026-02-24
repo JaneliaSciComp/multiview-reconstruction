@@ -41,7 +41,9 @@ import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
+import net.imglib2.FinalInterval;
 import net.imglib2.FinalRealInterval;
+import net.imglib2.Interval;
 import net.imglib2.RealInterval;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
@@ -418,5 +420,224 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 
 		// Step 2: Filter pairs in parallel using pre-computed bounding boxes
 		return removeNonOverlappingPairsParallel(pairs, boundingBoxes);
+	}
+
+	// ==================== PIXEL VALIDATION OVERLAP METHODS ====================
+
+	/**
+	 * Compute overlap between two views by sampling points and validating they fall
+	 * within both views. Returns two local intervals - one for each view.
+	 *
+	 * This correctly handles rotations by validating pixel-by-pixel.
+	 *
+	 * @param dims1 Dimensions of view 1
+	 * @param dims2 Dimensions of view 2
+	 * @param transform1 Local-to-global transform for view 1
+	 * @param transform2 Local-to-global transform for view 2
+	 * @return Array of [localOverlap1, localOverlap2], or null if no overlap
+	 */
+	public static RealInterval[] getLocalOverlapsUsingPixelValidation(
+			final Dimensions dims1,
+			final Dimensions dims2,
+			final AffineTransform3D transform1,
+			final AffineTransform3D transform2 )
+	{
+		final AffineTransform3D invTransform1 = transform1.inverse();
+		final AffineTransform3D invTransform2 = transform2.inverse();
+
+		// Sample in view 1's local space and validate pixels are in view 2
+		final RealInterval localOverlap1 = sampleLocalSpaceAndValidate(
+				dims1, dims2, transform1, invTransform2 );
+
+		// Sample in view 2's local space and validate pixels are in view 1
+		final RealInterval localOverlap2 = sampleLocalSpaceAndValidate(
+				dims2, dims1, transform2, invTransform1 );
+
+		if ( localOverlap1 == null || localOverlap2 == null )
+			return null;
+
+		return new RealInterval[] { localOverlap1, localOverlap2 };
+	}
+
+	/**
+	 * Sample pixels in a view's local space and validate they map to valid pixels in the other view.
+	 * Builds bounding box directly in local space from valid pixels.
+	 * Includes refinement to find tighter boundaries.
+	 *
+	 * @param dimsLocal Dimensions of this view
+	 * @param dimsOther Dimensions of other view
+	 * @param transformLocal Local-to-global transform for this view
+	 * @param invTransformOther Global-to-local transform for other view
+	 * @return Bounding box of valid pixels in local space, or null if none found
+	 */
+	private static RealInterval sampleLocalSpaceAndValidate(
+			final Dimensions dimsLocal,
+			final Dimensions dimsOther,
+			final AffineTransform3D transformLocal,
+			final AffineTransform3D invTransformOther )
+	{
+		final int n = dimsLocal.numDimensions();
+		final double[] minValid = new double[ n ];
+		final double[] maxValid = new double[ n ];
+
+		final double[][] minPoints = new double[ n ][ n ];
+		final double[][] maxPoints = new double[ n ][ n ];
+
+		for ( int d = 0; d < n; d++ )
+		{
+			minValid[ d ] = Double.MAX_VALUE;
+			maxValid[ d ] = -Double.MAX_VALUE;
+		}
+
+		final int stride = 10;
+		final double[] localPoint = new double[ n ];
+		final double[] globalPoint = new double[ n ];
+		final double[] otherLocalPoint = new double[ n ];
+
+		boolean foundValid = false;
+
+		for ( long z = 0; z < dimsLocal.dimension( 2 ); z += stride )
+		{
+			for ( long y = 0; y < dimsLocal.dimension( 1 ); y += stride )
+			{
+				for ( long x = 0; x < dimsLocal.dimension( 0 ); x += stride )
+				{
+					localPoint[ 0 ] = x;
+					localPoint[ 1 ] = y;
+					localPoint[ 2 ] = z;
+
+					if ( isValid( localPoint, dimsOther, transformLocal, invTransformOther, globalPoint, otherLocalPoint ) )
+					{
+						foundValid = true;
+						for ( int d = 0; d < n; d++ )
+						{
+							if ( localPoint[ d ] < minValid[ d ] )
+							{
+								minValid[ d ] = localPoint[ d ];
+								System.arraycopy( localPoint, 0, minPoints[ d ], 0, n );
+							}
+							if ( localPoint[ d ] > maxValid[ d ] )
+							{
+								maxValid[ d ] = localPoint[ d ];
+								System.arraycopy( localPoint, 0, maxPoints[ d ], 0, n );
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if ( !foundValid )
+			return null;
+
+		refineBoundaries( minValid, maxValid, minPoints, maxPoints, dimsOther, transformLocal, invTransformOther, stride );
+
+		return new FinalRealInterval( minValid, maxValid );
+	}
+
+	private static void refineBoundaries(
+			final double[] minValid,
+			final double[] maxValid,
+			final double[][] minPoints,
+			final double[][] maxPoints,
+			final Dimensions dimsOther,
+			final AffineTransform3D transformLocal,
+			final AffineTransform3D invTransformOther,
+			final int initialStride )
+	{
+		final int n = minValid.length;
+		final double[] globalPoint = new double[ n ];
+		final double[] otherLocalPoint = new double[ n ];
+		final double[] testPoint = new double[ n ];
+
+		final double[] steps = { 1.0, 0.1 };
+
+		for ( int d = 0; d < n; d++ )
+		{
+			// Refine Min
+			System.arraycopy( minPoints[ d ], 0, testPoint, 0, n );
+			double currentMin = minValid[ d ];
+			double range = initialStride;
+
+			for ( double step : steps )
+			{
+				for ( double val = currentMin - step; val >= currentMin - range; val -= step )
+				{
+					testPoint[ d ] = val;
+					if ( isValid( testPoint, dimsOther, transformLocal, invTransformOther, globalPoint, otherLocalPoint ) )
+						minValid[ d ] = val;
+					else
+						break;
+				}
+				currentMin = minValid[ d ];
+				range = step;
+			}
+
+			// Refine Max
+			System.arraycopy( maxPoints[ d ], 0, testPoint, 0, n );
+			double currentMax = maxValid[ d ];
+			range = initialStride;
+
+			for ( double step : steps )
+			{
+				for ( double val = currentMax + step; val <= currentMax + range; val += step )
+				{
+					testPoint[ d ] = val;
+					if ( isValid( testPoint, dimsOther, transformLocal, invTransformOther, globalPoint, otherLocalPoint ) )
+						maxValid[ d ] = val;
+					else
+						break;
+				}
+				currentMax = maxValid[ d ];
+				range = step;
+			}
+		}
+	}
+
+	private static boolean isValid(
+			final double[] localPoint,
+			final Dimensions dimsOther,
+			final AffineTransform3D transformLocal,
+			final AffineTransform3D invTransformOther,
+			final double[] globalPoint,
+			final double[] otherLocalPoint )
+	{
+		transformLocal.apply( localPoint, globalPoint );
+		invTransformOther.apply( globalPoint, otherLocalPoint );
+
+		for ( int d = 0; d < localPoint.length; d++ )
+		{
+			if ( otherLocalPoint[ d ] < 0 || otherLocalPoint[ d ] >= dimsOther.dimension( d ) )
+				return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Convert real-valued local overlap coordinates to integer raster coordinates
+	 * with proper bounds checking. Clamps to [0, dims[d]-1] for each dimension.
+	 *
+	 * @param localOverlap The overlap in local real coordinates
+	 * @param dims The dimensions of the view (for bounds checking)
+	 * @return FinalInterval with integer raster coordinates, or null if no valid overlap
+	 */
+	public static FinalInterval getRasterOverlap(
+			final RealInterval localOverlap,
+			final Dimensions dims )
+	{
+		final int n = localOverlap.numDimensions();
+		final long[] min = new long[ n ];
+		final long[] max = new long[ n ];
+
+		for ( int d = 0; d < n; d++ )
+		{
+			min[ d ] = Math.max( 0, (long) Math.ceil( localOverlap.realMin( d ) ) );
+			max[ d ] = Math.min( dims.dimension( d ) - 1, (long) Math.floor( localOverlap.realMax( d ) ) );
+
+			if ( max[ d ] < min[ d ] )
+				return null;
+		}
+
+		return new FinalInterval( min, max );
 	}
 }
