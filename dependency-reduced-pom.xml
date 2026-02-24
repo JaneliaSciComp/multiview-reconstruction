@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+  <parent>
+    <artifactId>pom-scijava</artifactId>
+    <groupId>org.scijava</groupId>
+    <version>43.0.0</version>
+    <relativePath>pom.xml</relativePath>
+  </parent>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>net.preibisch</groupId>
+  <artifactId>multiview-reconstruction</artifactId>
+  <name>Multiview Reconstruction</name>
+  <version>8.1.2-SNAPSHOT</version>
+  <description>Software for the reconstruction of multi-view microscopic acquisitions
+like Selective Plane Illumination Microscopy (SPIM) Data.</description>
+  <url>https://github.com/JaneliaSciComp/multiview-reconstruction</url>
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/JaneliaSciComp/multiview-reconstruction/issues</url>
+  </issueManagement>
+  <ciManagement>
+    <system>GitHub Actions</system>
+    <url>https://github.com/JaneliaSciComp/multiview-reconstruction/actions</url>
+  </ciManagement>
+  <inceptionYear>2012</inceptionYear>
+  <mailingLists>
+    <mailingList>
+      <name>Image.sc Forum</name>
+      <archive>https://forum.image.sc/tag/multiview-reconstruction</archive>
+    </mailingList>
+  </mailingLists>
+  <developers>
+    <developer>
+      <id>StephanPreibisch</id>
+      <name>Stephan Preibisch</name>
+      <url>https://imagej.net/people/StephanPreibisch</url>
+      <roles>
+        <role>founder</role>
+        <role>lead</role>
+        <role>developer</role>
+        <role>debugger</role>
+        <role>reviewer</role>
+        <role>support</role>
+        <role>maintainer</role>
+      </roles>
+    </developer>
+    <developer>
+      <id>hoerldavid</id>
+      <name>David Hoerl</name>
+      <url>https://imagej.net/people/hoerldavid</url>
+      <roles>
+        <role>developer</role>
+        <role>debugger</role>
+        <role>reviewer</role>
+        <role>support</role>
+        <role>maintainer</role>
+      </roles>
+    </developer>
+  </developers>
+  <contributors>
+    <contributor>
+      <name>Tobias Pietzsch</name>
+      <url>https://imagej.net/people/tpietzsch</url>
+      <properties>
+        <id>tpietzsch</id>
+      </properties>
+    </contributor>
+    <contributor>
+      <name>Curtis Rueden</name>
+      <url>https://imagej.net/people/ctrueden</url>
+      <properties>
+        <id>ctrueden</id>
+      </properties>
+    </contributor>
+  </contributors>
+  <licenses>
+    <license>
+      <name>GNU General Public License v2+</name>
+      <url>https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+  <scm>
+    <connection>scm:git:https://github.com/JaneliaSciComp/multiview-reconstruction</connection>
+    <developerConnection>scm:git:git@github.com:JaneliaSciComp/multiview-reconstruction</developerConnection>
+    <url>https://github.com/JaneliaSciComp/multiview-reconstruction</url>
+  </scm>
+  <organization>
+    <name>Preibisch Lab</name>
+    <url>http://preibischlab.mdc-berlin.de</url>
+  </organization>
+  <profiles>
+    <profile>
+      <id>fatjar</id>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-shade-plugin</artifactId>
+            <executions>
+              <execution>
+                <phase>package</phase>
+                <goals>
+                  <goal>shade</goal>
+                </goals>
+              </execution>
+            </executions>
+            <configuration>
+              <transformers>
+                <transformer>
+                  <resource>META-INF/json/mpicbg.spim.data.generic.sequence.ImgLoaderIo</resource>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+              <relocations>
+                <relocation>
+                  <pattern>org.apache.commons.compress</pattern>
+                  <shadedPattern>org.janelia.saalfeldlab.org.apache.commons.compress</shadedPattern>
+                </relocation>
+              </relocations>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+  <repositories>
+    <repository>
+      <id>scijava.public</id>
+      <url>https://maven.scijava.org/content/groups/public</url>
+    </repository>
+  </repositories>
+  <dependencies>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>1.3.15</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>activation</artifactId>
+          <groupId>javax.activation</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>logback-core</artifactId>
+          <groupId>ch.qos.logback</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+  </dependencies>
+  <properties>
+    <imglib2.version>8.0.0</imglib2.version>
+    <package-name>net.preibisch.mvrecon</package-name>
+    <imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
+    <license.copyrightOwners>Multiview Reconstruction developers.</license.copyrightOwners>
+    <bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
+    <ijp-kheops.version>0.6.2</ijp-kheops.version>
+    <generic-archiver.version>1.1.0</generic-archiver.version>
+    <license.licenseName>gpl_v2</license.licenseName>
+    <releaseProfiles>sign,deploy-to-scijava</releaseProfiles>
+    <pyramidio.version>1.1.0</pyramidio.version>
+  </properties>
+</project>

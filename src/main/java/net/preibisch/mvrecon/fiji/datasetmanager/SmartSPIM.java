@@ -27,12 +27,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.net.URI;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.Map.Entry;
 import java.util.stream.Collectors;
 
@@ -162,11 +157,13 @@ public class SmartSPIM implements MultiViewDatasetDefinition
 		for ( int y = 0; y < meta.yTileLocations.size(); ++y )
 			for ( int x = 0; x < meta.xTileLocations.size(); ++x )
 			{
-				final Tile tile = new Tile( i, "x" + x + "_y" + y );
-				tile.setLocation( new double[] { meta.xTileLocations.get( x ) * scaleFactor, meta.yTileLocations.get( y ) * scaleFactor, 0 } );
+                if (meta.tileMap.get(meta.xTileLocations.get( x )).contains(meta.yTileLocations.get( y ))) {
+                    final Tile tile = new Tile(i, "x" + x + "_y" + y);
+                    tile.setLocation(new double[]{meta.xTileLocations.get(x) * scaleFactor, meta.yTileLocations.get(y) * scaleFactor, 0});
 
-				tiles.add( tile );
-				++i;
+                    tiles.add(tile);
+                    ++i;
+                }
 			}
 
 		final ArrayList< ViewSetup > viewSetups = new ArrayList< ViewSetup >();
@@ -190,45 +187,48 @@ public class SmartSPIM implements MultiViewDatasetDefinition
 			for ( int xTile = 0; xTile < metadata.xTileLocations.size(); ++ xTile)
 				for ( int yTile = 0; yTile < metadata.yTileLocations.size(); ++ yTile)
 				{
-					final URI imageDir = metadata.folderFor(
-							metadata.channels.get( channel ),
-							metadata.xTileLocations.get( xTile ),
-							metadata.yTileLocations.get( yTile ) );
+                    if (metadata.tileMap.get(metadata.xTileLocations.get( xTile ))
+                            .contains(metadata.yTileLocations.get( yTile ))) {
+                        final URI imageDir = metadata.folderFor(
+                                metadata.channels.get( channel ),
+                                metadata.xTileLocations.get( xTile ),
+                                metadata.yTileLocations.get( yTile ) );
 
-					IOFunctions.println( "Directory: " + imageDir );
+                        IOFunctions.println( "Directory: " + imageDir );
 
-					final Pair< long[], List< String > > stackData =
-							metadata.loadImageSize( channel, xTile, yTile );
+                        final Pair< long[], List< String > > stackData =
+                                metadata.loadImageSize( channel, xTile, yTile );
 
-					final long[] dimensions = stackData.getA();
+                        final long[] dimensions = stackData.getA();
 
-					IOFunctions.println( "dimensions: " + Util.printCoordinates( dimensions ) );
+                        IOFunctions.println( "dimensions: " + Util.printCoordinates( dimensions ) );
 
-					if ( dimensions == null )
-						return false;
+                        if ( dimensions == null )
+                            return false;
 
-					if ( metadata.dimensions == null )
-					{
-						metadata.dimensions = dimensions;
-						metadata.sortedFileNames = stackData.getB();
-					}
+                        if ( metadata.dimensions == null )
+                        {
+                            metadata.dimensions = dimensions;
+                            metadata.sortedFileNames = stackData.getB();
+                        }
 
-					if ( !confirmAllImages )
-						return true;
+                        if ( !confirmAllImages )
+                            return true;
 
-					if ( !Arrays.equals( metadata.dimensions, dimensions ) )
-					{
-						IOFunctions.println( "dimensions are not equal. Stopping: " + Util.printCoordinates( dimensions ) + ", " + Util.printCoordinates( metadata.dimensions ) );
-						return false;
-					}
+                        if ( !Arrays.equals( metadata.dimensions, dimensions ) )
+                        {
+                            IOFunctions.println( "dimensions are not equal. Stopping: " + Util.printCoordinates( dimensions ) + ", " + Util.printCoordinates( metadata.dimensions ) );
+                            return false;
+                        }
 
-					if ( !areListsEqual( metadata.sortedFileNames, stackData.getB() ) )
-					{
-						IOFunctions.println( "file names are not equal. Stopping." );
-						return false;
-					}
-					
-				}
+                        if ( !areListsEqual( metadata.sortedFileNames, stackData.getB() ) )
+                        {
+                            IOFunctions.println( "file names are not equal. Stopping." );
+                            return false;
+                        }
+
+                    }
+                }
 
 		return true;
 	}
@@ -293,6 +293,7 @@ public class SmartSPIM implements MultiViewDatasetDefinition
 			IOFunctions.println( "number of tiles: " + tiles.size() );
 
 			metadata.channels = SmartSPIM_Tile.channels( tiles.values() );
+            metadata.tileMap = SmartSPIM_Tile.tileMap( tiles.values() );
 			metadata.xTileLocations = SmartSPIM_Tile.xTileLocations( tiles.values() );
 			metadata.yTileLocations = SmartSPIM_Tile.yTileLocations( tiles.values() );
 			metadata.zOffsets = SmartSPIM_Tile.zOffsets( tiles.values() );
@@ -380,6 +381,7 @@ public class SmartSPIM implements MultiViewDatasetDefinition
 		public List<Long> xTileLocations;
 		public List<Long> yTileLocations;
 		public List<Long> zOffsets;
+        public HashMap<Long, Set<Long>> tileMap;
 
 		public SmartSPIMMetaData( final URI metadataFile ) throws SpimDataIOException
 		{
@@ -472,10 +474,26 @@ public class SmartSPIM implements MultiViewDatasetDefinition
 		public int Skip;
 		public int Filter;
 
-		public static List< Long > xTileLocations( final Collection< SmartSPIM_Tile > tiles )
+		public static HashMap<Long, Set<Long>> tileMap( final Collection< SmartSPIM_Tile > tiles )
 		{
-			return tiles.stream().map( t -> t.X ).distinct().sorted().collect(Collectors.toList());
+            HashMap<Long, Set<Long>> getTiles = new HashMap<Long, Set<Long>>(xTileLocations(tiles).size());
+            for (SmartSPIM_Tile t : tiles) {
+                if (t.Skip == 1) {
+                    getTiles.computeIfAbsent(t.X, k -> new HashSet<>()).add(t.Y);
+                }
+            }
+
+            System.out.println("Valid X/Y Combos:");
+            getTiles.forEach((key, value) -> {
+                System.out.println("X: " + key + ", Ys: " + value);
+            });
+            return getTiles;
 		}
+
+        public static List< Long > xTileLocations( final Collection< SmartSPIM_Tile > tiles )
+        {
+            return tiles.stream().map( t -> t.X ).distinct().sorted().collect(Collectors.toList());
+        }
 
 		public static List< Long > yTileLocations( final Collection< SmartSPIM_Tile > tiles )
 		{
@@ -502,7 +520,7 @@ public class SmartSPIM implements MultiViewDatasetDefinition
 	{
 		//parseMetaDataFile( URITools.toURI("/Users/preibischs/Documents/Janelia/Projects/BigStitcher/SmartSPIM/metadata.json"));
 		SmartSPIMMetaData metadata =
-				parseMetaDataFile( URITools.toURI( "/Volumes/johnsonlab/LM/20241031_11_59_44_RJ_mouse_2_vDisco_hindleg_right_Destripe_DONE/metadata.json") );
+				parseMetaDataFile( URITools.toURI( "/Volumes/johnsonlab/LM/20240826_15_33_26_RJ_mouse_1_anterior_ventral_Destripe_DONE/metadata.json") );
 
 		//populateImageSize( metadata, true );
 	}
