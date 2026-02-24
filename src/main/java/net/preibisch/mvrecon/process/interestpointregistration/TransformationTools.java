@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
 
@@ -91,6 +92,12 @@ import net.preibisch.mvrecon.vecmath.Vector3f;
 public class TransformationTools
 {
 	public static NumberFormat f = new DecimalFormat("#.####");
+
+	/**
+	 * When true, prints individual warnings for each view missing interest points.
+	 * When false (default), prints a consolidated summary per label.
+	 */
+	public static boolean debugMissingInterestPoints = false;
 
 	public static void reCenterViews(final BigDataViewer viewer, final Collection<BasicViewDescription< ? >> selectedViews, final ViewRegistrations viewRegistrations)
 	{
@@ -815,18 +822,27 @@ public class TransformationTools
 			final Map< V, HashMap< String, Double > > labelMap,
 			final boolean transform )
 	{
+		// Thread-safe collection for missing interest points: label -> list of viewIds
+		final ConcurrentHashMap< String, ConcurrentLinkedQueue< V > > missingInterestPoints = new ConcurrentHashMap<>();
+
 		// Load interest points in parallel (I/O bound operation)
 		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
 
 		try
 		{
-			return (Map< V, HashMap< String, Collection< InterestPoint > > >) pool.submit( () ->
-				viewIds.parallelStream()
-					.collect( Collectors.toConcurrentMap(
-						viewId -> viewId,
-						viewId -> getInterestPoints( (V) viewId, registrations, interestpoints, labelMap, transform )
-					))
-			).get();
+			final Map< V, HashMap< String, Collection< InterestPoint > > > result =
+				(Map< V, HashMap< String, Collection< InterestPoint > > >) pool.submit( () ->
+					viewIds.parallelStream()
+						.collect( Collectors.toConcurrentMap(
+							viewId -> viewId,
+							viewId -> getInterestPoints( (V) viewId, registrations, interestpoints, labelMap, transform, missingInterestPoints )
+						))
+				).get();
+
+			// Print summary of missing interest points
+			printMissingInterestPointsSummary( missingInterestPoints );
+
+			return result;
 		}
 		catch ( final InterruptedException e )
 		{
@@ -843,6 +859,63 @@ public class TransformationTools
 		}
 	}
 
+	/**
+	 * Print summary of missing interest points, grouped by label.
+	 */
+	private static <V> void printMissingInterestPointsSummary( final ConcurrentHashMap< String, ConcurrentLinkedQueue< V > > missingInterestPoints )
+	{
+		if ( missingInterestPoints.isEmpty() )
+			return;
+
+		for ( final Entry< String, ConcurrentLinkedQueue< V > > entry : missingInterestPoints.entrySet() )
+		{
+			final String label = entry.getKey();
+			final ConcurrentLinkedQueue< V > views = entry.getValue();
+
+			if ( views.isEmpty() )
+				continue;
+
+			final List< V > viewList = new ArrayList<>( views );
+			final int total = viewList.size();
+
+			if ( debugMissingInterestPoints )
+			{
+				// Verbose mode: print each view individually
+				for ( final V viewId : viewList )
+				{
+					if ( ViewId.class.isInstance( viewId ) )
+						IOFunctions.println( "WARNING: no interestpoints available for " + Group.pvid( (ViewId)viewId ) + ", label '" + label + "'" );
+					else
+						IOFunctions.println( "WARNING: no interestpoints available for " + viewId + ", label '" + label + "'" );
+				}
+			}
+			else
+			{
+				// Consolidated mode: print summary with first 10 setupIds
+				final StringBuilder sb = new StringBuilder();
+				sb.append( "WARNING: no interestpoints for label '" ).append( label ).append( "': " );
+				sb.append( total ).append( " views (setupIds: " );
+
+				final int showCount = Math.min( 10, total );
+				for ( int i = 0; i < showCount; i++ )
+				{
+					if ( i > 0 ) sb.append( ", " );
+					final V viewId = viewList.get( i );
+					if ( ViewId.class.isInstance( viewId ) )
+						sb.append( ((ViewId)viewId).getViewSetupId() );
+					else
+						sb.append( viewId );
+				}
+
+				if ( total > 10 )
+					sb.append( ", ... and " ).append( total - 10 ).append( " more" );
+
+				sb.append( ")" );
+				IOFunctions.println( sb.toString() );
+			}
+		}
+	}
+
 	/* call this method to load interestpoints and apply current transformation if necessary */
 	public static <V> HashMap< String, Collection< InterestPoint > > getInterestPoints(
 			final V viewId,
@@ -850,6 +923,19 @@ public class TransformationTools
 			final Map< V, ViewInterestPointLists > interestpoints,
 			final Map< V, HashMap< String, Double > > labelMap,
 			final boolean transform )
+	{
+		// Backward compatibility: call with null for missingInterestPoints (will print warnings directly)
+		return getInterestPoints( viewId, registrations, interestpoints, labelMap, transform, null );
+	}
+
+	/* call this method to load interestpoints and apply current transformation if necessary */
+	public static <V> HashMap< String, Collection< InterestPoint > > getInterestPoints(
+			final V viewId,
+			final Map< V, ViewRegistration > registrations,
+			final Map< V, ViewInterestPointLists > interestpoints,
+			final Map< V, HashMap< String, Double > > labelMap,
+			final boolean transform,
+			final ConcurrentHashMap< String, ConcurrentLinkedQueue< V > > missingInterestPoints )
 	{
 		final HashMap< String, Collection< InterestPoint > > collections = new HashMap<>();
 
@@ -861,10 +947,19 @@ public class TransformationTools
 
 			if ( mapLocal.size() == 0 )
 			{
-				if ( ViewId.class.isInstance( viewId ))
-					IOFunctions.println( "WARNING: no interestpoints available for " + Group.pvid( (ViewId)viewId ) + ", label '" + label + "'" );
+				if ( missingInterestPoints != null )
+				{
+					// Collect for later summary
+					missingInterestPoints.computeIfAbsent( label, k -> new ConcurrentLinkedQueue<>() ).add( viewId );
+				}
 				else
-					IOFunctions.println( "WARNING: no interestpoints available for " + viewId + ", label '" + label + "'" );
+				{
+					// Backward compatibility: print warning directly
+					if ( ViewId.class.isInstance( viewId ))
+						IOFunctions.println( "WARNING: no interestpoints available for " + Group.pvid( (ViewId)viewId ) + ", label '" + label + "'" );
+					else
+						IOFunctions.println( "WARNING: no interestpoints available for " + viewId + ", label '" + label + "'" );
+				}
 			}
 		});
 
