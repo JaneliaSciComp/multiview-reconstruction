@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
 
@@ -79,6 +80,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
 import net.preibisch.mvrecon.vecmath.Matrix4d;
 import net.preibisch.mvrecon.vecmath.Matrix4f;
 import net.preibisch.mvrecon.vecmath.Quat4f;
@@ -621,8 +623,9 @@ public class TransformationTools
 			final Map< ViewId, ViewRegistration > registrations,
 			final Map< ViewId, ViewDescription > viewDescriptions )
 	{
+		final long startTotal = System.currentTimeMillis();
+
 		// Pre-compute which view pairs share a group for O(1) lookup
-		// This avoids O(g) iteration per view pair
 		final Set< Pair< ViewId, ViewId > > sameGroupPairs = new HashSet<>();
 		for ( final Group< ViewId > group : groups )
 		{
@@ -632,7 +635,95 @@ public class TransformationTools
 					sameGroupPairs.add( new ValuePair<>( members.get( i ), members.get( j ) ) );
 		}
 
-		// Process each view in parallel
+		// Pre-compute all inverse transforms and intervals (avoids repeated computation per view pair)
+		final long startPrecompute = System.currentTimeMillis();
+		final Map< ViewId, AffineTransform3D > inverseTransforms = new ConcurrentHashMap<>();
+		final Map< ViewId, Interval > viewIntervals = new ConcurrentHashMap<>();
+		final Map< ViewId, BoundingBox > viewBoundingBoxes = new ConcurrentHashMap<>();
+
+		final ForkJoinPool precomputePool = new ForkJoinPool( Threads.numThreads() );
+		try
+		{
+			precomputePool.submit( () ->
+				interestpoints.keySet().parallelStream().forEach( viewId -> {
+					final AffineTransform3D transform = getTransform( viewId, registrations );
+					inverseTransforms.put( viewId, transform.inverse() );
+
+					final ViewDescription vd = viewDescriptions.get( viewId );
+					if ( vd != null && vd.getViewSetup().hasSize() )
+					{
+						final Dimensions dim = vd.getViewSetup().getSize();
+						viewIntervals.put( viewId, new FinalInterval( dim ) );
+
+						// Pre-compute world-space bounding box for overlap testing
+						viewBoundingBoxes.put( viewId, SimpleBoundingBoxOverlap.getBoundingBox( dim, transform ) );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to precompute transforms", e );
+		}
+		finally
+		{
+			precomputePool.shutdown();
+		}
+		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints precompute: " + (System.currentTimeMillis() - startPrecompute) + " ms" );
+
+		// Build list of views for indexed access
+		final List< ViewId > viewList = new ArrayList<>( interestpoints.keySet() );
+
+		// Pre-compute which view pairs actually overlap (using bounding boxes)
+		final long startOverlapCheck = System.currentTimeMillis();
+		final Map< ViewId, Set< ViewId > > overlappingViews = new ConcurrentHashMap<>();
+
+		final ForkJoinPool overlapPool = new ForkJoinPool( Threads.numThreads() );
+		try
+		{
+			overlapPool.submit( () ->
+				viewList.parallelStream().forEach( viewId -> {
+					final BoundingBox bb1 = viewBoundingBoxes.get( viewId );
+					if ( bb1 == null ) return;
+
+					final Set< ViewId > overlapping = new HashSet<>();
+					for ( final ViewId otherViewId : viewList )
+					{
+						if ( otherViewId.equals( viewId ) ) continue;
+
+						// Skip if same group
+						if ( sameGroupPairs.contains( new ValuePair<>( viewId, otherViewId ) ) ||
+							 sameGroupPairs.contains( new ValuePair<>( otherViewId, viewId ) ) )
+							continue;
+
+						final BoundingBox bb2 = viewBoundingBoxes.get( otherViewId );
+						if ( bb2 != null && SimpleBoundingBoxOverlap.overlaps( bb1, bb2 ) )
+							overlapping.add( otherViewId );
+					}
+					overlappingViews.put( viewId, overlapping );
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to compute overlapping views", e );
+		}
+		finally
+		{
+			overlapPool.shutdown();
+		}
+
+		// Count total overlapping pairs for statistics
+		long totalOverlappingPairs = 0;
+		for ( final Set< ViewId > set : overlappingViews.values() )
+			totalOverlappingPairs += set.size();
+		totalOverlappingPairs /= 2; // Each pair counted twice
+
+		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints overlap detection: " + (System.currentTimeMillis() - startOverlapCheck) +
+				" ms (" + totalOverlappingPairs + " overlapping view pairs out of " + (((long)viewList.size() * (viewList.size() - 1)) / 2) + " total)" );
+
+		// Process each view in parallel - only check actually overlapping views
+		final long startFiltering = System.currentTimeMillis();
 		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
 
 		try
@@ -640,37 +731,34 @@ public class TransformationTools
 			pool.submit( () ->
 				interestpoints.entrySet().parallelStream().forEach( element -> {
 					final ViewId viewId = element.getKey();
+					final Set< ViewId > myOverlappingViews = overlappingViews.get( viewId );
+
+					// If no overlapping views, all points are removed
+					if ( myOverlappingViews == null || myOverlappingViews.isEmpty() )
+					{
+						for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
+							subElement.setValue( new ArrayList<>() );
+						return;
+					}
 
 					for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
 					{
 						final List< InterestPoint > points = new ArrayList<>( subElement.getValue() );
 						final List< InterestPoint > overlappingPoints = new ArrayList<>();
 
-						// for each pair (if it's not part of a group), test
-						// if there are any points that currently overlap with another view
-			A:			for ( final ViewId otherViewId : interestpoints.keySet() )
+						// Only check views that actually overlap (pre-computed)
+						for ( final ViewId otherViewId : myOverlappingViews )
 						{
-							// if it's the same view continue
-							if ( otherViewId.equals( viewId ) )
-								continue;
+							if ( points.isEmpty() ) break;
 
-							// if they are part of the same group, continue (O(1) lookup)
-							if ( sameGroupPairs.contains( new ValuePair<>( viewId, otherViewId ) ) ||
-								 sameGroupPairs.contains( new ValuePair<>( otherViewId, viewId ) ) )
-								continue A;
+							final AffineTransform3D tinv = inverseTransforms.get( otherViewId );
+							final Interval interval = viewIntervals.get( otherViewId );
 
-							// use the inverse affine transform of the other view
-							final AffineTransform3D tinv = TransformationTools.getTransform( otherViewId, registrations ).inverse();
+							if ( tinv == null || interval == null ) continue;
 
-							// to map all interestpoints into the bounding box
-							final ViewDescription otherVD = viewDescriptions.get( otherViewId );
-							final Dimensions dim = otherVD.getViewSetup().getSize();
-							final Interval interval = new FinalInterval( dim );
+							final RealPoint p = new RealPoint( 3 );
 
-							final int n = tinv.numDimensions();
-							final RealPoint p = new RealPoint( n );
-
-							// and check if they do intersect
+							// Check if points intersect with this view
 							for ( int i = points.size() - 1; i >= 0; --i )
 							{
 								final InterestPoint ip = points.get( i );
@@ -703,6 +791,9 @@ public class TransformationTools
 		{
 			pool.shutdown();
 		}
+
+		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints point filtering: " + (System.currentTimeMillis() - startFiltering) + " ms" );
+		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints total: " + (System.currentTimeMillis() - startTotal) + " ms" );
 	}
 
 	/* call this method to load interestpoints and apply current transformation */
