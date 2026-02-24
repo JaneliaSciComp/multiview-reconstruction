@@ -31,10 +31,12 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
 
 public abstract class PairwiseSetup< V extends Comparable< V > >
 {
@@ -100,15 +102,28 @@ public abstract class PairwiseSetup< V extends Comparable< V > >
 	protected abstract List< Pair< V, V > > definePairsAbstract();
 
 	/**
-	 * Remove pairs that are not overlapping
-	 * 
+	 * Remove pairs that are not overlapping.
+	 * Uses optimized parallel implementation for SimpleBoundingBoxOverlap with ViewId.
+	 *
 	 * @param ovlp - implementation of {@link OverlapDetection}
 	 * @return a list of pairs that were removed (not stored in this object)
 	 */
+	@SuppressWarnings("unchecked")
 	public ArrayList< Pair< V, V > > removeNonOverlappingPairs( final OverlapDetection< V > ovlp )
 	{
-		final ArrayList< Pair< V, V > > removed = removeNonOverlappingPairs( pairs, ovlp );
+		// Use optimized parallel implementation for SimpleBoundingBoxOverlap with ViewId
+		if (ovlp instanceof SimpleBoundingBoxOverlap && !views.isEmpty() && views.get(0) instanceof ViewId)
+		{
+			final SimpleBoundingBoxOverlap<ViewId> sbbo = (SimpleBoundingBoxOverlap<ViewId>) ovlp;
+			final List<Pair<ViewId, ViewId>> viewIdPairs = (List<Pair<ViewId, ViewId>>) (List<?>) pairs;
+			final Collection<ViewId> viewIdViews = (Collection<ViewId>) (Collection<?>) views;
 
+			final ArrayList<Pair<ViewId, ViewId>> removed = sbbo.removeNonOverlappingPairsOptimized(viewIdPairs, viewIdViews);
+			return (ArrayList<Pair<V, V>>) (ArrayList<?>) removed;
+		}
+
+		// Fallback to sequential implementation for other OverlapDetection types
+		final ArrayList< Pair< V, V > > removed = removeNonOverlappingPairs( pairs, ovlp );
 		return removed;
 	}
 

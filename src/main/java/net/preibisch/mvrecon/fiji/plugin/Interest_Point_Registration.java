@@ -216,7 +216,11 @@ public class Interest_Point_Registration implements PlugIn
 		final Set< Group< ViewId > > groups = arp.getGroups( data, viewIds, brp.groupTiles, brp.groupIllums, brp.groupChannels );
 
 		final PairwiseSetup< ViewId > setup = arp.pairwiseSetupInstance( brp.registrationType, viewIds, groups );
+
+		IOFunctions.println( "[TIMING] identifySubsets() START" );
+		final long identifySubsetsStart = System.currentTimeMillis();
 		identifySubsets( setup, brp.getOverlapDetection( data ) ); // uses brp.overlapType
+		IOFunctions.println( "[TIMING] identifySubsets() TOTAL: " + (System.currentTimeMillis() - identifySubsetsStart) + " ms" );
 
 		// query fixed and reference views for mapping back if necessary
 		final FixMapBackParameters fmbp = fixMapBackParameters( data.getSequenceDescription(), setup, arp.fixViewsIndex, arp.mapBackIndex, brp.registrationType );
@@ -286,14 +290,18 @@ public class Interest_Point_Registration implements PlugIn
 		final List< ViewId > viewIds = setup.getViews();
 		final ArrayList< Subset< ViewId > > subsets = setup.getSubsets();
 
-		// TODO: do this in parallel
+		final long processRegistrationStart = System.currentTimeMillis();
+
 		// load & transform all interest points
+		IOFunctions.println( "[TIMING] getAllTransformedInterestPoints() START (" + viewIds.size() + " views)" );
+		long start = System.currentTimeMillis();
 		final Map< ViewId, HashMap< String, Collection< InterestPoint > > > interestpoints =
 				TransformationTools.getAllTransformedInterestPoints(
 					viewIds,
 					registrations,
 					interestpointLists,
 					labelMap );
+		IOFunctions.println( "[TIMING] getAllTransformedInterestPoints(): " + (System.currentTimeMillis() - start) + " ms (" + viewIds.size() + " views)" );
 
 		// only keep those interestpoints that currently overlap with a view to register against
 		if ( interestPointOverlapType == InterestPointOverlapType.OVERLAPPING_ONLY )
@@ -304,7 +312,9 @@ public class Interest_Point_Registration implements PlugIn
 				for ( final Subset< ViewId > subset : subsets )
 					groups.addAll( subset.getGroups() );
 
+			start = System.currentTimeMillis();
 			TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, registrations, viewDescriptions );
+			IOFunctions.println( "[TIMING] filterForOverlappingInterestPoints(): " + (System.currentTimeMillis() - start) + " ms" );
 
 			IOFunctions.println( "Remaining interest points for alignment: " );
 			for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
@@ -316,8 +326,12 @@ public class Interest_Point_Registration implements PlugIn
 		if ( collectStatistics )
 			this.statistics = new ArrayList<>();
 
+		int subsetIdx = 0;
 		for ( final Subset< ViewId > subset : subsets )
 		{
+			subsetIdx++;
+			IOFunctions.println( "[TIMING] === Processing subset " + subsetIdx + "/" + subsets.size() + " ===" );
+
 			// fix view(s)
 			final List< ViewId > fixedViews = setup.getDefaultFixedViews();
 			IOFunctions.println( "By default #fixed views for strategy " + setup.getClass().getSimpleName() + " = " + fixedViews.size() );
@@ -330,21 +344,37 @@ public class Interest_Point_Registration implements PlugIn
 			if ( groupingType == InterestpointGroupingType.DO_NOT_GROUP )
 			{
 				// get all pairs to be compared (either that XOR grouped pairs)
+				start = System.currentTimeMillis();
 				final List< Pair< ViewId, ViewId > > pairs = subset.getPairs();
+				IOFunctions.println( "[TIMING] subset.getPairs(): " + (System.currentTimeMillis() - start) + " ms (" + pairs.size() + " pairs)" );
 
-				for ( final Pair< ViewId, ViewId > pair : pairs )
+				// Print first 10 pairs as sample
+				final int pairsToShow = Math.min( 10, pairs.size() );
+				for ( int i = 0; i < pairsToShow; i++ )
+				{
+					final Pair< ViewId, ViewId > pair = pairs.get( i );
 					System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) );
+				}
+				if ( pairs.size() > 10 )
+					System.out.println( "... and " + (pairs.size() - 10) + " more pairs" );
 
 				// compute all pairwise matchings
+				start = System.currentTimeMillis();
 				final List< Pair< Pair< ViewId, ViewId >, PairwiseResult< InterestPoint > > > result =
 						MatcherPairwiseTools.computePairs( pairs, interestpoints, pairwiseMatching.pairwiseMatchingInstance(), matchAcrossLabels );
+				final long computePairsTime = System.currentTimeMillis() - start;
+				IOFunctions.println( "[TIMING] computePairs(): " + computePairsTime + " ms (" + pairs.size() + " pairs, " +
+						(pairs.size() > 0 ? String.format("%.2f", (double)computePairsTime / pairs.size()) : "0") + " ms/pair avg)" );
 
 				// clear correspondences
 				if ( !LoadCorrespondencesGUI.class.isInstance( pairwiseMatching ) )
 				{
+					start = System.currentTimeMillis();
 					MatcherPairwiseTools.clearCorrespondences( subset.getViews(), interestpointLists, labelMap );
+					IOFunctions.println( "[TIMING] clearCorrespondences(): " + (System.currentTimeMillis() - start) + " ms (" + subset.getViews().size() + " views)" );
 
 					// add the corresponding detections and output result
+					start = System.currentTimeMillis();
 					for ( final Pair< Pair< ViewId, ViewId >, PairwiseResult< InterestPoint > > p : result )
 					{
 						final ViewId vA = p.getA().getA();
@@ -358,6 +388,7 @@ public class Interest_Point_Registration implements PlugIn
 
 						MatcherPairwiseTools.addCorrespondences( p.getB().getInliers(), p.getB().getInlierSetIds(), vA, vB, labelA, labelB, listA, listB );
 					}
+					IOFunctions.println( "[TIMING] addCorrespondences(): " + (System.currentTimeMillis() - start) + " ms (" + result.size() + " results)" );
 				}
 
 				if ( collectStatistics )
@@ -372,6 +403,10 @@ public class Interest_Point_Registration implements PlugIn
 				// run global optimization
 				final PointMatchCreator pmc = new InterestPointMatchCreator( result, labelMap ); // TODO: Add weights!!!
 				final M model = pairwiseMatching.getMatchingModel().getModel();
+
+				IOFunctions.println( "[TIMING] === Starting GlobalOpt (" + globalOptParameters.method + ") ===" );
+				IOFunctions.println( "[TIMING] Total time before GlobalOpt: " + (System.currentTimeMillis() - processRegistrationStart) + " ms" );
+				start = System.currentTimeMillis();
 
 				if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
 				{
@@ -642,11 +677,26 @@ public class Interest_Point_Registration implements PlugIn
 
 	public void identifySubsets( final PairwiseSetup< ViewId > setup, final OverlapDetection< ViewId > overlapDetection )
 	{
-		IOFunctions.println( "Defined pairs, removed " + setup.definePairs().size() + " redundant view pairs." );
-		IOFunctions.println( "Removed " + setup.removeNonOverlappingPairs( overlapDetection ).size() + " pairs because they do not overlap (Strategy='" + overlapDetection.getClass().getSimpleName() + "')" );
+		long start = System.currentTimeMillis();
+		final int removedRedundant = setup.definePairs().size();
+		IOFunctions.println( "[TIMING]   definePairs(): " + (System.currentTimeMillis() - start) + " ms (removed " + removedRedundant + " redundant view pairs)" );
+
+		start = System.currentTimeMillis();
+		final int removedNonOverlapping = setup.removeNonOverlappingPairs( overlapDetection ).size();
+		IOFunctions.println( "[TIMING]   removeNonOverlappingPairs(): " + (System.currentTimeMillis() - start) + " ms (removed " + removedNonOverlapping + " non-overlapping, Strategy='" + overlapDetection.getClass().getSimpleName() + "')" );
+
+		start = System.currentTimeMillis();
 		setup.reorderPairs();
+		IOFunctions.println( "[TIMING]   reorderPairs(): " + (System.currentTimeMillis() - start) + " ms" );
+
+		start = System.currentTimeMillis();
 		setup.detectSubsets();
+		IOFunctions.println( "[TIMING]   detectSubsets(): " + (System.currentTimeMillis() - start) + " ms" );
+
+		start = System.currentTimeMillis();
 		setup.sortSubsets();
+		IOFunctions.println( "[TIMING]   sortSubsets(): " + (System.currentTimeMillis() - start) + " ms" );
+
 		IOFunctions.println( "Identified " + setup.getSubsets().size() + " subsets " );
 	}
 

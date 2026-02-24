@@ -26,6 +26,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import mpicbg.spim.data.sequence.ViewId;
@@ -42,6 +44,50 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 
 public class LoadCorrespondencesPairwise< I extends InterestPoint > implements MatcherPairwise< I >
 {
+	// Thread-safe statistics for debugging performance
+	private static final AtomicInteger matchCallCount = new AtomicInteger(0);
+	private static final AtomicLong totalMatchTime = new AtomicLong(0);
+	private static final AtomicLong mapCreationTime = new AtomicLong(0);
+	private static final AtomicLong getCorrespondencesCopyTime = new AtomicLong(0);
+	private static final AtomicLong filteringTime = new AtomicLong(0);
+	private static final AtomicLong conversionTime = new AtomicLong(0);
+	private static final AtomicLong totalCorrespondencesLoaded = new AtomicLong(0);
+	private static final AtomicLong totalCorrespondencesFiltered = new AtomicLong(0);
+
+	/**
+	 * Reset all timing statistics (call before starting a new batch of computePairs)
+	 */
+	public static void resetStatistics()
+	{
+		matchCallCount.set(0);
+		totalMatchTime.set(0);
+		mapCreationTime.set(0);
+		getCorrespondencesCopyTime.set(0);
+		filteringTime.set(0);
+		conversionTime.set(0);
+		totalCorrespondencesLoaded.set(0);
+		totalCorrespondencesFiltered.set(0);
+	}
+
+	/**
+	 * Print timing statistics for the LoadCorrespondencesPairwise matcher
+	 */
+	public static void printStatistics()
+	{
+		final int count = matchCallCount.get();
+		if (count == 0) return;
+
+		System.out.println("[TIMING] LoadCorrespondencesPairwise Statistics:");
+		System.out.println("[TIMING]   Total match() calls: " + count);
+		System.out.println("[TIMING]   Total match time: " + totalMatchTime.get() + " ms (avg " + String.format("%.2f", (double)totalMatchTime.get()/count) + " ms/call)");
+		System.out.println("[TIMING]   - Map creation: " + mapCreationTime.get() + " ms (avg " + String.format("%.2f", (double)mapCreationTime.get()/count) + " ms/call)");
+		System.out.println("[TIMING]   - getCorrespondingInterestPointsCopy(): " + getCorrespondencesCopyTime.get() + " ms (avg " + String.format("%.2f", (double)getCorrespondencesCopyTime.get()/count) + " ms/call)");
+		System.out.println("[TIMING]   - Filtering: " + filteringTime.get() + " ms (avg " + String.format("%.2f", (double)filteringTime.get()/count) + " ms/call)");
+		System.out.println("[TIMING]   - Conversion to PointMatches: " + conversionTime.get() + " ms (avg " + String.format("%.2f", (double)conversionTime.get()/count) + " ms/call)");
+		System.out.println("[TIMING]   Correspondences loaded: " + totalCorrespondencesLoaded.get() + " (avg " + (totalCorrespondencesLoaded.get()/count) + "/call)");
+		System.out.println("[TIMING]   Correspondences after filter: " + totalCorrespondencesFiltered.get() + " (avg " + (totalCorrespondencesFiltered.get()/count) + "/call)");
+	}
+
 	final SpimData2 spimData;
 	final int minNumMatches;
 
@@ -61,6 +107,9 @@ public class LoadCorrespondencesPairwise< I extends InterestPoint > implements M
 			final String labelA,
 			final String labelB )
 	{
+		final long matchStart = System.currentTimeMillis();
+		matchCallCount.incrementAndGet();
+
 		final PairwiseResult< I > result = new PairwiseResult< I >( false );
 
 		if ( listA.size() < Math.max( 1, minNumMatches) || listB.size() < Math.max( 1, minNumMatches)  )
@@ -68,6 +117,7 @@ public class LoadCorrespondencesPairwise< I extends InterestPoint > implements M
 			result.setResult( System.currentTimeMillis(), "Not enough detections to load corresponding interest points." );
 			result.setCandidates( new ArrayList< PointMatchGeneric< I > >() );
 			result.setInliers( new ArrayList< PointMatchGeneric< I > >(), Double.NaN );
+			totalMatchTime.addAndGet(System.currentTimeMillis() - matchStart);
 			return result;
 		}
 
@@ -83,6 +133,8 @@ public class LoadCorrespondencesPairwise< I extends InterestPoint > implements M
 			final ViewInterestPointLists iplA = lists.get( viewsA );
 			final InterestPoints ipA = iplA.getInterestPointList( labelA );
 
+			// Timing: Map creation
+			long start = System.currentTimeMillis();
 			// note: we could use loaded points here, but we do not want to in case they got filtered somehow (e.g. overlapping only)
 			final Map<Integer, I> mapA =
 					listA.stream().collect( Collectors.toMap(
@@ -93,39 +145,51 @@ public class LoadCorrespondencesPairwise< I extends InterestPoint > implements M
 					listB.stream().collect( Collectors.toMap(
 							ip -> ip.getId(),
 							ip -> ip ) );
+			mapCreationTime.addAndGet(System.currentTimeMillis() - start);
 
+			// Timing: getCorrespondingInterestPointsCopy (this is the lazy loading bottleneck!)
+			start = System.currentTimeMillis();
 			final Collection<CorrespondingInterestPoints> corrA =
 					ipA.getCorrespondingInterestPointsCopy();
+			getCorrespondencesCopyTime.addAndGet(System.currentTimeMillis() - start);
 
-			System.out.println( "Loaded " + corrA.size() + " corresponding interest points.");
+			totalCorrespondencesLoaded.addAndGet(corrA.size());
 
+			// Timing: Filtering
+			start = System.currentTimeMillis();
 			final List<CorrespondingInterestPoints> corrAFiltered = corrA.stream().filter( c ->
 				c.getCorrespodingLabel().equals( labelB ) &&
 				c.getCorrespondingViewId().equals( viewsB ) &&
 				mapA.containsKey( c.getDetectionId() ) &&
 				mapB.containsKey( c.getCorrespondingDetectionId() )
 			).collect( Collectors.toList() );
+			filteringTime.addAndGet(System.currentTimeMillis() - start);
 
-			System.out.println( "After filtering " + corrAFiltered.size() + " corresponding interest points remain.");
+			totalCorrespondencesFiltered.addAndGet(corrAFiltered.size());
 
 			if ( corrAFiltered.size() < minNumMatches )
 			{
 				result.setResult( System.currentTimeMillis(), "Not enough corresponding interest points ("+corrAFiltered.size() +") were loaded." );
 				result.setCandidates( new ArrayList< PointMatchGeneric< I > >() );
 				result.setInliers( new ArrayList< PointMatchGeneric< I > >(), Double.NaN );
+				totalMatchTime.addAndGet(System.currentTimeMillis() - matchStart);
 				return result;
 			}
 
+			// Timing: Conversion to PointMatches
+			start = System.currentTimeMillis();
 			final List< PointMatchGeneric< I > > inliers = corrAFiltered.stream().map( c ->
 				new PointMatchGeneric<>(
 					mapA.get( c.getDetectionId() ),
 					mapB.get( c.getCorrespondingDetectionId() ) ) ).collect( Collectors.toList() );
+			conversionTime.addAndGet(System.currentTimeMillis() - start);
 
 			result.setCandidates( inliers );
 			result.setInliers( inliers, 0.0 );
 
 			result.setResult( System.currentTimeMillis(), "Loaded " + inliers.size() + " corresponding interest points." );
 
+			totalMatchTime.addAndGet(System.currentTimeMillis() - matchStart);
 			return result;
 		}
 	}

@@ -31,6 +31,8 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -57,6 +59,45 @@ public class InterestPointsN5 extends InterestPoints
 {
 	public static int defaultBlockSize = 300_000;
 	public static final String baseN5 = "interestpoints.n5";
+
+	// Thread-safe statistics for debugging correspondence loading performance
+	private static final AtomicInteger corrCopyCallCount = new AtomicInteger(0);
+	private static final AtomicInteger corrCacheMissCount = new AtomicInteger(0);
+	private static final AtomicLong corrLoadTime = new AtomicLong(0);
+	private static final AtomicLong corrCopyTime = new AtomicLong(0);
+	private static final AtomicLong corrTotalCount = new AtomicLong(0);
+
+	/**
+	 * Reset correspondence loading statistics
+	 */
+	public static void resetCorrespondenceStatistics()
+	{
+		corrCopyCallCount.set(0);
+		corrCacheMissCount.set(0);
+		corrLoadTime.set(0);
+		corrCopyTime.set(0);
+		corrTotalCount.set(0);
+	}
+
+	/**
+	 * Print correspondence loading statistics
+	 */
+	public static void printCorrespondenceStatistics()
+	{
+		final int calls = corrCopyCallCount.get();
+		if (calls == 0) return;
+
+		final int cacheMisses = corrCacheMissCount.get();
+		final int cacheHits = calls - cacheMisses;
+
+		System.out.println("[TIMING] InterestPointsN5 Correspondence Statistics:");
+		System.out.println("[TIMING]   getCorrespondingInterestPointsCopy() calls: " + calls);
+		System.out.println("[TIMING]   - Cache hits: " + cacheHits + " (" + String.format("%.1f", 100.0 * cacheHits / calls) + "%)");
+		System.out.println("[TIMING]   - Cache misses (I/O): " + cacheMisses + " (" + String.format("%.1f", 100.0 * cacheMisses / calls) + "%)");
+		System.out.println("[TIMING]   - loadCorrespondences() time: " + corrLoadTime.get() + " ms" + (cacheMisses > 0 ? " (avg " + String.format("%.2f", (double)corrLoadTime.get()/cacheMisses) + " ms/load)" : ""));
+		System.out.println("[TIMING]   - Deep copy time: " + corrCopyTime.get() + " ms (avg " + String.format("%.2f", (double)corrCopyTime.get()/calls) + " ms/call)");
+		System.out.println("[TIMING]   Total correspondences returned: " + corrTotalCount.get() + " (avg " + (corrTotalCount.get()/calls) + "/call)");
+	}
 
 	final String n5path;
 
@@ -105,13 +146,24 @@ public class InterestPointsN5 extends InterestPoints
 	 */
 	public synchronized Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy()
 	{
-		if ( this.correspondingInterestPoints == null )
-			loadCorrespondences();
+		corrCopyCallCount.incrementAndGet();
 
+		if ( this.correspondingInterestPoints == null )
+		{
+			corrCacheMissCount.incrementAndGet();
+			final long loadStart = System.currentTimeMillis();
+			loadCorrespondences();
+			corrLoadTime.addAndGet(System.currentTimeMillis() - loadStart);
+		}
+
+		final long copyStart = System.currentTimeMillis();
 		final ArrayList< CorrespondingInterestPoints > list = new ArrayList< CorrespondingInterestPoints >();
 
 		for ( final CorrespondingInterestPoints p : this.correspondingInterestPoints )
 			list.add( new CorrespondingInterestPoints( p ) );
+
+		corrCopyTime.addAndGet(System.currentTimeMillis() - copyStart);
+		corrTotalCount.addAndGet(list.size());
 
 		return list;
 	}
