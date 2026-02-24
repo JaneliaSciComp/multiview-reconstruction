@@ -540,18 +540,19 @@ public class InterestPointsN5 extends InterestPoints
 
 			if ( version == null || version.startsWith("1.") )
 			{
-				IOFunctions.println( "Loading correspondences v1.x format (3xN array)" );
+				//IOFunctions.println( "Loading correspondences v1.x format (3xN array)" );
 				return loadCorrespondencesV1( n5, dataset );
 			}
 			else if ( version.startsWith("2.") )
 			{
-				IOFunctions.println( "Loading correspondences v2.x format (4xN array with consensusSetId)" );
+				//IOFunctions.println( "Loading correspondences v2.x format (4xN array with consensusSetId)" );
 				return loadCorrespondencesV2( n5, dataset );
 			}
 			else
 			{
-				IOFunctions.println( "Unknown correspondences version: " + version + ", attempting v1.x loader" );
-				return loadCorrespondencesV1( n5, dataset );
+				throw new RuntimeException("Version " + version + " not supported." );
+				//IOFunctions.println( "Unknown correspondences version: " + version + ", attempting v1.x loader" );
+				//return loadCorrespondencesV1( n5, dataset );
 			}
 		}
 		catch ( final Exception e )
