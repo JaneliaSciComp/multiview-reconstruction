@@ -632,7 +632,7 @@ public class SplittingTools
 			if ( verboseIntervals )
 				IOFunctions.println( "Interval " + (i+1) + ": " + Util.printInterval( interval ) );
 			else if ( (i+1) % 100 == 0 )
-				IOFunctions.println( "  processed " + (i+1) + "/" + intervals.size() + " intervals..." );
+				IOFunctions.println( "  processed " + (i+1) + "/" + intervals.size() + " intervals for ViewId " + oldSetup.getId() + " ..." );
 
 			// from the new ID get the old ID and the corresponding interval
 			new2oldSetupId.put( newId, oldID );
@@ -982,6 +982,10 @@ public class SplittingTools
 		// oldVipl may be null for missing views
 		if ( spimData.getSequenceDescription().getMissingViews() != null && !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( oldViewId ) )
 		{
+			// Lazy cache for interest point maps within this task
+			// Key: "timepointId_setupId_label" -> Map of detection IDs
+			final Map< String, Map< Integer, InterestPoint > > ipMapCache = new HashMap<>();
+
 			for ( final String label : oldVipl.getHashMap().keySet() )
 			{
 				final Collection<CorrespondingInterestPoints> corr = oldVipl.getInterestPointList( label ).getCorrespondingInterestPointsCopy();
@@ -1001,7 +1005,16 @@ public class SplittingTools
 									final String newCorrLabel = c.getCorrespodingLabel() + "_split";
 									final ViewId newCorrViewId = new ViewId( t.getId(), corrNewSetupId );
 
-									if ( newInterestpoints.get( newCorrViewId ).getInterestPointList( newCorrLabel ).getInterestPointsCopy().containsKey( c.getCorrespondingDetectionId() ) )
+									// Lazy cache: only load when first needed, reuse for subsequent lookups
+									final String cacheKey = newCorrViewId.getTimePointId() + "_" + newCorrViewId.getViewSetupId() + "_" + newCorrLabel;
+									final Map< Integer, InterestPoint > cachedIpMap = ipMapCache.computeIfAbsent( cacheKey, k -> {
+										final ViewInterestPointLists corrVipl = newInterestpoints.get( newCorrViewId );
+										if ( corrVipl != null && corrVipl.contains( newCorrLabel ) )
+											return corrVipl.getInterestPointList( newCorrLabel ).getInterestPointsCopy();
+										return null;
+									});
+
+									if ( cachedIpMap != null && cachedIpMap.containsKey( c.getCorrespondingDetectionId() ) )
 									{
 										return new CorrespondingInterestPoints(
 												c.getDetectionId(),
