@@ -27,6 +27,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
+import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
 
 import org.janelia.saalfeldlab.n5.N5FSWriter;
@@ -38,6 +39,7 @@ import mpicbg.spim.data.registration.XmlIoViewRegistrations;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.XmlIoSequenceDescription;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.XmlIoBoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
@@ -279,23 +281,39 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 
 	public static void savePSFsInParallel( final SpimData2 spimData )
 	{
-		IOFunctions.println( "Saving PSFs multi-threaded ... " );
+		final int numThreads = Threads.numThreads();
+		IOFunctions.println( "Saving PSFs multi-threaded (" + numThreads + " threads) ... " );
 
-		spimData.getPointSpreadFunctions().getPointSpreadFunctions().values().parallelStream().forEach( psf ->
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+		try
 		{
-			if ( psf.isModified() )
-			{
-				if ( !psf.save() )
-					IOFunctions.println( "ERROR: Could not save PSF '" + psf.getFile() + "'" );
-				else
-					IOFunctions.println( "Saved PSF '" + psf.getFile() + "'" );
-			}
-		});
+			pool.submit( () ->
+				spimData.getPointSpreadFunctions().getPointSpreadFunctions().values().parallelStream().forEach( psf ->
+				{
+					if ( psf.isModified() )
+					{
+						if ( !psf.save() )
+							IOFunctions.println( "ERROR: Could not save PSF '" + psf.getFile() + "'" );
+						else
+							IOFunctions.println( "Saved PSF '" + psf.getFile() + "'" );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to save PSFs in parallel", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
 	}
 
 	public static void saveInterestPointsInParallel( final SpimData2 spimData )
 	{
-		IOFunctions.println( "Saving interest points multi-threaded ... " );
+		final int numThreads = Threads.numThreads();
+		IOFunctions.println( "Saving interest points multi-threaded (" + numThreads + " threads) ... " );
 
 		// collect first to avoid nested parallel streams
 		final ArrayList< InterestPoints > allIPs = new ArrayList<>();
@@ -303,17 +321,31 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		spimData.getViewInterestPoints().getViewInterestPoints().values().forEach( vipl ->
 			allIPs.addAll( vipl.getHashMap().values() ) );
 
-		allIPs.parallelStream().forEach( ipl ->
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+		try
 		{
-			try
-			{
-				ipl.saveInterestPoints( false );
-				ipl.saveCorrespondingInterestPoints( false );
-			}
-			catch ( Exception e )
-			{
-				IOFunctions.println( "Could not save interest points for (trying to skip): " + ipl.getXMLRepresentation()  );
-			}
-		});
+			pool.submit( () ->
+				allIPs.parallelStream().forEach( ipl ->
+				{
+					try
+					{
+						ipl.saveInterestPoints( false );
+						ipl.saveCorrespondingInterestPoints( false );
+					}
+					catch ( Exception e )
+					{
+						IOFunctions.println( "Could not save interest points for (trying to skip): " + ipl.getXMLRepresentation()  );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to save interest points in parallel", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
 	}
 }
