@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.process.splitting;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -34,6 +35,9 @@ import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.splitting.OctTreeSplitCriterion.SplitCorrespondence;
 
@@ -183,6 +187,48 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		return "ConsensusSetCriterion[labels=" + labels +
 				", minCorrespondences=" + minCorrespondences +
 				", " + toleranceDesc + "]";
+	}
+
+	/**
+	 * Override to validate that correspondences have multi-consensus information.
+	 * Throws RuntimeException if consensusSetId is -1 (single-consensus mode).
+	 */
+	@Override
+	public List< SplitCorrespondence > loadCorrespondences( final ViewId viewId )
+	{
+		final List< SplitCorrespondence > result = OctTreeSplitCriterion.super.loadCorrespondences( viewId );
+
+		if ( result.isEmpty() )
+			return result;
+
+		// Check first correspondence from raw data - if one is -1, all are -1
+		final ViewInterestPointLists vipl = spimData.getViewInterestPoints().getViewInterestPointLists( viewId );
+		if ( vipl != null )
+		{
+			for ( final String label : labels )
+			{
+				if ( !vipl.contains( label ) )
+					continue;
+
+				final InterestPoints ips = vipl.getInterestPointList( label );
+				final Collection< CorrespondingInterestPoints > corrs = ips.getCorrespondingInterestPointsCopy();
+				if ( !corrs.isEmpty() )
+				{
+					final CorrespondingInterestPoints firstCorr = corrs.iterator().next();
+					if ( firstCorr.getConsensusSetId() < 0 )
+					{
+						throw new RuntimeException(
+								"ConsensusSetCriterion requires multi-consensus correspondences, but view " +
+								viewId.getTimePointId() + "_" + viewId.getViewSetupId() +
+								" has single-consensus correspondences (consensusSetId=-1). " +
+								"Please use 'Cross-view correspondences' criterion instead, or run multi-consensus RANSAC first." );
+					}
+					return result;  // Found valid multi-consensus data
+				}
+			}
+		}
+
+		return result;
 	}
 
 	// Getters for GUI display and testing

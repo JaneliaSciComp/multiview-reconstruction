@@ -467,7 +467,7 @@ public class SplittingTools
 				trackedTasks.add( () -> {
 					task.call();
 					final int done = corrCompleted.incrementAndGet();
-					if ( done % 100 == 0 || done == totalCorrTasks )
+					if ( done % 10 == 0 || done == totalCorrTasks )
 						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Processed " + done + "/" + totalCorrTasks + " correspondence tasks" );
 					return null;
 				} );
