@@ -253,7 +253,8 @@ public class SplittingTools
 						octTreeSplitter.getMinStepSize(),
 						octTreeSplitter.getMinSizeMultiplier(),
 						octTreeSplitter.isEnableMerge(),
-						octTreeSplitter.getMinSplitLevels() ) );
+						octTreeSplitter.getMinSplitLevels(),
+						octTreeSplitter.getMergeMode() ) );
 				taskSetups.add( oldSetup );
 				taskInputs.add( input );
 			}
