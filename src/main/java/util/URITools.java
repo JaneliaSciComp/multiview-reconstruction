@@ -154,7 +154,7 @@ public class URITools
 		}
 		else if ( URITools.isFile( uri ) )
 		{
-			return new FileSystemKeyValueAccess( FileSystems.getDefault() );
+			return new FileSystemKeyValueAccess();
 		}
 		else
 		{
@@ -273,7 +273,7 @@ public class URITools
 			{
 				// Create Zarr v3 writer
 				return new ZarrV3KeyValueWriter(
-						new FileSystemKeyValueAccess(FileSystems.getDefault()),
+						new FileSystemKeyValueAccess(),
 						URITools.fromURI( uri ),
 						builder,
 						true   // cacheAttributes
@@ -332,7 +332,7 @@ public class URITools
 			{
 				// Create Zarr v3 reader
 				return new ZarrV3KeyValueReader(
-                        new FileSystemKeyValueAccess(FileSystems.getDefault()),
+                        new FileSystemKeyValueAccess(),
                         URITools.fromURI( uri ),
                         builder,
                         true // cacheMeta
