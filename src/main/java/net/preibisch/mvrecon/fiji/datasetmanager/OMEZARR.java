@@ -171,7 +171,7 @@ public class OMEZARR implements MultiViewDatasetDefinition
 
 		try
 		{
-			reader = URITools.instantiateN5Reader( StorageFormat.ZARR, baseDir );
+			reader = URITools.instantiateN5Reader( format, baseDir );
 		}
 		catch ( Exception e )
 		{
@@ -179,7 +179,7 @@ public class OMEZARR implements MultiViewDatasetDefinition
 
 			try
 			{
-				reader = URITools.instantiateN5Writer( StorageFormat.ZARR, baseDir );
+				reader = URITools.instantiateN5Writer( format, baseDir );
 			}
 			catch (Exception e2 )
 			{
