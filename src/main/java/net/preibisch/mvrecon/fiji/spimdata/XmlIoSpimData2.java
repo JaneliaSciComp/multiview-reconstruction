@@ -27,8 +27,12 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
+import java.util.List;
+import java.util.Map.Entry;
 import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
+
+import mpicbg.spim.data.sequence.ViewId;
 
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.jdom2.Element;
@@ -45,6 +49,8 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.XmlIoBoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlIoIntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5.InterestPointData;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlIoViewInterestPoints;
@@ -342,6 +348,87 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		catch ( final Exception e )
 		{
 			throw new RuntimeException( "Failed to save interest points in parallel", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
+	}
+
+	// ==================== Spark-Compatible Methods ====================
+
+	/**
+	 * Collect all modified interest points as serializable InterestPointData objects.
+	 * This method is useful for Spark-based parallel saving.
+	 *
+	 * @param spimData The SpimData2
+	 * @param modifiedOnly If true, only include interest points that have been modified
+	 * @return List of InterestPointData suitable for Spark RDD operations
+	 */
+	public static List< InterestPointData > collectInterestPointData( final SpimData2 spimData, final boolean modifiedOnly )
+	{
+		final List< InterestPointData > allData = new ArrayList<>();
+
+		for ( final Entry< ViewId, ViewInterestPointLists > entry : spimData.getViewInterestPoints().getViewInterestPoints().entrySet() )
+		{
+			final ViewId viewId = entry.getKey();
+			final ViewInterestPointLists vipl = entry.getValue();
+
+			for ( final Entry< String, InterestPoints > labelEntry : vipl.getHashMap().entrySet() )
+			{
+				final String label = labelEntry.getKey();
+				final InterestPoints ips = labelEntry.getValue();
+
+				// Only include if modified (or if modifiedOnly is false)
+				if ( !modifiedOnly || ips.hasModifiedInterestPoints() || ips.hasModifiedCorrespondingInterestPoints() )
+				{
+					if ( !( ips instanceof InterestPointsN5 ) )
+						throw new RuntimeException( "InterestPointData.from() requires InterestPointsN5, got: " + ips.getClass().getName() );
+
+					allData.add( InterestPointData.from( viewId, label, (InterestPointsN5) ips ) );
+				}
+			}
+		}
+
+		return allData;
+	}
+
+	/**
+	 * Save interest points using static methods (suitable for Spark).
+	 * This method saves both interest points and correspondences using the static API.
+	 *
+	 * @param spimData The SpimData2
+	 */
+	public static void saveInterestPointsInParallelStatic( final SpimData2 spimData )
+	{
+		final int numThreads = Threads.numThreads();
+		IOFunctions.println( "Saving interest points (static) multi-threaded (" + numThreads + " threads) ... " );
+
+		final URI baseDir = spimData.getBasePathURI();
+		final List< InterestPointData > allData = collectInterestPointData( spimData, true );
+
+		IOFunctions.println( "Collected " + allData.size() + " interest point sets to save." );
+
+		if ( allData.isEmpty() )
+			return;
+
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+		try
+		{
+			pool.submit( () ->
+				allData.parallelStream().forEach( data ->
+				{
+					if ( !InterestPointsN5.saveInterestPointDataStatic( baseDir, data ) )
+					{
+						IOFunctions.println( "ERROR: Could not save interest points for tp=" +
+								data.timepointId + ", setup=" + data.setupId + ", label=" + data.label );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to save interest points in parallel (static)", e );
 		}
 		finally
 		{
