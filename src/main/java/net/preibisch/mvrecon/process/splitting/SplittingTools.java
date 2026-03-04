@@ -133,6 +133,34 @@ public class SplittingTools
 		}
 	}
 
+	/**
+	 * Callback for saving interest points (detections + correspondences) on-the-fly.
+	 * Called at the end of {@link #processSetupStatic} after all tiles in a setup are finalized.
+	 * Receives the setup's interest points map (ViewId → ViewInterestPointLists).
+	 *
+	 * Default local implementation: call ips.saveInterestPoints(false) + ips.saveCorrespondingInterestPoints(false).
+	 * Spark implementation: use InterestPointsN5.saveInterestPointDataStatic().
+	 */
+	@FunctionalInterface
+	public interface InterestPointSaver
+	{
+		void saveInterestPoints( Map< ViewId, ViewInterestPointLists > viewInterestPoints );
+	}
+
+	/**
+	 * Callback for saving correspondences on-the-fly.
+	 * Called at the end of {@link #processCorrespondingInterestPointsStatic} after correspondences
+	 * for one view are remapped. Receives a single ViewInterestPointLists.
+	 *
+	 * Default local implementation: call ips.saveCorrespondingInterestPoints(false).
+	 * Spark implementation: use InterestPointsN5.saveCorrespondencesStatic().
+	 */
+	@FunctionalInterface
+	public interface CorrespondenceSaver
+	{
+		void saveCorrespondences( ViewInterestPointLists viewInterestPointLists );
+	}
+
 	//public static boolean assingIlluminationsFromTileIds = false;
 	//public static double error = 0.5;
 	//public static int minPoints = 20;
@@ -164,6 +192,22 @@ public class SplittingTools
 			final int maxPoints,
 			final double error,
 			final double excludeRadius )
+	{
+		return splitImages( spimData, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, null, null );
+	}
+
+	public static SpimData2 splitImages(
+			final SpimData2 spimData,
+			final SplitInterval splitting,
+			final boolean assingIlluminationsFromTileIds,
+			final InterestPointAdding ipAdding,
+			final double pointDensity,
+			final int minPoints,
+			final int maxPoints,
+			final double error,
+			final double excludeRadius,
+			final InterestPointSaver saver,
+			final CorrespondenceSaver corrSaver )
 	{
 		final TimePoints timepoints = spimData.getSequenceDescription().getTimePoints();
 
@@ -373,7 +417,8 @@ public class SplittingTools
 					error,
 					excludeRadius,
 					setupSeed,
-					splitting.description() ) );
+					splitting.description(),
+					saver ) );
 		}
 
 		// Execute in parallel and collect results
@@ -444,7 +489,8 @@ public class SplittingTools
 						processCorrespondingInterestPointsStatic(
 								capturedSetup, capturedNewSetupId, capturedT,
 								spimData, old2NewSetups, newInterestpoints,
-								null, 0 );  // progress tracking done at task wrapper level
+								null, 0,
+								corrSaver );
 						return null;
 					} );
 				}
@@ -575,6 +621,7 @@ public class SplittingTools
 	 * @param excludeRadius Radius to exclude around existing points
 	 * @param rndSeed Seed for random number generator (per-setup for determinism)
 	 * @param splittingDescription Description of splitting method
+	 * @param saver Optional callback for on-the-fly saving of interest points (null to skip)
 	 * @return SetupSplitResult containing all generated data for this setup
 	 */
 	public static SetupSplitResult processSetupStatic(
@@ -594,7 +641,8 @@ public class SplittingTools
 			final double error,
 			final double excludeRadius,
 			final long rndSeed,
-			final String splittingDescription )
+			final String splittingDescription,
+			final InterestPointSaver saver )
 	{
 		final int oldID = oldSetup.getId();
 		final Tile oldTile = oldSetup.getTile();
@@ -848,6 +896,10 @@ public class SplittingTools
 			}
 		}
 
+		// on-the-fly saving: all tiles in this setup are finalized (including cross-tile fake points)
+		if ( saver != null )
+			saver.saveInterestPoints( newInterestpoints );
+
 		return new SetupSplitResult( oldID, newSetups, new2oldSetupId, newSetupId2Interval,
 				newSetupIds, newRegistrations, newInterestpoints );
 	}
@@ -961,6 +1013,7 @@ public class SplittingTools
 	 * @param newInterestpoints Map of new ViewId to ViewInterestPointLists (modified in place)
 	 * @param completed Optional AtomicInteger for progress tracking (can be null)
 	 * @param totalTasks Total number of tasks for progress logging (ignored if completed is null)
+	 * @param corrSaver Optional callback for on-the-fly saving of correspondences (null to skip)
 	 */
 	public static void processCorrespondingInterestPointsStatic(
 			final ViewSetup oldSetup,
@@ -970,7 +1023,8 @@ public class SplittingTools
 			final Map< Integer, ? extends List< Integer > > old2NewSetups,
 			final Map< ViewId, ViewInterestPointLists > newInterestpoints,
 			final AtomicInteger completed,
-			final int totalTasks )
+			final int totalTasks,
+			final CorrespondenceSaver corrSaver )
 	{
 		final ViewId oldViewId = new ViewId( t.getId(), oldSetup.getId() );
 		final ViewId newViewId = new ViewId( t.getId(), newSetupId );
@@ -1032,6 +1086,10 @@ public class SplittingTools
 							.collect( Collectors.toList() ) );
 			}
 		}
+
+		// on-the-fly saving: correspondences for this view are finalized
+		if ( corrSaver != null && newVipl != null )
+			corrSaver.saveCorrespondences( newVipl );
 
 		// Progress logging
 		if ( completed != null )
