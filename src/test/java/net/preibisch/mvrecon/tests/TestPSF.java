@@ -117,7 +117,7 @@ public class TestPSF
 	{
 		new ImageJ();
 
-		final SpimData2 spimData = SimulateUtil.setUpLarge();
+		final SpimData2 spimData = SimulateUtil.setUp();//Large();
 
 		TestInterestPointDetection.testDoG( spimData, "beads" );
 		TestRegistration.testRegistration( spimData, "beads", false );
