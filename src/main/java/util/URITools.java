@@ -154,7 +154,7 @@ public class URITools
 		}
 		else if ( URITools.isFile( uri ) )
 		{
-			return new FileSystemKeyValueAccess( FileSystems.getDefault() );
+			return new FileSystemKeyValueAccess();
 		}
 		else
 		{
@@ -273,12 +273,9 @@ public class URITools
 			{
 				// Create Zarr v3 writer
 				return new ZarrV3KeyValueWriter(
-						new FileSystemKeyValueAccess(FileSystems.getDefault()),
+						new FileSystemKeyValueAccess(),
 						URITools.fromURI( uri ),
 						builder,
-						true,  // mapN5DatasetAttributes
-						true,  // mergeAttributes
-						"/",   // dimensionSeparator
 						true   // cacheAttributes
 				);
 			}
@@ -335,12 +332,10 @@ public class URITools
 			{
 				// Create Zarr v3 reader
 				return new ZarrV3KeyValueReader(
-						new FileSystemKeyValueAccess(FileSystems.getDefault()),
+						new FileSystemKeyValueAccess(),
 						URITools.fromURI( uri ),
 						builder,
-						true,  // mapN5DatasetAttributes
-						true,  // mergeAttributes
-						true   // cacheAttributes
+						true // cacheAttributes
 				);
 			}
 			else if ( format.equals( StorageFormat.ZARR2 ))
