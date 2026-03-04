@@ -103,7 +103,7 @@ public class Split_Views implements PlugIn
 			final double excludeRadius,
 			final boolean display )
 	{
-		return split( data, saveAs, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, display, null, null );
+		return split( data, saveAs, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, display, SplittingTools.defaultFakeLabel(), null, null );
 	}
 
 	public static boolean split(
@@ -118,10 +118,11 @@ public class Split_Views implements PlugIn
 			final double error,
 			final double excludeRadius,
 			final boolean display,
+			final String fakeLabel,
 			final SplittingTools.InterestPointSaver saver,
 			final SplittingTools.CorrespondenceSaver corrSaver )
 	{
-		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, saver, corrSaver );
+		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, fakeLabel, saver, corrSaver );
 
 		if ( display )
 		{
@@ -214,10 +215,13 @@ public class Split_Views implements PlugIn
 
 		InterestPointAdding ipAdding = InterestPointAdding.NONE;
 
+		String fakeLabel = SplittingTools.defaultFakeLabel();
+
 		if ( ipChoice < 2 )
 		{
 			final GenericDialogPlus gd2 = new GenericDialogPlus( (ipChoice == 0) ? "Add fake interest points (DEPRECATED)" : "Add fake CORRESPONDING interest points" );
 
+			gd2.addStringField( "Interest_point_label", fakeLabel, 20 );
 			gd2.addNumericField( "Density (# per 100x100x100 px)", defaultDensity, 2 );
 			gd2.addNumericField( "Min_total number of points", defaultMinPoints, 0 );
 			gd2.addNumericField( "Max_total number of points", defaultMaxPoints, 0 );
@@ -230,6 +234,7 @@ public class Split_Views implements PlugIn
 			if ( gd2.wasCanceled() )
 				return false;
 
+			fakeLabel = gd2.getNextString();
 			density = defaultDensity = gd2.getNextNumber();
 			minPoints = defaultMinPoints = (int)Math.round(gd2.getNextNumber());
 			maxPoints = defaultMaxPoints = (int)Math.round(gd2.getNextNumber());
@@ -260,7 +265,7 @@ public class Split_Views implements PlugIn
 				ips.saveCorrespondingInterestPoints( false );
 		} : null;
 
-		return split( data, URITools.toURI( saveAs ), splittingMethod, assignIllum, ipAdding, density, minPoints, maxPoints, error, exclusionRadius, choice == 0, saver, corrSaver );
+		return split( data, URITools.toURI( saveAs ), splittingMethod, assignIllum, ipAdding, density, minPoints, maxPoints, error, exclusionRadius, choice == 0, fakeLabel, saver, corrSaver );
 	}
 
 	public static void main( String[] args ) throws SpimDataException

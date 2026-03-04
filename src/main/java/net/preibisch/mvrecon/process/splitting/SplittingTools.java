@@ -193,7 +193,12 @@ public class SplittingTools
 			final double error,
 			final double excludeRadius )
 	{
-		return splitImages( spimData, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, null, null );
+		return splitImages( spimData, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, defaultFakeLabel(), null, null );
+	}
+
+	public static String defaultFakeLabel()
+	{
+		return "splitPoints_" + ( System.currentTimeMillis() % 10000 );
 	}
 
 	public static SpimData2 splitImages(
@@ -206,6 +211,7 @@ public class SplittingTools
 			final int maxPoints,
 			final double error,
 			final double excludeRadius,
+			final String fakeLabel,
 			final InterestPointSaver saver,
 			final CorrespondenceSaver corrSaver )
 	{
@@ -240,8 +246,7 @@ public class SplittingTools
 			if ( spimData.getSequenceDescription().getAllIlluminationsOrdered().size() > 1 )
 				throw new IllegalArgumentException( "Cannot SplittingTools.assingIlluminationsFromTileIds because more than one Illumination exists." );
 
-		// only relevant if addIPs is selected
-		final String fakeLabel = "splitPoints_" + System.currentTimeMillis();
+		// fakeLabel is passed in as parameter (only relevant if addIPs is selected)
 
 		// TODO: in order to assign existing corresponding points, we need to build the Map from old to new viewId's and their transformations/sizes first
 		// TODO: because we need to know what the new corresponding point(s) is/are, 1:1 correspondence mappings become 1:n since the corresponding point
