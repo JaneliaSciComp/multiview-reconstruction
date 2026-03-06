@@ -380,6 +380,33 @@ public class URITools
 		{
 			return io.load( URITools.fromURI( xmlURI ) ); // method from XmlIoAbstractSpimData
 		}
+		else if ( HTTPS_SCHEME.asPredicate().test( xmlURI.getScheme() ) )
+		{
+			// Plain HTTP/HTTPS web server - fetch XML directly via URL
+			// Note: this also handles public S3/GC data served over https://
+			final SAXBuilder sax = new SAXBuilder();
+			Document doc;
+
+			try
+			{
+				final InputStream is = xmlURI.toURL().openStream();
+				doc = sax.build( is );
+				is.close();
+			}
+			catch ( final Exception e )
+			{
+				throw new SpimDataIOException( e );
+			}
+
+			final Element docRoot = doc.getRootElement();
+
+			if ( docRoot.getName() != SPIMDATA_TAG )
+				throw new RuntimeException( "expected <" + SPIMDATA_TAG + "> root element. wrong file?" );
+
+			final SpimData2 data = io.fromXml( docRoot, xmlURI );
+
+			return data;
+		}
 		else if ( URITools.isS3( xmlURI ) || URITools.isGC( xmlURI ) )
 		{
 			final KeyValueAccess kva = getKeyValueAccess( xmlURI );
@@ -517,7 +544,8 @@ public class URITools
 	// TODO: does not work for Windows
 	public static boolean isKnownScheme( URI uri )
 	{
-		return isFile( uri ) || isS3( uri ) || isGC( uri );
+		return isFile( uri ) || isS3( uri ) || isGC( uri )
+				|| ( uri.getScheme() != null && HTTPS_SCHEME.asPredicate().test( uri.getScheme() ) );
 	}
 
 	public static boolean isGC( URI uri )
