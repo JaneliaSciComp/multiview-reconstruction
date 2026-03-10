@@ -1143,10 +1143,27 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			if (dirInput.endsWith( File.separator ))
 				dirInput = dirInput.substring( 0, dirInput.length() - File.separator.length() );
 
-			if (new File(dirInput).isDirectory())
+			// Check if the user entered an OME-ZARR container directly (has zarr.json or .zattrs at root).
+			// If so, use its parent as base and itself as the single dataset, rather than looking inside it.
+			if (new File(dirInput).isDirectory()) {
+				final File zarrJson = new File(dirInput, "zarr.json");
+				final File zattrs  = new File(dirInput, ".zattrs");
+				if (zarrJson.exists() || zattrs.exists()) {
+					final File zarrDir = new File(dirInput);
+					String parentPath = zarrDir.getParent();
+					if (parentPath == null) parentPath = File.separator;
+					final String base = parentPath.endsWith(File.separator) ? parentPath : parentPath + File.separator;
+					final URI baseDir = URITools.toURI(base);
+					final ArrayList<String> datasets = new ArrayList<>();
+					datasets.add(zarrDir.getName());
+					IOFunctions.println("Base path = '" + base + "' (URI='" + baseDir + "'");
+					IOFunctions.println("Including dataset '" + zarrDir.getName() + "'");
+					return new ValuePair<>(baseDir, datasets);
+				}
 				dirInput = String.join( File.separator, dirInput, "*" );
+			}
 
-			final ArrayList< String > datasets = new ArrayList<>(); 
+			final ArrayList< String > datasets = new ArrayList<>();
 			final Pair< String, List<File>> files = getDirectoriesFromPattern( dirInput );
 
 			final String base = files.getA().endsWith( File.separator ) ? files.getA() : files.getA() + File.separator;
