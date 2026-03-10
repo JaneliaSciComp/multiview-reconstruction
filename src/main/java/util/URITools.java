@@ -28,6 +28,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -43,6 +44,7 @@ import org.janelia.saalfeldlab.googlecloud.GoogleCloudUtils;
 import org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess;
 import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
+import org.janelia.saalfeldlab.n5.LockedChannel;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -516,7 +518,22 @@ public class URITools
 
 	public static OutputStream openFileWriteCloudStream( final KeyValueAccess kva, final URI uri ) throws IOException
 	{
-		return kva.lockForWriting( toNormalPath( kva, uri ) ).newOutputStream();
+		final LockedChannel channel = kva.lockForWriting( toNormalPath( kva, uri ) );
+		final OutputStream inner = channel.newOutputStream();
+		// In n5 alpha-10+, lockForWriting returns a BufferedKvaLockedChannel whose
+		// newOutputStream() returns an in-memory ByteArrayOutputStream. The actual
+		// disk write only happens in channel.close(). Wrap the stream so that
+		// closing it also closes the channel (flushing to disk).
+		return new FilterOutputStream(inner) {
+			@Override
+			public void close() throws IOException {
+				try {
+					super.close();
+				} finally {
+					channel.close();
+				}
+			}
+		};
 	}
 
 	/*
