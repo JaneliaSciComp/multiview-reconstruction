@@ -133,6 +133,34 @@ public class SplittingTools
 		}
 	}
 
+	/**
+	 * Callback for saving interest points (detections + correspondences) on-the-fly.
+	 * Called at the end of {@link #processSetupStatic} after all tiles in a setup are finalized.
+	 * Receives the setup's interest points map (ViewId → ViewInterestPointLists).
+	 *
+	 * Default local implementation: call ips.saveInterestPoints(false) + ips.saveCorrespondingInterestPoints(false).
+	 * Spark implementation: use InterestPointsN5.saveInterestPointDataStatic().
+	 */
+	@FunctionalInterface
+	public interface InterestPointSaver
+	{
+		void saveInterestPoints( Map< ViewId, ViewInterestPointLists > viewInterestPoints );
+	}
+
+	/**
+	 * Callback for saving correspondences on-the-fly.
+	 * Called at the end of {@link #processCorrespondingInterestPointsStatic} after correspondences
+	 * for one view are remapped. Receives a single ViewInterestPointLists.
+	 *
+	 * Default local implementation: call ips.saveCorrespondingInterestPoints(false).
+	 * Spark implementation: use InterestPointsN5.saveCorrespondencesStatic().
+	 */
+	@FunctionalInterface
+	public interface CorrespondenceSaver
+	{
+		void saveCorrespondences( ViewInterestPointLists viewInterestPointLists );
+	}
+
 	//public static boolean assingIlluminationsFromTileIds = false;
 	//public static double error = 0.5;
 	//public static int minPoints = 20;
@@ -165,6 +193,28 @@ public class SplittingTools
 			final double error,
 			final double excludeRadius )
 	{
+		return splitImages( spimData, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, defaultFakeLabel(), null, null );
+	}
+
+	public static String defaultFakeLabel()
+	{
+		return "splitPoints_" + ( System.currentTimeMillis() % 10000 );
+	}
+
+	public static SpimData2 splitImages(
+			final SpimData2 spimData,
+			final SplitInterval splitting,
+			final boolean assingIlluminationsFromTileIds,
+			final InterestPointAdding ipAdding,
+			final double pointDensity,
+			final int minPoints,
+			final int maxPoints,
+			final double error,
+			final double excludeRadius,
+			final String fakeLabel,
+			final InterestPointSaver saver,
+			final CorrespondenceSaver corrSaver )
+	{
 		final TimePoints timepoints = spimData.getSequenceDescription().getTimePoints();
 
 		final List< ViewSetup > oldSetups = new ArrayList<>();
@@ -196,8 +246,7 @@ public class SplittingTools
 			if ( spimData.getSequenceDescription().getAllIlluminationsOrdered().size() > 1 )
 				throw new IllegalArgumentException( "Cannot SplittingTools.assingIlluminationsFromTileIds because more than one Illumination exists." );
 
-		// only relevant if addIPs is selected
-		final String fakeLabel = "splitPoints_" + System.currentTimeMillis();
+		// fakeLabel is passed in as parameter (only relevant if addIPs is selected)
 
 		// TODO: in order to assign existing corresponding points, we need to build the Map from old to new viewId's and their transformations/sizes first
 		// TODO: because we need to know what the new corresponding point(s) is/are, 1:1 correspondence mappings become 1:n since the corresponding point
@@ -253,7 +302,8 @@ public class SplittingTools
 						octTreeSplitter.getMinStepSize(),
 						octTreeSplitter.getMinSizeMultiplier(),
 						octTreeSplitter.isEnableMerge(),
-						octTreeSplitter.getMinSplitLevels() ) );
+						octTreeSplitter.getMinSplitLevels(),
+						octTreeSplitter.getMergeMode() ) );
 				taskSetups.add( oldSetup );
 				taskInputs.add( input );
 			}
@@ -372,7 +422,8 @@ public class SplittingTools
 					error,
 					excludeRadius,
 					setupSeed,
-					splitting.description() ) );
+					splitting.description(),
+					saver ) );
 		}
 
 		// Execute in parallel and collect results
@@ -443,7 +494,8 @@ public class SplittingTools
 						processCorrespondingInterestPointsStatic(
 								capturedSetup, capturedNewSetupId, capturedT,
 								spimData, old2NewSetups, newInterestpoints,
-								null, 0 );  // progress tracking done at task wrapper level
+								null, 0,
+								corrSaver );
 						return null;
 					} );
 				}
@@ -466,7 +518,7 @@ public class SplittingTools
 				trackedTasks.add( () -> {
 					task.call();
 					final int done = corrCompleted.incrementAndGet();
-					if ( done % 100 == 0 || done == totalCorrTasks )
+					if ( done % 10 == 0 || done == totalCorrTasks )
 						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Processed " + done + "/" + totalCorrTasks + " correspondence tasks" );
 					return null;
 				} );
@@ -574,6 +626,7 @@ public class SplittingTools
 	 * @param excludeRadius Radius to exclude around existing points
 	 * @param rndSeed Seed for random number generator (per-setup for determinism)
 	 * @param splittingDescription Description of splitting method
+	 * @param saver Optional callback for on-the-fly saving of interest points (null to skip)
 	 * @return SetupSplitResult containing all generated data for this setup
 	 */
 	public static SetupSplitResult processSetupStatic(
@@ -593,7 +646,8 @@ public class SplittingTools
 			final double error,
 			final double excludeRadius,
 			final long rndSeed,
-			final String splittingDescription )
+			final String splittingDescription,
+			final InterestPointSaver saver )
 	{
 		final int oldID = oldSetup.getId();
 		final Tile oldTile = oldSetup.getTile();
@@ -631,7 +685,7 @@ public class SplittingTools
 			if ( verboseIntervals )
 				IOFunctions.println( "Interval " + (i+1) + ": " + Util.printInterval( interval ) );
 			else if ( (i+1) % 100 == 0 )
-				IOFunctions.println( "  processed " + (i+1) + "/" + intervals.size() + " intervals..." );
+				IOFunctions.println( "  processed " + (i+1) + "/" + intervals.size() + " intervals for ViewId " + oldSetup.getId() + " ..." );
 
 			// from the new ID get the old ID and the corresponding interval
 			new2oldSetupId.put( newId, oldID );
@@ -847,6 +901,10 @@ public class SplittingTools
 			}
 		}
 
+		// on-the-fly saving: all tiles in this setup are finalized (including cross-tile fake points)
+		if ( saver != null )
+			saver.saveInterestPoints( newInterestpoints );
+
 		return new SetupSplitResult( oldID, newSetups, new2oldSetupId, newSetupId2Interval,
 				newSetupIds, newRegistrations, newInterestpoints );
 	}
@@ -960,6 +1018,7 @@ public class SplittingTools
 	 * @param newInterestpoints Map of new ViewId to ViewInterestPointLists (modified in place)
 	 * @param completed Optional AtomicInteger for progress tracking (can be null)
 	 * @param totalTasks Total number of tasks for progress logging (ignored if completed is null)
+	 * @param corrSaver Optional callback for on-the-fly saving of correspondences (null to skip)
 	 */
 	public static void processCorrespondingInterestPointsStatic(
 			final ViewSetup oldSetup,
@@ -969,7 +1028,8 @@ public class SplittingTools
 			final Map< Integer, ? extends List< Integer > > old2NewSetups,
 			final Map< ViewId, ViewInterestPointLists > newInterestpoints,
 			final AtomicInteger completed,
-			final int totalTasks )
+			final int totalTasks,
+			final CorrespondenceSaver corrSaver )
 	{
 		final ViewId oldViewId = new ViewId( t.getId(), oldSetup.getId() );
 		final ViewId newViewId = new ViewId( t.getId(), newSetupId );
@@ -981,6 +1041,10 @@ public class SplittingTools
 		// oldVipl may be null for missing views
 		if ( spimData.getSequenceDescription().getMissingViews() != null && !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( oldViewId ) )
 		{
+			// Lazy cache for interest point maps within this task
+			// Key: "timepointId_setupId_label" -> Map of detection IDs
+			final Map< String, Map< Integer, InterestPoint > > ipMapCache = new HashMap<>();
+
 			for ( final String label : oldVipl.getHashMap().keySet() )
 			{
 				final Collection<CorrespondingInterestPoints> corr = oldVipl.getInterestPointList( label ).getCorrespondingInterestPointsCopy();
@@ -1000,7 +1064,16 @@ public class SplittingTools
 									final String newCorrLabel = c.getCorrespodingLabel() + "_split";
 									final ViewId newCorrViewId = new ViewId( t.getId(), corrNewSetupId );
 
-									if ( newInterestpoints.get( newCorrViewId ).getInterestPointList( newCorrLabel ).getInterestPointsCopy().containsKey( c.getCorrespondingDetectionId() ) )
+									// Lazy cache: only load when first needed, reuse for subsequent lookups
+									final String cacheKey = newCorrViewId.getTimePointId() + "_" + newCorrViewId.getViewSetupId() + "_" + newCorrLabel;
+									final Map< Integer, InterestPoint > cachedIpMap = ipMapCache.computeIfAbsent( cacheKey, k -> {
+										final ViewInterestPointLists corrVipl = newInterestpoints.get( newCorrViewId );
+										if ( corrVipl != null && corrVipl.contains( newCorrLabel ) )
+											return corrVipl.getInterestPointList( newCorrLabel ).getInterestPointsCopy();
+										return null;
+									});
+
+									if ( cachedIpMap != null && cachedIpMap.containsKey( c.getCorrespondingDetectionId() ) )
 									{
 										return new CorrespondingInterestPoints(
 												c.getDetectionId(),
@@ -1018,6 +1091,10 @@ public class SplittingTools
 							.collect( Collectors.toList() ) );
 			}
 		}
+
+		// on-the-fly saving: correspondences for this view are finalized
+		if ( corrSaver != null && newVipl != null )
+			corrSaver.saveCorrespondences( newVipl );
 
 		// Progress logging
 		if ( completed != null )

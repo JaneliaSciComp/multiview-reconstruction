@@ -334,11 +334,11 @@ public class URITools
 			{
 				// Create Zarr v3 reader
 				return new ZarrV3KeyValueReader(
-                        new FileSystemKeyValueAccess(),
-                        URITools.fromURI( uri ),
-                        builder,
-                        true // cacheMeta
-                );
+						new FileSystemKeyValueAccess(),
+						URITools.fromURI( uri ),
+						builder,
+						true // cacheAttributes
+				);
 			}
 			else if ( format.equals( StorageFormat.ZARR2 ))
 				return new N5ZarrReader( URITools.fromURI( uri ), builder );

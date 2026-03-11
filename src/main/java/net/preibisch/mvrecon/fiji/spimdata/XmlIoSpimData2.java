@@ -27,7 +27,12 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
+import java.util.List;
+import java.util.Map.Entry;
+import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
+
+import mpicbg.spim.data.sequence.ViewId;
 
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.jdom2.Element;
@@ -38,11 +43,14 @@ import mpicbg.spim.data.registration.XmlIoViewRegistrations;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.XmlIoSequenceDescription;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.XmlIoBoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlIoIntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5.InterestPointData;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlIoViewInterestPoints;
@@ -279,23 +287,39 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 
 	public static void savePSFsInParallel( final SpimData2 spimData )
 	{
-		IOFunctions.println( "Saving PSFs multi-threaded ... " );
+		final int numThreads = Threads.numThreads();
+		IOFunctions.println( "Saving PSFs multi-threaded (" + numThreads + " threads) ... " );
 
-		spimData.getPointSpreadFunctions().getPointSpreadFunctions().values().parallelStream().forEach( psf ->
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+		try
 		{
-			if ( psf.isModified() )
-			{
-				if ( !psf.save() )
-					IOFunctions.println( "ERROR: Could not save PSF '" + psf.getFile() + "'" );
-				else
-					IOFunctions.println( "Saved PSF '" + psf.getFile() + "'" );
-			}
-		});
+			pool.submit( () ->
+				spimData.getPointSpreadFunctions().getPointSpreadFunctions().values().parallelStream().forEach( psf ->
+				{
+					if ( psf.isModified() )
+					{
+						if ( !psf.save() )
+							IOFunctions.println( "ERROR: Could not save PSF '" + psf.getFile() + "'" );
+						else
+							IOFunctions.println( "Saved PSF '" + psf.getFile() + "'" );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to save PSFs in parallel", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
 	}
 
 	public static void saveInterestPointsInParallel( final SpimData2 spimData )
 	{
-		IOFunctions.println( "Saving interest points multi-threaded ... " );
+		final int numThreads = Threads.numThreads();
+		IOFunctions.println( "Saving interest points multi-threaded (" + numThreads + " threads) ... " );
 
 		// collect first to avoid nested parallel streams
 		final ArrayList< InterestPoints > allIPs = new ArrayList<>();
@@ -303,17 +327,112 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		spimData.getViewInterestPoints().getViewInterestPoints().values().forEach( vipl ->
 			allIPs.addAll( vipl.getHashMap().values() ) );
 
-		allIPs.parallelStream().forEach( ipl ->
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+		try
 		{
-			try
+			pool.submit( () ->
+				allIPs.parallelStream().forEach( ipl ->
+				{
+					try
+					{
+						ipl.saveInterestPoints( false );
+						ipl.saveCorrespondingInterestPoints( false );
+					}
+					catch ( Exception e )
+					{
+						IOFunctions.println( "Could not save interest points for (trying to skip): " + ipl.getXMLRepresentation()  );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to save interest points in parallel", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
+	}
+
+	// ==================== Spark-Compatible Methods ====================
+
+	/**
+	 * Collect all modified interest points as serializable InterestPointData objects.
+	 * This method is useful for Spark-based parallel saving.
+	 *
+	 * @param spimData The SpimData2
+	 * @param modifiedOnly If true, only include interest points that have been modified
+	 * @return List of InterestPointData suitable for Spark RDD operations
+	 */
+	public static List< InterestPointData > collectInterestPointData( final SpimData2 spimData, final boolean modifiedOnly )
+	{
+		final List< InterestPointData > allData = new ArrayList<>();
+
+		for ( final Entry< ViewId, ViewInterestPointLists > entry : spimData.getViewInterestPoints().getViewInterestPoints().entrySet() )
+		{
+			final ViewId viewId = entry.getKey();
+			final ViewInterestPointLists vipl = entry.getValue();
+
+			for ( final Entry< String, InterestPoints > labelEntry : vipl.getHashMap().entrySet() )
 			{
-				ipl.saveInterestPoints( false );
-				ipl.saveCorrespondingInterestPoints( false );
+				final String label = labelEntry.getKey();
+				final InterestPoints ips = labelEntry.getValue();
+
+				// Only include if modified (or if modifiedOnly is false)
+				if ( !modifiedOnly || ips.hasModifiedInterestPoints() || ips.hasModifiedCorrespondingInterestPoints() )
+				{
+					if ( !( ips instanceof InterestPointsN5 ) )
+						throw new RuntimeException( "InterestPointData.from() requires InterestPointsN5, got: " + ips.getClass().getName() );
+
+					allData.add( InterestPointData.from( viewId, label, (InterestPointsN5) ips ) );
+				}
 			}
-			catch ( Exception e )
-			{
-				IOFunctions.println( "Could not save interest points for (trying to skip): " + ipl.getXMLRepresentation()  );
-			}
-		});
+		}
+
+		return allData;
+	}
+
+	/**
+	 * Save interest points using static methods (suitable for Spark).
+	 * This method saves both interest points and correspondences using the static API.
+	 *
+	 * @param spimData The SpimData2
+	 */
+	public static void saveInterestPointsInParallelStatic( final SpimData2 spimData )
+	{
+		final int numThreads = Threads.numThreads();
+		IOFunctions.println( "Saving interest points (static) multi-threaded (" + numThreads + " threads) ... " );
+
+		final URI baseDir = spimData.getBasePathURI();
+		final List< InterestPointData > allData = collectInterestPointData( spimData, true );
+
+		IOFunctions.println( "Collected " + allData.size() + " interest point sets to save." );
+
+		if ( allData.isEmpty() )
+			return;
+
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+		try
+		{
+			pool.submit( () ->
+				allData.parallelStream().forEach( data ->
+				{
+					if ( !InterestPointsN5.saveInterestPointDataStatic( baseDir, data ) )
+					{
+						IOFunctions.println( "ERROR: Could not save interest points for tp=" +
+								data.timepointId + ", setup=" + data.setupId + ", label=" + data.label );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to save interest points in parallel (static)", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
 	}
 }

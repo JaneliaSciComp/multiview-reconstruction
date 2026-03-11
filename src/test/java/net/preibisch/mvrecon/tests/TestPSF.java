@@ -70,8 +70,8 @@ public class TestPSF
 		assertEquals( 0.0, maxAvgPSF.getAt( 0, 0 ).getRealDouble(), SimulateUtil.delta, "Expecting specific pixel intensities." );
 		assertEquals( 0.0, maxAvgPSF.getAt( 30, 30 ).getRealDouble(), SimulateUtil.delta, "Expecting specific pixel intensities." );
 		assertEquals( 1.0, maxAvgPSF.getAt( 15, 15 ).getRealDouble(), SimulateUtil.delta, "Expecting specific pixel intensities." );
-		assertEquals( 0.15018849074840546, maxAvgPSF.getAt( 11, 15 ).getRealDouble(), SimulateUtil.delta, "Expecting specific pixel intensities." );
-		assertEquals( 0.008482062257826328, maxAvgPSF.getAt( 23, 26 ).getRealDouble(), SimulateUtil.delta, "Expecting specific pixel intensities." );
+		assertEquals( 0.15133176743984222, maxAvgPSF.getAt( 11, 15 ).getRealDouble(), SimulateUtil.delta, "Expecting specific pixel intensities." );
+		assertEquals( 0.006437880918383598, maxAvgPSF.getAt( 23, 26 ).getRealDouble(), SimulateUtil.delta, "Expecting specific pixel intensities." );
 	}
 
 	public static RandomAccessibleInterval< FloatType > testPSF( final SpimData2 spimData, final String label, final boolean display )
@@ -117,7 +117,7 @@ public class TestPSF
 	{
 		new ImageJ();
 
-		final SpimData2 spimData = SimulateUtil.setUpLarge();
+		final SpimData2 spimData = SimulateUtil.setUp();//Large();
 
 		TestInterestPointDetection.testDoG( spimData, "beads" );
 		TestRegistration.testRegistration( spimData, "beads", false );

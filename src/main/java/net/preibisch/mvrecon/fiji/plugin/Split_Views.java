@@ -47,6 +47,8 @@ import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.splitting.SplitDistributeEvenly;
 import net.preibisch.mvrecon.process.splitting.SplitInterval;
 import net.preibisch.mvrecon.process.splitting.SplitOctTree;
@@ -64,6 +66,7 @@ public class Split_Views implements PlugIn
 	public static double defaultExclusionRadiusIP = 20;
 
 	public static boolean defaultAssignIlluminations = true;
+	public static boolean defaultSaveOnTheFly = false;
 
 	public static int defaultResultChoice = 0;
 	private static final String[] resultChoices = new String[] { "Display", "Save & Close" };
@@ -100,7 +103,26 @@ public class Split_Views implements PlugIn
 			final double excludeRadius,
 			final boolean display )
 	{
-		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius );
+		return split( data, saveAs, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, display, SplittingTools.defaultFakeLabel(), null, null );
+	}
+
+	public static boolean split(
+			final SpimData2 data,
+			final URI saveAs,
+			final SplitInterval splitting,
+			final boolean assingIlluminationsFromTileIds,
+			final InterestPointAdding ipAdding,
+			final double pointDensity,
+			final int minPoints,
+			final int maxPoints,
+			final double error,
+			final double excludeRadius,
+			final boolean display,
+			final String fakeLabel,
+			final SplittingTools.InterestPointSaver saver,
+			final SplittingTools.CorrespondenceSaver corrSaver )
+	{
+		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, fakeLabel, saver, corrSaver );
 
 		if ( display )
 		{
@@ -157,6 +179,7 @@ public class Split_Views implements PlugIn
 
 		gd.addFileField("New_XML_File", suggestion, 30);
 		gd.addChoice( "Split_Result", resultChoices, resultChoices[ defaultResultChoice ] );
+		gd.addCheckbox( "Save_interest_points_on-the-fly (recommended for large datasets)", defaultSaveOnTheFly );
 
 		gd.showDialog();
 
@@ -182,6 +205,7 @@ public class Split_Views implements PlugIn
 
 		final String saveAs = gd.getNextString();
 		final int choice = defaultResultChoice = gd.getNextChoiceIndex();
+		final boolean saveOnTheFly = defaultSaveOnTheFly = gd.getNextBoolean();
 
 		double density = defaultDensity;
 		int minPoints = defaultMinPoints;
@@ -191,10 +215,13 @@ public class Split_Views implements PlugIn
 
 		InterestPointAdding ipAdding = InterestPointAdding.NONE;
 
+		String fakeLabel = SplittingTools.defaultFakeLabel();
+
 		if ( ipChoice < 2 )
 		{
 			final GenericDialogPlus gd2 = new GenericDialogPlus( (ipChoice == 0) ? "Add fake interest points (DEPRECATED)" : "Add fake CORRESPONDING interest points" );
 
+			gd2.addStringField( "Interest_point_label", fakeLabel, 20 );
 			gd2.addNumericField( "Density (# per 100x100x100 px)", defaultDensity, 2 );
 			gd2.addNumericField( "Min_total number of points", defaultMinPoints, 0 );
 			gd2.addNumericField( "Max_total number of points", defaultMaxPoints, 0 );
@@ -207,6 +234,7 @@ public class Split_Views implements PlugIn
 			if ( gd2.wasCanceled() )
 				return false;
 
+			fakeLabel = gd2.getNextString();
 			density = defaultDensity = gd2.getNextNumber();
 			minPoints = defaultMinPoints = (int)Math.round(gd2.getNextNumber());
 			maxPoints = defaultMaxPoints = (int)Math.round(gd2.getNextNumber());
@@ -223,7 +251,21 @@ public class Split_Views implements PlugIn
 			}
 		}
 
-		return split(data, URITools.toURI(saveAs), splittingMethod, assignIllum, ipAdding, density, minPoints, maxPoints, error, exclusionRadius, choice == 0);
+		final SplittingTools.InterestPointSaver saver = saveOnTheFly ? vipl -> {
+			for ( final ViewInterestPointLists v : vipl.values() )
+				for ( final InterestPoints ips : v.getHashMap().values() )
+				{
+					ips.saveInterestPoints( false );
+					ips.saveCorrespondingInterestPoints( false );
+				}
+		} : null;
+
+		final SplittingTools.CorrespondenceSaver corrSaver = saveOnTheFly ? vipl -> {
+			for ( final InterestPoints ips : vipl.getHashMap().values() )
+				ips.saveCorrespondingInterestPoints( false );
+		} : null;
+
+		return split( data, URITools.toURI( saveAs ), splittingMethod, assignIllum, ipAdding, density, minPoints, maxPoints, error, exclusionRadius, choice == 0, fakeLabel, saver, corrSaver );
 	}
 
 	public static void main( String[] args ) throws SpimDataException
