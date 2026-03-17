@@ -46,7 +46,9 @@ public class AllenOMEZarrProperties implements N5Properties
 	// mapping of viewIDs to corresponding OME-ZARRs
 	private final Map< ViewId, OMEZARREntry > viewIdToOmeZarrPath;
 
-	// Cache for OME multiscale metadata per setupId so that we can retrieve the appropriate dataset path (e.g., "s0", "s1", "s2" or "0", "1", "2")
+	// N5Properties.getDatasetPath should require an N5Reader so that the dataset path could always be retrieved correctly (e.g., "s0", "s1", "s2" or "0", "1", "2")
+	// To work around this problem for now, first time we retrieve the view setup we cache it so that next time
+	// the dataset path is needed - we use the cached value.
 	private final Map< ViewId, OmeNgffMultiScaleMetadata > viewIdToOmeMetadata = new HashMap<>();
 
 	public AllenOMEZarrProperties(
