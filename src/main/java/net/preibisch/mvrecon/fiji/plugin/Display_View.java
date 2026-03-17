@@ -31,31 +31,20 @@ import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.sequence.Angle;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.Illumination;
-import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.img.ImgFactory;
-import net.imglib2.img.imageplus.ImagePlusImgFactory;
-import net.imglib2.type.NativeType;
-import net.imglib2.type.numeric.integer.UnsignedShortType;
-import net.imglib2.type.numeric.real.FloatType;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AbstractImgFactoryImgLoader;
 import net.preibisch.mvrecon.process.export.DisplayImage;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class Display_View implements PlugIn
 {
-	public static String[] pixelTypes = new String[]{ "32-bit floating point", "16-bit unsigned integer" };
-	public static int defaultPixelType = 0;
-	protected int pixelType = 0;
-
 	public static String[] imgTypes = new String[]{ "ArrayImg", "PlanarImg (large images, easy to display)", "CellImg (large images)" };
 	public static int defaultImgType = 1;
 	protected int imgtype = 1;
@@ -107,8 +96,6 @@ public class Display_View implements PlugIn
 		gd.addChoice( "Illumination", illuminationNames, illuminationNames[ defaultIlluminationChoice ] );
 		gd.addChoice( "Tile", tileNames, tileNames[ defaultTileChoice ] );
 		gd.addChoice( "Timepoint", timepointNames, timepointNames[ defaultTimepointChoice ] );
-		gd.addMessage( "" );
-		gd.addChoice( "Pixel_type", pixelTypes, pixelTypes[ defaultPixelType ] );
 
 		gd.showDialog();
 
@@ -120,7 +107,6 @@ public class Display_View implements PlugIn
 		final Illumination illumination = illuminations.get( defaultIlluminationChoice = gd.getNextChoiceIndex() );
 		final Tile tile = tiles.get( defaultTileChoice = gd.getNextChoiceIndex() );
 		final TimePoint tp = timepoints.get( defaultTimepointChoice = gd.getNextChoiceIndex() );
-		final int pixelType = defaultPixelType = gd.getNextChoiceIndex();
 
 		// get the corresponding viewid
 		final ViewId viewId = SpimData2.getViewId( result.getData().getSequenceDescription(), tp, channel, angle, illumination, tile );
@@ -146,44 +132,13 @@ public class Display_View implements PlugIn
 		}
 		
 		// display it
-		display( result.getData(), viewId, pixelType, name );
+		display( result.getData(), viewId, name );
 	}
 
-	public static void display( final AbstractSpimData< ? > spimData, final ViewId viewId, final int pixelType, final String name )
+	private static void display( final AbstractSpimData< ? > spimData, final ViewId viewId, final String name )
 	{
-		final ImgLoader imgLoader = (ImgLoader)spimData.getSequenceDescription().getImgLoader();
-		final ImgFactory< ? extends NativeType< ? > > factory;
-		final AbstractImgFactoryImgLoader il;
-
-		// load as ImagePlus directly if possible
-		if ( AbstractImgFactoryImgLoader.class.isInstance( imgLoader ) )
-		{
-			il = (AbstractImgFactoryImgLoader)imgLoader;
-			factory = il.getImgFactory();
-			il.setImgFactory( new ImagePlusImgFactory< FloatType >( new FloatType()));
-		}
-		else
-		{
-			il = null;
-			factory = null;
-		}
-
-		// display it
-
-		if ( pixelType == 0 )
-		{
-			FusionTools.getImagePlusInstance(((ImgLoader)spimData.getSequenceDescription().getImgLoader()).getSetupImgLoader( viewId.getViewSetupId() ).getFloatImage( viewId.getTimePointId(), false ), true, name, 0, 255, DisplayImage.service ).show();
-		}
-		else
-		{
-			@SuppressWarnings( "unchecked" )
-			RandomAccessibleInterval< UnsignedShortType > img =
-				( RandomAccessibleInterval< UnsignedShortType > ) ((ImgLoader)spimData.getSequenceDescription().getImgLoader()).getSetupImgLoader( viewId.getViewSetupId() ).getImage( viewId.getTimePointId() );
-			FusionTools.getImagePlusInstance(img, true, name, 0, 255, DisplayImage.service ).show();
-		}
-
-		if ( factory != null && il != null )
-			il.setImgFactory( factory );
+		RandomAccessibleInterval image = spimData.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() ).getImage( viewId.getTimePointId() );
+		FusionTools.getImagePlusInstance( image, true, name, 0, 255, DisplayImage.service ).show();
 	}
 
 	public static void main( String[] args )
