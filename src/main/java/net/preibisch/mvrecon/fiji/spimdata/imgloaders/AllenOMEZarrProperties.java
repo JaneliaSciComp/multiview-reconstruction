@@ -23,8 +23,9 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders;
 
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -32,6 +33,7 @@ import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiSca
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.OmeNgffDataset;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.ScaleCoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TranslationCoordinateTransformation;
 
 import bdv.img.n5.N5Properties;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
@@ -49,7 +51,8 @@ public class AllenOMEZarrProperties implements N5Properties
 	// N5Properties.getDatasetPath should require an N5Reader so that the dataset path could always be retrieved correctly (e.g., "s0", "s1", "s2" or "0", "1", "2")
 	// To work around this problem for now, first time we retrieve the view setup we cache it so that next time
 	// the dataset path is needed - we use the cached value.
-	private final Map< ViewId, OmeNgffMultiScaleMetadata > viewIdToOmeMetadata = new HashMap<>();
+	// TODO: Remove this and the method that populates it, once the signature for N5Properties.getDatasetPath was updated to use the N5 Reader
+	private final ConcurrentMap< ViewId, OmeNgffMultiScaleMetadata > viewIdToOmeMetadata = new ConcurrentHashMap<>();
 
 	public AllenOMEZarrProperties(
 			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
@@ -143,6 +146,25 @@ public class AllenOMEZarrProperties implements N5Properties
 						mipMapResolutions[ i ][ d ] = Math.round(mipMapResolutions[ i ][ d ]*10000)/10000d; // round to the 5th digit
 					}
 				}
+				if ( c instanceof TranslationCoordinateTransformation)
+				{
+					final TranslationCoordinateTransformation t = ( TranslationCoordinateTransformation ) c;
+
+					if (firstScale == null) {
+						throw new IllegalStateException("Expected first scale to be set before the translation for level " + i + " dataset is processed");
+					}
+
+					for ( int d = 0; d < mipMapResolutions[ i ].length; ++d )
+					{
+						// at this point firstScale should be available
+						double pxTranslation = t.getTranslation()[ d ] / firstScale[ d ];
+						double pxTranslationCorrection = (pxTranslation + 0.5) / mipMapResolutions[i][d] - 0.5;
+						if (Math.abs(pxTranslationCorrection) >= 0.5) {
+							System.out.printf("Pixel translation[%d][%d]=%f (=%fpx) and the pixel correction %f is more than 0.5px\n",
+									i, d, t.getTranslation()[ d ], pxTranslation, pxTranslationCorrection);
+						}
+					}
+				}
 			}
 		}
 
@@ -153,17 +175,14 @@ public class AllenOMEZarrProperties implements N5Properties
 	{
 		OmeNgffMultiScaleMetadata omeNgffMultiScaleMetadata = getViewSetupMultiscaleMetadata(n5, timepointId, setupId);
 
-		String viewSetupPath = getPath( setupId, timepointId );
-		String datasetPath;
-
-		if ( omeNgffMultiScaleMetadata != null ) {
-			// get the first scale path from the metadata
-			datasetPath = omeNgffMultiScaleMetadata.datasets[level].path;
-		} else {
-			// use the default level value
-			datasetPath = String.valueOf( level );
+		if (omeNgffMultiScaleMetadata == null) {
+			throw new IllegalStateException("OME multiscale metadata could not be cached for (tp, setup) = (" +
+					timepointId + "," + setupId + ") - current N5Reader is " + n5);
 		}
 
+		String viewSetupPath = getPath( setupId, timepointId );
+		// get the first scale path from the metadata
+		String datasetPath = omeNgffMultiScaleMetadata.datasets[level].path;
 		return String.format( "%s/%s", viewSetupPath, datasetPath);
 	}
 

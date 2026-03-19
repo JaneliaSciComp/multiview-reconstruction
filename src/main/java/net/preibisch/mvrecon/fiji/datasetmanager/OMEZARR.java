@@ -262,9 +262,6 @@ public class OMEZARR implements MultiViewDatasetDefinition
 
 				final DatasetAttributes attr = reader.getDatasetAttributes( dataset + "/" + path );
 
-				if (attr == null) {
-					continue;
-				}
 				IOFunctions.println( "NumDimensions: " + attr.getNumDimensions() );
 				IOFunctions.println( "Dimensions: " + Arrays.toString( attr.getDimensions() ) );
 				IOFunctions.println( "BlockSize: " + Arrays.toString( attr.getBlockSize() ) );
