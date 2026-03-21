@@ -39,6 +39,7 @@ import bdv.img.n5.N5Properties;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 
 public class AllenOMEZarrProperties implements N5Properties
@@ -53,6 +54,9 @@ public class AllenOMEZarrProperties implements N5Properties
 	// the dataset path is needed - we use the cached value.
 	// TODO: Remove this and the method that populates it, once the signature for N5Properties.getDatasetPath was updated to use the N5 Reader
 	private final ConcurrentMap< ViewId, OmeNgffMultiScaleMetadata > viewIdToOmeMetadata = new ConcurrentHashMap<>();
+
+	// only warn once per opened XML if TranslationCoordinateTransformation is missing
+	private boolean warnedMissingTranslation = false;
 
 	public AllenOMEZarrProperties(
 			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
@@ -122,49 +126,111 @@ public class AllenOMEZarrProperties implements N5Properties
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
 
 		// multiresolution pyramid
-		OmeNgffMultiScaleMetadata multiScaleMetadata = n5properties.getViewSetupMultiscaleMetadata(n5, timePointId, setupId);
+		final OmeNgffMultiScaleMetadata multiScaleMetadata = n5properties.getViewSetupMultiscaleMetadata(n5, timePointId, setupId);
 
-		double[][] mipMapResolutions = new double[ multiScaleMetadata.datasets.length ][ 3 ];
-		double[] firstScale = null;
+		final double[][] mipMapResolutions = new double[ multiScaleMetadata.datasets.length ][ 3 ];
+		double[] scaleS0 = null;
 
-		for ( int i = 0; i < multiScaleMetadata.datasets.length; ++i )
+		// iterate over all resolution levels for scale
+		for ( int s = 0; s < multiScaleMetadata.datasets.length; ++s )
 		{
-			final OmeNgffDataset ds = multiScaleMetadata.datasets[ i ];
+			final OmeNgffDataset ds = multiScaleMetadata.datasets[ s ];
 
 			for ( final CoordinateTransformation< ? > c : ds.coordinateTransformations )
 			{
 				if ( c instanceof ScaleCoordinateTransformation )
 				{
-					final ScaleCoordinateTransformation s = ( ScaleCoordinateTransformation ) c;
+					final ScaleCoordinateTransformation scale = ( ScaleCoordinateTransformation ) c;
 
-					if ( firstScale == null )
-						firstScale = s.getScale().clone();
+					if ( scaleS0 == null )
+						scaleS0 = scale.getScale().clone();
 
-					for ( int d = 0; d < mipMapResolutions[ i ].length; ++d )
+					for ( int d = 0; d < mipMapResolutions[ s ].length; ++d )
 					{
-						mipMapResolutions[ i ][ d ] = s.getScale()[ d ] / firstScale[ d ];
-						mipMapResolutions[ i ][ d ] = Math.round(mipMapResolutions[ i ][ d ]*10000)/10000d; // round to the 5th digit
+						mipMapResolutions[ s ][ d ] = scale.getScale()[ d ] / scaleS0[ d ];
+						mipMapResolutions[ s ][ d ] = Math.round(mipMapResolutions[ s ][ d ]*10000)/10000d; // round to the 5th digit
 					}
 				}
-				if ( c instanceof TranslationCoordinateTransformation)
+			}
+		}
+
+		// iterate over all resolution levels for translation (to make sure scaleS0 is assigned if it existed)
+		// OME-Zarr 0.4: physical = pixel * scale + translation
+		// For averaging downsampling by factor r: expected relative shift = (r-1)/2 in s0 pixels
+		// For non-averaging (strided) downsampling: expected relative shift = 0
+		double[] translationS0 = null;
+		Boolean isAveraging = null; // determined from first downsampled level with r>1, then verified for subsequent levels
+
+		//System.out.println( "\nsetup " + setupId );
+
+		for ( int s = 0; s < multiScaleMetadata.datasets.length; ++s )
+		{
+			final OmeNgffDataset ds = multiScaleMetadata.datasets[ s ];
+
+			boolean foundTranslation = false;
+
+			for ( final CoordinateTransformation< ? > c : ds.coordinateTransformations )
+			{
+				if ( c instanceof TranslationCoordinateTransformation )
 				{
 					final TranslationCoordinateTransformation t = ( TranslationCoordinateTransformation ) c;
+					foundTranslation = true;
 
-					if (firstScale == null) {
-						throw new IllegalStateException("Expected first scale to be set before the translation for level " + i + " dataset is processed");
+					if ( scaleS0 == null )
+						throw new IllegalStateException( "Expected first scale to be set before the translation for level " + s + " dataset is processed" );
+
+					//System.out.println( "s=" + s + ", translation: " + Arrays.toString( t.getTranslation() ));
+
+					// capture s0's translation
+					if ( translationS0 == null )
+					{
+						translationS0 = t.getTranslation().clone();
+						// s0: no validation needed, just capture
+						break;
 					}
 
-					for ( int d = 0; d < mipMapResolutions[ i ].length; ++d )
+					for ( int d = 0; d < mipMapResolutions[ s ].length; ++d )
 					{
-						// at this point firstScale should be available
-						double pxTranslation = t.getTranslation()[ d ] / firstScale[ d ];
-						double pxTranslationCorrection = (pxTranslation + 0.5) / mipMapResolutions[i][d] - 0.5;
-						if (Math.abs(pxTranslationCorrection) >= 0.5) {
-							System.out.printf("Pixel translation[%d][%d]=%f (=%fpx) and the pixel correction %f is more than 0.5px\n",
-									i, d, t.getTranslation()[ d ], pxTranslation, pxTranslationCorrection);
+						final double r = mipMapResolutions[ s ][ d ];
+
+						// skip dimensions that are not downsampled (r=1), both modes have shift=0
+						if ( Math.abs( r - 1.0 ) < 0.01 )
+							continue;
+
+						// relative pixel translation: (translation_s - translationS0) / scaleS0
+						final double relPxTranslation = ( t.getTranslation()[ d ] - translationS0[ d ] ) / scaleS0[ d ];
+						final double expectedAveraging = ( r - 1.0 ) / 2.0; // 0.5, 1.5, 3.5, 7.5, ...
+
+						final boolean matchesAveraging = Math.abs( relPxTranslation - expectedAveraging ) < 0.01;
+						final boolean matchesNonAveraging = Math.abs( relPxTranslation ) < 0.01;
+
+						//System.out.println( "s=" + s + ", d=" + d + ", relPxTranslation=" + relPxTranslation + " @ scale=" + r );
+
+						if ( isAveraging == null )
+						{
+							// determine mode from first downsampled dimension
+							if ( matchesAveraging )
+								isAveraging = true;
+							else if ( matchesNonAveraging )
+								throw new IllegalStateException( "Non-averaging downsampling detected (translation=0 for level " + s + " dim " + d + "), which is currently not supported." );
+							else
+								throw new IllegalStateException( "Unsupported translation for level " + s + " dim " + d + ": relative pixel translation=" + relPxTranslation + " (expected " + expectedAveraging + " for averaging or 0.0 for non-averaging)." );
+						}
+						else
+						{
+							// verify consistency with detected mode
+							final double expected = isAveraging ? expectedAveraging : 0.0;
+							if ( Math.abs( relPxTranslation - expected ) >= 0.01 )
+								throw new IllegalStateException( "Inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + relPxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling." );
 						}
 					}
 				}
+			}
+
+			if ( !foundTranslation && s > 0 && !n5properties.warnedMissingTranslation )
+			{
+				IOFunctions.println( "WARNING: No TranslationCoordinateTransformation found, assuming half-pixel shifts for averaging-based downsampling." );
+				n5properties.warnedMissingTranslation = true;
 			}
 		}
 
