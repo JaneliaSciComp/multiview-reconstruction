@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import mpicbg.spim.data.sequence.VoxelDimensions;
 import org.bigdataviewer.n5.N5CloudImageLoader;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
@@ -188,13 +189,15 @@ public class Resave_N5Api implements PlugIn
 							}
 							else
 							{
+								VoxelDimensions vx = data.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize();
 								// 5d OME-ZARR with dimension=1 in c and t
 								mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR(
 										n5Writer,
 										viewId,
 										dataTypes.get( viewId.getViewSetupId() ),
 										dimensions.get( viewId.getViewSetupId() ),
-										//data.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(),
+										vx.dimensionsAsDoubleArray(), // resolutionS0
+										vx.unit(),
 										compression,
 										blockSize,
 										downsamplings);

@@ -33,7 +33,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
@@ -42,7 +41,6 @@ import java.util.function.Function;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
-import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.RawCompression;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
@@ -382,7 +380,8 @@ public class N5ApiTools
 			final ViewId viewId,
 			final DataType dataType,
 			final long[] dimensions,
-			//final double[] resolutionS0, // TODO: this is a hack (uses 1,1,1) so the export downsampling pyramid is working
+			final double[] resolutionS0,
+			final String resolutionUnit,
 			final Compression compression,
 			final int[] blockSize,
 			int[][] downsamplings )
@@ -414,25 +413,17 @@ public class N5ApiTools
 		final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 				(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
-		// extract the resolution of the s0 export
-		//final VoxelDimensions vx = fusionGroup.iterator().next().getViewSetup().getVoxelSize();
-		//final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisoF, downsamplingF );
-
 		// create metadata
 		final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
 				5, // int n
 				"/", // String name, I also saw "/"
-				new double[] { 1, 1, 1 }, //resolutionS0, // double[] resolutionS0,
-				"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+				resolutionS0, // double[] resolutionS0,
+				resolutionUnit, //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 				mrInfo.length, // int numResolutionLevels,
 				levelToName,
 				levelToMipmapTransform );
 
 		// save metadata
-
-		//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
-		// for this to work you need to register an adapter in the N5Factory class
-		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
 		driverVolumeWriter.setAttribute( baseDataset, "multiscales", meta );
 
 		return mrInfo;

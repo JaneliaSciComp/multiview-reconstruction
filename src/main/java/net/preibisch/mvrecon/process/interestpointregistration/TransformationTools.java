@@ -320,13 +320,13 @@ public class TransformationTools
 			else if ( unit.equalsIgnoreCase( transformedCal.getB() ) )
 				unit = transformedCal.getB();
 			else
-				unit = "inconsisistent";
+				unit = "inconsistent";
 
 			System.out.println( "Calibration (transformed): " + Util.printCoordinates( transformedCal.getA() ) + " " + transformedCal.getB() );
 		}
 
 		if ( count == 0 )
-			return new ValuePair<>( new double[] { 1, 1, 1 }, "px" );
+			return new ValuePair<>( new double[] { 1, 1, 1 }, "micrometer" );
 		else
 			return new ValuePair<>( new double[] { avgCalX / (double)count, avgCalY / (double)count, avgCalZ / (double)count }, unit );
 	}

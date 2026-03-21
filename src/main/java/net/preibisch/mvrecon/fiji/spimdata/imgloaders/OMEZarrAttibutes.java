@@ -39,9 +39,7 @@ import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTrans
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.ScaleCoordinateTransformation;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TranslationCoordinateTransformation;
 
-import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import util.URITools;
 
 public class OMEZarrAttibutes
@@ -61,12 +59,6 @@ public class OMEZarrAttibutes
 			final Function<Integer, String> levelToName,
 			final Function<Integer, AffineTransform3D > levelToMipmapTransform )
 	{
-		// TODO: make sure the unit is supported by OME-ZARR, if not replace it because otherwise readers will fail
-		// TODO: e.g. um -> micrometer
-		// TODO: etc.
-		// TODO: can you find out what the correct unit for 'unit unknown' is, because that is what I would replace it with, otherwise micrometer
-		// TOOD: then please also change in TransformationTools.computeCalibration
-		
 		final OmeNgffMultiScaleMetadata[] meta = new OmeNgffMultiScaleMetadata[ 1 ];
 
 		// dataset name and co
@@ -85,9 +77,10 @@ public class OMEZarrAttibutes
 		if ( n >= 4 )
 			axes[ index++ ] = new Axis( "channel", "c", null );
 
-		axes[ index++ ] = new Axis( "space", "z", unitXYZ );
-		axes[ index++ ] = new Axis( "space", "y", unitXYZ );
-		axes[ index++ ] = new Axis( "space", "x", unitXYZ );
+		String unit = adaptSpatialUnit( unitXYZ );
+		axes[ index ] = new Axis( "space", "z", unit );
+		axes[ index + 1 ] = new Axis( "space", "y", unit );
+		axes[ index + 2 ] = new Axis( "space", "x", unit );
 
 		// multiresolution-pyramid
 		// TODO: seem to be in XYZCT order (but in the file it seems reversed)
@@ -106,8 +99,8 @@ public class OMEZarrAttibutes
 
 			for ( int d = 0; d < 3; ++d )
 			{
-				translation[ d ] = m.getTranslation()[ d ];
-				scale[ d ] = resolutionS0[ d ] * m.get( d, d );
+				translation[ d ] = resolutionS0[d] * m.getTranslation()[ d ];
+				scale[ d ] = resolutionS0[d] * m.get( d, d );
 			}
 
 			// if 4d and 5d, add 1's for C and T
@@ -137,27 +130,74 @@ public class OMEZarrAttibutes
 		return meta;
 	}
 
-
-	// Note: TransformationTools.computeAverageCalibration does this reasonably correct
-	/*
-	public static double[] getResolutionS0( final VoxelDimensions vx, final double anisoF, final double downsamplingF )
+	public static double[] getResolutionS0( final double[] cal, final double anisoF, final double downsamplingF )
 	{
-		final double[] resolutionS0 = vx.dimensionsAsDoubleArray();
+		double[] resolutionS0 = Arrays.copyOf( cal, cal.length );
 
-		// not preserving anisotropy
-		if ( Double.isNaN( anisoF ) )
-			resolutionS0[ 2 ] = resolutionS0[ 0 ];
+		if ( !Double.isNaN( anisoF ) ) {
+			// preserving anisotropy
+			resolutionS0[2] = cal[2] * anisoF;
+		}
 
 		// downsampling
 		if ( !Double.isNaN( downsamplingF ) )
 			Arrays.setAll( resolutionS0, d -> resolutionS0[ d ] * downsamplingF );
 
-		// TODO: this is a hack so the export downsampling pyramid is working
-		Arrays.setAll( resolutionS0, d -> 1 );
-
 		return resolutionS0;
 	}
-	*/
+
+	/**
+	 * Adapt various space unit namings to the units supported by Neuroglancer.
+	 * OME NGFF spec does not have any restrictions on units but Neuroglancer only supports the ones that end in meter or the US customary units.
+	 * @param unit
+	 * @return
+	 */
+	private static String adaptSpatialUnit(String unit)
+	{
+		if ( unit == null )
+			return "micrometer";
+
+		switch ( unit.toLowerCase() ) {
+			case "angstrom":
+			case "ångström":
+			case "ångströms":
+				return "angstrom";
+			case "nm":
+			case "nanometers":
+			case "nanometer":
+				return "nanometer";
+			case "mm":
+			case "millimeters":
+			case "millimeter":
+				return "millimeter";
+			case "m":
+			case "meters":
+			case "meter":
+				return "meter";
+			case "km":
+			case "kilometer":
+			case "kilometers":
+				return "kilometer";
+			case "inch":
+			case "inches":
+				return "inch";
+			case "foot":
+			case "feet":
+				return "foot";
+			case "yard":
+			case "yards":
+				return "yard";
+			case "mile":
+			case "miles":
+				return "mile";
+			case "um":
+			case "μm":
+			case "microns":
+			case "micron":
+			default:
+				return "micrometer";
+		}
+	}
 
 	public static void loadOMEZarr( final N5Reader n5, final String dataset )
 	{
