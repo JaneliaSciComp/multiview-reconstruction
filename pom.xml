@@ -11,7 +11,7 @@
 
 	<groupId>net.preibisch</groupId>
 	<artifactId>multiview-reconstruction</artifactId>
-	<version>8.1.3-SNAPSHOT</version>
+	<version>8.1.4-SNAPSHOT</version>
 
 	<name>Multiview Reconstruction</name>
 	<description>Software for the reconstruction of multi-view microscopic acquisitions
