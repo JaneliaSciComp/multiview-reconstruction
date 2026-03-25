@@ -733,17 +733,19 @@ public class InterestPointsN5 extends InterestPoints
 	}
 
 	/**
-	 * Core static method for saving interest points to N5.
-	 * Used by both instance method and Spark-compatible API.
+	 * Core static method for saving interest points to N5 using an already-open N5Writer.
+	 * The caller is responsible for opening and closing the writer.
+	 * Use this overload when saving many views to avoid the per-view open/close overhead
+	 * (e.g. in BigStitcher-Spark interest point detection).
 	 *
-	 * @param baseDir Base URI for N5 storage (parent of interestpoints.n5)
+	 * @param n5Writer an already-open N5Writer for interestpoints.n5
 	 * @param n5path Relative path within interestpoints.n5 (e.g., "tpId_0_viewSetupId_1/beads")
 	 * @param ids Array of detection IDs
 	 * @param locations Array of coordinates (numPoints x numDimensions)
 	 * @return true if successful
 	 */
 	public static boolean saveInterestPointsStatic(
-			final URI baseDir,
+			final N5Writer n5Writer,
 			final String n5path,
 			final int[] ids,
 			final double[][] locations )
@@ -752,8 +754,6 @@ public class InterestPointsN5 extends InterestPoints
 
 		try
 		{
-			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) );
-
 			if ( n5Writer.exists( dataset ) )
 				n5Writer.remove( dataset );
 
@@ -782,7 +782,7 @@ public class InterestPointsN5 extends InterestPoints
 						DataType.FLOAT64,
 						new GzipCompression() );
 
-				IOFunctions.println( "Saved: " + URITools.appendName( baseDir, baseN5 ) + "/" + dataset + " (was empty)" );
+				IOFunctions.println( "Saved: " + n5path + "/" + dataset + " (was empty)" );
 			}
 			else
 			{
@@ -811,14 +811,44 @@ public class InterestPointsN5 extends InterestPoints
 				N5Utils.save( idData, n5Writer, idDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
 				N5Utils.save( locData, n5Writer, locDataset, new int[] { (int) locData.dimension( 0 ), defaultBlockSize }, new GzipCompression() );
 
-				IOFunctions.println( "Saved: " + URITools.appendName( baseDir, baseN5 ) + "/" + dataset );
+				IOFunctions.println( "Saved: " + n5path + "/" + dataset );
 			}
 
-			n5Writer.close();
 			return true;
 		}
 		catch ( Exception e )
 		{
+			IOFunctions.println( "Couldn't write interestpoints to N5 '" + n5path + "/" + dataset + "': " + e );
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	/**
+	 * Core static method for saving interest points to N5.
+	 * Opens and closes its own N5Writer. For saving many views, prefer
+	 * {@link #saveInterestPointsStatic(N5Writer, String, int[], double[][])} with a
+	 * shared writer to avoid the per-view open/close overhead.
+	 *
+	 * @param baseDir Base URI for N5 storage (parent of interestpoints.n5)
+	 * @param n5path Relative path within interestpoints.n5 (e.g., "tpId_0_viewSetupId_1/beads")
+	 * @param ids Array of detection IDs
+	 * @param locations Array of coordinates (numPoints x numDimensions)
+	 * @return true if successful
+	 */
+	public static boolean saveInterestPointsStatic(
+			final URI baseDir,
+			final String n5path,
+			final int[] ids,
+			final double[][] locations )
+	{
+		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) ) )
+		{
+			return saveInterestPointsStatic( n5Writer, n5path, ids, locations );
+		}
+		catch ( Exception e )
+		{
+			final String dataset = new File( n5path, "interestpoints" ).getPath();
 			IOFunctions.println( "Couldn't write interestpoints to N5 '" + URITools.appendName( baseDir, baseN5 ) + "/" + dataset + "': " + e );
 			e.printStackTrace();
 			return false;
@@ -843,17 +873,18 @@ public class InterestPointsN5 extends InterestPoints
 	}
 
 	/**
-	 * Core static method for saving correspondences to N5.
-	 * Works directly with List&lt;CorrespondingInterestPoints&gt; (the native internal format).
-	 * Used by both instance method and Spark-compatible API.
+	 * Core static method for saving correspondences to N5 using an already-open N5Writer.
+	 * The caller is responsible for opening and closing the writer.
+	 * Use this overload when saving many views to avoid the per-view open/close overhead
+	 * (e.g. in BigStitcher-Spark interest point detection).
 	 *
-	 * @param baseDir Base URI for N5 storage (parent of interestpoints.n5)
+	 * @param n5Writer an already-open N5Writer for interestpoints.n5
 	 * @param n5path Relative path within interestpoints.n5 (e.g., "tpId_0_viewSetupId_1/beads")
 	 * @param list List of corresponding interest points (can be empty, not null)
 	 * @return true if successful
 	 */
 	public static boolean saveCorrespondencesStatic(
-			final URI baseDir,
+			final N5Writer n5Writer,
 			final String n5path,
 			final List< CorrespondingInterestPoints > list )
 	{
@@ -861,8 +892,6 @@ public class InterestPointsN5 extends InterestPoints
 
 		try
 		{
-			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) );
-
 			if ( n5Writer.exists( dataset ) )
 				n5Writer.remove( dataset );
 
@@ -875,7 +904,6 @@ public class InterestPointsN5 extends InterestPoints
 			if ( list == null || list.size() == 0 )
 			{
 				n5Writer.setAttribute( dataset, "idMap", new HashMap< String, Long >() );
-				n5Writer.close();
 				return true;
 			}
 
@@ -941,13 +969,42 @@ public class InterestPointsN5 extends InterestPoints
 
 			N5Utils.save( corrIdData, n5Writer, corrDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
 
-			IOFunctions.println( "Saved: " + URITools.appendName( baseDir, baseN5 ) + "/" + dataset );
+			IOFunctions.println( "Saved: " + n5path + "/" + dataset );
 
-			n5Writer.close();
 			return true;
 		}
 		catch ( Exception e )
 		{
+			IOFunctions.println( "Couldn't write corresponding interestpoints to N5 '" + n5path + "/" + dataset + "': " + e );
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	/**
+	 * Core static method for saving correspondences to N5.
+	 * Works directly with List&lt;CorrespondingInterestPoints&gt; (the native internal format).
+	 * Opens and closes its own N5Writer. For saving many views, prefer
+	 * {@link #saveCorrespondencesStatic(N5Writer, String, List)} with a shared writer
+	 * to avoid the per-view open/close overhead.
+	 *
+	 * @param baseDir Base URI for N5 storage (parent of interestpoints.n5)
+	 * @param n5path Relative path within interestpoints.n5 (e.g., "tpId_0_viewSetupId_1/beads")
+	 * @param list List of corresponding interest points (can be empty, not null)
+	 * @return true if successful
+	 */
+	public static boolean saveCorrespondencesStatic(
+			final URI baseDir,
+			final String n5path,
+			final List< CorrespondingInterestPoints > list )
+	{
+		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) ) )
+		{
+			return saveCorrespondencesStatic( n5Writer, n5path, list );
+		}
+		catch ( Exception e )
+		{
+			final String dataset = new File( n5path, "correspondences" ).getPath();
 			IOFunctions.println( "Couldn't write corresponding interestpoints to N5 '" + URITools.appendName( baseDir, baseN5 ) + "/" + dataset + "': " + e );
 			e.printStackTrace();
 			return false;
@@ -971,8 +1028,33 @@ public class InterestPointsN5 extends InterestPoints
 	}
 
 	/**
+	 * Static wrapper to save all data from an InterestPointData object using an already-open N5Writer.
+	 * The caller is responsible for opening and closing the writer.
+	 * Use this overload when saving many views to avoid the per-view open/close overhead
+	 * (e.g. in BigStitcher-Spark interest point detection).
+	 *
+	 * @param n5Writer an already-open N5Writer for interestpoints.n5
+	 * @param data InterestPointData containing all data
+	 * @return true if successful
+	 */
+	public static boolean saveInterestPointDataStatic( final N5Writer n5Writer, final InterestPointData data )
+	{
+		final String n5path = "tpId_" + data.timepointId + "_viewSetupId_" + data.setupId + "/" + data.label;
+
+		boolean success = saveInterestPointsStatic( n5Writer, n5path, data.ids, data.locations );
+
+		if ( success && data.hasCorrespondences() )
+			success = saveCorrespondencesStatic( n5Writer, n5path, data.correspondences );
+
+		return success;
+	}
+
+	/**
 	 * Static wrapper to save all data from an InterestPointData object.
 	 * Suitable for Spark RDD.foreach() operations.
+	 * Opens and closes its own N5Writer. For saving many views, prefer
+	 * {@link #saveInterestPointDataStatic(N5Writer, InterestPointData)} with a shared writer
+	 * to avoid the per-view open/close overhead.
 	 *
 	 * @param baseDir Base URI for N5 storage (parent of interestpoints.n5)
 	 * @param data InterestPointData containing all data
