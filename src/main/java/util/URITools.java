@@ -220,7 +220,7 @@ public class URITools
 
 			try
 			{
-				XmlIoSpimData2.saveInterestPointsSharedWriter( data );
+				XmlIoSpimData2.saveInterestPointsInParallel( data );
 			}
 			catch ( Exception e )
 			{

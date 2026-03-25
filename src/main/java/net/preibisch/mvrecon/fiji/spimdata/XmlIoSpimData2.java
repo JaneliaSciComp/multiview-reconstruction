@@ -142,7 +142,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 
 		try
 		{
-			XmlIoSpimData2.saveInterestPointsSharedWriter( spimData );
+			XmlIoSpimData2.saveInterestPointsInParallel( spimData );
 		}
 		catch ( Exception e )
 		{
@@ -318,58 +318,6 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		}
 	}
 
-	/** @deprecated Use {@link #saveInterestPointsSharedWriter(SpimData2)} instead. */
-	@Deprecated
-	public static void saveInterestPointsInParallel( final SpimData2 spimData )
-	{
-		saveInterestPointsSharedWriter( spimData );
-	}
-
-	// ==================== Spark-Compatible Methods ====================
-
-	/**
-	 * Collect all modified interest points as serializable InterestPointData objects.
-	 * This method is useful for Spark-based parallel saving.
-	 *
-	 * @param spimData The SpimData2
-	 * @param modifiedOnly If true, only include interest points that have been modified
-	 * @return List of InterestPointData suitable for Spark RDD operations
-	 */
-	public static List< InterestPointData > collectInterestPointData( final SpimData2 spimData, final boolean modifiedOnly )
-	{
-		final List< InterestPointData > allData = new ArrayList<>();
-
-		for ( final Entry< ViewId, ViewInterestPointLists > entry : spimData.getViewInterestPoints().getViewInterestPoints().entrySet() )
-		{
-			final ViewId viewId = entry.getKey();
-			final ViewInterestPointLists vipl = entry.getValue();
-
-			for ( final Entry< String, InterestPoints > labelEntry : vipl.getHashMap().entrySet() )
-			{
-				final String label = labelEntry.getKey();
-				final InterestPoints ips = labelEntry.getValue();
-
-				// Only include if modified (or if modifiedOnly is false)
-				if ( !modifiedOnly || ips.hasModifiedInterestPoints() || ips.hasModifiedCorrespondingInterestPoints() )
-				{
-					if ( !( ips instanceof InterestPointsN5 ) )
-						throw new RuntimeException( "InterestPointData.from() requires InterestPointsN5, got: " + ips.getClass().getName() );
-
-					allData.add( InterestPointData.from( viewId, label, (InterestPointsN5) ips ) );
-				}
-			}
-		}
-
-		return allData;
-	}
-
-	/** @deprecated Use {@link #saveInterestPointsSharedWriter(SpimData2)} instead. */
-	@Deprecated
-	public static void saveInterestPointsInParallelStatic( final SpimData2 spimData )
-	{
-		saveInterestPointsSharedWriter( spimData );
-	}
-
 	/**
 	 * Save all interest points using a single shared N5Writer with parallel writes.
 	 * Opens the N5Writer once and reuses it across all views, avoiding per-view
@@ -380,10 +328,10 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 	 *
 	 * @param spimData the SpimData2 object whose interest points should be saved
 	 */
-	public static void saveInterestPointsSharedWriter( final SpimData2 spimData )
+	public static void saveInterestPointsInParallel( final SpimData2 spimData )
 	{
 		final int numThreads = Threads.numThreads();
-		IOFunctions.println( "Saving interest points with shared N5Writer (" + numThreads + " threads) ... " );
+		IOFunctions.println( "Saving interest points multi-threaded (" + numThreads + " threads) ... " );
 
 		final URI baseDir = spimData.getBasePathURI();
 
@@ -424,11 +372,56 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		}
 		catch ( final Exception e )
 		{
-			throw new RuntimeException( "Failed to save interest points with shared writer", e );
+			throw new RuntimeException( "Failed to save interest points in parallel", e );
 		}
 		finally
 		{
 			pool.shutdown();
 		}
+	}
+
+	// ==================== Spark-Compatible Methods ====================
+
+	/**
+	 * Collect all modified interest points as serializable InterestPointData objects.
+	 * This method is useful for Spark-based parallel saving.
+	 *
+	 * @param spimData The SpimData2
+	 * @param modifiedOnly If true, only include interest points that have been modified
+	 * @return List of InterestPointData suitable for Spark RDD operations
+	 */
+	public static List< InterestPointData > collectInterestPointData( final SpimData2 spimData, final boolean modifiedOnly )
+	{
+		final List< InterestPointData > allData = new ArrayList<>();
+
+		for ( final Entry< ViewId, ViewInterestPointLists > entry : spimData.getViewInterestPoints().getViewInterestPoints().entrySet() )
+		{
+			final ViewId viewId = entry.getKey();
+			final ViewInterestPointLists vipl = entry.getValue();
+
+			for ( final Entry< String, InterestPoints > labelEntry : vipl.getHashMap().entrySet() )
+			{
+				final String label = labelEntry.getKey();
+				final InterestPoints ips = labelEntry.getValue();
+
+				// Only include if modified (or if modifiedOnly is false)
+				if ( !modifiedOnly || ips.hasModifiedInterestPoints() || ips.hasModifiedCorrespondingInterestPoints() )
+				{
+					if ( !( ips instanceof InterestPointsN5 ) )
+						throw new RuntimeException( "InterestPointData.from() requires InterestPointsN5, got: " + ips.getClass().getName() );
+
+					allData.add( InterestPointData.from( viewId, label, (InterestPointsN5) ips ) );
+				}
+			}
+		}
+
+		return allData;
+	}
+
+	/** @deprecated Use {@link #saveInterestPointsInParallel(SpimData2)} instead. */
+	@Deprecated
+	public static void saveInterestPointsInParallelStatic( final SpimData2 spimData )
+	{
+		saveInterestPointsInParallel( spimData );
 	}
 }
