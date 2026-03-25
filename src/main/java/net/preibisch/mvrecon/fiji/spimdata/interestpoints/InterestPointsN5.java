@@ -238,6 +238,46 @@ public class InterestPointsN5 extends InterestPoints
 		return success;
 	}
 
+	/**
+	 * Save interest points using an already-open N5Writer, clearing the modified flag on success.
+	 * Use when saving many views to avoid per-view open/close overhead.
+	 */
+	public boolean saveInterestPoints( final boolean forceWrite, final N5Writer n5Writer )
+	{
+		if ( !modifiedInterestPoints && !forceWrite )
+			return true;
+
+		if ( ids == null || locations == null )
+			return false;
+
+		final boolean success = saveInterestPointsStatic( n5Writer, n5path, ids, locations );
+
+		if ( success )
+			modifiedInterestPoints = false;
+
+		return success;
+	}
+
+	/**
+	 * Save correspondences using an already-open N5Writer, clearing the modified flag on success.
+	 * Use when saving many views to avoid per-view open/close overhead.
+	 */
+	public boolean saveCorrespondingInterestPoints( final boolean forceWrite, final N5Writer n5Writer )
+	{
+		if ( !modifiedCorrespondingInterestPoints && !forceWrite )
+			return true;
+
+		if ( correspondingInterestPoints == null )
+			return false;
+
+		final boolean success = saveCorrespondencesStatic( n5Writer, n5path, correspondingInterestPoints );
+
+		if ( success )
+			modifiedCorrespondingInterestPoints = false;
+
+		return success;
+	}
+
 	@Override
 	protected boolean loadInterestPoints()
 	{
@@ -782,7 +822,7 @@ public class InterestPointsN5 extends InterestPoints
 						DataType.FLOAT64,
 						new GzipCompression() );
 
-				IOFunctions.println( "Saved: " + n5path + "/" + dataset + " (was empty)" );
+				IOFunctions.println( "Saved: " + dataset + " (was empty)" );
 			}
 			else
 			{
@@ -811,14 +851,14 @@ public class InterestPointsN5 extends InterestPoints
 				N5Utils.save( idData, n5Writer, idDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
 				N5Utils.save( locData, n5Writer, locDataset, new int[] { (int) locData.dimension( 0 ), defaultBlockSize }, new GzipCompression() );
 
-				IOFunctions.println( "Saved: " + n5path + "/" + dataset );
+				IOFunctions.println( "Saved: " + dataset );
 			}
 
 			return true;
 		}
 		catch ( Exception e )
 		{
-			IOFunctions.println( "Couldn't write interestpoints to N5 '" + n5path + "/" + dataset + "': " + e );
+			IOFunctions.println( "Couldn't write interestpoints to N5 '" + dataset + "': " + e );
 			e.printStackTrace();
 			return false;
 		}
@@ -969,13 +1009,13 @@ public class InterestPointsN5 extends InterestPoints
 
 			N5Utils.save( corrIdData, n5Writer, corrDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
 
-			IOFunctions.println( "Saved: " + n5path + "/" + dataset );
+			IOFunctions.println( "Saved: " + dataset );
 
 			return true;
 		}
 		catch ( Exception e )
 		{
-			IOFunctions.println( "Couldn't write corresponding interestpoints to N5 '" + n5path + "/" + dataset + "': " + e );
+			IOFunctions.println( "Couldn't write corresponding interestpoints to N5 '" + dataset + "': " + e );
 			e.printStackTrace();
 			return false;
 		}

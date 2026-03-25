@@ -371,42 +371,64 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 	}
 
 	/**
-	 * Save all interest points using a single shared N5Writer, avoiding the per-view
-	 * open/close overhead. Intended for use in BigStitcher-Spark after batch interest
-	 * point detection, where many views are saved sequentially on a single executor.
-	 *
-	 * Unlike {@link #saveInterestPointsInParallelStatic(SpimData2)}, this method is
-	 * sequential and safe to call even when the N5Writer implementation is not
-	 * thread-safe for concurrent writes.
+	 * Save all interest points using a single shared N5Writer with parallel writes.
+	 * Opens the N5Writer once and reuses it across all views, avoiding per-view
+	 * open/close overhead while preserving parallel write performance.
+	 * Each view writes to an independent dataset path so concurrent writes are safe.
+	 * Modified flags are cleared on each InterestPoints instance after a successful save,
+	 * so subsequent XML serialization does not trigger a redundant second save.
 	 *
 	 * @param spimData the SpimData2 object whose interest points should be saved
 	 */
 	public static void saveInterestPointsSharedWriter( final SpimData2 spimData )
 	{
-		IOFunctions.println( "Saving interest points with shared N5Writer ... " );
+		final int numThreads = Threads.numThreads();
+		IOFunctions.println( "Saving interest points with shared N5Writer (" + numThreads + " threads) ... " );
 
 		final URI baseDir = spimData.getBasePathURI();
-		final List< InterestPointData > allData = collectInterestPointData( spimData, true );
 
-		IOFunctions.println( "Collected " + allData.size() + " interest point sets to save." );
+		// collect first to avoid nested parallel streams
+		final ArrayList< InterestPoints > allIPs = new ArrayList<>();
+		spimData.getViewInterestPoints().getViewInterestPoints().values().forEach( vipl ->
+			allIPs.addAll( vipl.getHashMap().values() ) );
 
-		if ( allData.isEmpty() )
+		if ( allIPs.isEmpty() )
 			return;
 
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
 		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) )
 		{
-			for ( final InterestPointData data : allData )
-			{
-				if ( !InterestPointsN5.saveInterestPointDataStatic( n5Writer, data ) )
+			pool.submit( () ->
+				allIPs.parallelStream().forEach( ipl ->
 				{
-					IOFunctions.println( "ERROR: Could not save interest points for tp=" +
-							data.timepointId + ", setup=" + data.setupId + ", label=" + data.label );
-				}
-			}
+					try
+					{
+						if ( ipl instanceof InterestPointsN5 )
+						{
+							final InterestPointsN5 ipsN5 = (InterestPointsN5) ipl;
+							ipsN5.saveInterestPoints( false, n5Writer );
+							ipsN5.saveCorrespondingInterestPoints( false, n5Writer );
+						}
+						else
+						{
+							ipl.saveInterestPoints( false );
+							ipl.saveCorrespondingInterestPoints( false );
+						}
+					}
+					catch ( Exception e )
+					{
+						IOFunctions.println( "Could not save interest points for (trying to skip): " + ipl.getXMLRepresentation() );
+					}
+				})
+			).get();
 		}
 		catch ( final Exception e )
 		{
 			throw new RuntimeException( "Failed to save interest points with shared writer", e );
+		}
+		finally
+		{
+			pool.shutdown();
 		}
 	}
 }
