@@ -35,6 +35,8 @@ import java.util.stream.Collectors;
 import mpicbg.spim.data.sequence.ViewId;
 
 import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.jdom2.Element;
 
 import mpicbg.spim.data.SpimDataException;
@@ -144,7 +146,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		}
 		catch ( Exception e )
 		{
-			throw new SpimDataException( "Could not interest points for '" + lastURI() + "' in paralell: " + e );
+			throw new SpimDataException( "Could not save interest points for '" + lastURI() + "': " + e );
 		}
 
 		try
@@ -316,31 +318,54 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		}
 	}
 
+	/**
+	 * Save all interest points using a single shared N5Writer with parallel writes.
+	 * Opens the N5Writer once and reuses it across all views, avoiding per-view
+	 * open/close overhead while preserving parallel write performance.
+	 * Each view writes to an independent dataset path so concurrent writes are safe.
+	 * Modified flags are cleared on each InterestPoints instance after a successful save,
+	 * so subsequent XML serialization does not trigger a redundant second save.
+	 *
+	 * @param spimData the SpimData2 object whose interest points should be saved
+	 */
 	public static void saveInterestPointsInParallel( final SpimData2 spimData )
 	{
 		final int numThreads = Threads.numThreads();
 		IOFunctions.println( "Saving interest points multi-threaded (" + numThreads + " threads) ... " );
 
+		final URI baseDir = spimData.getBasePathURI();
+
 		// collect first to avoid nested parallel streams
 		final ArrayList< InterestPoints > allIPs = new ArrayList<>();
-
 		spimData.getViewInterestPoints().getViewInterestPoints().values().forEach( vipl ->
 			allIPs.addAll( vipl.getHashMap().values() ) );
 
+		if ( allIPs.isEmpty() )
+			return;
+
 		final ForkJoinPool pool = new ForkJoinPool( numThreads );
-		try
+		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) )
 		{
 			pool.submit( () ->
 				allIPs.parallelStream().forEach( ipl ->
 				{
 					try
 					{
-						ipl.saveInterestPoints( false );
-						ipl.saveCorrespondingInterestPoints( false );
+						if ( ipl instanceof InterestPointsN5 )
+						{
+							final InterestPointsN5 ipsN5 = (InterestPointsN5) ipl;
+							ipsN5.saveInterestPoints( false, n5Writer );
+							ipsN5.saveCorrespondingInterestPoints( false, n5Writer );
+						}
+						else
+						{
+							ipl.saveInterestPoints( false );
+							ipl.saveCorrespondingInterestPoints( false );
+						}
 					}
 					catch ( Exception e )
 					{
-						IOFunctions.println( "Could not save interest points for (trying to skip): " + ipl.getXMLRepresentation()  );
+						IOFunctions.println( "Could not save interest points for (trying to skip): " + ipl.getXMLRepresentation() );
 					}
 				})
 			).get();
@@ -393,46 +418,10 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		return allData;
 	}
 
-	/**
-	 * Save interest points using static methods (suitable for Spark).
-	 * This method saves both interest points and correspondences using the static API.
-	 *
-	 * @param spimData The SpimData2
-	 */
+	/** @deprecated Use {@link #saveInterestPointsInParallel(SpimData2)} instead. */
+	@Deprecated
 	public static void saveInterestPointsInParallelStatic( final SpimData2 spimData )
 	{
-		final int numThreads = Threads.numThreads();
-		IOFunctions.println( "Saving interest points (static) multi-threaded (" + numThreads + " threads) ... " );
-
-		final URI baseDir = spimData.getBasePathURI();
-		final List< InterestPointData > allData = collectInterestPointData( spimData, true );
-
-		IOFunctions.println( "Collected " + allData.size() + " interest point sets to save." );
-
-		if ( allData.isEmpty() )
-			return;
-
-		final ForkJoinPool pool = new ForkJoinPool( numThreads );
-		try
-		{
-			pool.submit( () ->
-				allData.parallelStream().forEach( data ->
-				{
-					if ( !InterestPointsN5.saveInterestPointDataStatic( baseDir, data ) )
-					{
-						IOFunctions.println( "ERROR: Could not save interest points for tp=" +
-								data.timepointId + ", setup=" + data.setupId + ", label=" + data.label );
-					}
-				})
-			).get();
-		}
-		catch ( final Exception e )
-		{
-			throw new RuntimeException( "Failed to save interest points in parallel (static)", e );
-		}
-		finally
-		{
-			pool.shutdown();
-		}
+		saveInterestPointsInParallel( spimData );
 	}
 }
