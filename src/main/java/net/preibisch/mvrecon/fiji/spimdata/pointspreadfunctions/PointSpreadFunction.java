@@ -81,10 +81,10 @@ public class PointSpreadFunction
 		this.img = img;
 	}
 
-	public URI getBaseDir() { return xmlBasePath; }
-	public void setBaseDir( final URI baseDir )
+	public URI getBasePath() { return xmlBasePath; }
+	public void setBasePath( final URI basePath )
 	{
-		this.xmlBasePath = baseDir;
+		this.xmlBasePath = basePath;
 		this.modified = true;
 	}
 

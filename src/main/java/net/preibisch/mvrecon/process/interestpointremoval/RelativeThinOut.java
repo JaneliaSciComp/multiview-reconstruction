@@ -113,7 +113,7 @@ public class RelativeThinOut
 
 			// Nearest neighbor for each point, populate the new list
 			final NearestNeighborSearchOnKDTree< RealPoint > nn = new NearestNeighborSearchOnKDTree< RealPoint >( tree );
-			final InterestPoints newIpl = InterestPoints.newInstance( oldIpl.getBaseDir(), viewId, rtop.getNewLabel() );
+			final InterestPoints newIpl = InterestPoints.newInstance( oldIpl.getBasePath(), viewId, rtop.getNewLabel() );
 			/*final InterestPointList newIpl = new InterestPointList(
 					oldIpl.getBaseDir(),
 					new File(

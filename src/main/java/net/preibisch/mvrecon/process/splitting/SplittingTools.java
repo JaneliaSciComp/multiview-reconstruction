@@ -758,7 +758,7 @@ public class SplittingTools
 							}
 						}
 
-						final InterestPoints newIps = InterestPoints.newInstance( oldIps.getBaseDir(), newViewId, newLabel );
+						final InterestPoints newIps = InterestPoints.newInstance( oldIps.getBasePath(), newViewId, newLabel );
 						newIps.setInterestPoints( newIpList );
 						newIps.setParameters( oldIps.getParameters() );
 						newIps.setCorrespondingInterestPoints( new ArrayList<>() );

@@ -30,7 +30,6 @@ import java.util.List;
 import java.util.Set;
 
 import ij.gui.GenericDialog;
-import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.FinalInterval;

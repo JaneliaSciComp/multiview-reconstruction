@@ -329,7 +329,7 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 									{
 										ipl.getInterestPointsCopy();
 										ipl.getCorrespondingInterestPointsCopy();
-										ipl.setBaseDir( basePathURI ); // also sets 'isModified' flags
+										ipl.setBasePath( basePathURI ); // also sets 'isModified' flags
 									}
 									catch ( Exception e )
 									{

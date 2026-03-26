@@ -141,7 +141,7 @@ public class ExampleXMLBased
 			list.getHashMap().keySet().forEach( label -> {
 				list.getInterestPointList( label ).getInterestPointsCopy();
 				list.getInterestPointList( label ).getCorrespondingInterestPointsCopy();
-				list.getInterestPointList( label ).setBaseDir( URI.create("file:/nrs/saalfeld/john/for/keller/danio_1_488/dataset-orig-tifs/3/test/"));
+				list.getInterestPointList( label ).setBasePath( URI.create("file:/nrs/saalfeld/john/for/keller/danio_1_488/dataset-orig-tifs/3/test/"));
 			});
 		});
 

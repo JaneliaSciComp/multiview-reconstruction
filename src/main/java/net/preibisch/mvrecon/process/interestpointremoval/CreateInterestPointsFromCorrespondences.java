@@ -76,7 +76,7 @@ public class CreateInterestPointsFromCorrespondences
 				}
 			}
 
-			final InterestPoints newIpl = InterestPoints.newInstance( oldIpl.getBaseDir(), viewId, params.getNewLabel() );
+			final InterestPoints newIpl = InterestPoints.newInstance( oldIpl.getBasePath(), viewId, params.getNewLabel() );
 			/*final InterestPointList newIpl = new InterestPointList(
 					oldIpl.getBaseDir(),
 					new File(

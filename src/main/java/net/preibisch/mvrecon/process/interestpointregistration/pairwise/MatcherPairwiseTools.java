@@ -27,28 +27,23 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
-import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.loadcorrespondences.LoadCorrespondencesPairwise;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 
 public class MatcherPairwiseTools
 {
@@ -307,15 +302,6 @@ public class MatcherPairwiseTools
 			final ExecutorService exec )
 	{
 		final int numThreads = (exec == null) ? net.preibisch.mvrecon.Threads.numThreads() : -1;
-		System.out.println( "[TIMING] computePairs() START (" + pairs.size() + " pairs" + (numThreads > 0 ? ", " + numThreads + " threads" : "") + ")" );
-		final long computePairsStart = System.currentTimeMillis();
-
-		// Reset statistics if using LoadCorrespondencesPairwise matcher
-		if (LoadCorrespondencesPairwise.class.isInstance(matcher))
-		{
-			LoadCorrespondencesPairwise.resetStatistics();
-			InterestPointsN5.resetCorrespondenceStatistics();
-		}
 
 		final ExecutorService taskExecutor;
 
@@ -325,20 +311,15 @@ public class MatcherPairwiseTools
 			taskExecutor = exec;
 
 		// each pair of Views that will be compared
-		long start = System.currentTimeMillis();
 		final ArrayList<MatchingTask<V>> tasksList = getTasksList( pairs, interestpoints, matchAcrossLabels );
-		System.out.println( "[TIMING]   Task list creation: " + (System.currentTimeMillis() - start) + " ms (" + tasksList.size() + " tasks)" );
 
-		start = System.currentTimeMillis();
 		final ArrayList< Callable< Pair< Pair< V, V >, PairwiseResult< I > > > > tasks = getCallables( tasksList, interestpoints, matcher );
-		System.out.println( "[TIMING]   Callable creation: " + (System.currentTimeMillis() - start) + " ms" );
 
 		final List< Pair< Pair< V, V >, PairwiseResult< I > > > r = new ArrayList<>();
 
 		try
 		{
 			// invokeAll() returns when all tasks are complete
-			start = System.currentTimeMillis();
 			taskExecutor.invokeAll( tasks ).forEach( future ->
 			{
 				try
@@ -351,7 +332,6 @@ public class MatcherPairwiseTools
 					throw new RuntimeException( e );
 				}
 			});
-			System.out.println( "[TIMING]   invokeAll execution: " + (System.currentTimeMillis() - start) + " ms" );
 		}
 		catch ( final Exception e )
 		{
@@ -361,14 +341,6 @@ public class MatcherPairwiseTools
 		if ( exec == null )
 			taskExecutor.shutdown();
 
-		// Print statistics if using LoadCorrespondencesPairwise matcher
-		if (LoadCorrespondencesPairwise.class.isInstance(matcher))
-		{
-			LoadCorrespondencesPairwise.printStatistics();
-			InterestPointsN5.printCorrespondenceStatistics();
-		}
-
-		System.out.println( "[TIMING] computePairs() TOTAL: " + (System.currentTimeMillis() - computePairsStart) + " ms" );
 		return r;
 	}
 

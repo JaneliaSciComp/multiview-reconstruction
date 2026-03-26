@@ -22,7 +22,6 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
-import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -32,8 +31,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -61,70 +58,27 @@ public class InterestPointsN5 extends InterestPoints
 	public static int defaultBlockSize = 300_000;
 	public static final String baseN5 = "interestpoints.n5";
 
-	// Thread-safe statistics for debugging correspondence loading performance
-	private static final AtomicInteger corrCopyCallCount = new AtomicInteger(0);
-	private static final AtomicInteger corrCacheMissCount = new AtomicInteger(0);
-	private static final AtomicLong corrLoadTime = new AtomicLong(0);
-	private static final AtomicLong corrCopyTime = new AtomicLong(0);
-	private static final AtomicLong corrTotalCount = new AtomicLong(0);
-
-	/**
-	 * Reset correspondence loading statistics
-	 */
-	public static void resetCorrespondenceStatistics()
-	{
-		corrCopyCallCount.set(0);
-		corrCacheMissCount.set(0);
-		corrLoadTime.set(0);
-		corrCopyTime.set(0);
-		corrTotalCount.set(0);
-	}
-
-	/**
-	 * Print correspondence loading statistics
-	 */
-	public static void printCorrespondenceStatistics()
-	{
-		final int calls = corrCopyCallCount.get();
-		if (calls == 0) return;
-
-		final int cacheMisses = corrCacheMissCount.get();
-		final int cacheHits = calls - cacheMisses;
-
-		System.out.println("[TIMING] InterestPointsN5 Correspondence Statistics:");
-		System.out.println("[TIMING]   getCorrespondingInterestPointsCopy() calls: " + calls);
-		System.out.println("[TIMING]   - Cache hits: " + cacheHits + " (" + String.format("%.1f", 100.0 * cacheHits / calls) + "%)");
-		System.out.println("[TIMING]   - Cache misses (I/O): " + cacheMisses + " (" + String.format("%.1f", 100.0 * cacheMisses / calls) + "%)");
-		System.out.println("[TIMING]   - loadCorrespondences() time: " + corrLoadTime.get() + " ms" + (cacheMisses > 0 ? " (avg " + String.format("%.2f", (double)corrLoadTime.get()/cacheMisses) + " ms/load)" : ""));
-		System.out.println("[TIMING]   - Deep copy time: " + corrCopyTime.get() + " ms (avg " + String.format("%.2f", (double)corrCopyTime.get()/calls) + " ms/call)");
-		System.out.println("[TIMING]   Total correspondences returned: " + corrTotalCount.get() + " (avg " + (corrTotalCount.get()/calls) + "/call)");
-	}
-
-	final String n5path;
+	final String n5dataset;
 
 	int[] ids = null;
 	double[][] locations = null;
 
 	ArrayList< CorrespondingInterestPoints > correspondingInterestPoints;
 
-	public InterestPointsN5( final URI baseDir, final String n5path )
+	public InterestPointsN5( final URI basePath, final String n5dataset )
 	{
-		super(baseDir);
-		this.n5path = n5path;
+		super(basePath);
+		this.n5dataset = n5dataset;
 	}
 
-	public String getN5path() { return n5path; }
+	public String getN5dataset() { return n5dataset; }
 
 	@Override
-	public String getXMLRepresentation() {
-		// a hack so that windows does not put its backslashes in
-		return getN5path().toString().replace( "\\", "/" );
-	}
+	public String getXMLRepresentation() { return getN5dataset(); }
 
-	@Override
-	public String createXMLRepresentation( final ViewId viewId, final String label )
+	public static String createN5datasetPath( final int tpId, final int vsId, final String label )
 	{
-		return new File( "tpId_" + viewId.getTimePointId() + "_viewSetupId_" + viewId.getViewSetupId() + "/" + label ).getPath();
+		return "tpId_" + tpId + "_viewSetupId_" + vsId + "/" + label;
 	}
 
 	/**
@@ -147,24 +101,14 @@ public class InterestPointsN5 extends InterestPoints
 	 */
 	public synchronized Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy()
 	{
-		corrCopyCallCount.incrementAndGet();
 
 		if ( this.correspondingInterestPoints == null )
-		{
-			corrCacheMissCount.incrementAndGet();
-			final long loadStart = System.currentTimeMillis();
 			loadCorrespondences();
-			corrLoadTime.addAndGet(System.currentTimeMillis() - loadStart);
-		}
 
-		final long copyStart = System.currentTimeMillis();
 		final ArrayList< CorrespondingInterestPoints > list = new ArrayList< CorrespondingInterestPoints >();
 
 		for ( final CorrespondingInterestPoints p : this.correspondingInterestPoints )
 			list.add( new CorrespondingInterestPoints( p ) );
-
-		corrCopyTime.addAndGet(System.currentTimeMillis() - copyStart);
-		corrTotalCount.addAndGet(list.size());
 
 		return list;
 	}
@@ -201,8 +145,11 @@ public class InterestPointsN5 extends InterestPoints
 			this.correspondingInterestPoints = new ArrayList<>( list );
 	}
 
-	public String ipDataset() { return new File( getN5path(), "interestpoints" ).getPath(); }
-	public String corrDataset() { return new File( getN5path(), "correspondences" ).getPath(); }
+	public String ipDataset() { return ipDataset( getN5dataset() ); }
+	public String corrDataset() { return corrDataset( getN5dataset() ); }
+
+	public static String ipDataset( final String n5dataset ) { return n5dataset + "/interestpoints"; }
+	public static String corrDataset( final String n5dataset  ) { return n5dataset + "/correspondences"; }
 
 	@Override
 	public boolean saveInterestPoints( final boolean forceWrite )
@@ -213,7 +160,7 @@ public class InterestPointsN5 extends InterestPoints
 		if ( ids == null || locations == null )
 			return false;
 
-		final boolean success = saveInterestPointsStatic( baseDir, n5path, ids, locations );
+		final boolean success = saveInterestPointsStatic( basePath, n5dataset, ids, locations );
 
 		if ( success )
 			modifiedInterestPoints = false;
@@ -230,7 +177,7 @@ public class InterestPointsN5 extends InterestPoints
 		if ( correspondingInterestPoints == null )
 			return false;
 
-		final boolean success = saveCorrespondencesStatic( baseDir, n5path, correspondingInterestPoints );
+		final boolean success = saveCorrespondencesStatic( basePath, n5dataset, correspondingInterestPoints );
 
 		if ( success )
 			modifiedCorrespondingInterestPoints = false;
@@ -250,7 +197,7 @@ public class InterestPointsN5 extends InterestPoints
 		if ( ids == null || locations == null )
 			return false;
 
-		final boolean success = saveInterestPointsStatic( n5Writer, n5path, ids, locations );
+		final boolean success = saveInterestPointsStatic( n5Writer, n5dataset, ids, locations );
 
 		if ( success )
 			modifiedInterestPoints = false;
@@ -270,7 +217,7 @@ public class InterestPointsN5 extends InterestPoints
 		if ( correspondingInterestPoints == null )
 			return false;
 
-		final boolean success = saveCorrespondencesStatic( n5Writer, n5path, correspondingInterestPoints );
+		final boolean success = saveCorrespondencesStatic( n5Writer, n5dataset, correspondingInterestPoints );
 
 		if ( success )
 			modifiedCorrespondingInterestPoints = false;
@@ -283,13 +230,13 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		try
 		{
-			final N5Reader n5 = URITools.instantiateN5Reader( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) );
+			final N5Reader n5 = URITools.instantiateN5Reader( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
 
 			final String dataset = ipDataset();
 
 			if (!n5.exists(dataset))
 			{
-				IOFunctions.println( "InterestPointsN5.loadInterestPoints(): dataset '" + URITools.appendName( baseDir, baseN5 ) + "/" + dataset + "' does not exist, cannot load interestpoints." );
+				IOFunctions.println( "InterestPointsN5.loadInterestPoints(): dataset '" + URITools.appendName( basePath, baseN5 ) + "/" + dataset + "' does not exist, cannot load interestpoints." );
 				return false;
 			}
 
@@ -379,13 +326,13 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		try
 		{
-			final N5Reader n5 = URITools.instantiateN5Reader( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) );;
+			final N5Reader n5 = URITools.instantiateN5Reader( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );;
 
 			final String dataset = corrDataset();
 
 			if (!n5.exists(dataset))
 			{
-				IOFunctions.println( "InterestPointsN5.loadCorrespondences(): dataset '" + baseDir + ":/" + baseN5 + "/" + dataset + "' does not exist, cannot load interestpoints." );
+				IOFunctions.println( "InterestPointsN5.loadCorrespondences(): dataset '" + basePath + ":/" + baseN5 + "/" + dataset + "' does not exist, cannot load interestpoints." );
 				return false;
 			}
 
@@ -612,54 +559,12 @@ public class InterestPointsN5 extends InterestPoints
 		}
 	}
 
-	// Old commented-out code kept for reference
-	/*
-	protected boolean loadCorrespondences_OLD()
-	{
-		try
-		{
-			final N5FSReader n5 = new N5FSReader( new File( baseDir.getAbsolutePath(), baseN5 ).getAbsolutePath() );
-			final String dataset = corrDataset();
-
-			if (!n5.exists(dataset))
-			{
-				IOFunctions.println( "InterestPointsN5.loadCorrespondingInterestPoints(): dataset '" + baseDir + ":/" + dataset + "' does not exist, cannot load interestpoints." );
-				return false;
-			}
-
-			final DatasetAttributes datasetAttributes = n5.getDatasetAttributes(dataset);
-
-			this.correspondingInterestPoints = n5.readSerializedBlock( dataset, datasetAttributes, 0 );
-			modifiedCorrespondingInterestPoints = false;
-
-			n5.close();
-
-			return true;
-		}
-		catch ( final Exception e )
-		{
-			this.ids = new int[0];
-			this.locations = new double[0][0];
-			IOFunctions.println( "InterestPointsN5.loadCorrespondingInterestPoints(): " + e );
-			e.printStackTrace();
-			return false;
-		}
-	}
-	*/
-
 	@Override
 	public boolean deleteInterestPoints()
 	{
 		try
 		{
-			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) );
-
-			/*
-			if ( URITools.isFile( baseDir ) )
-				n5Writer = new N5FSWriter( new File( URITools.removeFilePrefix( baseDir ), baseN5 ).getAbsolutePath() );
-			else
-				n5Writer = new N5Factory().openWriter( URITools.appendName( baseDir, baseN5 ) ); // cloud support, avoid dependency hell if it is a local file
-			*/
+			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
 
 			if (n5Writer.exists(ipDataset()))
 				n5Writer.remove(ipDataset());
@@ -682,14 +587,7 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		try
 		{
-			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) );
-
-			/*
-			if ( URITools.isFile( baseDir ) )
-				n5Writer = new N5FSWriter( new File( URITools.removeFilePrefix( baseDir ), baseN5 ).getAbsolutePath() );
-			else
-				n5Writer = new N5Factory().openWriter( URITools.appendName( baseDir, baseN5 ) ); // cloud support, avoid dependency hell if it is a local file
-			*/
+			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
 
 			if (n5Writer.exists(corrDataset()))
 				n5Writer.remove(corrDataset());
@@ -790,7 +688,7 @@ public class InterestPointsN5 extends InterestPoints
 			final int[] ids,
 			final double[][] locations )
 	{
-		final String dataset = new File( n5path, "interestpoints" ).getPath();
+		final String dataset = ipDataset( n5path );// new File( n5path, "interestpoints" ).getPath();
 
 		try
 		{
@@ -888,7 +786,7 @@ public class InterestPointsN5 extends InterestPoints
 		}
 		catch ( Exception e )
 		{
-			final String dataset = new File( n5path, "interestpoints" ).getPath();
+			final String dataset = ipDataset( n5path );// new File( n5path, "interestpoints" ).getPath();
 			IOFunctions.println( "Couldn't write interestpoints to N5 '" + URITools.appendName( baseDir, baseN5 ) + "/" + dataset + "': " + e );
 			e.printStackTrace();
 			return false;
@@ -908,7 +806,7 @@ public class InterestPointsN5 extends InterestPoints
 			final double[][] locations )
 	{
 		return saveInterestPointsStatic( baseDir,
-				"tpId_" + timepointId + "_viewSetupId_" + setupId + "/" + label,
+				createN5datasetPath( timepointId, setupId, label ),
 				ids, locations );
 	}
 
@@ -928,7 +826,7 @@ public class InterestPointsN5 extends InterestPoints
 			final String n5path,
 			final List< CorrespondingInterestPoints > list )
 	{
-		final String dataset = new File( n5path, "correspondences" ).getPath();
+		final String dataset = corrDataset( n5path );// new File( n5path, "correspondences" ).getPath();
 
 		try
 		{
@@ -1044,7 +942,7 @@ public class InterestPointsN5 extends InterestPoints
 		}
 		catch ( Exception e )
 		{
-			final String dataset = new File( n5path, "correspondences" ).getPath();
+			final String dataset = corrDataset( n5path );//new File( n5path, "correspondences" ).getPath();
 			IOFunctions.println( "Couldn't write corresponding interestpoints to N5 '" + URITools.appendName( baseDir, baseN5 ) + "/" + dataset + "': " + e );
 			e.printStackTrace();
 			return false;
@@ -1063,7 +961,7 @@ public class InterestPointsN5 extends InterestPoints
 			final List< CorrespondingInterestPoints > list )
 	{
 		return saveCorrespondencesStatic( baseDir,
-				"tpId_" + timepointId + "_viewSetupId_" + setupId + "/" + label,
+				createN5datasetPath( timepointId, setupId, label ),
 				list );
 	}
 
@@ -1079,7 +977,7 @@ public class InterestPointsN5 extends InterestPoints
 	 */
 	public static boolean saveInterestPointDataStatic( final N5Writer n5Writer, final InterestPointData data )
 	{
-		final String n5path = "tpId_" + data.timepointId + "_viewSetupId_" + data.setupId + "/" + data.label;
+		final String n5path = createN5datasetPath( data.timepointId, data.setupId, data.label );
 
 		boolean success = saveInterestPointsStatic( n5Writer, n5path, data.ids, data.locations );
 
@@ -1102,7 +1000,7 @@ public class InterestPointsN5 extends InterestPoints
 	 */
 	public static boolean saveInterestPointDataStatic( final URI baseDir, final InterestPointData data )
 	{
-		final String n5path = "tpId_" + data.timepointId + "_viewSetupId_" + data.setupId + "/" + data.label;
+		final String n5path = createN5datasetPath( data.timepointId, data.setupId, data.label );
 
 		boolean success = saveInterestPointsStatic( baseDir, n5path, data.ids, data.locations );
 

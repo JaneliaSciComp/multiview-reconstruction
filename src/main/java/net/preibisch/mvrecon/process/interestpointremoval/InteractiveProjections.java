@@ -301,7 +301,7 @@ public class InteractiveProjections
 
 				// add new label
 				final InterestPoints newIpl = InterestPoints.newInstance(
-						lists.getInterestPointList( label ).getBaseDir(), viewId, newLabel );
+						lists.getInterestPointList( label ).getBasePath(), viewId, newLabel );
 				/*final InterestPointList newIpl = new InterestPointList(
 						lists.getInterestPointList( label ).getBaseDir(),
 						new File(

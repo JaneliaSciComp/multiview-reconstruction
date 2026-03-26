@@ -87,7 +87,7 @@ public class ThinOut
 
 			// Nearest neighbor for each point, populate the new list
 			final KNearestNeighborSearchOnKDTree< RealPoint > nn = new KNearestNeighborSearchOnKDTree< RealPoint >( tree, 2 );
-			final InterestPoints newIpl = InterestPoints.newInstance( oldIpl.getBaseDir(), viewId, top.getNewLabel() );
+			final InterestPoints newIpl = InterestPoints.newInstance( oldIpl.getBasePath(), viewId, top.getNewLabel() );
 			/*final InterestPointList newIpl = new InterestPointList(
 					oldIpl.getBaseDir(),
 					new File(

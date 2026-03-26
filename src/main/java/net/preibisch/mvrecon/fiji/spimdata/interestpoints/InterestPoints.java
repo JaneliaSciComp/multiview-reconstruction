@@ -36,14 +36,14 @@ import mpicbg.spim.data.sequence.ViewId;
  */
 public abstract class InterestPoints
 {
-	URI baseDir;
+	URI basePath;
 	String parameters;
 
 	boolean modifiedInterestPoints, modifiedCorrespondingInterestPoints;
 
-	protected InterestPoints(final URI baseDir)
+	protected InterestPoints(final URI basePath)
 	{
-		this.baseDir = baseDir;
+		this.basePath = basePath;
 		this.modifiedInterestPoints = false;
 		this.modifiedCorrespondingInterestPoints = false;
 	}
@@ -60,8 +60,8 @@ public abstract class InterestPoints
 	{
 		final InterestPoints list;
 
-		final String n5path = new InterestPointsN5( null, null ).createXMLRepresentation( viewId, label );
-		list = new InterestPointsN5( baseDir, n5path );
+		final String n5dataset = InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label );
+		list = new InterestPointsN5( baseDir, n5dataset );
 
 		return list;
 	}
@@ -69,10 +69,10 @@ public abstract class InterestPoints
 	public boolean hasModifiedInterestPoints() { return modifiedInterestPoints; }
 	public boolean hasModifiedCorrespondingInterestPoints() { return modifiedCorrespondingInterestPoints; }
 
-	public URI getBaseDir() { return baseDir; }
-	public void setBaseDir( final URI baseDir )
+	public URI getBasePath() { return basePath; }
+	public void setBasePath( final URI basePath )
 	{
-		this.baseDir = baseDir;
+		this.basePath = basePath;
 		this.modifiedCorrespondingInterestPoints = true;
 		this.modifiedInterestPoints = true;
 	}
@@ -97,7 +97,7 @@ public abstract class InterestPoints
 	 * 
 	 * @return a string that is stored in the XML and that is used to load/save interestpoints and corresponding interest points
 	 */
-	public abstract String createXMLRepresentation( final ViewId viewId, final String label );
+	// public abstract String createXMLRepresentation( final ViewId viewId, final String label );
 
 	/**
 	 * @return - a map from interest point ID to interest points (copied), tries to load from disc if null
