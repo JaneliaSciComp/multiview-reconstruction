@@ -34,9 +34,11 @@ import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
 import mpicbg.models.TileConfiguration;
+import mpicbg.models.TileUtil;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.IterativeConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.linkremoval.LinkRemovalStrategy;
@@ -120,10 +122,16 @@ public class GlobalOptIterative
 
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): starting solve ..." );
 
-				tc.optimizeSilently(new ErrorStatistic( ics.getMaxPlateauWidth() + 1 ), ics.getMaxError(), ics.getMaxIterations(), ics.getMaxPlateauWidth() );
-				/*TileUtil.optimizeConcurrently(
-						new ErrorStatistic( ics.getMaxPlateauWidth() + 1 ),  ics.getMaxError(), ics.getMaxIterations(), ics.getMaxPlateauWidth(), 1.0f,
-						tc, tc.getTiles(), tc.getFixedTiles(), Runtime.getRuntime().availableProcessors());*/
+				//tc.optimizeSilently(new ErrorStatistic( ics.getMaxPlateauWidth() + 1 ), ics.getMaxError(), ics.getMaxIterations(), ics.getMaxPlateauWidth() );
+				TileUtil.optimizeConcurrently(
+						new ErrorStatistic( ics.getMaxPlateauWidth() + 1 ),
+						ics.getMaxError(),
+						ics.getMaxIterations(),
+						ics.getMaxPlateauWidth(),
+						1.0, // damp
+						tc, tc.getTiles(), tc.getFixedTiles(),
+						Threads.numThreads(),
+						true ); //verbose
 
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Global optimization of " + tc.getTiles().size());
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Avg Error: " + tc.getError() + "px" );
