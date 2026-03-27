@@ -105,6 +105,11 @@ class MaxIntensity
 			final long[] srcMax = new long[ srcPos.length ];
 			Arrays.setAll( srcMax, d -> srcPos[ d ] + size[ d ] - 1 );
 			final int[] overlapping = overlap.getOverlappingViewIndices( srcPos, srcMax );
+			if ( overlapping.length == 0 )
+			{
+				Arrays.fill( fdest, 0, len, 0 );
+				return;
+			}
 			boolean first = true;
 			for ( int i : overlapping )
 			{
