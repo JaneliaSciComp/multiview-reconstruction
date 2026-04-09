@@ -192,7 +192,7 @@ public class LegacyFileMapImgLoaderLOCI extends AbstractImgFactoryImgLoader
 		// use a new ImageReader since we might be loading multi-threaded and BioFormats is not thread-save
 		// use Memoizer to cache ReaderState for each File on disk
 		// see: https://www-legacy.openmicroscopy.org/site/support/bio-formats5.1/developers/matlab-dev.html#reader-performance
-		IFormatReader reader = null;
+		IFormatReader reader;
 		if (zGrouped)
 		{
 			final FileStitcher fs = new FileStitcher(true);
@@ -239,8 +239,14 @@ public class LegacyFileMapImgLoaderLOCI extends AbstractImgFactoryImgLoader
 		final int height = dim[ 1 ];
 		final int depth = dim[ 2 ];
 		final int numPx = width * height;
-
-		final byte[] b = new byte[ numPx * reader.getBitsPerPixel() / 8 ];
+		final int bitsPerPixels = reader.getBitsPerPixel();
+		final int bytesPerPixel = BioformatsReaderUtils.getBytesPerPixel( reader );
+		IOFunctions.println(String.format(
+				"Reader=%s Create %d buffer for (%d, %d, %d) image with pixelType %d, %d bits/pixel, %d bytes/pixel",
+				reader.getClass().getName(), (numPx * bytesPerPixel), width, height, depth, pixelType, bitsPerPixels, bytesPerPixel)
+		);
+		final int bufferSize = Math.multiplyExact( numPx, bytesPerPixel );
+		final byte[] b = new byte[ bufferSize ];
 
 		try
 		{
@@ -539,8 +545,9 @@ public class LegacyFileMapImgLoaderLOCI extends AbstractImgFactoryImgLoader
 
 	public static long getMaxNonzero(IFormatReader reader)
 	{
-		final int siz = reader.getBitsPerPixel() / 8 * reader.getRGBChannelCount() * reader.getSizeX()
-				* reader.getSizeY();
+		final int siz = Math.multiplyExact(
+				BioformatsReaderUtils.getPlaneSizeInBytes( reader ),
+				reader.getRGBChannelCount() );
 		final byte[] buffer = new byte[siz];
 
 		final int nC = reader.getSizeC() == reader.getRGBChannelCount() ? 1 : reader.getSizeC();

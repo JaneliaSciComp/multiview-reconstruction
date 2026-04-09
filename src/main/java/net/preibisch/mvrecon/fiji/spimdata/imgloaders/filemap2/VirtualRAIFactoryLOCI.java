@@ -53,6 +53,7 @@ import net.imglib2.type.numeric.integer.UnsignedIntType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.util.BioformatsReaderUtils;
 
 class VirtualRAIFactoryLOCI
 {
@@ -178,7 +179,7 @@ class VirtualRAIFactoryLOCI
 		setReaderFileAndSeriesIfNecessary( reader, file, series );
 //		System.out.println( "reading z plane " + z + " from series " + series + " in file " + file.getAbsolutePath() );
 
-		final int planeSize = ( reader.getBitsPerPixel() / 8 ) * reader.getSizeX() * reader.getSizeY();
+		final int planeSize = BioformatsReaderUtils.getPlaneSizeInBytes( reader );
 		final int size = planeSize * reader.getRGBChannelCount();
 		final byte[] buffer = new byte[ size ];
 

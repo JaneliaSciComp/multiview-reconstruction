@@ -22,6 +22,7 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.util;
 
+import ch.epfl.biop.formats.in.ZeissQuickStartCZIReader;
 import loci.formats.IFormatReader;
 import loci.formats.in.DynamicMetadataOptions;
 import loci.formats.in.MetadataOptions;
@@ -56,22 +57,47 @@ public class CZIReaderSetupHook implements BioformatsReaderSetupHook {
 	@Override
 	public void runSetup(IFormatReader reader) {
 
-		if (!(reader instanceof ZeissCZIReader)) {
-			return;
+		if (reader instanceof ZeissCZIReader) {
+			setupZeissCZIReader(reader);
+		} else if (reader instanceof ZeissQuickStartCZIReader) {
+			setupQuickCZIReader(reader);
 		}
+	}
 
+	private void setupZeissCZIReader(final IFormatReader reader)
+	{
+		configureCZIReader(
+				reader,
+				ZeissCZIReader.ALLOW_AUTOSTITCHING_KEY,
+				ZeissCZIReader.RELATIVE_POSITIONS_KEY
+		);
+	}
+
+	private void setupQuickCZIReader(final IFormatReader reader)
+	{
+		configureCZIReader(
+				reader,
+				ZeissQuickStartCZIReader.ALLOW_AUTOSTITCHING_KEY,
+				ZeissQuickStartCZIReader.RELATIVE_POSITIONS_KEY
+		);
+	}
+
+	private void configureCZIReader(
+			final IFormatReader reader,
+			final String autoStitchKey,
+			final String relativePositionsKey)
+	{
 		// disable auto stitching, following solutions by @CellKai and @NicoKiaru in
 		// https://forum.image.sc/t/change-in-czi-tile-info-metadata-after-upgrade-to-zeiss-lightsheet-7/49414/15
-		MetadataOptions options = reader.getMetadataOptions();
+		final MetadataOptions options = reader.getMetadataOptions();
 		if (options instanceof DynamicMetadataOptions) {
-			((DynamicMetadataOptions) options).setBoolean(
-					ZeissCZIReader.ALLOW_AUTOSTITCHING_KEY, allowAutostitch);
-			((DynamicMetadataOptions) options).setBoolean(
-					ZeissCZIReader.RELATIVE_POSITIONS_KEY, relativePositions);
+			final DynamicMetadataOptions dynamicOptions = (DynamicMetadataOptions) options;
+			dynamicOptions.setBoolean(autoStitchKey, allowAutostitch);
+			dynamicOptions.setBoolean(relativePositionsKey, relativePositions);
+			reader.setMetadataOptions(dynamicOptions);
 		} else {
-			System.err.println("WARNING: could not set CZI autostitching option.");
+			System.err.println("WARNING: could not set CZI metadata options for " + reader.getClass().getSimpleName() + ".");
 		}
-		reader.setMetadataOptions(options);
 	}
 
 }

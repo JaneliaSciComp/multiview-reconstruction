@@ -24,6 +24,8 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.util;
 
 import java.util.HashMap;
 
+import ch.epfl.biop.formats.in.ZeissQuickStartCZIReader;
+import loci.formats.FormatTools;
 import loci.formats.IFormatReader;
 import loci.formats.ImageReader;
 import loci.formats.in.ZeissCZIReader;
@@ -33,6 +35,7 @@ public class BioformatsReaderUtils {
 	static HashMap<Class<? extends IFormatReader>, BioformatsReaderSetupHook> setupHooks = new HashMap<>();
 	static {
 		setupHooks.put(ZeissCZIReader.class, CZIReaderSetupHook.getInstance());
+		setupHooks.put(ZeissQuickStartCZIReader.class, CZIReaderSetupHook.getInstance());
 	}
 
 	public static ImageReader createImageReaderWithSetupHooks()
@@ -45,5 +48,31 @@ public class BioformatsReaderUtils {
 				setupHooks.get(formatReader.getClass()).runSetup(formatReader);
 
 		return reader;
+	}
+
+	public static int getBytesPerPixel(final IFormatReader reader)
+	{
+		final int bytesPerPixel = FormatTools.getBytesPerPixel(reader.getPixelType());
+
+		if (bytesPerPixel <= 0)
+		{
+			final int bitsPerPixel = reader.getBitsPerPixel();
+
+			if (bitsPerPixel > 0 && bitsPerPixel % 8 == 0)
+				return bitsPerPixel / 8;
+
+			throw new IllegalArgumentException(
+					"Could not determine bytes per pixel for pixelType=" + reader.getPixelType() +
+					", bitsPerPixel=" + bitsPerPixel);
+		}
+
+		return bytesPerPixel;
+	}
+
+	public static int getPlaneSizeInBytes(final IFormatReader reader)
+	{
+		return Math.multiplyExact(
+				Math.multiplyExact(getBytesPerPixel(reader), reader.getSizeX()),
+				reader.getSizeY());
 	}
 }
