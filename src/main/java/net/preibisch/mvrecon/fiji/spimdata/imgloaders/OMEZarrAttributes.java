@@ -44,7 +44,7 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import util.URITools;
 
-public class OMEZarrAttibutes
+public class OMEZarrAttributes
 {
 	/*
 	 * 

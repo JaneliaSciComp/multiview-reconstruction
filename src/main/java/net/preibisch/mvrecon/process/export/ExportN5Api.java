@@ -80,7 +80,7 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionExportInterface;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.plugin.util.PluginHelper;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
@@ -259,7 +259,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 						IOFunctions.println( "Resolution of level 0: " + Util.printCoordinates( cal ) + " " + unit ); //vx.unit() might not be OME-ZARR compatible
 
 						// create metadata
-						final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
+						final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
 								5, // int n
 								"/", // String name, I also saw "/"
 								cal, // double[] resolutionS0,
@@ -378,7 +378,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			IOFunctions.println( "Resolution of level 0: " + Util.printCoordinates( cal ) + " micrometer" );
 
 			// create metadata
-			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
+			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
 					3, // int n
 					omeZarrSubContainer, // String name, I also saw "/"
 					cal, // double[] resolutionS0,
