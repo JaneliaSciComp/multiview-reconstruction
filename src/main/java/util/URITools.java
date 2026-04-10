@@ -28,6 +28,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -43,6 +44,7 @@ import org.janelia.saalfeldlab.googlecloud.GoogleCloudUtils;
 import org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess;
 import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
+import org.janelia.saalfeldlab.n5.LockedChannel;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -380,6 +382,33 @@ public class URITools
 		{
 			return io.load( URITools.fromURI( xmlURI ) ); // method from XmlIoAbstractSpimData
 		}
+		else if ( HTTPS_SCHEME.asPredicate().test( xmlURI.getScheme() ) )
+		{
+			// Plain HTTP/HTTPS web server - fetch XML directly via URL
+			// Note: this also handles public S3/GC data served over https://
+			final SAXBuilder sax = new SAXBuilder();
+			Document doc;
+
+			try
+			{
+				final InputStream is = xmlURI.toURL().openStream();
+				doc = sax.build( is );
+				is.close();
+			}
+			catch ( final Exception e )
+			{
+				throw new SpimDataIOException( e );
+			}
+
+			final Element docRoot = doc.getRootElement();
+
+			if ( docRoot.getName() != SPIMDATA_TAG )
+				throw new RuntimeException( "expected <" + SPIMDATA_TAG + "> root element. wrong file?" );
+
+			final SpimData2 data = io.fromXml( docRoot, xmlURI );
+
+			return data;
+		}
 		else if ( URITools.isS3( xmlURI ) || URITools.isGC( xmlURI ) )
 		{
 			final KeyValueAccess kva = getKeyValueAccess( xmlURI );
@@ -489,7 +518,22 @@ public class URITools
 
 	public static OutputStream openFileWriteCloudStream( final KeyValueAccess kva, final URI uri ) throws IOException
 	{
-		return kva.lockForWriting( toNormalPath( kva, uri ) ).newOutputStream();
+		final LockedChannel channel = kva.lockForWriting( toNormalPath( kva, uri ) );
+		final OutputStream inner = channel.newOutputStream();
+		// In n5 alpha-10+, lockForWriting returns a BufferedKvaLockedChannel whose
+		// newOutputStream() returns an in-memory ByteArrayOutputStream. The actual
+		// disk write only happens in channel.close(). Wrap the stream so that
+		// closing it also closes the channel (flushing to disk).
+		return new FilterOutputStream(inner) {
+			@Override
+			public void close() throws IOException {
+				try {
+					super.close();
+				} finally {
+					channel.close();
+				}
+			}
+		};
 	}
 
 	/*
@@ -517,7 +561,8 @@ public class URITools
 	// TODO: does not work for Windows
 	public static boolean isKnownScheme( URI uri )
 	{
-		return isFile( uri ) || isS3( uri ) || isGC( uri );
+		return isFile( uri ) || isS3( uri ) || isGC( uri )
+				|| ( uri.getScheme() != null && HTTPS_SCHEME.asPredicate().test( uri.getScheme() ) );
 	}
 
 	public static boolean isGC( URI uri )

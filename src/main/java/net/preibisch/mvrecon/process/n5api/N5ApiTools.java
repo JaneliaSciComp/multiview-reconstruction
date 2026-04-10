@@ -76,7 +76,7 @@ import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import util.Grid;
 
@@ -156,13 +156,13 @@ public class N5ApiTools
 		{
 			path = "t" + String.format("%05d", viewId.getTimePointId()) + "/" + "s" + String.format("%02d", viewId.getViewSetupId()) + "/" + level + "/cells";
 		}
-		else if ( StorageFormat.ZARR.equals( storageType ) )
+		else if ( StorageFormat.ZARR.equals( storageType ) || StorageFormat.ZARR2.equals( storageType ) )
 		{
 			path = "s" + viewId.getViewSetupId() + "-t" + viewId.getTimePointId() + ".zarr/" + level;
 		}
 		else
 		{
-			new RuntimeException( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
+			throw new RuntimeException( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
 		}
 
 		return path;
@@ -499,10 +499,10 @@ public class N5ApiTools
 
 		// extract the resolution of the s0 export
 		//final VoxelDimensions vx = fusionGroup.iterator().next().getViewSetup().getVoxelSize();
-		//final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisoF, downsamplingF );
+		//final double[] resolutionS0 = OMEZarrAttributes.getResolutionS0( vx, anisoF, downsamplingF );
 
 		// create metadata
-		final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
+		final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
 				5, // int n
 				"/", // String name, I also saw "/"
 				new double[] { 1, 1, 1 }, //resolutionS0, // double[] resolutionS0,

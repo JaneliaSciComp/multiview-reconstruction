@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -140,13 +141,16 @@ public class Resave_N5Api implements PlugIn
 		final int[][] downsamplings =
 				N5ApiTools.mipMapInfoToDownsamplings( n5Params.proposedMipmaps );
 
-		final List<long[][]> gridS0 =
-				vidsToResave.stream().map( viewId ->
-						N5ApiTools.assembleJobs(
-								viewId,
-								dimensions.get( viewId.getViewSetupId() ),
-								blockSize,
-								computeBlockSize ) ).flatMap(List::stream).collect( Collectors.toList() );
+		// Group blocks by view and process one view at a time to avoid loading
+		// multiple large images into memory simultaneously (which causes OOM)
+		final Map<ViewId, List<long[][]>> gridS0ByView = new LinkedHashMap<>();
+		for ( final ViewId viewId : vidsToResave )
+			gridS0ByView.put( viewId, N5ApiTools.assembleJobs(
+					viewId,
+					dimensions.get( viewId.getViewSetupId() ),
+					blockSize,
+					computeBlockSize ) );
+		final int totalBlocksS0 = gridS0ByView.values().stream().mapToInt( List::size ).sum();
 
 		final Map<Integer, DataType> dataTypes =
 				N5ApiTools.assembleDataTypes( data, dimensions.keySet() );
@@ -206,10 +210,10 @@ public class Resave_N5Api implements PlugIn
 						} ).collect(Collectors.toMap( e -> e.getA(), e -> e.getB() ));
 
 		IOFunctions.println( "Created BDV-metadata, took: " + (System.currentTimeMillis() - time ) + " ms." );
-		IOFunctions.println( "Number of compute blocks (s0): " + gridS0.size() );
+		IOFunctions.println( "Number of compute blocks (s0): " + totalBlocksS0 );
 
 		final AtomicInteger progress = new AtomicInteger( 0 );
-		IJ.showProgress( progress.get(), gridS0.size() );
+		IJ.showProgress( progress.get(), totalBlocksS0 );
 
 		//
 		// Save full resolution dataset (s0)
@@ -217,64 +221,60 @@ public class Resave_N5Api implements PlugIn
 		try
 		{
 			final ForkJoinPool myPool = new ForkJoinPool( n5Params.numCellCreatorThreads );
-			final RetryTracker<long[][]> retryTracker = RetryTracker.forGridBlocks("s0 resaving", gridS0.size());
 
 			time = System.currentTimeMillis();
 
-			do
+			// Process one view at a time so only one large image is in memory at once
+			for ( final Map.Entry<ViewId, List<long[][]>> viewEntry : gridS0ByView.entrySet() )
 			{
-				if (!retryTracker.beginAttempt())
-					return null;
+				final RetryTracker<long[][]> retryTracker = RetryTracker.forGridBlocks(
+						"s0 resaving tp=" + viewEntry.getKey().getTimePointId() + " setup=" + viewEntry.getKey().getViewSetupId(),
+						viewEntry.getValue().size() );
 
-				final ArrayList< Callable< long[][] > > tasks = new ArrayList<>();
+				List<long[][]> viewBlocks = viewEntry.getValue();
 
-				for ( final long[][] gridBlock : gridS0 )
-					tasks.add( () ->
-					{
-						N5ApiTools.resaveS0Block(
-								data,
-								n5Writer,
-								n5Params.format,
-								dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
-								N5ApiTools.gridToDatasetBdv( 0, n5Params.format ), // a function mapping the gridblock to the dataset name for level 0 and N5
-								gridBlock );
-
-						IJ.showProgress( progress.incrementAndGet(), gridS0.size() );
-
-						return gridBlock.clone();
-					});
-
-				/*
-				myPool.submit(() -> grid.parallelStream().map( gridBlock -> 
+				do
 				{
-					N5ApiTools.resaveS0Block(
-						data,
-						n5Writer,
-						n5Params.format,
-						dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
-						N5ApiTools.gridToDatasetBdv( 0, n5Params.format ), // a function mapping the gridblock to the dataset name for level 0 and N5
-						gridBlock );
+					if (!retryTracker.beginAttempt())
+					{
+						myPool.shutdown();
+						return null;
+					}
 
-					IJ.showProgress( progress.incrementAndGet(), grid.size() );
+					final ArrayList< Callable< long[][] > > tasks = new ArrayList<>();
 
-					// TOOD: add re-try logic
-					return gridBlock;
-				})).get();*/
+					for ( final long[][] gridBlock : viewBlocks )
+						tasks.add( () ->
+						{
+							N5ApiTools.resaveS0Block(
+									data,
+									n5Writer,
+									n5Params.format,
+									dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
+									N5ApiTools.gridToDatasetBdv( 0, n5Params.format ),
+									gridBlock );
 
-				final List<Future<long[][]>> futures = myPool.invokeAll( tasks );
+							IJ.showProgress( progress.incrementAndGet(), totalBlocksS0 );
 
-				// extract all blocks that failed
-				final Set<long[][]> failedBlocksSet = retryTracker.processWithFutures( futures, gridS0 );
+							return gridBlock.clone();
+						});
 
-				// Use RetryTracker to handle retry counting and removal
-				if (!retryTracker.processFailures(failedBlocksSet))
-					return null;
+					final List<Future<long[][]>> futures = myPool.invokeAll( tasks );
 
-				// Update grid for next iteration with remaining failed blocks
-				gridS0.clear();
-				gridS0.addAll(failedBlocksSet);
+					// extract all blocks that failed
+					final Set<long[][]> failedBlocksSet = retryTracker.processWithFutures( futures, viewBlocks );
+
+					// Use RetryTracker to handle retry counting and removal
+					if (!retryTracker.processFailures(failedBlocksSet))
+					{
+						myPool.shutdown();
+						return null;
+					}
+
+					viewBlocks = new ArrayList<>( failedBlocksSet );
+				}
+				while ( viewBlocks.size() > 0 );
 			}
-			while ( gridS0.size() > 0 );
 
 			myPool.shutdown();
 			myPool.awaitTermination(Long.MAX_VALUE, TimeUnit.HOURS);
@@ -286,7 +286,7 @@ public class Resave_N5Api implements PlugIn
 			return null;
 		}
 
-		IJ.showProgress( progress.getAndSet( 0 ), gridS0.size() );
+		IJ.showProgress( progress.getAndSet( 0 ), totalBlocksS0 );
 		IOFunctions.println( "Saved level s0, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
 		//

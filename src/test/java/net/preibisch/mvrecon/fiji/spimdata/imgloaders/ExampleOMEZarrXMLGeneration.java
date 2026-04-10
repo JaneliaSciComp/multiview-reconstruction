@@ -191,7 +191,7 @@ public class ExampleOMEZarrXMLGeneration
 		if ( datasetBaseName.isEmpty() )
 		{
 			org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata[] metadata =
-				OMEZarrAttibutes.createOMEZarrMetadata(
+				OMEZarrAttributes.createOMEZarrMetadata(
 					is3D ? 3 : 4,
 					"/",
 					is3D ? new double[] { voxelSizeX, voxelSizeY, voxelSizeZ } :
