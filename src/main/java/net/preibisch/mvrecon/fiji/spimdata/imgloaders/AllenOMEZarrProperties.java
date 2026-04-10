@@ -123,14 +123,11 @@ public class AllenOMEZarrProperties implements N5Properties
 			getMipMapResolutions( n5properties, n5, setupId );
 
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
-<<<<<<< HEAD
 
 		// If all timepoints are missing, return a default data type
 		if ( timePointId < 0 )
 			return DataType.UINT16;
 
-		return n5.getDatasetAttributes( n5properties.getDatasetPath( setupId, timePointId, 0 ) ).getDataType();
-=======
 		final String path = n5properties.getDatasetPath( setupId, timePointId, 0 );
 		final DatasetAttributes attributes = n5.getDatasetAttributes( path );
 
@@ -138,7 +135,6 @@ public class AllenOMEZarrProperties implements N5Properties
 			throw new RuntimeException( "Could not find dataset attributes for '" + path + "'. Please check if the OME-Zarr data is valid." );
 
 		return attributes.getDataType();
->>>>>>> 1151adb7 (able to create xml from zarr3)
 	}
 
 	private static double[][] getMipMapResolutions( final AllenOMEZarrProperties n5properties, final N5Reader n5, final int setupId )

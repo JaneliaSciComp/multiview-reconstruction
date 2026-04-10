@@ -201,9 +201,6 @@ public class OMEZARR implements MultiViewDatasetDefinition
 		for ( final String dataset : datasets )
 		{
 			IOFunctions.println( "\nFetching metadata for " + dataset );
-//			IOFunctions.println( "Reader URI: " + reader.getURI() );
-//			IOFunctions.println( "Full dataset URI: " + reader.getURI().resolve( dataset ) );
-//			IOFunctions.println( "Available attributes: " + reader.listAttributes( dataset ) );
 
 			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
 			// for this to work you need to register an adapter in the N5Factory class
@@ -755,16 +752,12 @@ public class OMEZARR implements MultiViewDatasetDefinition
 				// channel had a pattern, so it's a single channel for this dataset, still possibly multiple timepoints
 				viewIdToPath.putAll( updateViewSetup(dataset, viewSetups, meta, angleId, chId, illumId, tileId, tpId, sizeT, numDimensions ) );
 			}
-			else if ( sizeC > 0 )
-			{
-				// if the channels are inside the 4D/5D OME-ZARR, this dataset could contain more than one ViewSetup
-				for ( int c = 0; c < sizeC; ++c )
-					viewIdToPath.putAll( updateViewSetup( dataset, viewSetups, meta, angleId, c, illumId, tileId, tpId, sizeT, numDimensions ) );
-			}
 			else
 			{
-				// 3D data with no channel pattern - single channel (channelId = 0)
-				viewIdToPath.putAll( updateViewSetup( dataset, viewSetups, meta, angleId, 0, illumId, tileId, tpId, sizeT, numDimensions ) );
+				// if the channels are inside the 4D/5D OME-ZARR, this dataset could contain more than one ViewSetup
+                // if 3D OME-ZARR with no channel pattern (sizeC=0), create 1 channel (channelID 0)
+				for ( int c = 0; c < Math.max(1, sizeC); ++c )
+					viewIdToPath.putAll( updateViewSetup( dataset, viewSetups, meta, angleId, c, illumId, tileId, tpId, sizeT, numDimensions ) );
 			}
 		}
 
