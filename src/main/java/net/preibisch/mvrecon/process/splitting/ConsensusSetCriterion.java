@@ -122,7 +122,7 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		if ( uniqueDetections.size() <= minCorrespondences )
 			return false;
 
-		// Too many detections - check if any view has multiple consensus sets
+		// Count consensus set distribution per view pair
 		// Map: corrViewKey → Map of consensusSetId → count
 		final Map< String, Map< Integer, Integer > > consensusSetCountsPerView = new HashMap<>();
 		for ( final SplitCorrespondence corr : correspondences )
@@ -132,44 +132,50 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 				.merge( corr.consensusSetId, 1, Integer::sum );
 		}
 
-		// Check each view for multiple consensus sets, applying tolerance
+		// Aggregate across all view pairs: sum dominant counts (biggest set each)
+		// and outlier counts (all other consensus sets)
+		int totalDominant = 0;
+		int totalOutliers = 0;
+		int maxNumSets = 0;
+		int totalNumSets = 0;
+		int numPairs = 0;
+
 		for ( final Map< Integer, Integer > setCounts : consensusSetCountsPerView.values() )
 		{
-			if ( setCounts.size() <= 1 )
-				continue;  // Only one set for this view - no problem
-
-			// Multiple sets - check if within tolerance
-			if ( toleranceMode == TOLERANCE_NONE )
-			{
-				// Any other set triggers split
-				return true;
-			}
-
-			// Find the dominant set and count outliers
-			int totalCount = 0;
-			int maxCount = 0;
+			int pairTotal = 0;
+			int pairMax = 0;
 			for ( final int count : setCounts.values() )
 			{
-				totalCount += count;
-				maxCount = Math.max( maxCount, count );
+				pairTotal += count;
+				pairMax = Math.max( pairMax, count );
 			}
-			final int outlierCount = totalCount - maxCount;
-
-			if ( toleranceMode == TOLERANCE_PERCENTAGE )
-			{
-				final double outlierPercentage = ( 100.0 * outlierCount ) / totalCount;
-				if ( outlierPercentage > toleranceValue )
-					return true;
-			}
-			else if ( toleranceMode == TOLERANCE_COUNT )
-			{
-				if ( outlierCount > toleranceValue )
-					return true;
-			}
+			totalDominant += pairMax;
+			totalOutliers += pairTotal - pairMax;
+			maxNumSets = Math.max( maxNumSets, setCounts.size() );
+			totalNumSets += setCounts.size();
+			numPairs++;
 		}
 
-		// Within tolerance for all views - don't split
-		return false;
+		final double avgNumSets = numPairs > 0 ? ( double ) totalNumSets / numPairs : 0;
+
+		// If no outliers at all, don't split
+		if ( totalOutliers == 0 )
+			return false;
+
+		// Apply tolerance check on aggregated counts
+		if ( toleranceMode == TOLERANCE_NONE )
+		{
+			return true;
+		}
+		else if ( toleranceMode == TOLERANCE_PERCENTAGE )
+		{
+			final double outlierPercentage = ( 100.0 * totalOutliers ) / ( totalDominant + totalOutliers );
+			return outlierPercentage > toleranceValue;
+		}
+		else // TOLERANCE_COUNT
+		{
+			return totalOutliers > toleranceValue;
+		}
 	}
 
 	@Override
