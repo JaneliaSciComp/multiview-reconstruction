@@ -313,7 +313,7 @@ public class SplitOctTree implements SplitInterval
 		final List< Interval > octants =
 				createOctantsWithOverlapStatic( interval, minStepSize, minSizeMultiplier, splitDim );
 		final List< List< SplitCorrespondence > > partitionedCorrs =
-				partitionCorrespondencesStatic( correspondences, interval, minStepSize, minSizeMultiplier, splitDim );
+				partitionCorrespondencesStatic( correspondences, octants );
 
 		final List< List< InternalSplitResult > > octantResults = new ArrayList<>();
 		for ( int i = 0; i < octants.size(); i++ )
@@ -509,87 +509,32 @@ public class SplitOctTree implements SplitInterval
 	}
 
 	/**
-	 * Static version of partitionCorrespondences.
-	 * Only partitions along dimensions that are being split (matching createOctantsWithOverlapStatic).
+	 * Partition correspondences into the child intervals (octants) created by createOctantsWithOverlapStatic.
+	 * Each correspondence is added to every octant that contains its location.
+	 * Correspondences in overlap zones are added to multiple octants.
 	 */
 	private static List< List< SplitCorrespondence > > partitionCorrespondencesStatic(
 			final List< SplitCorrespondence > correspondences,
-			final Interval interval,
-			final long[] minStepSize,
-			final int minSizeMultiplier,
-			final boolean[] splitDim )
+			final List< Interval > octants )
 	{
-		final int n = interval.numDimensions();
-
-		// Build mapping from bit index to split dimensions
-		final int[] splitDimIndices = new int[ n ];
-		int numSplitDims = 0;
-		for ( int d = 0; d < n; ++d )
-			if ( splitDim[ d ] )
-				splitDimIndices[ numSplitDims++ ] = d;
-
-		final double[] splitPoints = new double[ n ];
-		for ( int d = 0; d < n; d++ )
-		{
-			if ( !splitDim[ d ] )
-				continue;
-
-			final long mid = interval.min( d ) + interval.dimension( d ) / 2;
-			splitPoints[ d ] = SplitDistributeEvenly.closestLongDivisableBy( mid, minStepSize[ d ] );
-			final long margin = ( minSizeMultiplier - 1 ) * minStepSize[ d ];
-			splitPoints[ d ] = Math.max( interval.min( d ) + margin,
-					Math.min( splitPoints[ d ], interval.max( d ) - margin + 1 ) );
-		}
-
-		final int numChildren = 1 << numSplitDims;
-		final List< List< SplitCorrespondence > > children = new ArrayList<>( numChildren );
-		for ( int i = 0; i < numChildren; i++ )
+		final List< List< SplitCorrespondence > > children = new ArrayList<>( octants.size() );
+		for ( int i = 0; i < octants.size(); i++ )
 			children.add( new ArrayList<>() );
 
 		for ( final SplitCorrespondence corr : correspondences )
-		{
-			// Only classify along split dimensions
-			final int[] belongsTo = new int[ numSplitDims ];
-			for ( int bit = 0; bit < numSplitDims; bit++ )
-			{
-				final int d = splitDimIndices[ bit ];
-				final double low = splitPoints[ d ] - minStepSize[ d ];
-				final double high = splitPoints[ d ] + minStepSize[ d ];
-				if ( corr.location[ d ] < low )
-					belongsTo[ bit ] = 0;
-				else if ( corr.location[ d ] >= high )
-					belongsTo[ bit ] = 1;
-				else
-					belongsTo[ bit ] = 2;
-			}
-
-			addToChildrenStatic( children, corr, belongsTo, 0, 0, numSplitDims );
-		}
+			for ( int i = 0; i < octants.size(); i++ )
+				if ( contains( corr.location, octants.get( i ) ) )
+					children.get( i ).add( corr );
 
 		return children;
 	}
 
-	/**
-	 * Static version of addToChildren.
-	 * Operates on the split dimension indices (not full dimension indices).
-	 */
-	private static void addToChildrenStatic(
-			final List< List< SplitCorrespondence > > children,
-			final SplitCorrespondence corr,
-			final int[] belongsTo,
-			final int bitIdx,
-			final int childIdx,
-			final int numSplitDims )
+	private static boolean contains( final double[] location, final Interval interval )
 	{
-		if ( bitIdx == numSplitDims )
-		{
-			children.get( childIdx ).add( corr );
-			return;
-		}
-		if ( belongsTo[ bitIdx ] == 0 || belongsTo[ bitIdx ] == 2 )
-			addToChildrenStatic( children, corr, belongsTo, bitIdx + 1, childIdx, numSplitDims );
-		if ( belongsTo[ bitIdx ] == 1 || belongsTo[ bitIdx ] == 2 )
-			addToChildrenStatic( children, corr, belongsTo, bitIdx + 1, childIdx | ( 1 << bitIdx ), numSplitDims );
+		for ( int d = 0; d < location.length; d++ )
+			if ( location[ d ] < interval.min( d ) || location[ d ] > interval.max( d ) )
+				return false;
+		return true;
 	}
 
 	// ==================== Helper Methods for Merge Strategies ====================
