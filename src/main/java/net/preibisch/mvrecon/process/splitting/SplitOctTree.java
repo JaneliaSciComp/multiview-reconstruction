@@ -310,9 +310,10 @@ public class SplitOctTree implements SplitInterval
 		}
 
 		stats[ 0 ]++;  // splitCount
-		final List< Interval > octants = createOctantsWithOverlapStatic( interval, minStepSize, minSizeMultiplier, anisotropy, forceSplit );
+		final List< Interval > octants =
+				createOctantsWithOverlapStatic( interval, minStepSize, minSizeMultiplier, splitDim );
 		final List< List< SplitCorrespondence > > partitionedCorrs =
-				partitionCorrespondencesStatic( correspondences, interval, minStepSize, minSizeMultiplier, anisotropy, forceSplit );
+				partitionCorrespondencesStatic( correspondences, interval, minStepSize, minSizeMultiplier, splitDim );
 
 		final List< List< InternalSplitResult > > octantResults = new ArrayList<>();
 		for ( int i = 0; i < octants.size(); i++ )
@@ -376,22 +377,28 @@ public class SplitOctTree implements SplitInterval
 
 
 	/**
-	 * Static version of createOctantsWithOverlap.
-	 * Uses anisotropy to selectively skip splitting dimensions whose physical extent
-	 * is less than 50% of the largest dimension's physical extent.
+	 * Create child intervals by splitting the parent along the dimensions marked in splitDim.
+	 *
+	 * For each split dimension, computes a midpoint (snapped to minStepSize alignment)
+	 * and clamps it so both halves have at least (minSizeMultiplier - 1) * minStepSize margin.
+	 *
+	 * Generates 2^numSplitDims children. Each child:
+	 *   - Non-split dimensions: inherits the full parent range
+	 *   - Split dimensions: gets lower or upper half, selected by bit index
+	 *     - Lower: [parent.min, splitPoint + minStepSize - 1]
+	 *     - Upper: [splitPoint - minStepSize, parent.max]
+	 *   - The two halves overlap by 2 * minStepSize - 1 pixels around the split point
+	 *
+	 * Examples for 3D: all dims split → 8 children, two dims split → 4 children, one dim split → 2 children.
 	 */
 	private static List< Interval > createOctantsWithOverlapStatic(
 			final Interval interval,
 			final long[] minStepSize,
 			final int minSizeMultiplier,
-			final double[] anisotropy,
-			final boolean forceSplit )
+			final boolean[] splitDim )
 	{
 		final int n = interval.numDimensions();
 		final List< Interval > octants = new ArrayList<>();
-
-		// Determine which dimensions to split based on physical extent
-		final boolean[] splitDim = computeSplitDimensions( interval, minStepSize, minSizeMultiplier, anisotropy, forceSplit );
 
 		// Build mapping from bit index to split dimensions
 		final int[] splitDimIndices = new int[ n ];
@@ -510,11 +517,9 @@ public class SplitOctTree implements SplitInterval
 			final Interval interval,
 			final long[] minStepSize,
 			final int minSizeMultiplier,
-			final double[] anisotropy,
-			final boolean forceSplit )
+			final boolean[] splitDim )
 	{
 		final int n = interval.numDimensions();
-		final boolean[] splitDim = computeSplitDimensions( interval, minStepSize, minSizeMultiplier, anisotropy, forceSplit );
 
 		// Build mapping from bit index to split dimensions
 		final int[] splitDimIndices = new int[ n ];
@@ -1164,7 +1169,7 @@ public class SplitOctTree implements SplitInterval
 		}
 
 		// 5. Try individual octant merges (within each octant)
-		final List< Interval > octants = createOctantsWithOverlapStatic( parentInterval, minStepSize, minSizeMultiplier, anisotropy, false );
+		final List< Interval > octants = createOctantsWithOverlapStatic( parentInterval, minStepSize, minSizeMultiplier, splitDimFlags );
 		final List< InternalSplitResult > indivMerged = tryMergeIndividualOctantsStatic( octantResults, octants, criterion );
 		if ( indivMerged != null && indivMerged.size() < bestCount )
 		{
