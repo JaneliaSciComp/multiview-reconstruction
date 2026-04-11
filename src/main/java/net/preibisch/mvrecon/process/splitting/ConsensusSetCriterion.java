@@ -178,6 +178,43 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		}
 	}
 
+	/**
+	 * Compute the aggregate outlier ratio across all view pairs.
+	 * For each pair, the dominant consensus set (highest count) is "inlier",
+	 * everything else is "outlier". Returns totalOutliers / (totalDominant + totalOutliers),
+	 * or 0.0 if there are no correspondences.
+	 */
+	public static double computeOutlierRatio( final List< SplitCorrespondence > correspondences )
+	{
+		// Map: corrViewKey → Map of consensusSetId → count
+		final Map< String, Map< Integer, Integer > > consensusSetCountsPerView = new HashMap<>();
+		for ( final SplitCorrespondence corr : correspondences )
+		{
+			consensusSetCountsPerView
+				.computeIfAbsent( corr.corrViewKey, k -> new HashMap<>() )
+				.merge( corr.consensusSetId, 1, Integer::sum );
+		}
+
+		int totalDominant = 0;
+		int totalOutliers = 0;
+
+		for ( final Map< Integer, Integer > setCounts : consensusSetCountsPerView.values() )
+		{
+			int pairMax = 0;
+			int pairTotal = 0;
+			for ( final int count : setCounts.values() )
+			{
+				pairTotal += count;
+				pairMax = Math.max( pairMax, count );
+			}
+			totalDominant += pairMax;
+			totalOutliers += pairTotal - pairMax;
+		}
+
+		final int total = totalDominant + totalOutliers;
+		return total > 0 ? ( double ) totalOutliers / total : 0.0;
+	}
+
 	@Override
 	public String description()
 	{

@@ -60,23 +60,11 @@ public class SplitOctTree implements SplitInterval
 		ConsensusSetCriterion.CRITERION_NAME
 	};
 
-	// Merge constraint modes (must be before defaultMergeMode)
-	public static final int MERGE_NONE = 0;           // Merge as much as possible
-	public static final int MERGE_SAME_AS_SPLIT = 1;  // Use minSplitLevels (default)
-	public static final int MERGE_TPS_COMPATIBLE = 2; // At least 8 non-co-planar tiles
-
-	public static final String[] MERGE_MODE_NAMES = {
-		"None (merge as much as possible)",
-		"Same as splitting (minSplitLevel)",
-		"Thin-plate spline compatible (>=8 non-co-planar tiles)"
-	};
-
 	// Static defaults for GUI persistence
 	public static int defaultCriterionChoice = 1;
 	public static long[] defaultMinTileSize = null;  // initialized in setupGUI based on minStepSize
 	public static boolean defaultEnableMerge = true;
 	public static int defaultMinSplitLevels = 0;
-	public static int defaultMergeMode = MERGE_SAME_AS_SPLIT;
 	public static int defaultAnisotropyChoice = 1;
 
 	public static final String[] ANISOTROPY_CHOICES = {
@@ -91,7 +79,6 @@ public class SplitOctTree implements SplitInterval
 	private final OctTreeSplitCriterion criterion;
 	private final boolean enableMerge;
 	private final int minSplitLevels;
-	private final int mergeMode;
 	private final double[] anisotropy; // per-dimension voxel size ratio, {1,1,1} for isotropic
 
 	// Current context for split() method (set per ViewSetup iteration)
@@ -155,8 +142,8 @@ public class SplitOctTree implements SplitInterval
 	 * @param minSizeMultiplier Multiplier for minimum split size (e.g., 4 means min size = 4 * minStepSize)
 	 * @param criterion The splitting criterion (determines when to stop splitting)
 	 * @param enableMerge If true, attempt to merge blocks back when combined count is below threshold
-	 * @param minSplitLevels Minimum number of split levels to always perform (0 = fully adaptive)
-	 * @param mergeMode Merge constraint mode (MERGE_NONE, MERGE_SAME_AS_SPLIT, or MERGE_TPS_COMPATIBLE)
+	 * @param minSplitLevels Minimum number of split levels to always perform (0 = fully adaptive).
+	 *        Use minSplitLevels=1 for TPS-compatible splitting (guaranteed 8 non-co-planar tiles).
 	 * @param anisotropy Per-dimension voxel size ratio (e.g., {1, 1, 2} for 2x anisotropy in Z), or null for isotropic
 	 */
 	public SplitOctTree(
@@ -165,7 +152,6 @@ public class SplitOctTree implements SplitInterval
 			final OctTreeSplitCriterion criterion,
 			final boolean enableMerge,
 			final int minSplitLevels,
-			final int mergeMode,
 			final double[] anisotropy )
 	{
 		this.minStepSize = minStepSize.clone();
@@ -173,7 +159,6 @@ public class SplitOctTree implements SplitInterval
 		this.criterion = criterion;
 		this.enableMerge = enableMerge;
 		this.minSplitLevels = minSplitLevels;
-		this.mergeMode = mergeMode;
 		this.anisotropy = ( anisotropy != null ) ? anisotropy.clone() : new double[] { 1, 1, 1 };
 	}
 
@@ -193,8 +178,7 @@ public class SplitOctTree implements SplitInterval
 	 * @param minStepSize Alignment constraint and overlap size
 	 * @param minSizeMultiplier Multiplier for minimum split size
 	 * @param enableMerge If true, attempt to merge blocks back
-	 * @param minSplitLevels Minimum number of split levels
-	 * @param mergeMode Merge constraint mode (MERGE_NONE, MERGE_SAME_AS_SPLIT, or MERGE_TPS_COMPATIBLE)
+	 * @param minSplitLevels Minimum number of split levels (use 1 for TPS-compatible splitting)
 	 * @return SplitStatistics containing intervals and statistics, or null on error
 	 */
 	public static SplitStatistics splitStatic(
@@ -205,7 +189,6 @@ public class SplitOctTree implements SplitInterval
 			final int minSizeMultiplier,
 			final boolean enableMerge,
 			final int minSplitLevels,
-			final int mergeMode,
 			final double[] anisotropy )
 	{
 		final long startTime = System.currentTimeMillis();
@@ -224,15 +207,6 @@ public class SplitOctTree implements SplitInterval
 			}
 		}
 
-		// Validate TPS mode requires 3D data
-		if ( mergeMode == MERGE_TPS_COMPATIBLE && input.numDimensions() < 3 )
-		{
-			IOFunctions.printErr( "ERROR: TPS-compatible merge mode requires 3D data, but view " +
-					viewId.getTimePointId() + "_" + viewId.getViewSetupId() + " has only " +
-					input.numDimensions() + " dimensions" );
-			return null;
-		}
-
 		// Load correspondences for this view
 		final List< SplitCorrespondence > correspondences = criterion.loadCorrespondences( viewId );
 
@@ -242,7 +216,7 @@ public class SplitOctTree implements SplitInterval
 		// Recursive splitting
 		final List< InternalSplitResult > results = new ArrayList<>();
 		splitRecursiveStatic( input, correspondences, results, 0,
-				criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, mergeMode, anisotropy, stats );
+				criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, anisotropy, stats );
 
 		// Extract intervals
 		final ArrayList< Interval > intervals = new ArrayList<>();
@@ -270,7 +244,6 @@ public class SplitOctTree implements SplitInterval
 			final int minSizeMultiplier,
 			final boolean enableMerge,
 			final int minSplitLevels,
-			final int mergeMode,
 			final double[] anisotropy,
 			final int[] stats )
 	{
@@ -310,41 +283,75 @@ public class SplitOctTree implements SplitInterval
 		}
 
 		stats[ 0 ]++;  // splitCount
-		final List< Interval > octants =
-				createOctantsWithOverlapStatic( interval, minStepSize, minSizeMultiplier, splitDim );
-		final List< List< SplitCorrespondence > > partitionedCorrs =
-				partitionCorrespondencesStatic( correspondences, octants );
 
-		final List< List< InternalSplitResult > > octantResults = new ArrayList<>();
-		for ( int i = 0; i < octants.size(); i++ )
+		if ( forceSplit )
 		{
-			final List< InternalSplitResult > childResults = new ArrayList<>();
-			splitRecursiveStatic( octants.get( i ), partitionedCorrs.get( i ), childResults, depth + 1,
-					criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, mergeMode, anisotropy, stats );
-			octantResults.add( childResults );
-		}
+			// === FORCED PATH: split all eligible dimensions at once ===
+			final List< Interval > octants =
+					createOctantsWithOverlapStatic( interval, minStepSize, minSizeMultiplier, splitDim );
+			final List< List< SplitCorrespondence > > partitionedCorrs =
+					partitionCorrespondencesStatic( correspondences, octants );
 
-		// Determine whether to attempt merging based on mergeMode
-		final boolean shouldAttemptMerge;
-		if ( !enableMerge )
-			shouldAttemptMerge = false;
-		else if ( mergeMode == MERGE_NONE )
-			shouldAttemptMerge = true;  // Always try to merge
-		else if ( mergeMode == MERGE_SAME_AS_SPLIT )
-			shouldAttemptMerge = ( depth + 1 >= minSplitLevels );  // Original behavior
-		else // MERGE_TPS_COMPATIBLE
-			shouldAttemptMerge = true;  // Try merge, but check constraint in mergeOctantResultsStatic
+			final List< List< InternalSplitResult > > octantResults = new ArrayList<>();
+			for ( int i = 0; i < octants.size(); i++ )
+			{
+				final List< InternalSplitResult > childResults = new ArrayList<>();
+				splitRecursiveStatic( octants.get( i ), partitionedCorrs.get( i ), childResults, depth + 1,
+						criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, anisotropy, stats );
+				octantResults.add( childResults );
+			}
 
-		if ( shouldAttemptMerge )
-		{
-			final List< InternalSplitResult > merged = mergeOctantResultsStatic( octantResults, interval,
-					criterion, minStepSize, minSizeMultiplier, mergeMode, anisotropy, stats );
-			result.addAll( merged );
+			// Merge after forced split: only attempt if we're past the forced levels
+			if ( enableMerge && depth + 1 >= minSplitLevels )
+			{
+				final List< InternalSplitResult > merged = mergeOctantResultsStatic( octantResults, interval,
+						criterion, minStepSize, minSizeMultiplier, anisotropy, stats );
+				result.addAll( merged );
+			}
+			else
+			{
+				for ( final List< InternalSplitResult > childResults : octantResults )
+					result.addAll( childResults );
+			}
 		}
 		else
 		{
-			for ( final List< InternalSplitResult > childResults : octantResults )
-				result.addAll( childResults );
+			// === NON-FORCED PATH: split along one best dimension (binary split) ===
+			final int bestDim = chooseBestSplitDimension( interval, correspondences, splitDim,
+					criterion, minStepSize, minSizeMultiplier );
+
+			final boolean[] singleDimMask = new boolean[ interval.numDimensions() ];
+			singleDimMask[ bestDim ] = true;
+
+			final List< Interval > children =
+					createOctantsWithOverlapStatic( interval, minStepSize, minSizeMultiplier, singleDimMask );
+			final List< List< SplitCorrespondence > > childCorrs =
+					partitionCorrespondencesStatic( correspondences, children );
+
+			// Recurse into both children
+			final List< InternalSplitResult > allSubResults = new ArrayList<>();
+			for ( int i = 0; i < children.size(); i++ )
+			{
+				splitRecursiveStatic( children.get( i ), childCorrs.get( i ), allSubResults, depth + 1,
+						criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, anisotropy, stats );
+			}
+
+			// Simplified merge: try full merge, otherwise keep sub-results
+			if ( enableMerge && allSubResults.size() > 1 )
+			{
+				final List< SplitCorrespondence > allCorrespondences = new ArrayList<>();
+				for ( final InternalSplitResult sr : allSubResults )
+					allCorrespondences.addAll( sr.correspondences );
+
+				if ( criterion.canMerge( allCorrespondences ) )
+				{
+					result.add( new InternalSplitResult( interval, allCorrespondences ) );
+					stats[ 1 ] += allSubResults.size() - 1;  // mergeCount
+					return;
+				}
+			}
+
+			result.addAll( allSubResults );
 		}
 	}
 
@@ -506,6 +513,68 @@ public class SplitOctTree implements SplitInterval
 		}
 
 		return splitDim;
+	}
+
+	/**
+	 * Choose the best single dimension to split along by evaluating each eligible dimension.
+	 *
+	 * Stage 1: For each dimension, simulate a binary split and count how many children
+	 * don't need further splitting (cleanCount: 0, 1, or 2). Higher is better.
+	 *
+	 * Stage 2 (tiebreaker): Sum the outlier ratios of both children. Lower is better.
+	 *
+	 * @return The dimension index of the best split dimension
+	 */
+	private static int chooseBestSplitDimension(
+			final Interval interval,
+			final List< SplitCorrespondence > correspondences,
+			final boolean[] splitDim,
+			final OctTreeSplitCriterion criterion,
+			final long[] minStepSize,
+			final int minSizeMultiplier )
+	{
+		final int n = interval.numDimensions();
+		int bestDim = -1;
+		int bestCleanCount = -1;
+		double bestOutlierSum = Double.MAX_VALUE;
+
+		for ( int d = 0; d < n; d++ )
+		{
+			if ( !splitDim[ d ] )
+				continue;
+
+			// Create single-dim mask
+			final boolean[] testSplitDim = new boolean[ n ];
+			testSplitDim[ d ] = true;
+
+			// Simulate split along this dimension → 2 children
+			final List< Interval > children =
+					createOctantsWithOverlapStatic( interval, minStepSize, minSizeMultiplier, testSplitDim );
+			final List< List< SplitCorrespondence > > childCorrs =
+					partitionCorrespondencesStatic( correspondences, children );
+
+			// Stage 1: count clean children
+			int cleanCount = 0;
+			for ( int i = 0; i < children.size(); i++ )
+				if ( !criterion.shouldSplit( childCorrs.get( i ) ) )
+					cleanCount++;
+
+			// Stage 2: sum outlier ratios (tiebreaker)
+			double outlierSum = 0;
+			for ( int i = 0; i < children.size(); i++ )
+				outlierSum += ConsensusSetCriterion.computeOutlierRatio( childCorrs.get( i ) );
+
+			// Pick best: highest cleanCount, then lowest outlierSum
+			if ( cleanCount > bestCleanCount ||
+				( cleanCount == bestCleanCount && outlierSum < bestOutlierSum ) )
+			{
+				bestDim = d;
+				bestCleanCount = cleanCount;
+				bestOutlierSum = outlierSum;
+			}
+		}
+
+		return bestDim;
 	}
 
 	/**
@@ -986,35 +1055,6 @@ public class SplitOctTree implements SplitInterval
 	// ==================== Main Merge Orchestration ====================
 
 	/**
-	 * Check if tiles satisfy TPS compatibility: ≥8 tiles with non-co-planar centers.
-	 * Non-co-planar means at least 2 different centers in each of X, Y, Z.
-	 * TPS only supports 3D data.
-	 *
-	 * @param tiles The list of tiles to check
-	 * @return true if TPS compatible, false otherwise
-	 */
-	private static boolean isTPSCompatible( final List< InternalSplitResult > tiles )
-	{
-		if ( tiles.size() < 8 )
-			return false;
-
-		// Collect unique centers in each dimension
-		final Set< Long > centersX = new HashSet<>();
-		final Set< Long > centersY = new HashSet<>();
-		final Set< Long > centersZ = new HashSet<>();
-
-		for ( final InternalSplitResult tile : tiles )
-		{
-			final Interval interval = tile.interval;
-			centersX.add( ( interval.min( 0 ) + interval.max( 0 ) ) / 2 );
-			centersY.add( ( interval.min( 1 ) + interval.max( 1 ) ) / 2 );
-			centersZ.add( ( interval.min( 2 ) + interval.max( 2 ) ) / 2 );
-		}
-
-		return centersX.size() >= 2 && centersY.size() >= 2 && centersZ.size() >= 2;
-	}
-
-	/**
 	 * Static version of mergeOctantResults.
 	 * Tries multiple merge strategies and returns the best result.
 	 *
@@ -1023,7 +1063,6 @@ public class SplitOctTree implements SplitInterval
 	 * @param criterion The split criterion
 	 * @param minStepSize Minimum step size
 	 * @param minSizeMultiplier Size multiplier
-	 * @param mergeMode Merge constraint mode
 	 * @param stats Statistics array [splitCount, mergeCount, leafCount]
 	 * @return Best merged result
 	 */
@@ -1033,7 +1072,6 @@ public class SplitOctTree implements SplitInterval
 			final OctTreeSplitCriterion criterion,
 			final long[] minStepSize,
 			final int minSizeMultiplier,
-			final int mergeMode,
 			final double[] anisotropy,
 			final int[] stats )
 	{
@@ -1054,16 +1092,9 @@ public class SplitOctTree implements SplitInterval
 		// 1. Try full merge (all octants → parent)
 		if ( criterion.canMerge( allCorrespondences ) )
 		{
-			final List< InternalSplitResult > fullMerged = java.util.Collections.singletonList(
+			stats[ 1 ] += inputCount - 1;  // mergeCount
+			return java.util.Collections.singletonList(
 					new InternalSplitResult( parentInterval, allCorrespondences ) );
-
-			// Check TPS constraint if applicable
-			if ( mergeMode != MERGE_TPS_COMPATIBLE || isTPSCompatible( fullMerged ) )
-			{
-				stats[ 1 ] += inputCount - 1;  // mergeCount
-				return fullMerged;
-			}
-			// TPS constraint not satisfied, fall through to try other strategies
 		}
 
 		// Compute split dimensions (must match what createOctantsWithOverlapStatic used)
@@ -1084,33 +1115,24 @@ public class SplitOctTree implements SplitInterval
 		final List< InternalSplitResult > halfMerged = tryMergeHalvesStatic( octantResults, parentInterval, criterion, minStepSize, minSizeMultiplier, splitDimIndices, numSplitDims );
 		if ( halfMerged != null && halfMerged.size() < bestCount )
 		{
-			if ( mergeMode != MERGE_TPS_COMPATIBLE || isTPSCompatible( halfMerged ) )
-			{
-				bestResult = halfMerged;
-				bestCount = halfMerged.size();
-			}
+			bestResult = halfMerged;
+			bestCount = halfMerged.size();
 		}
 
 		// 3. Try quadrant merges
 		final List< InternalSplitResult > quadMerged = tryMergeQuadrantsStatic( octantResults, parentInterval, criterion, minStepSize, minSizeMultiplier, splitDimIndices, numSplitDims );
 		if ( quadMerged != null && quadMerged.size() < bestCount )
 		{
-			if ( mergeMode != MERGE_TPS_COMPATIBLE || isTPSCompatible( quadMerged ) )
-			{
-				bestResult = quadMerged;
-				bestCount = quadMerged.size();
-			}
+			bestResult = quadMerged;
+			bestCount = quadMerged.size();
 		}
 
 		// 4. Try pairwise adjacent merges
 		final List< InternalSplitResult > pairMerged = tryMergePairwiseAdjacentStatic( octantResults, parentInterval, criterion, minStepSize, minSizeMultiplier, splitDimIndices, numSplitDims );
 		if ( pairMerged != null && pairMerged.size() < bestCount )
 		{
-			if ( mergeMode != MERGE_TPS_COMPATIBLE || isTPSCompatible( pairMerged ) )
-			{
-				bestResult = pairMerged;
-				bestCount = pairMerged.size();
-			}
+			bestResult = pairMerged;
+			bestCount = pairMerged.size();
 		}
 
 		// 5. Try individual octant merges (within each octant)
@@ -1118,11 +1140,8 @@ public class SplitOctTree implements SplitInterval
 		final List< InternalSplitResult > indivMerged = tryMergeIndividualOctantsStatic( octantResults, octants, criterion );
 		if ( indivMerged != null && indivMerged.size() < bestCount )
 		{
-			if ( mergeMode != MERGE_TPS_COMPATIBLE || isTPSCompatible( indivMerged ) )
-			{
-				bestResult = indivMerged;
-				bestCount = indivMerged.size();
-			}
+			bestResult = indivMerged;
+			bestCount = indivMerged.size();
 		}
 
 		// Update merge count
@@ -1169,7 +1188,7 @@ public class SplitOctTree implements SplitInterval
 	{
 		// Use static method for the actual splitting
 		final SplitStatistics result = splitStatic( input, currentViewId, criterion,
-				minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, mergeMode, anisotropy );
+				minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, anisotropy );
 
 		if ( result == null )
 		{
@@ -1367,12 +1386,6 @@ public class SplitOctTree implements SplitInterval
 
 		gd.addCheckbox( "Enable_block_merging (reduces tile count)", defaultEnableMerge );
 
-		gd.addChoice( "Merge_constraint", MERGE_MODE_NAMES, MERGE_MODE_NAMES[ defaultMergeMode ] );
-		gd.addMessage(
-				"Merge constraint: 'None' merges as much as possible, 'Same as splitting' uses minSplitLevel,\n" +
-				"'TPS compatible' ensures >=8 non-co-planar tiles for Thin-Plate Spline fusion.",
-				GUIHelper.smallStatusFont, Color.DARK_GRAY );
-
 		// Anisotropy
 		final List< ViewId > allViewIds = new ArrayList<>();
 		for ( final mpicbg.spim.data.sequence.ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
@@ -1446,15 +1459,6 @@ public class SplitOctTree implements SplitInterval
 
 		final int minSplitLevels = defaultMinSplitLevels = Math.max( 0, (int) Math.round( gd.getNextNumber() ) );
 		final boolean enableMerge = defaultEnableMerge = gd.getNextBoolean();
-		final int mergeMode = defaultMergeMode = gd.getNextChoiceIndex();
-
-		// Validate TPS compatible mode with minSplitLevels=0
-		if ( mergeMode == MERGE_TPS_COMPATIBLE && minSplitLevels == 0 )
-		{
-			IOFunctions.printErr( "ERROR: TPS-compatible merge constraint requires minSplitLevels >= 1.\n" +
-					"With minSplitLevels=0, splitting may not create enough tiles for TPS fusion." );
-			return null;
-		}
 
 		// Anisotropy
 		final int anisotropyChoice = defaultAnisotropyChoice = gd.getNextChoiceIndex();
@@ -1484,10 +1488,9 @@ public class SplitOctTree implements SplitInterval
 				", minTileSize=" + Arrays.toString( tileSizes ) +
 				", multiplier=" + minSizeMultiplier +
 				", merge=" + enableMerge + ", minSplitLevels=" + minSplitLevels +
-				", mergeMode=" + MERGE_MODE_NAMES[ mergeMode ] +
 				", anisotropy=" + Arrays.toString( anisotropy ) );
 
-		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, enableMerge, minSplitLevels, mergeMode, anisotropy );
+		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, enableMerge, minSplitLevels, anisotropy );
 	}
 
 	// Getters for testing
@@ -1497,6 +1500,5 @@ public class SplitOctTree implements SplitInterval
 	public ViewId getCurrentViewId() { return currentViewId; }
 	public boolean isEnableMerge() { return enableMerge; }
 	public int getMinSplitLevels() { return minSplitLevels; }
-	public int getMergeMode() { return mergeMode; }
 	public double[] getAnisotropy() { return anisotropy.clone(); }
 }
