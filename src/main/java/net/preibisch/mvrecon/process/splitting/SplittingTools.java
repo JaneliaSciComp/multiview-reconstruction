@@ -303,7 +303,8 @@ public class SplittingTools
 						octTreeSplitter.getMinSizeMultiplier(),
 						octTreeSplitter.isEnableMerge(),
 						octTreeSplitter.getMinSplitLevels(),
-						octTreeSplitter.getMergeMode() ) );
+						octTreeSplitter.getMergeMode(),
+						octTreeSplitter.getAnisotropy() ) );
 				taskSetups.add( oldSetup );
 				taskInputs.add( input );
 			}

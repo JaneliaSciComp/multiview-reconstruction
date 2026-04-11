@@ -37,6 +37,7 @@ import net.imglib2.Interval;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.splitting.OctTreeSplitCriterion.SplitCorrespondence;
 
 /**
@@ -71,11 +72,18 @@ public class SplitOctTree implements SplitInterval
 	};
 
 	// Static defaults for GUI persistence
-	public static int defaultCriterionChoice = 0;
+	public static int defaultCriterionChoice = 1;
 	public static long[] defaultMinTileSize = null;  // initialized in setupGUI based on minStepSize
 	public static boolean defaultEnableMerge = true;
 	public static int defaultMinSplitLevels = 0;
 	public static int defaultMergeMode = MERGE_SAME_AS_SPLIT;
+	public static int defaultAnisotropyChoice = 1;
+
+	public static final String[] ANISOTROPY_CHOICES = {
+		"Ignore anisotropy",
+		"Global anisotropy factor",
+		"Per-view anisotropy"
+	};
 
 	// Instance fields
 	private final long[] minStepSize;
@@ -84,6 +92,7 @@ public class SplitOctTree implements SplitInterval
 	private final boolean enableMerge;
 	private final int minSplitLevels;
 	private final int mergeMode;
+	private final double[] anisotropy; // per-dimension voxel size ratio, {1,1,1} for isotropic
 
 	// Current context for split() method (set per ViewSetup iteration)
 	private ViewId currentViewId;
@@ -148,6 +157,7 @@ public class SplitOctTree implements SplitInterval
 	 * @param enableMerge If true, attempt to merge blocks back when combined count is below threshold
 	 * @param minSplitLevels Minimum number of split levels to always perform (0 = fully adaptive)
 	 * @param mergeMode Merge constraint mode (MERGE_NONE, MERGE_SAME_AS_SPLIT, or MERGE_TPS_COMPATIBLE)
+	 * @param anisotropy Per-dimension voxel size ratio (e.g., {1, 1, 2} for 2x anisotropy in Z), or null for isotropic
 	 */
 	public SplitOctTree(
 			final long[] minStepSize,
@@ -155,7 +165,8 @@ public class SplitOctTree implements SplitInterval
 			final OctTreeSplitCriterion criterion,
 			final boolean enableMerge,
 			final int minSplitLevels,
-			final int mergeMode )
+			final int mergeMode,
+			final double[] anisotropy )
 	{
 		this.minStepSize = minStepSize.clone();
 		this.minSizeMultiplier = minSizeMultiplier;
@@ -163,6 +174,7 @@ public class SplitOctTree implements SplitInterval
 		this.enableMerge = enableMerge;
 		this.minSplitLevels = minSplitLevels;
 		this.mergeMode = mergeMode;
+		this.anisotropy = ( anisotropy != null ) ? anisotropy.clone() : new double[] { 1, 1, 1 };
 	}
 
 	// ==================== Static Methods for Parallel Execution ====================
@@ -193,7 +205,8 @@ public class SplitOctTree implements SplitInterval
 			final int minSizeMultiplier,
 			final boolean enableMerge,
 			final int minSplitLevels,
-			final int mergeMode )
+			final int mergeMode,
+			final double[] anisotropy )
 	{
 		final long startTime = System.currentTimeMillis();
 		IOFunctions.println( Thread.currentThread().getName() + ": Starting view " +
@@ -229,7 +242,7 @@ public class SplitOctTree implements SplitInterval
 		// Recursive splitting
 		final List< InternalSplitResult > results = new ArrayList<>();
 		splitRecursiveStatic( input, correspondences, results, 0,
-				criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, mergeMode, stats );
+				criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, mergeMode, anisotropy, stats );
 
 		// Extract intervals
 		final ArrayList< Interval > intervals = new ArrayList<>();
@@ -258,6 +271,7 @@ public class SplitOctTree implements SplitInterval
 			final boolean enableMerge,
 			final int minSplitLevels,
 			final int mergeMode,
+			final double[] anisotropy,
 			final int[] stats )
 	{
 		final boolean forceSplit = depth < minSplitLevels;
@@ -283,16 +297,16 @@ public class SplitOctTree implements SplitInterval
 		}
 
 		stats[ 0 ]++;  // splitCount
-		final List< Interval > octants = createOctantsWithOverlapStatic( interval, minStepSize, minSizeMultiplier );
+		final List< Interval > octants = createOctantsWithOverlapStatic( interval, minStepSize, minSizeMultiplier, anisotropy );
 		final List< List< SplitCorrespondence > > partitionedCorrs =
-				partitionCorrespondencesStatic( correspondences, interval, minStepSize, minSizeMultiplier );
+				partitionCorrespondencesStatic( correspondences, interval, minStepSize, minSizeMultiplier, anisotropy );
 
 		final List< List< InternalSplitResult > > octantResults = new ArrayList<>();
 		for ( int i = 0; i < octants.size(); i++ )
 		{
 			final List< InternalSplitResult > childResults = new ArrayList<>();
 			splitRecursiveStatic( octants.get( i ), partitionedCorrs.get( i ), childResults, depth + 1,
-					criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, mergeMode, stats );
+					criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, mergeMode, anisotropy, stats );
 			octantResults.add( childResults );
 		}
 
@@ -310,7 +324,7 @@ public class SplitOctTree implements SplitInterval
 		if ( shouldAttemptMerge )
 		{
 			final List< InternalSplitResult > merged = mergeOctantResultsStatic( octantResults, interval,
-					criterion, minStepSize, minSizeMultiplier, mergeMode, stats );
+					criterion, minStepSize, minSizeMultiplier, mergeMode, anisotropy, stats );
 			result.addAll( merged );
 		}
 		else
@@ -328,29 +342,28 @@ public class SplitOctTree implements SplitInterval
 			final long[] minStepSize,
 			final int minSizeMultiplier )
 	{
-		int maxLevels = Integer.MAX_VALUE;
+		// With anisotropy-aware splitting, we only need at least one dimension to be splittable,
+		// so we take the maximum across dimensions
+		int maxLevels = 0;
 
 		for ( int d = 0; d < interval.numDimensions(); d++ )
 		{
 			final long dim = interval.dimension( d );
 			final long minParentSize = 2 * ( minSizeMultiplier - 1 ) * minStepSize[ d ];
 
-			if ( dim < minParentSize )
-			{
-				maxLevels = 0;
-			}
-			else
+			if ( dim >= minParentSize )
 			{
 				final int levelsForDim = ( int ) Math.floor( Math.log( ( double ) dim / minParentSize ) / Math.log( 2 ) );
-				maxLevels = Math.min( maxLevels, levelsForDim );
+				maxLevels = Math.max( maxLevels, levelsForDim );
 			}
 		}
 
-		return maxLevels == Integer.MAX_VALUE ? 0 : maxLevels;
+		return maxLevels;
 	}
 
 	/**
 	 * Static version of canSplitFurther.
+	 * Returns true if at least one dimension can be split.
 	 */
 	private static boolean canSplitFurtherStatic(
 			final Interval interval,
@@ -360,26 +373,42 @@ public class SplitOctTree implements SplitInterval
 		for ( int d = 0; d < interval.numDimensions(); ++d )
 		{
 			final long minParentSize = 2 * ( minSizeMultiplier - 1 ) * minStepSize[ d ];
-			if ( interval.dimension( d ) < minParentSize )
-				return false;
+			if ( interval.dimension( d ) >= minParentSize )
+				return true;
 		}
-		return true;
+		return false;
 	}
 
 	/**
 	 * Static version of createOctantsWithOverlap.
+	 * Uses anisotropy to selectively skip splitting dimensions whose physical extent
+	 * is less than 50% of the largest dimension's physical extent.
 	 */
 	private static List< Interval > createOctantsWithOverlapStatic(
 			final Interval interval,
 			final long[] minStepSize,
-			final int minSizeMultiplier )
+			final int minSizeMultiplier,
+			final double[] anisotropy )
 	{
 		final int n = interval.numDimensions();
 		final List< Interval > octants = new ArrayList<>();
 
+		// Determine which dimensions to split based on physical extent
+		final boolean[] splitDim = computeSplitDimensions( interval, minStepSize, minSizeMultiplier, anisotropy );
+
+		// Build mapping from bit index to split dimensions
+		final int[] splitDimIndices = new int[ n ];
+		int numSplitDims = 0;
+		for ( int d = 0; d < n; ++d )
+			if ( splitDim[ d ] )
+				splitDimIndices[ numSplitDims++ ] = d;
+
 		final long[] splitPoints = new long[ n ];
 		for ( int d = 0; d < n; ++d )
 		{
+			if ( !splitDim[ d ] )
+				continue;
+
 			long mid = interval.min( d ) + interval.dimension( d ) / 2;
 			splitPoints[ d ] = SplitDistributeEvenly.closestLongDivisableBy( mid, minStepSize[ d ] );
 			final long margin = ( minSizeMultiplier - 1 ) * minStepSize[ d ];
@@ -387,16 +416,25 @@ public class SplitOctTree implements SplitInterval
 					Math.min( splitPoints[ d ], interval.max( d ) - margin + 1 ) );
 		}
 
-		final int numOctants = 1 << n;
+		final int numChildren = 1 << numSplitDims;
 
-		for ( int i = 0; i < numOctants; ++i )
+		for ( int i = 0; i < numChildren; ++i )
 		{
 			final long[] min = new long[ n ];
 			final long[] max = new long[ n ];
 
+			// Non-split dimensions: inherit full range
 			for ( int d = 0; d < n; ++d )
 			{
-				if ( ( i & ( 1 << d ) ) == 0 )
+				min[ d ] = interval.min( d );
+				max[ d ] = interval.max( d );
+			}
+
+			// Split dimensions: assign low or high half based on bit index
+			for ( int bit = 0; bit < numSplitDims; ++bit )
+			{
+				final int d = splitDimIndices[ bit ];
+				if ( ( i & ( 1 << bit ) ) == 0 )
 				{
 					min[ d ] = interval.min( d );
 					max[ d ] = splitPoints[ d ] + minStepSize[ d ] - 1;
@@ -415,19 +453,73 @@ public class SplitOctTree implements SplitInterval
 	}
 
 	/**
+	 * Determine which dimensions should be split at this level based on physical extent and constraints.
+	 * A dimension is split if its physical extent is at least 50% of the largest dimension's physical extent
+	 * and it is large enough to be split (per minStepSize/minSizeMultiplier constraint).
+	 */
+	static boolean[] computeSplitDimensions(
+			final Interval interval,
+			final long[] minStepSize,
+			final int minSizeMultiplier,
+			final double[] anisotropy )
+	{
+		final int n = interval.numDimensions();
+		final boolean[] splitDim = new boolean[ n ];
+
+		// Find maximum physical extent
+		double maxPhysical = 0;
+		for ( int d = 0; d < n; ++d )
+		{
+			final double physicalExtent = interval.dimension( d ) * anisotropy[ d ];
+			if ( physicalExtent > maxPhysical )
+				maxPhysical = physicalExtent;
+		}
+
+		for ( int d = 0; d < n; ++d )
+		{
+			// Check physical extent threshold (50% of largest)
+			final double physicalExtent = interval.dimension( d ) * anisotropy[ d ];
+			splitDim[ d ] = physicalExtent >= maxPhysical * 0.5;
+
+			// Also check minimum size constraint
+			if ( splitDim[ d ] )
+			{
+				final long minParentSize = 2 * ( minSizeMultiplier - 1 ) * minStepSize[ d ];
+				if ( interval.dimension( d ) < minParentSize )
+					splitDim[ d ] = false;
+			}
+		}
+
+		return splitDim;
+	}
+
+	/**
 	 * Static version of partitionCorrespondences.
+	 * Only partitions along dimensions that are being split (matching createOctantsWithOverlapStatic).
 	 */
 	private static List< List< SplitCorrespondence > > partitionCorrespondencesStatic(
 			final List< SplitCorrespondence > correspondences,
 			final Interval interval,
 			final long[] minStepSize,
-			final int minSizeMultiplier )
+			final int minSizeMultiplier,
+			final double[] anisotropy )
 	{
 		final int n = interval.numDimensions();
+		final boolean[] splitDim = computeSplitDimensions( interval, minStepSize, minSizeMultiplier, anisotropy );
+
+		// Build mapping from bit index to split dimensions
+		final int[] splitDimIndices = new int[ n ];
+		int numSplitDims = 0;
+		for ( int d = 0; d < n; ++d )
+			if ( splitDim[ d ] )
+				splitDimIndices[ numSplitDims++ ] = d;
 
 		final double[] splitPoints = new double[ n ];
 		for ( int d = 0; d < n; d++ )
 		{
+			if ( !splitDim[ d ] )
+				continue;
+
 			final long mid = interval.min( d ) + interval.dimension( d ) / 2;
 			splitPoints[ d ] = SplitDistributeEvenly.closestLongDivisableBy( mid, minStepSize[ d ] );
 			final long margin = ( minSizeMultiplier - 1 ) * minStepSize[ d ];
@@ -435,27 +527,29 @@ public class SplitOctTree implements SplitInterval
 					Math.min( splitPoints[ d ], interval.max( d ) - margin + 1 ) );
 		}
 
-		final int numChildren = 1 << n;
+		final int numChildren = 1 << numSplitDims;
 		final List< List< SplitCorrespondence > > children = new ArrayList<>( numChildren );
 		for ( int i = 0; i < numChildren; i++ )
 			children.add( new ArrayList<>() );
 
 		for ( final SplitCorrespondence corr : correspondences )
 		{
-			final int[] belongsTo = new int[ n ];
-			for ( int d = 0; d < n; d++ )
+			// Only classify along split dimensions
+			final int[] belongsTo = new int[ numSplitDims ];
+			for ( int bit = 0; bit < numSplitDims; bit++ )
 			{
+				final int d = splitDimIndices[ bit ];
 				final double low = splitPoints[ d ] - minStepSize[ d ];
 				final double high = splitPoints[ d ] + minStepSize[ d ];
 				if ( corr.location[ d ] < low )
-					belongsTo[ d ] = 0;
+					belongsTo[ bit ] = 0;
 				else if ( corr.location[ d ] >= high )
-					belongsTo[ d ] = 1;
+					belongsTo[ bit ] = 1;
 				else
-					belongsTo[ d ] = 2;
+					belongsTo[ bit ] = 2;
 			}
 
-			addToChildrenStatic( children, corr, belongsTo, 0, 0, n );
+			addToChildrenStatic( children, corr, belongsTo, 0, 0, numSplitDims );
 		}
 
 		return children;
@@ -463,24 +557,25 @@ public class SplitOctTree implements SplitInterval
 
 	/**
 	 * Static version of addToChildren.
+	 * Operates on the split dimension indices (not full dimension indices).
 	 */
 	private static void addToChildrenStatic(
 			final List< List< SplitCorrespondence > > children,
 			final SplitCorrespondence corr,
 			final int[] belongsTo,
-			final int dim,
-			final int idx,
-			final int n )
+			final int bitIdx,
+			final int childIdx,
+			final int numSplitDims )
 	{
-		if ( dim == n )
+		if ( bitIdx == numSplitDims )
 		{
-			children.get( idx ).add( corr );
+			children.get( childIdx ).add( corr );
 			return;
 		}
-		if ( belongsTo[ dim ] == 0 || belongsTo[ dim ] == 2 )
-			addToChildrenStatic( children, corr, belongsTo, dim + 1, idx, n );
-		if ( belongsTo[ dim ] == 1 || belongsTo[ dim ] == 2 )
-			addToChildrenStatic( children, corr, belongsTo, dim + 1, idx | ( 1 << dim ), n );
+		if ( belongsTo[ bitIdx ] == 0 || belongsTo[ bitIdx ] == 2 )
+			addToChildrenStatic( children, corr, belongsTo, bitIdx + 1, childIdx, numSplitDims );
+		if ( belongsTo[ bitIdx ] == 1 || belongsTo[ bitIdx ] == 2 )
+			addToChildrenStatic( children, corr, belongsTo, bitIdx + 1, childIdx | ( 1 << bitIdx ), numSplitDims );
 	}
 
 	// ==================== Helper Methods for Merge Strategies ====================
@@ -649,16 +744,19 @@ public class SplitOctTree implements SplitInterval
 			final Interval parentInterval,
 			final OctTreeSplitCriterion criterion,
 			final long[] minStepSize,
-			final int minSizeMultiplier )
+			final int minSizeMultiplier,
+			final int[] splitDimIndices,
+			final int numSplitDims )
 	{
-		final int n = parentInterval.numDimensions();
 		final int numOctants = octantResults.size();
 
 		List< InternalSplitResult > bestResult = null;
 		int bestCount = Integer.MAX_VALUE;
 
-		for ( int splitDim = 0; splitDim < n; splitDim++ )
+		// Try merging halves along each split dimension
+		for ( int bit = 0; bit < numSplitDims; bit++ )
 		{
+			final int realDim = splitDimIndices[ bit ];
 			final List< InternalSplitResult > lowerResults = new ArrayList<>();
 			final List< InternalSplitResult > upperResults = new ArrayList<>();
 			final List< SplitCorrespondence > lowerCorrs = new ArrayList<>();
@@ -666,7 +764,7 @@ public class SplitOctTree implements SplitInterval
 
 			for ( int i = 0; i < numOctants; i++ )
 			{
-				if ( ( i & ( 1 << splitDim ) ) == 0 )
+				if ( ( i & ( 1 << bit ) ) == 0 )
 				{
 					for ( final InternalSplitResult sr : octantResults.get( i ) )
 					{
@@ -692,12 +790,12 @@ public class SplitOctTree implements SplitInterval
 
 			final List< InternalSplitResult > result = new ArrayList<>();
 			if ( canMergeLower )
-				result.add( new InternalSplitResult( createHalfIntervalStatic( parentInterval, splitDim, false, minStepSize, minSizeMultiplier ), lowerCorrs ) );
+				result.add( new InternalSplitResult( createHalfIntervalStatic( parentInterval, realDim, false, minStepSize, minSizeMultiplier ), lowerCorrs ) );
 			else
 				result.addAll( lowerResults );
 
 			if ( canMergeUpper )
-				result.add( new InternalSplitResult( createHalfIntervalStatic( parentInterval, splitDim, true, minStepSize, minSizeMultiplier ), upperCorrs ) );
+				result.add( new InternalSplitResult( createHalfIntervalStatic( parentInterval, realDim, true, minStepSize, minSizeMultiplier ), upperCorrs ) );
 			else
 				result.addAll( upperResults );
 
@@ -720,10 +818,11 @@ public class SplitOctTree implements SplitInterval
 			final Interval parentInterval,
 			final OctTreeSplitCriterion criterion,
 			final long[] minStepSize,
-			final int minSizeMultiplier )
+			final int minSizeMultiplier,
+			final int[] splitDimIndices,
+			final int numSplitDims )
 	{
-		final int n = parentInterval.numDimensions();
-		if ( n < 2 )
+		if ( numSplitDims < 2 )
 			return null;
 
 		final int numOctants = octantResults.size();
@@ -731,9 +830,11 @@ public class SplitOctTree implements SplitInterval
 		List< InternalSplitResult > bestResult = null;
 		int bestCount = Integer.MAX_VALUE;
 
-		for ( int fixedDim = 0; fixedDim < n; fixedDim++ )
+		// For each split dimension as "fixed" (merged across), group octants into quadrants
+		for ( int fixedBit = 0; fixedBit < numSplitDims; fixedBit++ )
 		{
-			final int numQuadrants = 1 << ( n - 1 );
+			final int realFixedDim = splitDimIndices[ fixedBit ];
+			final int numQuadrants = 1 << ( numSplitDims - 1 );
 			final List< List< InternalSplitResult > > quadrantResults = new ArrayList<>();
 			final List< List< SplitCorrespondence > > quadrantCorrs = new ArrayList<>();
 			final boolean[] canMergeQuadrant = new boolean[ numQuadrants ];
@@ -746,13 +847,14 @@ public class SplitOctTree implements SplitInterval
 
 			for ( int i = 0; i < numOctants; i++ )
 			{
+				// Map octant index to quadrant index by removing the fixedBit
 				int quadrantIdx = 0;
 				int bitPos = 0;
-				for ( int d = 0; d < n; d++ )
+				for ( int bit = 0; bit < numSplitDims; bit++ )
 				{
-					if ( d != fixedDim )
+					if ( bit != fixedBit )
 					{
-						if ( ( i & ( 1 << d ) ) != 0 )
+						if ( ( i & ( 1 << bit ) ) != 0 )
 							quadrantIdx |= ( 1 << bitPos );
 						bitPos++;
 					}
@@ -778,7 +880,7 @@ public class SplitOctTree implements SplitInterval
 				for ( int q = 0; q < numQuadrants; q++ )
 				{
 					if ( canMergeQuadrant[ q ] )
-						result.add( new InternalSplitResult( createQuadrantIntervalStatic( parentInterval, fixedDim, q, n, minStepSize, minSizeMultiplier ), quadrantCorrs.get( q ) ) );
+						result.add( new InternalSplitResult( createQuadrantIntervalStatic( parentInterval, realFixedDim, q, parentInterval.numDimensions(), minStepSize, minSizeMultiplier ), quadrantCorrs.get( q ) ) );
 					else
 						result.addAll( quadrantResults.get( q ) );
 				}
@@ -804,7 +906,9 @@ public class SplitOctTree implements SplitInterval
 			final Interval parentInterval,
 			final OctTreeSplitCriterion criterion,
 			final long[] minStepSize,
-			final int minSizeMultiplier )
+			final int minSizeMultiplier,
+			final int[] splitDimIndices,
+			final int numSplitDims )
 	{
 		final int n = parentInterval.numDimensions();
 		final int numOctants = octantResults.size();
@@ -812,10 +916,11 @@ public class SplitOctTree implements SplitInterval
 		List< InternalSplitResult > bestResult = null;
 		int bestCount = Integer.MAX_VALUE;
 
-		// For each dimension, try merging pairs that differ only in that dimension
-		for ( int pairDim = 0; pairDim < n; pairDim++ )
+		// For each split dimension, try merging pairs that differ only in that dimension
+		for ( int pairBit = 0; pairBit < numSplitDims; pairBit++ )
 		{
-			final int numPairs = 1 << ( n - 1 );  // 4 pairs for 3D
+			final int realPairDim = splitDimIndices[ pairBit ];
+			final int numPairs = 1 << ( numSplitDims - 1 );
 			final boolean[] merged = new boolean[ numOctants ];
 			final List< InternalSplitResult > result = new ArrayList<>();
 			boolean anyMerged = false;
@@ -823,22 +928,22 @@ public class SplitOctTree implements SplitInterval
 			for ( int pairIdx = 0; pairIdx < numPairs; pairIdx++ )
 			{
 				// Compute the two octant indices for this pair
-				// pairIdx encodes position in dimensions other than pairDim
+				// pairIdx encodes position in split dimensions other than pairBit
 				int octant0 = 0;
 				int octant1 = 0;
 				int bitPos = 0;
-				for ( int d = 0; d < n; d++ )
+				for ( int bit = 0; bit < numSplitDims; bit++ )
 				{
-					if ( d == pairDim )
+					if ( bit == pairBit )
 					{
-						octant1 |= ( 1 << d );  // octant1 has bit set in pairDim
+						octant1 |= ( 1 << bit );  // octant1 has bit set in pairBit
 					}
 					else
 					{
 						if ( ( pairIdx & ( 1 << bitPos ) ) != 0 )
 						{
-							octant0 |= ( 1 << d );
-							octant1 |= ( 1 << d );
+							octant0 |= ( 1 << bit );
+							octant1 |= ( 1 << bit );
 						}
 						bitPos++;
 					}
@@ -861,7 +966,7 @@ public class SplitOctTree implements SplitInterval
 				if ( pairResults.size() > 1 && criterion.canMerge( pairCorrs ) )
 				{
 					// Merge this pair
-					result.add( new InternalSplitResult( createPairIntervalStatic( parentInterval, pairDim, pairIdx, n, minStepSize, minSizeMultiplier ), pairCorrs ) );
+					result.add( new InternalSplitResult( createPairIntervalStatic( parentInterval, realPairDim, pairIdx, n, minStepSize, minSizeMultiplier ), pairCorrs ) );
 					merged[ octant0 ] = true;
 					merged[ octant1 ] = true;
 					anyMerged = true;
@@ -970,6 +1075,7 @@ public class SplitOctTree implements SplitInterval
 			final long[] minStepSize,
 			final int minSizeMultiplier,
 			final int mergeMode,
+			final double[] anisotropy,
 			final int[] stats )
 	{
 		// Flatten all results
@@ -1001,12 +1107,21 @@ public class SplitOctTree implements SplitInterval
 			// TPS constraint not satisfied, fall through to try other strategies
 		}
 
+		// Compute split dimensions (must match what createOctantsWithOverlapStatic used)
+		final boolean[] splitDimFlags = computeSplitDimensions( parentInterval, minStepSize, minSizeMultiplier, anisotropy );
+		final int n = parentInterval.numDimensions();
+		final int[] splitDimIndices = new int[ n ];
+		int numSplitDims = 0;
+		for ( int d = 0; d < n; ++d )
+			if ( splitDimFlags[ d ] )
+				splitDimIndices[ numSplitDims++ ] = d;
+
 		// Track best result
 		List< InternalSplitResult > bestResult = allResults;
 		int bestCount = allResults.size();
 
-		// 2. Try half-space merges (4+4 octants)
-		final List< InternalSplitResult > halfMerged = tryMergeHalvesStatic( octantResults, parentInterval, criterion, minStepSize, minSizeMultiplier );
+		// 2. Try half-space merges
+		final List< InternalSplitResult > halfMerged = tryMergeHalvesStatic( octantResults, parentInterval, criterion, minStepSize, minSizeMultiplier, splitDimIndices, numSplitDims );
 		if ( halfMerged != null && halfMerged.size() < bestCount )
 		{
 			if ( mergeMode != MERGE_TPS_COMPATIBLE || isTPSCompatible( halfMerged ) )
@@ -1016,8 +1131,8 @@ public class SplitOctTree implements SplitInterval
 			}
 		}
 
-		// 3. Try quadrant merges (2+2+2+2 octants)
-		final List< InternalSplitResult > quadMerged = tryMergeQuadrantsStatic( octantResults, parentInterval, criterion, minStepSize, minSizeMultiplier );
+		// 3. Try quadrant merges
+		final List< InternalSplitResult > quadMerged = tryMergeQuadrantsStatic( octantResults, parentInterval, criterion, minStepSize, minSizeMultiplier, splitDimIndices, numSplitDims );
 		if ( quadMerged != null && quadMerged.size() < bestCount )
 		{
 			if ( mergeMode != MERGE_TPS_COMPATIBLE || isTPSCompatible( quadMerged ) )
@@ -1027,8 +1142,8 @@ public class SplitOctTree implements SplitInterval
 			}
 		}
 
-		// 4. Try pairwise adjacent merges (any 2 adjacent octants)
-		final List< InternalSplitResult > pairMerged = tryMergePairwiseAdjacentStatic( octantResults, parentInterval, criterion, minStepSize, minSizeMultiplier );
+		// 4. Try pairwise adjacent merges
+		final List< InternalSplitResult > pairMerged = tryMergePairwiseAdjacentStatic( octantResults, parentInterval, criterion, minStepSize, minSizeMultiplier, splitDimIndices, numSplitDims );
 		if ( pairMerged != null && pairMerged.size() < bestCount )
 		{
 			if ( mergeMode != MERGE_TPS_COMPATIBLE || isTPSCompatible( pairMerged ) )
@@ -1039,7 +1154,7 @@ public class SplitOctTree implements SplitInterval
 		}
 
 		// 5. Try individual octant merges (within each octant)
-		final List< Interval > octants = createOctantsWithOverlapStatic( parentInterval, minStepSize, minSizeMultiplier );
+		final List< Interval > octants = createOctantsWithOverlapStatic( parentInterval, minStepSize, minSizeMultiplier, anisotropy );
 		final List< InternalSplitResult > indivMerged = tryMergeIndividualOctantsStatic( octantResults, octants, criterion );
 		if ( indivMerged != null && indivMerged.size() < bestCount )
 		{
@@ -1094,7 +1209,7 @@ public class SplitOctTree implements SplitInterval
 	{
 		// Use static method for the actual splitting
 		final SplitStatistics result = splitStatic( input, currentViewId, criterion,
-				minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, mergeMode );
+				minStepSize, minSizeMultiplier, enableMerge, minSplitLevels, mergeMode, anisotropy );
 
 		if ( result == null )
 		{
@@ -1298,6 +1413,20 @@ public class SplitOctTree implements SplitInterval
 				"'TPS compatible' ensures >=8 non-co-planar tiles for Thin-Plate Spline fusion.",
 				GUIHelper.smallStatusFont, Color.DARK_GRAY );
 
+		// Anisotropy
+		final List< ViewId > allViewIds = new ArrayList<>();
+		for ( final mpicbg.spim.data.sequence.ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
+			if ( vd.isPresent() )
+				allViewIds.add( vd );
+
+		final double avgAnisoF = TransformationTools.getAverageAnisotropyFactor( data, allViewIds );
+
+		gd.addChoice( "Anisotropy", ANISOTROPY_CHOICES, ANISOTROPY_CHOICES[ defaultAnisotropyChoice ] );
+		gd.addMessage(
+				"Average anisotropy factor: " + TransformationTools.f.format( avgAnisoF ) + " (Z / avg(XY))\n" +
+				"Skips splitting dimensions whose physical extent is < 50% of the largest.",
+				GUIHelper.smallStatusFont, Color.DARK_GRAY );
+
 		return true;
 	}
 
@@ -1367,13 +1496,38 @@ public class SplitOctTree implements SplitInterval
 			return null;
 		}
 
+		// Anisotropy
+		final int anisotropyChoice = defaultAnisotropyChoice = gd.getNextChoiceIndex();
+		final double[] anisotropy;
+
+		if ( anisotropyChoice == 0 )
+		{
+			// Ignore anisotropy
+			anisotropy = new double[] { 1, 1, 1 };
+		}
+		else
+		{
+			// Global or per-view: use average anisotropy factor for now
+			final List< ViewId > allViewIds = new ArrayList<>();
+			for ( final mpicbg.spim.data.sequence.ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
+				if ( vd.isPresent() )
+					allViewIds.add( vd );
+
+			final double avgAnisoF = TransformationTools.getAverageAnisotropyFactor( data, allViewIds );
+			anisotropy = new double[] { 1, 1, avgAnisoF };
+
+			IOFunctions.println( "Using anisotropy factor: " + Arrays.toString( anisotropy ) +
+					" (" + ANISOTROPY_CHOICES[ anisotropyChoice ] + ")" );
+		}
+
 		IOFunctions.println( "Created oct-tree splitter: " + criterion.description() +
 				", minTileSize=" + Arrays.toString( tileSizes ) +
 				", multiplier=" + minSizeMultiplier +
 				", merge=" + enableMerge + ", minSplitLevels=" + minSplitLevels +
-				", mergeMode=" + MERGE_MODE_NAMES[ mergeMode ] );
+				", mergeMode=" + MERGE_MODE_NAMES[ mergeMode ] +
+				", anisotropy=" + Arrays.toString( anisotropy ) );
 
-		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, enableMerge, minSplitLevels, mergeMode );
+		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, enableMerge, minSplitLevels, mergeMode, anisotropy );
 	}
 
 	// Getters for testing
@@ -1384,4 +1538,5 @@ public class SplitOctTree implements SplitInterval
 	public boolean isEnableMerge() { return enableMerge; }
 	public int getMinSplitLevels() { return minSplitLevels; }
 	public int getMergeMode() { return mergeMode; }
+	public double[] getAnisotropy() { return anisotropy.clone(); }
 }
