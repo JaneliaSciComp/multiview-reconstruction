@@ -39,7 +39,6 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestP
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
-import net.preibisch.mvrecon.process.splitting.OctTreeSplitCriterion.SplitCorrespondence;
 
 /**
  * Criterion based on multi-consensus RANSAC sets.
@@ -72,7 +71,7 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	// Static defaults for GUI persistence
 	public static int defaultMinCorrespondences = 12;
 	public static int[] defaultLabelChoices = null;
-	public static int defaultToleranceMode = TOLERANCE_NONE;
+	public static int defaultToleranceMode = TOLERANCE_PERCENTAGE;
 	public static double defaultToleranceValue = 10.0;  // 10% or 10 correspondences
 
 	private final SpimData2 spimData;
