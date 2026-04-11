@@ -284,7 +284,14 @@ public class SplitOctTree implements SplitInterval
 			return;
 		}
 
-		if ( !canSplitFurtherStatic( interval, minStepSize, minSizeMultiplier ) )
+		// Check whether the interval can be split in at least one dimension,
+		// using the same anisotropy-aware logic as createOctantsWithOverlapStatic
+		final boolean[] splitDim = computeSplitDimensions( interval, minStepSize, minSizeMultiplier, anisotropy );
+		boolean canSplit = false;
+		for ( final boolean b : splitDim )
+			if ( b ) { canSplit = true; break; }
+
+		if ( !canSplit )
 		{
 			if ( forceSplit )
 			{
@@ -361,23 +368,6 @@ public class SplitOctTree implements SplitInterval
 		return maxLevels;
 	}
 
-	/**
-	 * Static version of canSplitFurther.
-	 * Returns true if at least one dimension can be split.
-	 */
-	private static boolean canSplitFurtherStatic(
-			final Interval interval,
-			final long[] minStepSize,
-			final int minSizeMultiplier )
-	{
-		for ( int d = 0; d < interval.numDimensions(); ++d )
-		{
-			final long minParentSize = 2 * ( minSizeMultiplier - 1 ) * minStepSize[ d ];
-			if ( interval.dimension( d ) >= minParentSize )
-				return true;
-		}
-		return false;
-	}
 
 	/**
 	 * Static version of createOctantsWithOverlap.
