@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -256,23 +256,23 @@ public class ExportN5Api implements ImgExport, Calibrateable
 						final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 								(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfoZarr[level].absoluteDownsamplingDouble() );
 
-						IOFunctions.println( "Resolution of level 0: " + Util.printCoordinates( cal ) + " " + unit ); //vx.unit() might not be OME-ZARR compatible
+						// at this point the pixel size has already been set
+						// - here we adjust the S0 resolution based on selected downsampling and anisotropy before exporting to N5
+						double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( cal, anisoF, downsamplingF );
+
+						IOFunctions.println( "Calibration: " + Util.printCoordinates( cal ) + " micrometer; resolution at S0: " + Util.printCoordinates( resolutionS0 ) + " " + unit);
 
 						// create metadata
 						final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
 								5, // int n
 								"/", // String name, I also saw "/"
-								cal, // double[] resolutionS0,
+								resolutionS0, // double[] resolutionS0,
 								unit, //"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 								mrInfoZarr.length, // int numResolutionLevels,
 								levelToName,
 								levelToMipmapTransform );
 
 						// save metadata
-
-						//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
-						// for this to work you need to register an adapter in the N5Factory class
-						// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
 						driverVolumeWriter.setAttribute( "/", "multiscales", meta );
 					}
 				}
@@ -375,14 +375,16 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
-			IOFunctions.println( "Resolution of level 0: " + Util.printCoordinates( cal ) + " micrometer" );
+			double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( cal, anisoF, downsamplingF );
+
+			IOFunctions.println( "Calibration: " + Util.printCoordinates( cal ) + " micrometer; resolution at S0: " + Util.printCoordinates( resolutionS0 ) + " " + unit);
 
 			// create metadata
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
 					3, // int n
 					omeZarrSubContainer, // String name, I also saw "/"
-					cal, // double[] resolutionS0,
-					unit, //"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+					resolutionS0, // double[] resolutionS0,
+					unit, // might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfo.length, // int numResolutionLevels,
 					(level) -> "/" + level,
 					levelToMipmapTransform );

@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import mpicbg.spim.data.sequence.VoxelDimensions;
 import org.bigdataviewer.n5.N5CloudImageLoader;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
@@ -192,13 +193,15 @@ public class Resave_N5Api implements PlugIn
 							}
 							else
 							{
+								VoxelDimensions vx = data.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize();
 								// 5d OME-ZARR with dimension=1 in c and t
 								mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR_ResaveRaw(
 										n5Writer,
 										viewId,
 										dataTypes.get( viewId.getViewSetupId() ),
 										dimensions.get( viewId.getViewSetupId() ),
-										//data.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(),
+										vx.dimensionsAsDoubleArray(), // resolutionS0
+										vx.unit(),
 										compression,
 										blockSize,
 										downsamplings,

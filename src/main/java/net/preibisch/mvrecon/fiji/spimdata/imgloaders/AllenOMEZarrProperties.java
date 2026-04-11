@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -23,56 +23,59 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders;
 
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.OmeNgffDataset;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.ScaleCoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TranslationCoordinateTransformation;
 
 import bdv.img.n5.N5Properties;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 
 public class AllenOMEZarrProperties implements N5Properties
 {
 	private final AbstractSequenceDescription< ?, ?, ? > sequenceDescription;
 
-	private final Map< ViewId, OMEZARREntry > viewIdToPath;
+	// mapping of viewIDs to corresponding OME-ZARRs
+	private final Map< ViewId, OMEZARREntry > viewIdToOmeZarrPath;
 
-	// Cache for actual dataset paths from multiscales metadata: setupId -> (level -> datasetPath)
-	private final Map< Integer, String[] > levelPathCache = new HashMap<>();
+	// N5Properties.getDatasetPath should require an N5Reader so that the dataset path could always be retrieved correctly (e.g., "s0", "s1", "s2" or "0", "1", "2")
+	// To work around this problem for now, first time we retrieve the view setup we cache it so that next time
+	// the dataset path is needed - we use the cached value.
+	// TODO: Remove this and the method that populates it, once the signature for N5Properties.getDatasetPath was updated to use the N5 Reader
+	private final ConcurrentMap< ViewId, OmeNgffMultiScaleMetadata > viewIdToOmeMetadata = new ConcurrentHashMap<>();
+
+	// only warn once per opened XML if TranslationCoordinateTransformation is missing
+	private boolean warnedMissingTranslation = false;
 
 	public AllenOMEZarrProperties(
 			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
-			final Map< ViewId, OMEZARREntry > viewIdToPath )
+			final Map< ViewId, OMEZARREntry > viewIdToOmeZarrPath)
 	{
 		this.sequenceDescription = sequenceDescription;
-		this.viewIdToPath = viewIdToPath;
+		this.viewIdToOmeZarrPath = viewIdToOmeZarrPath;
 	}
 
 	private String getPath( final int setupId, final int timepointId )
 	{
-		return viewIdToPath.get( new ViewId( timepointId, setupId ) ).getPath();
+		return viewIdToOmeZarrPath.get( new ViewId( timepointId, setupId ) ).getPath();
 	}
 
 	@Override
 	public String getDatasetPath( final int setupId, final int timepointId, final int level )
 	{
-		// Check if we have cached the actual paths from multiscales metadata
-		final String[] cachedPaths = levelPathCache.get( setupId );
-		if ( cachedPaths != null && level < cachedPaths.length )
-		{
-			return getPath( setupId, timepointId ) + "/" + cachedPaths[ level ];
-		}
-		// Fallback to numeric level (for v0.4 or if cache not populated)
-		return String.format( getPath( setupId, timepointId ) + "/%d", level );
+		// Note: if the OME metadata has not been cached yet this method will return the default path, because the reader is not available
+		return getMultiscaleDatasetPathOrDefault(null, timepointId, setupId, level);
 	}
 
 	@Override
@@ -90,7 +93,7 @@ public class AllenOMEZarrProperties implements N5Properties
 	@Override
 	public long[] getDimensions( final N5Reader n5, final int setupId, final int timepointId, final int level )
 	{
-		final String path = getDatasetPath( setupId, timepointId, level );
+		final String path = getMultiscaleDatasetPathOrDefault(n5, timepointId, setupId, level);
 		final long[] dimensions = n5.getDatasetAttributes( path ).getDimensions();
 		// dataset dimensions is 5D, remove the channel and time dimensions
 		return Arrays.copyOf( dimensions, 3 );
@@ -112,95 +115,165 @@ public class AllenOMEZarrProperties implements N5Properties
 				return tp.getId();
 		}
 
-		// All timepoints are missing for this setup
-		return -1;
+		throw new IllegalStateException( "All timepoints for setupId " + setupId + " are declared missing. Stopping." );
 	}
 
 	private static DataType getDataType( final AllenOMEZarrProperties n5properties, final N5Reader n5, final int setupId )
 	{
-		// we need to make sure the cache is populated, otherwise getDatasetPath(...) might return the wrong path
-		if ( n5properties.levelPathCache.get( setupId ) == null )
-			getMipMapResolutions( n5properties, n5, setupId );
-
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
-
-		// If all timepoints are missing, return a default data type
-		if ( timePointId < 0 )
-			return DataType.UINT16;
-
-		final String path = n5properties.getDatasetPath( setupId, timePointId, 0 );
-		final DatasetAttributes attributes = n5.getDatasetAttributes( path );
-
-		if ( attributes == null )
-			throw new RuntimeException( "Could not find dataset attributes for '" + path + "'. Please check if the OME-Zarr data is valid." );
-
-		return attributes.getDataType();
+		String datasetPath = n5properties.getMultiscaleDatasetPathOrDefault(n5, timePointId, setupId, 0);
+		return n5.getDatasetAttributes( datasetPath ).getDataType();
 	}
 
 	private static double[][] getMipMapResolutions( final AllenOMEZarrProperties n5properties, final N5Reader n5, final int setupId )
 	{
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
 
-		// If all timepoints are missing, return default single-level resolution
-		if ( timePointId < 0 )
-			return new double[][] { { 1.0, 1.0, 1.0 } };
-
 		// multiresolution pyramid
+		final OmeNgffMultiScaleMetadata multiScaleMetadata = n5properties.getViewSetupMultiscaleMetadata(n5, timePointId, setupId);
 
-		//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
-		// for this to work you need to register an adapter in the N5Factory class
-		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
-		final String path = n5properties.getPath( setupId, timePointId );
+		final double[][] mipMapResolutions = new double[ multiScaleMetadata.datasets.length ][ 3 ];
+		double[] scaleS0 = null;
 
-		// Try v0.4 structure first (multiscales at root), then v0.5/Zarr v3 structure (nested under ome)
-		OmeNgffMultiScaleMetadata[] multiscales = n5.getAttribute( path, "multiscales", OmeNgffMultiScaleMetadata[].class );
-
-		if ( multiscales == null || multiscales.length == 0 )
-			multiscales = n5.getAttribute( path, "ome/multiscales", OmeNgffMultiScaleMetadata[].class );
-
-		if ( multiscales == null || multiscales.length == 0 )
-			throw new RuntimeException( "Could not parse OME-ZARR multiscales object (tried 'multiscales' and 'ome/multiscales'). stopping." );
-
-		if ( multiscales.length != 1 )
-			System.out.println( "This dataset has " + multiscales.length + " objects, we expected 1. Picking the first one." );
-
-		//System.out.println( "AllenOMEZarrLoader.getMipmapResolutions() for " + setupId + " using " + n5properties.getPath( setupId, timePointId ) + ": found " + multiscales[ 0 ].datasets.length + " multi-resolution levels." );
-
-		double[][] mipMapResolutions = new double[ multiscales[ 0 ].datasets.length ][ 3 ];
-		double[] firstScale = null;
-
-		// Cache the actual dataset paths from metadata (they may not be just "0", "1", "2")
-		final String[] levelPaths = new String[ multiscales[ 0 ].datasets.length ];
-
-		for ( int i = 0; i < multiscales[ 0 ].datasets.length; ++i )
+		// iterate over all resolution levels for scale
+		for ( int s = 0; s < multiScaleMetadata.datasets.length; ++s )
 		{
-			final OmeNgffDataset ds = multiscales[ 0 ].datasets[ i ];
-
-			// Store the actual path for this resolution level
-			levelPaths[ i ] = ds.path;
+			final OmeNgffDataset ds = multiScaleMetadata.datasets[ s ];
 
 			for ( final CoordinateTransformation< ? > c : ds.coordinateTransformations )
 			{
 				if ( c instanceof ScaleCoordinateTransformation )
 				{
-					final ScaleCoordinateTransformation s = ( ScaleCoordinateTransformation ) c;
+					final ScaleCoordinateTransformation scale = ( ScaleCoordinateTransformation ) c;
 
-					if ( firstScale == null )
-						firstScale = s.getScale().clone();
+					if ( scaleS0 == null )
+						scaleS0 = scale.getScale().clone();
 
-					for ( int d = 0; d < mipMapResolutions[ i ].length; ++d )
+					for ( int d = 0; d < mipMapResolutions[ s ].length; ++d )
 					{
-						mipMapResolutions[ i ][ d ] = s.getScale()[ d ] / firstScale[ d ];
-						mipMapResolutions[ i ][ d ] = Math.round(mipMapResolutions[ i ][ d ]*10000)/10000d; // round to the 5th digit
+						mipMapResolutions[ s ][ d ] = scale.getScale()[ d ] / scaleS0[ d ];
+						mipMapResolutions[ s ][ d ] = Math.round(mipMapResolutions[ s ][ d ]*10000)/10000d; // round to the 5th digit
 					}
-					//System.out.println( "AllenOMEZarrLoader.getMipmapResolutions(), level " + i + ": " + Arrays.toString( s.getScale() ) + " >> " + Arrays.toString( mipMapResolutions[ i ] ) );
 				}
 			}
 		}
 
-		// Cache the level paths for this setup
-		n5properties.levelPathCache.put( setupId, levelPaths );
+		// iterate over all resolution levels for translation (to make sure scaleS0 is assigned if it existed)
+		// OME-Zarr 0.4: physical = pixel * scale + translation
+		// For averaging downsampling by factor r: expected relative shift = (r-1)/2 in s0 pixels
+		// For non-averaging (strided) downsampling: expected relative shift = 0
+		double[] translationS0 = null;
+		Boolean isAveraging = null; // determined from first downsampled level with r>1, then verified for subsequent levels
+
+		//System.out.println( "\nsetup " + setupId );
+
+		for ( int s = 0; s < multiScaleMetadata.datasets.length; ++s )
+		{
+			final OmeNgffDataset ds = multiScaleMetadata.datasets[ s ];
+
+			boolean foundTranslation = false;
+
+			for ( final CoordinateTransformation< ? > c : ds.coordinateTransformations )
+			{
+				if ( c instanceof TranslationCoordinateTransformation )
+				{
+					final TranslationCoordinateTransformation t = ( TranslationCoordinateTransformation ) c;
+					foundTranslation = true;
+
+					if ( scaleS0 == null )
+						throw new IllegalStateException( "Expected first scale to be set before the translation for level " + s + " dataset is processed" );
+
+					//System.out.println( "s=" + s + ", translation: " + Arrays.toString( t.getTranslation() ));
+
+					// capture s0's translation
+					if ( translationS0 == null )
+					{
+						translationS0 = t.getTranslation().clone();
+						// s0: no validation needed, just capture
+						break;
+					}
+
+					for ( int d = 0; d < mipMapResolutions[ s ].length; ++d )
+					{
+						final double r = mipMapResolutions[ s ][ d ];
+
+						// skip dimensions that are not downsampled (r=1), both modes have shift=0
+						if ( Math.abs( r - 1.0 ) < 0.01 )
+							continue;
+
+						// relative pixel translation: (translation_s - translationS0) / scaleS0
+						final double relPxTranslation = ( t.getTranslation()[ d ] - translationS0[ d ] ) / scaleS0[ d ];
+						final double expectedAveraging = ( r - 1.0 ) / 2.0; // 0.5, 1.5, 3.5, 7.5, ...
+
+						final boolean matchesAveraging = Math.abs( relPxTranslation - expectedAveraging ) < 0.01;
+						final boolean matchesNonAveraging = Math.abs( relPxTranslation ) < 0.01;
+
+						//System.out.println( "s=" + s + ", d=" + d + ", relPxTranslation=" + relPxTranslation + " @ scale=" + r );
+
+						if ( isAveraging == null )
+						{
+							// determine mode from first downsampled dimension
+							if ( matchesAveraging )
+								isAveraging = true;
+							else if ( matchesNonAveraging )
+								throw new IllegalStateException( "Non-averaging downsampling detected (translation=0 for level " + s + " dim " + d + "), which is currently not supported." );
+							else
+								throw new IllegalStateException( "Unsupported translation for level " + s + " dim " + d + ": relative pixel translation=" + relPxTranslation + " (expected " + expectedAveraging + " for averaging or 0.0 for non-averaging)." );
+						}
+						else
+						{
+							// verify consistency with detected mode
+							final double expected = isAveraging ? expectedAveraging : 0.0;
+							if ( Math.abs( relPxTranslation - expected ) >= 0.01 )
+								throw new IllegalStateException( "Inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + relPxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling." );
+						}
+					}
+				}
+			}
+
+			if ( !foundTranslation && s > 0 && !n5properties.warnedMissingTranslation )
+			{
+				IOFunctions.println( "WARNING: No TranslationCoordinateTransformation found, assuming half-pixel shifts for averaging-based downsampling." );
+				n5properties.warnedMissingTranslation = true;
+			}
+		}
 
 		return mipMapResolutions;
+	}
+
+	private String getMultiscaleDatasetPathOrDefault( N5Reader n5, int timepointId, int setupId, int level )
+	{
+		OmeNgffMultiScaleMetadata omeNgffMultiScaleMetadata = getViewSetupMultiscaleMetadata(n5, timepointId, setupId);
+
+		if (omeNgffMultiScaleMetadata == null) {
+			throw new IllegalStateException("OME multiscale metadata could not be cached for (tp, setup) = (" +
+					timepointId + "," + setupId + ") - current N5Reader is " + n5);
+		}
+
+		String viewSetupPath = getPath( setupId, timepointId );
+		// get the first scale path from the metadata
+		String datasetPath = omeNgffMultiScaleMetadata.datasets[level].path;
+		return String.format( "%s/%s", viewSetupPath, datasetPath);
+	}
+
+	// retrieve and cache the multiscale metadata
+	private OmeNgffMultiScaleMetadata getViewSetupMultiscaleMetadata(N5Reader n5, int timePointId, int setupId) {
+		ViewId viewId = new ViewId(timePointId, setupId);
+
+		return viewIdToOmeMetadata.computeIfAbsent(viewId, k -> {
+			if (n5 == null) {
+				return null; // no mapping will be cached
+			}
+
+			final OmeNgffMultiScaleMetadata[] multiscales = n5.getAttribute( getPath( setupId, timePointId ), "multiscales", OmeNgffMultiScaleMetadata[].class );
+
+			if ( multiscales == null || multiscales.length == 0 )
+				throw new IllegalStateException( "Could not parse OME-ZARR multiscales object. stopping." );
+
+			if ( multiscales.length > 1 )
+				System.out.println( "This dataset has " + multiscales.length + " objects, we expected 1. Picking the first one." );
+
+			return multiscales[0];
+		});
 	}
 }
