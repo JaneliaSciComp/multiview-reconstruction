@@ -315,6 +315,14 @@ public class SplittingTools
 
 				// Collect results and aggregate statistics
 				int totalSplitCount = 0, totalLeafCount = 0, totalFinalBlocks = 0;
+				int globalMinDepth = Integer.MAX_VALUE, globalMaxDepth = 0;
+				double totalDepthSum = 0;
+				int globalMinDetections = Integer.MAX_VALUE, globalMaxDetections = 0;
+				double totalDetectionsSum = 0;
+				int globalMinMaxSets = Integer.MAX_VALUE, globalMaxMaxSets = 0;
+				double totalMaxSetsSum = 0;
+				double totalOutlierSum = 0;
+				int totalCriterionOk = 0, totalWithinTolerance = 0;
 
 				for ( int i = 0; i < futures.size(); i++ )
 				{
@@ -343,6 +351,22 @@ public class SplittingTools
 					totalSplitCount += result.splitCount;
 					totalLeafCount += result.leafCount;
 					totalFinalBlocks += result.intervals.size();
+
+					if ( result.leafCount > 0 )
+					{
+						globalMinDepth = Math.min( globalMinDepth, result.minDepth );
+						globalMaxDepth = Math.max( globalMaxDepth, result.maxDepth );
+						totalDepthSum += result.avgDepth * result.leafCount;
+						globalMinDetections = Math.min( globalMinDetections, result.minDetections );
+						globalMaxDetections = Math.max( globalMaxDetections, result.maxDetections );
+						totalDetectionsSum += result.avgDetections * result.leafCount;
+						globalMinMaxSets = Math.min( globalMinMaxSets, result.minMaxSets );
+						globalMaxMaxSets = Math.max( globalMaxMaxSets, result.maxMaxSets );
+						totalMaxSetsSum += result.avgMaxSets * result.leafCount;
+						totalOutlierSum += result.avgOutlierPercent * result.leafCount;
+						totalCriterionOk += Math.round( result.criterionSatisfiedPercent * result.leafCount / 100.0 );
+						totalWithinTolerance += Math.round( result.withinTolerancePercent * result.leafCount / 100.0 );
+					}
 				}
 
 				// Print aggregate statistics
@@ -351,6 +375,15 @@ public class SplittingTools
 				IOFunctions.println( "Total splits: " + totalSplitCount );
 				IOFunctions.println( "Total leaves: " + totalLeafCount );
 				IOFunctions.println( "Total final blocks: " + totalFinalBlocks );
+				if ( totalLeafCount > 0 )
+				{
+					IOFunctions.println( "Depth: " + globalMinDepth + "/" + String.format( "%.1f", totalDepthSum / totalLeafCount ) + "/" + globalMaxDepth );
+					IOFunctions.println( "Detections/leaf: " + globalMinDetections + "/" + String.format( "%.0f", totalDetectionsSum / totalLeafCount ) + "/" + globalMaxDetections );
+					IOFunctions.println( "MaxSets/leaf: " + globalMinMaxSets + "/" + String.format( "%.1f", totalMaxSetsSum / totalLeafCount ) + "/" + globalMaxMaxSets );
+					IOFunctions.println( "Avg outlier: " + String.format( "%.1f", totalOutlierSum / totalLeafCount ) + "%" );
+					IOFunctions.println( "Criterion OK: " + String.format( "%.0f", 100.0 * totalCriterionOk / totalLeafCount ) + "%" );
+					IOFunctions.println( "Within tolerance: " + String.format( "%.0f", 100.0 * totalWithinTolerance / totalLeafCount ) + "%" );
+				}
 				IOFunctions.println( "======================================" );
 			}
 			catch ( final Exception e )
