@@ -314,12 +314,11 @@ public class SplittingTools
 				final List< Future< SplitOctTree.SplitStatistics > > futures = taskExecutor.invokeAll( tasks );
 
 				// Collect results and aggregate statistics
-				int totalSplitCount = 0, totalMergeCount = 0, totalLeafCount = 0, totalFinalBlocks = 0;
+				int totalSplitCount = 0, totalLeafCount = 0, totalFinalBlocks = 0;
 
 				for ( int i = 0; i < futures.size(); i++ )
 				{
 					final ViewSetup setup = taskSetups.get( i );
-					final Interval input = taskInputs.get( i );
 					final SplitOctTree.SplitStatistics result = futures.get( i ).get();
 
 					if ( result == null )
@@ -329,14 +328,19 @@ public class SplittingTools
 						return null;
 					}
 
-					IOFunctions.println( "ViewId " + setup.getId() + " with interval " + Util.printInterval( input ) +
+					IOFunctions.println( "ViewId " + setup.getId() +
 							": " + result.intervals.size() + " tiles (" + result.splitCount + " splits, " +
-							result.mergeCount + " merges, " + result.leafCount + " leaves)" );
+							result.leafCount + " leaves" +
+							", depth=" + result.minDepth + "/" + String.format( "%.1f", result.avgDepth ) + "/" + result.maxDepth +
+							", detections/leaf=" + result.minDetections + "/" + String.format( "%.0f", result.avgDetections ) + "/" + result.maxDetections +
+							", maxSets/leaf=" + result.minMaxSets + "/" + String.format( "%.1f", result.avgMaxSets ) + "/" + result.maxMaxSets +
+							", avgOutlier=" + String.format( "%.1f", result.avgOutlierPercent ) + "%" +
+							", criterionOk=" + String.format( "%.0f", result.criterionSatisfiedPercent ) + "%" +
+							", withinTolerance=" + String.format( "%.0f", result.withinTolerancePercent ) + "%)" );
 
 					splitResults.put( setup, result.intervals );
 
 					totalSplitCount += result.splitCount;
-					totalMergeCount += result.mergeCount;
 					totalLeafCount += result.leafCount;
 					totalFinalBlocks += result.intervals.size();
 				}
@@ -345,7 +349,6 @@ public class SplittingTools
 				IOFunctions.println( "===== Oct-tree splitting summary =====" );
 				IOFunctions.println( "Total views processed: " + oldSetups.size() );
 				IOFunctions.println( "Total splits: " + totalSplitCount );
-				IOFunctions.println( "Total merges: " + totalMergeCount );
 				IOFunctions.println( "Total leaves: " + totalLeafCount );
 				IOFunctions.println( "Total final blocks: " + totalFinalBlocks );
 				IOFunctions.println( "======================================" );

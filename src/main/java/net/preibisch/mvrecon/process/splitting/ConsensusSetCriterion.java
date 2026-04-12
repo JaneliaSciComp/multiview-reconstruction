@@ -103,13 +103,6 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		this.toleranceValue = toleranceValue;
 	}
 
-	/*
-	default boolean canMerge( List< SplitCorrespondence > correspondences )
-	{
-		return !shouldSplit( correspondences );
-	}
-	*/
-
 	@Override
 	public boolean shouldSplit( final List< SplitCorrespondence > correspondences )
 	{
@@ -213,6 +206,12 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 
 		final int total = totalDominant + totalOutliers;
 		return total > 0 ? ( double ) totalOutliers / total : 0.0;
+	}
+
+	@Override
+	public double scoreSplit( final List< SplitCorrespondence > child1, final List< SplitCorrespondence > child2 )
+	{
+		return computeOutlierRatio( child1 ) + computeOutlierRatio( child2 );
 	}
 
 	@Override

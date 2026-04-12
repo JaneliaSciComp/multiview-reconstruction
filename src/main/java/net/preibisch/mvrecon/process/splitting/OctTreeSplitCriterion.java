@@ -151,14 +151,17 @@ public interface OctTreeSplitCriterion
 	boolean shouldSplit( List< SplitCorrespondence > correspondences );
 
 	/**
-	 * Check if a set of correspondences can be merged (combined metric below threshold).
+	 * Score a candidate binary split. Lower is better.
+	 * Used as tiebreaker in chooseBestSplitDimension when multiple
+	 * dimensions produce the same number of clean children.
 	 *
-	 * @param correspondences The correspondences from all children being merged
-	 * @return true if merging is allowed (combined metric ≤ threshold)
+	 * @param child1 Correspondences in the first child
+	 * @param child2 Correspondences in the second child
+	 * @return Score (lower = better split). Default: 0 (no preference).
 	 */
-	default boolean canMerge( List< SplitCorrespondence > correspondences )
+	default double scoreSplit( List< SplitCorrespondence > child1, List< SplitCorrespondence > child2 )
 	{
-		return !shouldSplit( correspondences );
+		return 0;
 	}
 
 	/**
