@@ -84,6 +84,22 @@ public class CrossViewCorrespondenceCriterion implements OctTreeSplitCriterion
 	}
 
 	@Override
+	public double scoreSplit( final List< SplitCorrespondence > child1, final List< SplitCorrespondence > child2 )
+	{
+		// Score by detection imbalance: 0 = perfectly balanced, 1 = all in one side
+		final Set< Integer > dets1 = new HashSet<>();
+		for ( final SplitCorrespondence c : child1 )
+			dets1.add( c.detectionId );
+
+		final Set< Integer > dets2 = new HashSet<>();
+		for ( final SplitCorrespondence c : child2 )
+			dets2.add( c.detectionId );
+
+		final int total = dets1.size() + dets2.size();
+		return total > 0 ? ( double ) Math.abs( dets1.size() - dets2.size() ) / total : 0;
+	}
+
+	@Override
 	public String description()
 	{
 		return "CrossViewCorrespondenceCriterion[labels=" + labels +

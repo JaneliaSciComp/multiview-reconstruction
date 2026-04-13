@@ -39,7 +39,6 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestP
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
-import net.preibisch.mvrecon.process.splitting.OctTreeSplitCriterion.SplitCorrespondence;
 
 /**
  * Criterion based on multi-consensus RANSAC sets.
@@ -72,7 +71,7 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	// Static defaults for GUI persistence
 	public static int defaultMinCorrespondences = 12;
 	public static int[] defaultLabelChoices = null;
-	public static int defaultToleranceMode = TOLERANCE_NONE;
+	public static int defaultToleranceMode = TOLERANCE_PERCENTAGE;
 	public static double defaultToleranceValue = 10.0;  // 10% or 10 correspondences
 
 	private final SpimData2 spimData;
@@ -104,13 +103,6 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		this.toleranceValue = toleranceValue;
 	}
 
-	/*
-	default boolean canMerge( List< SplitCorrespondence > correspondences )
-	{
-		return !shouldSplit( correspondences );
-	}
-	*/
-
 	@Override
 	public boolean shouldSplit( final List< SplitCorrespondence > correspondences )
 	{
@@ -123,7 +115,7 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		if ( uniqueDetections.size() <= minCorrespondences )
 			return false;
 
-		// Too many detections - check if any view has multiple consensus sets
+		// Count consensus set distribution per view pair
 		// Map: corrViewKey → Map of consensusSetId → count
 		final Map< String, Map< Integer, Integer > > consensusSetCountsPerView = new HashMap<>();
 		for ( final SplitCorrespondence corr : correspondences )
@@ -133,44 +125,93 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 				.merge( corr.consensusSetId, 1, Integer::sum );
 		}
 
-		// Check each view for multiple consensus sets, applying tolerance
+		// Aggregate across all view pairs: sum dominant counts (biggest set each)
+		// and outlier counts (all other consensus sets)
+		int totalDominant = 0;
+		int totalOutliers = 0;
+		int maxNumSets = 0;
+		int totalNumSets = 0;
+		int numPairs = 0;
+
 		for ( final Map< Integer, Integer > setCounts : consensusSetCountsPerView.values() )
 		{
-			if ( setCounts.size() <= 1 )
-				continue;  // Only one set for this view - no problem
-
-			// Multiple sets - check if within tolerance
-			if ( toleranceMode == TOLERANCE_NONE )
-			{
-				// Any other set triggers split
-				return true;
-			}
-
-			// Find the dominant set and count outliers
-			int totalCount = 0;
-			int maxCount = 0;
+			int pairTotal = 0;
+			int pairMax = 0;
 			for ( final int count : setCounts.values() )
 			{
-				totalCount += count;
-				maxCount = Math.max( maxCount, count );
+				pairTotal += count;
+				pairMax = Math.max( pairMax, count );
 			}
-			final int outlierCount = totalCount - maxCount;
-
-			if ( toleranceMode == TOLERANCE_PERCENTAGE )
-			{
-				final double outlierPercentage = ( 100.0 * outlierCount ) / totalCount;
-				if ( outlierPercentage > toleranceValue )
-					return true;
-			}
-			else if ( toleranceMode == TOLERANCE_COUNT )
-			{
-				if ( outlierCount > toleranceValue )
-					return true;
-			}
+			totalDominant += pairMax;
+			totalOutliers += pairTotal - pairMax;
+			maxNumSets = Math.max( maxNumSets, setCounts.size() );
+			totalNumSets += setCounts.size();
+			numPairs++;
 		}
 
-		// Within tolerance for all views - don't split
-		return false;
+		final double avgNumSets = numPairs > 0 ? ( double ) totalNumSets / numPairs : 0;
+
+		// If no outliers at all, don't split
+		if ( totalOutliers == 0 )
+			return false;
+
+		// Apply tolerance check on aggregated counts
+		if ( toleranceMode == TOLERANCE_NONE )
+		{
+			return true;
+		}
+		else if ( toleranceMode == TOLERANCE_PERCENTAGE )
+		{
+			final double outlierPercentage = ( 100.0 * totalOutliers ) / ( totalDominant + totalOutliers );
+			return outlierPercentage > toleranceValue;
+		}
+		else // TOLERANCE_COUNT
+		{
+			return totalOutliers > toleranceValue;
+		}
+	}
+
+	/**
+	 * Compute the aggregate outlier ratio across all view pairs.
+	 * For each pair, the dominant consensus set (highest count) is "inlier",
+	 * everything else is "outlier". Returns totalOutliers / (totalDominant + totalOutliers),
+	 * or 0.0 if there are no correspondences.
+	 */
+	public static double computeOutlierRatio( final List< SplitCorrespondence > correspondences )
+	{
+		// Map: corrViewKey → Map of consensusSetId → count
+		final Map< String, Map< Integer, Integer > > consensusSetCountsPerView = new HashMap<>();
+		for ( final SplitCorrespondence corr : correspondences )
+		{
+			consensusSetCountsPerView
+				.computeIfAbsent( corr.corrViewKey, k -> new HashMap<>() )
+				.merge( corr.consensusSetId, 1, Integer::sum );
+		}
+
+		int totalDominant = 0;
+		int totalOutliers = 0;
+
+		for ( final Map< Integer, Integer > setCounts : consensusSetCountsPerView.values() )
+		{
+			int pairMax = 0;
+			int pairTotal = 0;
+			for ( final int count : setCounts.values() )
+			{
+				pairTotal += count;
+				pairMax = Math.max( pairMax, count );
+			}
+			totalDominant += pairMax;
+			totalOutliers += pairTotal - pairMax;
+		}
+
+		final int total = totalDominant + totalOutliers;
+		return total > 0 ? ( double ) totalOutliers / total : 0.0;
+	}
+
+	@Override
+	public double scoreSplit( final List< SplitCorrespondence > child1, final List< SplitCorrespondence > child2 )
+	{
+		return computeOutlierRatio( child1 ) + computeOutlierRatio( child2 );
 	}
 
 	@Override
