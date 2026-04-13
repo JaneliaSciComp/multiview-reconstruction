@@ -258,7 +258,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 
 						// at this point the pixel size has already been set
 						// - here we adjust the S0 resolution based on selected downsampling and anisotropy before exporting to N5
-						double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( cal, anisoF, downsamplingF );
+						double[] resolutionS0 = OMEZarrAttributes.getResolutionS0( cal, anisoF, downsamplingF );
 
 						IOFunctions.println( "Calibration: " + Util.printCoordinates( cal ) + " micrometer; resolution at S0: " + Util.printCoordinates( resolutionS0 ) + " " + unit);
 
@@ -375,7 +375,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
-			double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( cal, anisoF, downsamplingF );
+			double[] resolutionS0 = OMEZarrAttributes.getResolutionS0( cal, anisoF, downsamplingF );
 
 			IOFunctions.println( "Calibration: " + Util.printCoordinates( cal ) + " micrometer; resolution at S0: " + Util.printCoordinates( resolutionS0 ) + " " + unit);
 

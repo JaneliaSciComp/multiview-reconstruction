@@ -80,7 +80,6 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	private static final List<List<BasicViewDescription<?>>> selectionHistory = new ArrayList<>();
 	private static int historyIndex = -1;
 	private static boolean navigatingHistory = false;
-	private static boolean bulkSelecting = false;
 
 	static
 	{
@@ -288,11 +287,6 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			@Override
 			public void valueChanged(final ListSelectionEvent arg0)
 			{
-				// Skip intermediate selection changes while user is still adjusting
-				// (e.g., shift-clicking multiple rows). Only process when finalized.
-				if ( arg0.getValueIsAdjusting() )
-					return;
-
 				BDVPopup b = bdvPopup();
 
 				selectedRows.clear();
@@ -622,14 +616,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			final List<BasicViewDescription<?>> selectedViews = dialog.getSelectedViews();
 			if ( selectedViews != null && !selectedViews.isEmpty() )
 			{
-				// Select the views in the table (disable history saving during bulk selection)
-				bulkSelecting = true;
+				// Select the views in the table
 				selectViews( selectedViews );
-				bulkSelecting = false;
-
-				// Save the final selection to history once
-				saveSelectionToHistory();
-
 				IOFunctions.println( "Selected " + selectedViews.size() + " views based on criteria." );
 			}
 		}
@@ -657,7 +645,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 	protected void saveSelectionToHistory()
 	{
-		if ( navigatingHistory || bulkSelecting )
+		if ( navigatingHistory )
 			return;
 
 		// Get current selection
