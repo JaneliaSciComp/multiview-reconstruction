@@ -134,12 +134,7 @@ public class GlobalOpt
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Min Error: " + tc.getMinError() + "px" );
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Max Error: " + tc.getMaxError() + "px" );
 		}
-		catch (NotEnoughDataPointsException e)
-		{
-			IOFunctions.println( "Global optimization failed: " + e );
-			e.printStackTrace();
-		}
-		catch (IllDefinedDataPointsException e)
+		catch (Exception e)
 		{
 			IOFunctions.println( "Global optimization failed: " + e );
 			e.printStackTrace();

@@ -560,6 +560,7 @@ public class SplittingTools
 			}
 
 			corrExecutor.invokeAll( trackedTasks );
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Processed " + totalCorrTasks + "/" + totalCorrTasks + " correspondence tasks" );
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Corresponding interest points processing complete." );
 		}
 		catch ( final InterruptedException e )
