@@ -654,7 +654,8 @@ public class N5ApiTools
 		final long[] dimensionsRaw = attrs.getDimensions();
 		final long[] dimensions = new long[] { dimensionsRaw[ 0 ], dimensionsRaw[ 1 ], dimensionsRaw[ 2 ] };
 
-		final RandomAccessibleInterval< T > downsampled3d = BlockAlgoUtils.cellImg( blocks, dimensions, new int[] { 64 } );
+		final int[] cellSize = new int[] { mrInfo.blockSize[0], mrInfo.blockSize[1], mrInfo.blockSize[2] };
+		final RandomAccessibleInterval<T> downsampled3d = BlockAlgoUtils.cellImg( blocks, dimensions, cellSize );
 
 		// the same information is returned no matter which index is queried in C and T
 		final RandomAccessible< T > downsampled5d = Views.addDimension( Views.addDimension( downsampled3d ) );
