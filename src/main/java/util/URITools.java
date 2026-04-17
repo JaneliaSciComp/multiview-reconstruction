@@ -52,6 +52,9 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Reader;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.s3.AmazonS3Utils;
+import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
@@ -297,9 +300,11 @@ public class URITools
 				//System.out.println( "Trying writing with credentials ..." );
 				final N5Factory factory = new N5Factory().zarrDimensionSeparator( "/" );
 				factory.gsonBuilder( builder );
-				factory.s3UseCredentials();
-				if ( s3Region != null )
-					factory.s3Region( s3Region );
+				factory.s3Configuration( b -> {
+					b.credentialsProvider( DefaultCredentialsProvider.create() );
+					if ( s3Region != null )
+						b.region( Region.of( s3Region ) );
+				} );
 				n5w = factory.openWriter( format, uri );
 			}
 			catch ( Exception e )
@@ -308,8 +313,11 @@ public class URITools
 
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				if ( s3Region != null )
-					factory.s3Region( s3Region );
+				factory.s3Configuration( b -> {
+					b.credentialsProvider( AnonymousCredentialsProvider.create() );
+					if ( s3Region != null )
+						b.region( Region.of( s3Region ) );
+				} );
 				n5w = factory.openWriter( format, uri );
 			}
 
@@ -356,9 +364,11 @@ public class URITools
 				//System.out.println( "Trying reading with credentials ..." );
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				factory.s3UseCredentials();
-				if ( s3Region != null )
-					factory.s3Region( s3Region );
+				factory.s3Configuration( b -> {
+					b.credentialsProvider( DefaultCredentialsProvider.create() );
+					if ( s3Region != null )
+						b.region( Region.of( s3Region ) );
+				} );
 				n5r = factory.openReader( format, uri );
 			}
 			catch ( Exception e )
@@ -367,8 +377,11 @@ public class URITools
 
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				if ( s3Region != null )
-					factory.s3Region( s3Region );
+				factory.s3Configuration( b -> {
+					b.credentialsProvider( AnonymousCredentialsProvider.create() );
+					if ( s3Region != null )
+						b.region( Region.of( s3Region ) );
+				} );
 				n5r = factory.openReader( format, uri );
 			}
 
