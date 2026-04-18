@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,6 +42,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import bdv.ViewerImgLoader;
 import mpicbg.spim.data.generic.AbstractSpimData;
@@ -68,6 +70,7 @@ import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.KDTree;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.neighborsearch.RadiusNeighborSearch;
 import net.imglib2.neighborsearch.RadiusNeighborSearchOnKDTree;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -547,11 +550,22 @@ public class SplittingTools
 			final int totalCorrTasks = corrTasks.size();
 
 			// Wrap tasks with progress tracking
+			final AtomicInteger corrFailed = new AtomicInteger( 0 );
 			final List< Callable< Void > > trackedTasks = new ArrayList<>();
 			for ( final Callable< Void > task : corrTasks )
 			{
 				trackedTasks.add( () -> {
-					task.call();
+					try
+					{
+						task.call();
+					}
+					catch ( final Exception e )
+					{
+						corrFailed.incrementAndGet();
+						IOFunctions.println( "ERROR in correspondence task: " + e.getMessage() );
+						e.printStackTrace();
+						SimpleMultiThreading.threadHaltUnClean();
+					}
 					final int done = corrCompleted.incrementAndGet();
 					if ( done % 10 == 0 || done == totalCorrTasks )
 						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Processed " + done + "/" + totalCorrTasks + " correspondence tasks" );
@@ -560,8 +574,10 @@ public class SplittingTools
 			}
 
 			corrExecutor.invokeAll( trackedTasks );
-			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Processed " + totalCorrTasks + "/" + totalCorrTasks + " correspondence tasks" );
-			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Corresponding interest points processing complete." );
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Finished processing " + totalCorrTasks + "/" + totalCorrTasks + " correspondence tasks" + 
+					" (" + corrFailed.get() + " FAILED)" );
+			if ( corrFailed.get() > 0 )
+				throw new RuntimeException("Correspondence task processing failed for " + corrFailed.get() + " jobs");
 		}
 		catch ( final InterruptedException e )
 		{
@@ -1081,6 +1097,9 @@ public class SplittingTools
 			// Key: "timepointId_setupId_label" -> Map of detection IDs
 			final Map< String, Map< Integer, InterestPoint > > ipMapCache = new HashMap<>();
 
+			// Track missing corresponding views to warn only once per view
+			final Set< Integer > warnedMissingSetups = new HashSet<>();
+
 			for ( final String label : oldVipl.getHashMap().keySet() )
 			{
 				final Collection<CorrespondingInterestPoints> corr = oldVipl.getInterestPointList( label ).getCorrespondingInterestPointsCopy();
@@ -1092,10 +1111,19 @@ public class SplittingTools
 						// for each corresponding interest point entry
 						corr.stream()
 							.filter( c -> newIpList.containsKey( c.getDetectionId() ) ) // only look at those that are in the current new viewid
-							.map( c ->
+							.map( c -> {
 								// find all new setups we have correspondences with,
 								// this could be in more than one of the new views if it falls into an overlapping area
-								old2NewSetups.get( c.getCorrespondingViewId().getViewSetupId() ).stream().map( corrNewSetupId ->
+								final int corrOldSetupId = c.getCorrespondingViewId().getViewSetupId();
+								final List< Integer > corrNewSetups = old2NewSetups.get( corrOldSetupId );
+								if ( corrNewSetups == null )
+								{
+									if ( warnedMissingSetups.add( corrOldSetupId ) )
+										IOFunctions.println( "WARNING: correspondences reference ViewSetupId " + corrOldSetupId +
+												" which is not part of the split dataset, skipping." );
+									return Stream.< CorrespondingInterestPoints >empty();
+								}
+								return corrNewSetups.stream().map( corrNewSetupId ->
 								{
 									final String newCorrLabel = c.getCorrespodingLabel() + "_split";
 									final ViewId newCorrViewId = new ViewId( t.getId(), corrNewSetupId );
@@ -1122,7 +1150,8 @@ public class SplittingTools
 										return null;
 									}
 								})
-								.filter( Objects::nonNull ) )
+								.filter( Objects::nonNull );
+								})
 							.flatMap( Function.identity() )
 							.collect( Collectors.toList() ) );
 			}
