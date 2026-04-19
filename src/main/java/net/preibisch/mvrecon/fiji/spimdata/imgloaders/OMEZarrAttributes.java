@@ -111,8 +111,12 @@ public class OMEZarrAttributes
 			}
 
 			datasets[ s ].coordinateTransformations = new CoordinateTransformation[ 2 ];
-			datasets[ s ].coordinateTransformations[ 0 ] = new ScaleCoordinateTransformation( scale ); // TODO: check
-			datasets[ s ].coordinateTransformations[ 1 ] = new TranslationCoordinateTransformation( translation ); // TODO: check
+			datasets[ s ].coordinateTransformations[ 0 ] = new ScaleCoordinateTransformation(
+					OmeNgffMultiScaleMetadata.reverseCopy(scale)
+			);
+			datasets[ s ].coordinateTransformations[ 1 ] = new TranslationCoordinateTransformation(
+					OmeNgffMultiScaleMetadata.reverseCopy(translation)
+			);
 		}
 
 		final double[] scale = new double[ n ];
