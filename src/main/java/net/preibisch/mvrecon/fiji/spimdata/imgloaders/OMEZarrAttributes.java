@@ -69,18 +69,16 @@ public class OMEZarrAttributes
 		// TODO: seem to be TCZYX order
 		final Axis[] axes = new Axis[ n ];
 
-		int index = 0;
+		int axisIndex = 0;
 
 		if ( n >= 5 )
-			axes[ index++ ] = new Axis( "time", "t", "millisecond" );
-
+			axes[ axisIndex++ ] = new Axis( "time", "t", "millisecond" );
 		if ( n >= 4 )
-			axes[ index++ ] = new Axis( "channel", "c", null );
-
-		String unit = adaptSpatialUnit( unitXYZ );
-		axes[ index ] = new Axis( "space", "z", unit );
-		axes[ index + 1 ] = new Axis( "space", "y", unit );
-		axes[ index + 2 ] = new Axis( "space", "x", unit );
+			axes[ axisIndex++ ] = new Axis( "channel", "c", null );
+		String spatialUnit = adaptSpatialUnit( unitXYZ );
+		axes[ axisIndex++ ] = new Axis( "space", "z", spatialUnit );
+		axes[ axisIndex++ ] = new Axis( "space", "y", spatialUnit );
+		axes[ axisIndex++ ] = new Axis( "space", "x", spatialUnit );
 
 		// multiresolution-pyramid
 		// TODO: seem to be in XYZCT order (but in the file it seems reversed)
@@ -110,13 +108,10 @@ public class OMEZarrAttributes
 				scale[ d ] = 1.0;
 			}
 
-			datasets[ s ].coordinateTransformations = new CoordinateTransformation[ 2 ];
-			datasets[ s ].coordinateTransformations[ 0 ] = new ScaleCoordinateTransformation(
-					OmeNgffMultiScaleMetadata.reverseCopy(scale)
-			);
-			datasets[ s ].coordinateTransformations[ 1 ] = new TranslationCoordinateTransformation(
-					OmeNgffMultiScaleMetadata.reverseCopy(translation)
-			);
+			datasets[ s ].coordinateTransformations = new CoordinateTransformation[] {
+					new ScaleCoordinateTransformation( scale ),
+					new TranslationCoordinateTransformation( translation )
+			};
 		}
 
 		final double[] scale = new double[ n ];

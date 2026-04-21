@@ -662,8 +662,8 @@ public class N5ApiTools
 
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled5d, blockOffset, blockSize);
 
-		//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridOffset, previousScale.getType().createVariable());
-		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridOffset );
+		// using saveNonEmptyBlock - this is supported now
+		N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, downsampled5d.getType().createVariable() );
 	}
 
 	public static List<long[][]> assembleJobs( final MultiResolutionLevelInfo mrInfo )

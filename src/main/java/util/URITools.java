@@ -34,12 +34,17 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.lang.reflect.Type;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.FileSystems;
 import java.util.Date;
 import java.util.regex.Pattern;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSerializationContext;
+import org.apache.commons.lang.StringUtils;
 import org.janelia.saalfeldlab.googlecloud.GoogleCloudUtils;
 import org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess;
 import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
@@ -52,6 +57,8 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Reader;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.s3.AmazonS3Utils;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.AxisAdapter;
 import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -266,9 +273,22 @@ public class URITools
 
 	public static N5Writer instantiateN5Writer( final StorageFormat format, final URI uri )
 	{
-		final GsonBuilder builder = new GsonBuilder().registerTypeAdapter(
-				CoordinateTransformation.class,
-				new CoordinateTransformationAdapter() );
+		final GsonBuilder builder = new GsonBuilder()
+				.registerTypeAdapter(
+					CoordinateTransformation.class, new CoordinateTransformationAdapter() )
+				.registerTypeAdapter(
+						Axis.class, new AxisAdapter() {
+							// do not serialize a null unit
+							@Override
+							public JsonElement serialize(Axis src, Type typeOfSrc, JsonSerializationContext context) {
+								JsonObject obj = new JsonObject();
+								obj.addProperty("type", src.getType());
+								obj.addProperty("name", src.getName());
+								if (StringUtils.isNotBlank(src.getUnit())) obj.addProperty("unit", src.getUnit());
+								return obj;
+							}
+						}
+				);
 
 		if ( URITools.isFile( uri ) )
 		{
