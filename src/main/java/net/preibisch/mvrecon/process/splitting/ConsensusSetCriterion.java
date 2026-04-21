@@ -59,25 +59,35 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	public static final String CRITERION_NAME = "Multi-consensus sets";
 
 	// Tolerance modes for multi-set detection
-	public static final int TOLERANCE_NONE = 0;
-	public static final int TOLERANCE_PERCENTAGE = 1;
-	public static final int TOLERANCE_COUNT = 2;
+	public enum ToleranceMode
+	{
+		NONE( "Not tolerant (any other set triggers split)" ),
+		PERCENTAGE( "Percentage tolerance" ),
+		COUNT( "Count tolerance" );
+
+		private final String description;
+
+		ToleranceMode( final String description ) { this.description = description; }
+
+		public String getDescription() { return description; }
+	}
+
 	public static final String[] TOLERANCE_CHOICES = new String[] {
-		"Not tolerant (any other set triggers split)",
-		"Percentage tolerance",
-		"Count tolerance"
+		ToleranceMode.NONE.getDescription(),
+		ToleranceMode.PERCENTAGE.getDescription(),
+		ToleranceMode.COUNT.getDescription()
 	};
 
 	// Static defaults for GUI persistence
 	public static int defaultMinCorrespondences = 12;
 	public static int[] defaultLabelChoices = null;
-	public static int defaultToleranceMode = TOLERANCE_PERCENTAGE;
+	public static ToleranceMode defaultToleranceMode = ToleranceMode.PERCENTAGE;
 	public static double defaultToleranceValue = 10.0;  // 10% or 10 correspondences
 
 	private final SpimData2 spimData;
 	private final Set< String > labels;
 	private final int minCorrespondences;
-	private final int toleranceMode;
+	private final ToleranceMode toleranceMode;
 	private final double toleranceValue;
 
 	/**
@@ -86,14 +96,14 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	 * @param spimData The SpimData2 containing interest points
 	 * @param labels Set of interest point labels to consider
 	 * @param minCorrespondences Threshold - regions with more unique detections should be split
-	 * @param toleranceMode How to handle multiple consensus sets (TOLERANCE_NONE, TOLERANCE_PERCENTAGE, TOLERANCE_COUNT)
+	 * @param toleranceMode How to handle multiple consensus sets (NONE, PERCENTAGE, COUNT)
 	 * @param toleranceValue The tolerance value (percentage or count, depending on mode)
 	 */
 	public ConsensusSetCriterion(
 			final SpimData2 spimData,
 			final Set< String > labels,
 			final int minCorrespondences,
-			final int toleranceMode,
+			final ToleranceMode toleranceMode,
 			final double toleranceValue )
 	{
 		this.spimData = spimData;
@@ -156,18 +166,17 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 			return false;
 
 		// Apply tolerance check on aggregated counts
-		if ( toleranceMode == TOLERANCE_NONE )
+		switch ( toleranceMode )
 		{
-			return true;
-		}
-		else if ( toleranceMode == TOLERANCE_PERCENTAGE )
-		{
-			final double outlierPercentage = ( 100.0 * totalOutliers ) / ( totalDominant + totalOutliers );
-			return outlierPercentage > toleranceValue;
-		}
-		else // TOLERANCE_COUNT
-		{
-			return totalOutliers > toleranceValue;
+			case NONE:
+				return true;
+			case PERCENTAGE:
+				final double outlierPercentage = ( 100.0 * totalOutliers ) / ( totalDominant + totalOutliers );
+				return outlierPercentage > toleranceValue;
+			case COUNT:
+				return totalOutliers > toleranceValue;
+			default:
+				return true;
 		}
 	}
 
@@ -217,13 +226,21 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 	@Override
 	public String description()
 	{
-		String toleranceDesc;
-		if ( toleranceMode == TOLERANCE_NONE )
-			toleranceDesc = "no tolerance";
-		else if ( toleranceMode == TOLERANCE_PERCENTAGE )
-			toleranceDesc = "tolerance=" + toleranceValue + "%";
-		else
-			toleranceDesc = "tolerance=" + (int) toleranceValue + " correspondences";
+		final String toleranceDesc;
+		switch ( toleranceMode )
+		{
+			case NONE:
+				toleranceDesc = "no tolerance";
+				break;
+			case PERCENTAGE:
+				toleranceDesc = "tolerance=" + toleranceValue + "%";
+				break;
+			case COUNT:
+				toleranceDesc = "tolerance=" + (int) toleranceValue + " correspondences";
+				break;
+			default:
+				toleranceDesc = "unknown";
+		}
 
 		return "ConsensusSetCriterion[labels=" + labels +
 				", minCorrespondences=" + minCorrespondences +
@@ -274,7 +291,7 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 
 	// Getters for GUI display and testing
 	public int getMinCorrespondences() { return minCorrespondences; }
-	public int getToleranceMode() { return toleranceMode; }
+	public ToleranceMode getToleranceMode() { return toleranceMode; }
 	public double getToleranceValue() { return toleranceValue; }
 	@Override
 	public Set< String > getLabels() { return labels; }
@@ -323,7 +340,7 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		gd.addNumericField( "Min_detections/correspondences per tile", defaultMinCorrespondences, 0 );
 		gd.addMessage( "(Splits only if >N unique detections AND multiple consensus sets per view-pair)" );
 
-		gd.addChoice( "Tolerance_for_other_sets", TOLERANCE_CHOICES, TOLERANCE_CHOICES[ defaultToleranceMode ] );
+		gd.addChoice( "Tolerance_for_other_sets", TOLERANCE_CHOICES, TOLERANCE_CHOICES[ defaultToleranceMode.ordinal() ] );
 
 		return true;
 	}
@@ -373,20 +390,20 @@ public class ConsensusSetCriterion implements OctTreeSplitCriterion
 		}
 
 		final int minCorrespondences = defaultMinCorrespondences = (int) Math.round( gd.getNextNumber() );
-		final int toleranceMode = defaultToleranceMode = gd.getNextChoiceIndex();
+		final ToleranceMode toleranceMode = defaultToleranceMode = ToleranceMode.values()[ gd.getNextChoiceIndex() ];
 
 		// If tolerance mode requires a value, show second dialog
 		double toleranceValue = 0;
-		if ( toleranceMode != TOLERANCE_NONE )
+		if ( toleranceMode != ToleranceMode.NONE )
 		{
 			final GenericDialog gdTolerance = new GenericDialog( "Consensus Set Tolerance" );
 
-			if ( toleranceMode == TOLERANCE_PERCENTAGE )
+			if ( toleranceMode == ToleranceMode.PERCENTAGE )
 			{
 				gdTolerance.addNumericField( "Max_percentage_from_other_sets", defaultToleranceValue, 1 );
 				gdTolerance.addMessage( "(e.g., 10 means up to 10% of correspondences can be from other sets)" );
 			}
-			else // TOLERANCE_COUNT
+			else // COUNT
 			{
 				gdTolerance.addNumericField( "Max_count_from_other_sets", defaultToleranceValue, 0 );
 				gdTolerance.addMessage( "(e.g., 5 means up to 5 correspondences can be from other sets)" );
