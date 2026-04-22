@@ -201,6 +201,21 @@ public class SplittingTools
 		return "splitPoints_" + ( System.currentTimeMillis() % 10000 );
 	}
 
+	public static ViewId findFirstPresentViewId( final SpimData2 spimData, final int setupId )
+	{
+		final TimePoints timepoints = spimData.getSequenceDescription().getTimePoints();
+		final MissingViews mv = spimData.getSequenceDescription().getMissingViews();
+		final Set< ViewId > missing = ( mv == null ) ? null : mv.getMissingViews();
+
+		for ( final TimePoint tp : timepoints.getTimePointsOrdered() )
+		{
+			final ViewId candidate = new ViewId( tp.getId(), setupId );
+			if ( missing == null || !missing.contains( candidate ) )
+				return candidate;
+		}
+		return new ViewId( timepoints.getTimePointsOrdered().get( 0 ).getId(), setupId );
+	}
+
 	public static SpimData2 splitImages(
 			final SpimData2 spimData,
 			final SplitView splitting,
@@ -262,25 +277,7 @@ public class SplittingTools
 		// Build ViewIds for each setup (find first present timepoint)
 		final List< ViewId > viewIds = new ArrayList<>();
 		for ( final ViewSetup oldSetup : oldSetups )
-		{
-			ViewId viewId = null;
-			for ( final TimePoint tp : timepoints.getTimePointsOrdered() )
-			{
-				final ViewId candidate = new ViewId( tp.getId(), oldSetup.getId() );
-				if ( spimData.getSequenceDescription().getMissingViews() == null ||
-					 spimData.getSequenceDescription().getMissingViews().getMissingViews() == null ||
-					 !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( candidate ) )
-				{
-					viewId = candidate;
-					break;
-				}
-			}
-
-			if ( viewId == null )
-				viewId = new ViewId( timepoints.getTimePointsOrdered().get( 0 ).getId(), oldSetup.getId() );
-
-			viewIds.add( viewId );
-		}
+			viewIds.add( findFirstPresentViewId( spimData, oldSetup.getId() ) );
 
 		// Create parallel tasks
 		final List< Callable< SplitResult > > tasks = new ArrayList<>();
