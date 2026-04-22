@@ -185,6 +185,8 @@ public class SplitOctTree implements SplitView
 	 */
 	public static class OctTreeSplitResult extends SplitResult
 	{
+		private static final long serialVersionUID = 1L;
+
 		public final int splitCount;
 		public final int leafCount;
 		public final int minDepth, maxDepth;

@@ -307,7 +307,7 @@ public class SplittingTools
 				}
 
 				IOFunctions.println( "ViewId " + setup.getId() + ": " + result.numIntervals + " tiles" );
-				splitResults.put( setup, result.intervals );
+				splitResults.put( setup, result.getIntervals() );
 				allResults.add( result );
 			}
 
