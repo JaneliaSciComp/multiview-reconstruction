@@ -4,9 +4,11 @@ import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 
-import fiji.util.gui.GenericDialogPlus;
 import ij.gui.GenericDialog;
+import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.iterator.LocalizingZeroMinIntervalIterator;
@@ -17,7 +19,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 
-public class SplitDistributeEvenly implements SplitInterval
+public class SplitDistributeEvenly implements SplitView
 {
 	public static long defaultImgX = 256;
 	public static long defaultImgY = 256;
@@ -29,13 +31,15 @@ public class SplitDistributeEvenly implements SplitInterval
 
 	public static boolean defaultOptimize = true;
 
+	final SpimData2 spimData;
 	final long[] overlapPx;
 	final long[] targetSize;
 	final long[] minStepSize;
 	final boolean optimize;
 
-	public SplitDistributeEvenly( final long[] overlapPx, final long[] targetSize, final long[] minStepSize, final boolean optimize )
+	public SplitDistributeEvenly( final SpimData2 spimData, final long[] overlapPx, final long[] targetSize, final long[] minStepSize, final boolean optimize )
 	{
+		this.spimData = spimData;
 		this.overlapPx = overlapPx.clone();
 		this.targetSize = targetSize.clone();
 		this.minStepSize = minStepSize.clone();
@@ -55,8 +59,47 @@ public class SplitDistributeEvenly implements SplitInterval
 	 * @param optimize - optimize targetsize to make tiles as equal as possible
 	 * @return
 	 */
-	//public static ArrayList< Interval > distributeIntervalsFixedOverlap( final Interval input, final long[] overlapPx, final long[] targetSize, final long[] minStepSize, final boolean optimize )
-	public ArrayList< Interval > split( final Interval input )
+	@Override
+	public SplitResult split( final ViewId viewId )
+	{
+		final ViewSetup setup = spimData.getSequenceDescription().getViewSetups().get( viewId.getViewSetupId() );
+		final Interval input = new FinalInterval( setup.getSize() );
+		final ArrayList< Interval > intervals = splitInterval( input );
+		return intervals != null ? new SplitResult( intervals ) : null;
+	}
+
+	@Override
+	public String aggregateStatistics( final List< ? extends SplitResult > results )
+	{
+		int totalIntervals = 0;
+		for ( final SplitResult r : results )
+			totalIntervals += r.numIntervals;
+
+		return "===== Uniform splitting summary =====\n" +
+				"Total views processed: " + results.size() + "\n" +
+				"Total intervals: " + totalIntervals + "\n" +
+				"=====================================";
+	}
+
+	@Override
+	public int maxIntervalSpread( final List< ViewSetup > oldSetups )
+	{
+		int max = 1;
+		for ( final ViewSetup oldSetup : oldSetups )
+		{
+			final Interval input = new FinalInterval( oldSetup.getSize() );
+			final ArrayList< Interval > intervals = splitInterval( input );
+			if ( intervals != null )
+				max = Math.max( max, intervals.size() );
+		}
+		return max;
+	}
+
+	/**
+	 * Split an interval into uniform sub-intervals with overlap.
+	 * Sizes are constrained to be divisible by minStepSize for multi-resolution compatibility.
+	 */
+	public ArrayList< Interval > splitInterval( final Interval input )
 	{
 		for ( int d = 0; d < input.numDimensions(); ++d )
 		{
@@ -276,7 +319,7 @@ public class SplitDistributeEvenly implements SplitInterval
 		gd.addMessage( "Minimal image sizes per dimension: " + Util.printCoordinates( imgSizes.getB() ), GUIHelper.mediumstatusfont, Color.DARK_GRAY );
 	}
 
-	public static SplitDistributeEvenly queryGUI( final GenericDialog gd, final long[] minStepSize )
+	public static SplitDistributeEvenly queryGUI( final GenericDialog gd, final SpimData2 data, final long[] minStepSize )
 	{
 		final long sx = defaultImgX = closestLargerLongDivisableBy( Math.round( gd.getNextNumber() ), minStepSize[ 0 ] );
 		final long sy = defaultImgY = closestLargerLongDivisableBy( Math.round( gd.getNextNumber() ), minStepSize[ 1 ] );
@@ -297,7 +340,7 @@ public class SplitDistributeEvenly implements SplitInterval
 			return null;
 		}
 
-		return new SplitDistributeEvenly( new long[] { ox, oy, oz }, new long[] { sx, sy, sz }, minStepSize, optimize );
+		return new SplitDistributeEvenly( data, new long[] { ox, oy, oz }, new long[] { sx, sy, sz }, minStepSize, optimize );
 	}
 
 	public static long closestSmallerLongDivisableBy( final long a, final long b )
@@ -340,7 +383,7 @@ public class SplitDistributeEvenly implements SplitInterval
 
 		boolean optimize = true;
 
-		ArrayList< Interval > intervals = new SplitDistributeEvenly( overlapPx, targetSize, minStepSize, optimize).split( input );
+		ArrayList< Interval > intervals = new SplitDistributeEvenly( null, overlapPx, targetSize, minStepSize, optimize).splitInterval( input );
 
 		System.out.println();
 

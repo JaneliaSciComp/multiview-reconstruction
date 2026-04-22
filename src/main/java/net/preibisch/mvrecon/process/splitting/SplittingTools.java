@@ -67,10 +67,8 @@ import mpicbg.spim.data.sequence.ViewSetup;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalDimensions;
-import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.KDTree;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.neighborsearch.RadiusNeighborSearch;
 import net.imglib2.neighborsearch.RadiusNeighborSearchOnKDTree;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -95,7 +93,6 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunction;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class SplittingTools
 {
@@ -187,7 +184,7 @@ public class SplittingTools
 	 */
 	public static SpimData2 splitImages(
 			final SpimData2 spimData,
-			final SplitInterval splitting,
+			final SplitView splitting,
 			final boolean assingIlluminationsFromTileIds,
 			final InterestPointAdding ipAdding,
 			final double pointDensity,
@@ -206,7 +203,7 @@ public class SplittingTools
 
 	public static SpimData2 splitImages(
 			final SpimData2 spimData,
-			final SplitInterval splitting,
+			final SplitView splitting,
 			final boolean assingIlluminationsFromTileIds,
 			final InterestPointAdding ipAdding,
 			final double pointDensity,
@@ -256,168 +253,77 @@ public class SplittingTools
 		// TODO: may be in an overlapping area and are thus multiplied
 
 		// ==================== Parallel Splitting ====================
-		// For SplitOctTree, we use the static method for thread-safe parallel execution.
-		// For other splitters, we fall back to sequential execution.
 
 		final Map< ViewSetup, ArrayList< Interval > > splitResults = new HashMap<>();
 
-		if ( splitting instanceof SplitOctTree )
+		final int nThreads = Threads.numThreads();
+		IOFunctions.println( "Parallel splitting with " + nThreads + " threads for " + oldSetups.size() + " setups..." );
+
+		// Build ViewIds for each setup (find first present timepoint)
+		final List< ViewId > viewIds = new ArrayList<>();
+		for ( final ViewSetup oldSetup : oldSetups )
 		{
-			final SplitOctTree octTreeSplitter = (SplitOctTree) splitting;
-			final int nThreads = Threads.numThreads();
-			IOFunctions.println( "Parallel oct-tree splitting with " + nThreads + " threads for " + oldSetups.size() + " setups..." );
-
-			// Prepare tasks: for each setup, find ViewId and create splitting task
-			final List< Callable< SplitOctTree.SplitStatistics > > tasks = new ArrayList<>();
-			final List< ViewSetup > taskSetups = new ArrayList<>();  // parallel list to track which setup each task belongs to
-			final List< Interval > taskInputs = new ArrayList<>();   // parallel list for input intervals
-
-			for ( final ViewSetup oldSetup : oldSetups )
+			ViewId viewId = null;
+			for ( final TimePoint tp : timepoints.getTimePointsOrdered() )
 			{
-				final Interval input = new FinalInterval( oldSetup.getSize() );
-
-				// Find first present (non-missing) timepoint for this setup
-				ViewId viewId = null;
-				for ( final TimePoint tp : timepoints.getTimePointsOrdered() )
+				final ViewId candidate = new ViewId( tp.getId(), oldSetup.getId() );
+				if ( spimData.getSequenceDescription().getMissingViews() == null ||
+					 spimData.getSequenceDescription().getMissingViews().getMissingViews() == null ||
+					 !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( candidate ) )
 				{
-					final ViewId candidate = new ViewId( tp.getId(), oldSetup.getId() );
-					if ( spimData.getSequenceDescription().getMissingViews() == null ||
-						 spimData.getSequenceDescription().getMissingViews().getMissingViews() == null ||
-						 !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( candidate ) )
-					{
-						viewId = candidate;
-						break;
-					}
+					viewId = candidate;
+					break;
 				}
-
-				// If all timepoints are missing for this setup, use the first timepoint anyway
-				if ( viewId == null )
-				{
-					final TimePoint firstTP = timepoints.getTimePointsOrdered().get( 0 );
-					viewId = new ViewId( firstTP.getId(), oldSetup.getId() );
-				}
-
-				final ViewId finalViewId = viewId;
-				tasks.add( () -> SplitOctTree.splitStatic(
-						input,
-						finalViewId,
-						octTreeSplitter.getCriterion(),
-						octTreeSplitter.getMinStepSize(),
-						octTreeSplitter.getMinSizeMultiplier(),
-						octTreeSplitter.getMinSplitLevels(),
-						octTreeSplitter.getAnisotropy() ) );
-				taskSetups.add( oldSetup );
-				taskInputs.add( input );
 			}
 
-			// Execute all tasks in parallel
-			final ExecutorService taskExecutor = Executors.newFixedThreadPool( nThreads );
-			try
-			{
-				final List< Future< SplitOctTree.SplitStatistics > > futures = taskExecutor.invokeAll( tasks );
+			if ( viewId == null )
+				viewId = new ViewId( timepoints.getTimePointsOrdered().get( 0 ).getId(), oldSetup.getId() );
 
-				// Collect results and aggregate statistics
-				int totalSplitCount = 0, totalLeafCount = 0, totalFinalBlocks = 0;
-				int globalMinDepth = Integer.MAX_VALUE, globalMaxDepth = 0;
-				double totalDepthSum = 0;
-				int globalMinDetections = Integer.MAX_VALUE, globalMaxDetections = 0;
-				double totalDetectionsSum = 0;
-				int globalMinMaxSets = Integer.MAX_VALUE, globalMaxMaxSets = 0;
-				double totalMaxSetsSum = 0;
-				double totalOutlierSum = 0;
-				int totalCriterionOk = 0, totalWithinTolerance = 0;
-
-				for ( int i = 0; i < futures.size(); i++ )
-				{
-					final ViewSetup setup = taskSetups.get( i );
-					final SplitOctTree.SplitStatistics result = futures.get( i ).get();
-
-					if ( result == null )
-					{
-						IOFunctions.printErr( "ERROR: Splitting failed for ViewSetup " + setup.getId() );
-						taskExecutor.shutdown();
-						return null;
-					}
-
-					IOFunctions.println( "ViewId " + setup.getId() +
-							": " + result.intervals.size() + " tiles (" + result.splitCount + " splits, " +
-							result.leafCount + " leaves" +
-							", depth=" + result.minDepth + "/" + String.format( "%.1f", result.avgDepth ) + "/" + result.maxDepth +
-							", detections/leaf=" + result.minDetections + "/" + String.format( "%.0f", result.avgDetections ) + "/" + result.maxDetections +
-							", maxSets/leaf=" + result.minMaxSets + "/" + String.format( "%.1f", result.avgMaxSets ) + "/" + result.maxMaxSets +
-							", avgOutlier=" + String.format( "%.1f", result.avgOutlierPercent ) + "%" +
-							", criterionOk=" + String.format( "%.0f", result.criterionSatisfiedPercent ) + "%" +
-							", withinTolerance=" + String.format( "%.0f", result.withinTolerancePercent ) + "%)" );
-
-					splitResults.put( setup, result.intervals );
-
-					totalSplitCount += result.splitCount;
-					totalLeafCount += result.leafCount;
-					totalFinalBlocks += result.intervals.size();
-
-					if ( result.leafCount > 0 )
-					{
-						globalMinDepth = Math.min( globalMinDepth, result.minDepth );
-						globalMaxDepth = Math.max( globalMaxDepth, result.maxDepth );
-						totalDepthSum += result.avgDepth * result.leafCount;
-						globalMinDetections = Math.min( globalMinDetections, result.minDetections );
-						globalMaxDetections = Math.max( globalMaxDetections, result.maxDetections );
-						totalDetectionsSum += result.avgDetections * result.leafCount;
-						globalMinMaxSets = Math.min( globalMinMaxSets, result.minMaxSets );
-						globalMaxMaxSets = Math.max( globalMaxMaxSets, result.maxMaxSets );
-						totalMaxSetsSum += result.avgMaxSets * result.leafCount;
-						totalOutlierSum += result.avgOutlierPercent * result.leafCount;
-						totalCriterionOk += Math.round( result.criterionSatisfiedPercent * result.leafCount / 100.0 );
-						totalWithinTolerance += Math.round( result.withinTolerancePercent * result.leafCount / 100.0 );
-					}
-				}
-
-				// Print aggregate statistics
-				IOFunctions.println( "===== Oct-tree splitting summary =====" );
-				IOFunctions.println( "Total views processed: " + oldSetups.size() );
-				IOFunctions.println( "Total splits: " + totalSplitCount );
-				IOFunctions.println( "Total leaves: " + totalLeafCount );
-				IOFunctions.println( "Total final blocks: " + totalFinalBlocks );
-				if ( totalLeafCount > 0 )
-				{
-					IOFunctions.println( "Depth: " + globalMinDepth + "/" + String.format( "%.1f", totalDepthSum / totalLeafCount ) + "/" + globalMaxDepth );
-					IOFunctions.println( "Detections/leaf: " + globalMinDetections + "/" + String.format( "%.0f", totalDetectionsSum / totalLeafCount ) + "/" + globalMaxDetections );
-					IOFunctions.println( "MaxSets/leaf: " + globalMinMaxSets + "/" + String.format( "%.1f", totalMaxSetsSum / totalLeafCount ) + "/" + globalMaxMaxSets );
-					IOFunctions.println( "Avg outlier: " + String.format( "%.1f", totalOutlierSum / totalLeafCount ) + "%" );
-					IOFunctions.println( "Criterion OK: " + String.format( "%.0f", 100.0 * totalCriterionOk / totalLeafCount ) + "%" );
-					IOFunctions.println( "Within tolerance: " + String.format( "%.0f", 100.0 * totalWithinTolerance / totalLeafCount ) + "%" );
-				}
-				IOFunctions.println( "======================================" );
-			}
-			catch ( final Exception e )
-			{
-				IOFunctions.printErr( "ERROR during parallel splitting: " + e.getMessage() );
-				e.printStackTrace();
-				taskExecutor.shutdown();
-				return null;
-			}
-			finally
-			{
-				taskExecutor.shutdown();
-			}
+			viewIds.add( viewId );
 		}
-		else
-		{
-			// Sequential splitting for non-OctTree splitters
-			for ( final ViewSetup oldSetup : oldSetups )
-			{
-				final Interval input = new FinalInterval( oldSetup.getSize() );
-				IOFunctions.println( "ViewId " + oldSetup.getId() + " with interval " + Util.printInterval( input ) + " will be split as follows: " );
 
-				final ArrayList< Interval > intervals = splitting.split( input );
-				if ( intervals == null )
+		// Create parallel tasks
+		final List< Callable< SplitResult > > tasks = new ArrayList<>();
+		for ( final ViewId viewId : viewIds )
+			tasks.add( () -> splitting.split( viewId ) );
+
+		// Execute
+		final List< SplitResult > allResults = new ArrayList<>();
+		final ExecutorService taskExecutor = Executors.newFixedThreadPool( nThreads );
+		try
+		{
+			final List< Future< SplitResult > > futures = taskExecutor.invokeAll( tasks );
+
+			for ( int i = 0; i < futures.size(); i++ )
+			{
+				final ViewSetup setup = oldSetups.get( i );
+				final SplitResult result = futures.get( i ).get();
+
+				if ( result == null )
 				{
-					IOFunctions.printErr( "ERROR: Splitting failed for ViewSetup " + oldSetup.getId() );
+					IOFunctions.printErr( "ERROR: Splitting failed for ViewSetup " + setup.getId() );
+					taskExecutor.shutdown();
 					return null;
 				}
 
-				splitResults.put( oldSetup, intervals );
+				IOFunctions.println( "ViewId " + setup.getId() + ": " + result.numIntervals + " tiles" );
+				splitResults.put( setup, result.intervals );
+				allResults.add( result );
 			}
+
+			// Print aggregate statistics
+			IOFunctions.println( splitting.aggregateStatistics( allResults ) );
+		}
+		catch ( final Exception e )
+		{
+			IOFunctions.printErr( "ERROR during parallel splitting: " + e.getMessage() );
+			e.printStackTrace();
+			taskExecutor.shutdown();
+			return null;
+		}
+		finally
+		{
+			taskExecutor.shutdown();
 		}
 
 		// ==================== Process Split Results in Parallel ====================
@@ -430,7 +336,6 @@ public class SplittingTools
 			cumulativeId += splitResults.get( setup ).size();
 		}
 
-		final int nThreads = Threads.numThreads();
 		IOFunctions.println( "Parallel post-processing with " + nThreads + " threads for " + oldSetups.size() + " setups..." );
 
 		// Prepare parallel tasks
@@ -474,7 +379,6 @@ public class SplittingTools
 			for ( int idx = 0; idx < postProcessFutures.size(); idx++ )
 			{
 				final SetupSplitResult result = postProcessFutures.get( idx ).get();
-				final ViewSetup oldSetup = oldSetups.get( idx );
 
 				// Merge into shared collections
 				newSetups.addAll( result.newSetups );
@@ -564,7 +468,7 @@ public class SplittingTools
 						corrFailed.incrementAndGet();
 						IOFunctions.println( "ERROR in correspondence task: " + e.getMessage() );
 						e.printStackTrace();
-						SimpleMultiThreading.threadHaltUnClean();
+						throw new RuntimeException( "ERROR in correspondence task: " + e.getMessage() );
 					}
 					final int done = corrCompleted.incrementAndGet();
 					if ( done % 10 == 0 || done == totalCorrTasks )

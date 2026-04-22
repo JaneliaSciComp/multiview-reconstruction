@@ -22,36 +22,24 @@
  */
 package net.preibisch.mvrecon.fiji.plugin;
 
-import java.awt.Color;
 import java.net.URI;
-import java.util.Arrays;
-import java.util.HashMap;
 
 import fiji.util.gui.GenericDialogPlus;
 import ij.ImageJ;
 import ij.gui.GenericDialog;
 import ij.plugin.PlugIn;
 import mpicbg.spim.data.SpimDataException;
-import mpicbg.spim.data.generic.AbstractSpimData;
-import mpicbg.spim.data.generic.sequence.BasicImgLoader;
-import mpicbg.spim.data.generic.sequence.BasicViewSetup;
-import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
-import net.imglib2.Dimensions;
-import net.imglib2.util.Pair;
-import net.imglib2.util.Util;
-import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.GenericLoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
-import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.splitting.SplitDistributeEvenly;
-import net.preibisch.mvrecon.process.splitting.SplitInterval;
 import net.preibisch.mvrecon.process.splitting.SplitOctTree;
+import net.preibisch.mvrecon.process.splitting.SplitView;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
 import util.URITools;
 
@@ -93,7 +81,7 @@ public class Split_Views implements PlugIn
 	public static boolean split(
 			final SpimData2 data,
 			final URI saveAs,
-			final SplitInterval splitting,
+			final SplitView splitting,
 			final boolean assingIlluminationsFromTileIds,
 			final InterestPointAdding ipAdding,
 			final double pointDensity,
@@ -109,7 +97,7 @@ public class Split_Views implements PlugIn
 	public static boolean split(
 			final SpimData2 data,
 			final URI saveAs,
-			final SplitInterval splitting,
+			final SplitView splitting,
 			final boolean assingIlluminationsFromTileIds,
 			final InterestPointAdding ipAdding,
 			final double pointDensity,
@@ -186,10 +174,10 @@ public class Split_Views implements PlugIn
 		if ( gd.wasCanceled() )
 			return false;
 
-		final SplitInterval splittingMethod;
+		final SplitView splittingMethod;
 
 		if ( method == 0 )
-			splittingMethod = SplitDistributeEvenly.queryGUI( gd, minStepSize );
+			splittingMethod = SplitDistributeEvenly.queryGUI( gd, data, minStepSize );
 		else if ( method == 1 )
 			splittingMethod = SplitOctTree.queryGUI( gd, data, minStepSize );
 		else
