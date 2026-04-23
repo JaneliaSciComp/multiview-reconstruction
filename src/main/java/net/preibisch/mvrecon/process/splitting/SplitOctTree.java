@@ -68,6 +68,11 @@ public class SplitOctTree implements SplitView
 	public static int defaultMinSplitLevels = 1;
 	public static int defaultAnisotropyChoice = 1;
 
+	// Lower bound for the tile-size multiplier accepted by the GUI
+	// (min tile size = minSizeMultiplierFloor * minStepSize[d]).
+	// Algorithmic floor is 2; raising this is a usability/sanity guard.
+	public static int minSizeMultiplierFloor = 2;
+
 	public static final String[] ANISOTROPY_CHOICES = {
 		"Ignore anisotropy",
 		"Global anisotropy factor",
@@ -865,13 +870,13 @@ public class SplitOctTree implements SplitView
 
 		// Add per-dimension sliders for minimum tile size
 		final String[] dimNames = { "X", "Y", "Z" };
-		gd.addMessage( "Minimum tile size per dimension (must be >= 4 × minStepSize and divisible by minStepSize):",
+		gd.addMessage( "Minimum tile size per dimension (must be >= " + minSizeMultiplierFloor + " × minStepSize and divisible by minStepSize):",
 				GUIHelper.smallStatusFont, Color.DARK_GRAY );
 
 		for ( int d = 0; d < minStepSize.length; d++ )
 		{
 			final long step = minStepSize[ d ];
-			final long minVal = 4 * step;
+			final long minVal = minSizeMultiplierFloor * step;
 			final long maxVal = 32 * step;
 			final String label = "Min_tile_size_" + dimNames[ d ] + " (step=" + step + ")";
 			gd.addSlider( label, minVal, maxVal, defaultMinTileSize[ d ], step );
@@ -933,12 +938,12 @@ public class SplitOctTree implements SplitView
 				return null;
 			}
 
-			// Validate: must be >= 4 * minStepSize
-			final long minAllowed = 4 * minStepSize[ d ];
+			// Validate: must be >= minSizeMultiplierFloor * minStepSize
+			final long minAllowed = minSizeMultiplierFloor * minStepSize[ d ];
 			if ( tileSizes[ d ] < minAllowed )
 			{
 				IOFunctions.printErr( "ERROR: Min tile size " + dimNames[ d ] + " (" + tileSizes[ d ] +
-						") must be >= " + minAllowed + " (4 × minStepSize)" );
+						") must be >= " + minAllowed + " (" + minSizeMultiplierFloor + " × minStepSize)" );
 				return null;
 			}
 
