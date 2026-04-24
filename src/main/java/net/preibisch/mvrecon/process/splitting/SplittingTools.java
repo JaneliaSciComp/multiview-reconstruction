@@ -434,7 +434,8 @@ public class SplittingTools
 								capturedSetup, capturedNewSetupId, capturedT,
 								spimData, old2NewSetups, newInterestpoints,
 								null, 0,
-								corrSaver );
+								corrSaver,
+								null );
 						return null;
 					} );
 				}
@@ -625,7 +626,7 @@ public class SplittingTools
 		// Local map for fake IP generation within this setup
 		final HashMap< Integer, ViewSetup > intervalId2ViewSetup = new HashMap<>();
 
-		final boolean verboseIntervals = intervals.size() <= 200;
+		final boolean verboseIntervals = intervals.size() <= 50;
 
 		if ( !verboseIntervals )
 			IOFunctions.println( "Processing " + intervals.size() + " intervals for ViewId " + oldSetup.getId() + "..." );
@@ -637,7 +638,7 @@ public class SplittingTools
 
 			if ( verboseIntervals )
 				IOFunctions.println( "Interval " + (i+1) + ": " + Util.printInterval( interval ) );
-			else if ( (i+1) % 100 == 0 )
+			else if ( (i+1) % (intervals.size()/10) == 0 )
 				IOFunctions.println( "  processed " + (i+1) + "/" + intervals.size() + " intervals for ViewId " + oldSetup.getId() + " ..." );
 
 			// from the new ID get the old ID and the corresponding interval
@@ -856,7 +857,13 @@ public class SplittingTools
 
 		// on-the-fly saving: all tiles in this setup are finalized (including cross-tile fake points)
 		if ( saver != null )
+		{
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Saving interest points on the fly for setup " + oldSetup.getId() + " ... " );
+
 			saver.saveInterestPoints( newInterestpoints );
+
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Saving interest points on the fly for setup " + oldSetup.getId() + "done." );
+		}
 
 		return new SetupSplitResult( oldID, newSetups, new2oldSetupId, newSetupId2Interval,
 				newSetupIds, newRegistrations, newInterestpoints );
@@ -972,6 +979,12 @@ public class SplittingTools
 	 * @param completed Optional AtomicInteger for progress tracking (can be null)
 	 * @param totalTasks Total number of tasks for progress logging (ignored if completed is null)
 	 * @param corrSaver Optional callback for on-the-fly saving of correspondences (null to skip)
+	 * @param ipMapCache Optional caller-supplied cache of new-view interest point maps, keyed by
+	 *        "timepointId_setupId_label". Pass null to have this call create a fresh cache internally
+	 *        (single-call scope). Share a cache across calls that run on the same thread (e.g. a Spark
+	 *        task's newSetupId loop) to avoid reloading the same target-view IP copies; the supplied
+	 *        Map does NOT need to be thread-safe for that pattern. Do NOT share across concurrent
+	 *        threads unless the caller passes a thread-safe Map (e.g. ConcurrentHashMap).
 	 */
 	public static void processCorrespondingInterestPointsStatic(
 			final ViewSetup oldSetup,
@@ -982,7 +995,8 @@ public class SplittingTools
 			final Map< ViewId, ViewInterestPointLists > newInterestpoints,
 			final AtomicInteger completed,
 			final int totalTasks,
-			final CorrespondenceSaver corrSaver )
+			final CorrespondenceSaver corrSaver,
+			final Map< String, Map< Integer, InterestPoint > > ipMapCache )
 	{
 		final ViewId oldViewId = new ViewId( t.getId(), oldSetup.getId() );
 		final ViewId newViewId = new ViewId( t.getId(), newSetupId );
@@ -994,9 +1008,10 @@ public class SplittingTools
 		// oldVipl may be null for missing views
 		if ( spimData.getSequenceDescription().getMissingViews() != null && !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( oldViewId ) )
 		{
-			// Lazy cache for interest point maps within this task
+			// Lazy cache for interest point maps, either caller-supplied (amortized across calls) or fresh per call.
 			// Key: "timepointId_setupId_label" -> Map of detection IDs
-			final Map< String, Map< Integer, InterestPoint > > ipMapCache = new HashMap<>();
+			final Map< String, Map< Integer, InterestPoint > > localIpMapCache =
+					( ipMapCache != null ) ? ipMapCache : new HashMap<>();
 
 			// Track missing corresponding views to warn only once per view
 			final Set< Integer > warnedMissingSetups = new HashSet<>();
@@ -1031,7 +1046,7 @@ public class SplittingTools
 
 									// Lazy cache: only load when first needed, reuse for subsequent lookups
 									final String cacheKey = newCorrViewId.getTimePointId() + "_" + newCorrViewId.getViewSetupId() + "_" + newCorrLabel;
-									final Map< Integer, InterestPoint > cachedIpMap = ipMapCache.computeIfAbsent( cacheKey, k -> {
+									final Map< Integer, InterestPoint > cachedIpMap = localIpMapCache.computeIfAbsent( cacheKey, k -> {
 										final ViewInterestPointLists corrVipl = newInterestpoints.get( newCorrViewId );
 										if ( corrVipl != null && corrVipl.contains( newCorrLabel ) )
 											return corrVipl.getInterestPointList( newCorrLabel ).getInterestPointsCopy();
