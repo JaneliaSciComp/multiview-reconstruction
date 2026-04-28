@@ -28,9 +28,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import javax.swing.JMenuItem;
 
+import mpicbg.spim.data.generic.base.Entity;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.multithreading.SimpleMultiThreading;
@@ -83,28 +85,43 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 					final List< ViewId > viewIds =
 							ApplyTransformationPopup.getSelectedViews( panel );
 
-					final HashMap<String, Double > labelAndWeights =
-							Analyze_Errors.getParameters( panel.getSpimData(), viewIds );
+					// pre-set the grouping defaults from the explorer panel's current state
+					// (matches the RegisterInterestPointsPopup convention so the dialog opens
+					// pre-checked according to what the user has grouped in the table).
+					net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration.defaultGroupTiles    = panel.tilesGrouped();
+					net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration.defaultGroupIllums   = panel.illumsGrouped();
+					net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration.defaultGroupChannels = panel.channelsGrouped();
 
-					if ( labelAndWeights == null )
+					final Analyze_Errors.Parameters params =
+							Analyze_Errors.getParametersExtended( panel.getSpimData(), viewIds );
+
+					if ( params == null )
 						return;
 
 					final ArrayList<Pair<Pair<ViewId, ViewId>, Double>> errors =
-							Analyze_Errors.getErrors( panel.getSpimData(), viewIds, labelAndWeights );
+							Analyze_Errors.getErrors( panel.getSpimData(), viewIds, params.labelAndWeights );
 
 					if ( errors.size() > 0 )
 					{
-						errors.forEach( e -> IOFunctions.println( Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + e.getB() + " px.") );
+						Analyze_Errors.printResults( panel.getSpimData(), errors, params );
 
 						// disable coloring
 						final BDVPopup p = panel.bdvPopup();
 						if ( p != null && p.bdv != null && p.bdv.getViewerFrame().isVisible() )
 							panel.updateBDV( p.bdv, false, panel.getSpimData(), null, panel.selectedRows );
 
+						// remember prior grouping state so we can restore it after the worst-pair
+						// row-selection (the row-parsing code below requires ungrouped rows)
+						final ViewSetupExplorerPanel< ? > vsep = (ViewSetupExplorerPanel< ? >)panel;
+						final boolean prevGroupTiles  = vsep.groupTilesCheckbox != null && vsep.groupTilesCheckbox.isSelected();
+						final boolean prevGroupIllums = vsep.groupIllumsCheckbox != null && vsep.groupIllumsCheckbox.isSelected();
+						final Set< Class< ? extends Entity > > prevFactors =
+								new HashSet<>( panel.getTableModel().getGroupingFactors() );
+
 						// ungroup everything
-						((ViewSetupExplorerPanel)panel).groupTilesCheckbox.setSelected( false );
-						((ViewSetupExplorerPanel)panel).groupIllumsCheckbox.setSelected( false );
-	
+						vsep.groupTilesCheckbox.setSelected( false );
+						vsep.groupIllumsCheckbox.setSelected( false );
+
 						panel.getTableModel().clearGroupingFactors();
 						panel.updateContent();
 
@@ -151,6 +168,14 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 											( a, b ) -> a.addAll( b ), ( a, b ) -> a.addAll( b ) ),
 									panel.getSpimData().getViewRegistrations() );
 						}
+
+						// restore the explorer's grouping state to what it was before the popup ran
+						vsep.groupTilesCheckbox.setSelected( prevGroupTiles );
+						vsep.groupIllumsCheckbox.setSelected( prevGroupIllums );
+						panel.getTableModel().clearGroupingFactors();
+						for ( final Class< ? extends Entity > f : prevFactors )
+							panel.getTableModel().addGroupingFactor( f );
+						panel.updateContent();
 
 						// TODO: activate overlay that shows the outlines of both stacks
 					}

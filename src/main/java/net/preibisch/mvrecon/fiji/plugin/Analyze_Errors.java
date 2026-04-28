@@ -27,19 +27,27 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import ij.ImageJ;
 import ij.gui.GenericDialog;
 import ij.plugin.PlugIn;
-import mpicbg.models.Point;
+import mpicbg.spim.data.generic.base.Entity;
 import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.sequence.Angle;
+import mpicbg.spim.data.sequence.Channel;
+import mpicbg.spim.data.sequence.Illumination;
+import mpicbg.spim.data.sequence.Tile;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
-import net.imglib2.util.RealSum;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.GenericLoadParseQueryXML;
@@ -54,6 +62,14 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 
 public class Analyze_Errors implements PlugIn
 {
+	// Tile/Channel/Illumination defaults are shared with Interest_Point_Registration
+	// (the same statics, mirroring the registration popup convention). Angles isn't
+	// exposed by the explorer, so it gets its own session-static here.
+	public static boolean defaultGroupAngles = false;
+
+	public static int defaultTopNWorst  = 50;
+	public static int defaultBottomMBest = 50;
+	public static int defaultMiddleK    = 50;
 
 	@Override
 	public void run( final String arg0 )
@@ -68,113 +84,172 @@ public class Analyze_Errors implements PlugIn
 		final List< ViewId > viewIds =
 				SpimData2.getAllViewIdsSorted( result.getData(), result.getViewSetupsToProcess(), result.getTimePointsToProcess() );
 
-		final HashMap<String, Double > labelAndWeights = getParameters(data, viewIds);
+		final Parameters params = getParametersExtended( data, viewIds );
+		if ( params == null )
+			return;
 
-		final ArrayList<Pair<Pair<ViewId, ViewId>, Double>> errors = getErrors(data, viewIds, labelAndWeights);
+		final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors =
+				getErrors( data, viewIds, params.labelAndWeights );
 
-		errors.forEach( e -> IOFunctions.println( Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + e.getB() + " px.") );
+		printResults( data, errors, params );
 	}
 
-	/*
-	 * @param data
-	 * @param viewIds
-	 * @param labelAndWeights
-	 * @return - sorted list of weighted errors between pairs of views (big to small errors)
+	/** Bundle of dialog choices returned by {@link #getParametersExtended}. */
+	public static class Parameters
+	{
+		public HashMap< String, Double > labelAndWeights;
+		public boolean groupTiles, groupChannels, groupIlluminations, groupAngles;
+		public int topN, bottomM, middleK;
+
+		public boolean anyGroupingSelected()
+		{
+			return groupTiles || groupChannels || groupIlluminations || groupAngles;
+		}
+	}
+
+	/**
+	 * Compute weighted error per (viewA, viewB) pair, returning the list sorted desc by error.
+	 *
+	 * Inverted iteration: walks each view's correspondences exactly once and accumulates into a
+	 * canonical-pair map. Avoids the all-pairs Cartesian product that OOMs on large datasets.
+	 * Complexity: O(N · C_avg) instead of O(N² · C_avg).
+	 *
+	 * Same-label only (matching the previous code's filter): correspondences with a different
+	 * label on the other side are skipped.
 	 */
 	public static ArrayList< Pair< Pair< ViewId, ViewId >, Double > > getErrors(
 			final SpimData2 data,
 			final List< ViewId > viewIds,
-			final Map<String, Double > labelAndWeights )
+			final Map< String, Double > labelAndWeights )
 	{
 		// load all ViewRegistrations
 		final HashMap< ViewId, AffineTransform3D > viewToModel = new HashMap<>();
-
 		viewIds.forEach( viewId -> {
 			final ViewRegistration vr = data.getViewRegistrations().getViewRegistration( viewId );
 			vr.updateModel();
 			viewToModel.put( viewId, vr.getModel() );
 		});
 
-		// load all interest points in parallel
+		// pre-cache IPs and correspondences per (view, label) once, in parallel
+		final ConcurrentHashMap< ViewId, Map< String, Map< Integer, InterestPoint > > > ipsCache = new ConcurrentHashMap<>();
+		final ConcurrentHashMap< ViewId, Map< String, Collection< CorrespondingInterestPoints > > > corrsCache = new ConcurrentHashMap<>();
+
 		viewIds.parallelStream().forEach( viewId -> {
 			final ViewInterestPointLists vip = data.getViewInterestPoints().getViewInterestPointLists( viewId );
-
-			for ( final Entry<String, Double> e : labelAndWeights.entrySet() )
+			final HashMap< String, Map< Integer, InterestPoint > > ipsByLabel = new HashMap<>();
+			final HashMap< String, Collection< CorrespondingInterestPoints > > corrsByLabel = new HashMap<>();
+			for ( final String label : labelAndWeights.keySet() )
 			{
-				if ( vip.getInterestPointList( e.getKey() ) != null )
+				if ( vip.getInterestPointList( label ) != null )
 				{
-					vip.getInterestPointList( e.getKey() ).getInterestPointsCopy();
-					vip.getInterestPointList( e.getKey() ).getCorrespondingInterestPointsCopy();
+					ipsByLabel.put( label, vip.getInterestPointList( label ).getInterestPointsCopy() );
+					corrsByLabel.put( label, vip.getInterestPointList( label ).getCorrespondingInterestPointsCopy() );
 				}
 			}
+			ipsCache.put( viewId, ipsByLabel );
+			corrsCache.put( viewId, corrsByLabel );
 		});
 
-		// go over all pairs of tiles and compute the error in parallel
-		final ArrayList< Pair< ViewId, ViewId > > pairs = new ArrayList<>();
+		// O(1) lookup of "is this view in the user-selected set"
+		final Set< ViewId > selected = new HashSet<>( viewIds );
 
-		for ( int i = 0; i < viewIds.size() - 1; ++i )
-			for ( int j = i + 1; j < viewIds.size(); ++j )
-				pairs.add( new ValuePair<ViewId, ViewId>( viewIds.get( i ), viewIds.get( j ) ) );
+		// Canonical pair map: only one side accumulates per pair (viewA < viewB).
+		final ConcurrentHashMap< Pair< ViewId, ViewId >, ErrorAcc > pairErrors = new ConcurrentHashMap<>();
 
-		final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > pairResults = new ArrayList<>();
+		viewIds.parallelStream().forEach( viewA -> {
+			final AffineTransform3D mA = viewToModel.get( viewA );
+			final Map< String, Map< Integer, InterestPoint > > aIps = ipsCache.get( viewA );
+			final Map< String, Collection< CorrespondingInterestPoints > > aCorrs = corrsCache.get( viewA );
 
-		pairs.parallelStream().forEach( pair -> {
-			final AffineTransform3D mA = viewToModel.get( pair.getA() );
-			final AffineTransform3D mB = viewToModel.get( pair.getB() );
+			for ( final Entry< String, Double > e : labelAndWeights.entrySet() )
+			{
+				final String label = e.getKey();
+				final double w = e.getValue();
 
-			final ViewInterestPointLists vipA = data.getViewInterestPoints().getViewInterestPointLists( pair.getA() );
-			final ViewInterestPointLists vipB = data.getViewInterestPoints().getViewInterestPointLists( pair.getB() );
+				final Map< Integer, InterestPoint > ipsA = aIps.get( label );
+				final Collection< CorrespondingInterestPoints > corrs = aCorrs.get( label );
+				if ( ipsA == null || corrs == null )
+					continue;
 
-			final RealSum sum = new RealSum();
-			final RealSum sumWeights = new RealSum();
+				final double[] tA = new double[ 3 ];
+				final double[] tB = new double[ 3 ];
 
-			labelAndWeights.forEach( (l,w) -> {
-				if ( vipA.getInterestPointList( l ) != null && vipB.getInterestPointList( l ) != null )
+				for ( final CorrespondingInterestPoints cpA : corrs )
 				{
-					final double[] tmpA = new double[ 3 ];
-					final double[] tmpB = new double[ 3 ];
+					// same-label only — preserves prior semantics
+					if ( !cpA.getCorrespodingLabel().equals( label ) )
+						continue;
+					final ViewId viewB = cpA.getCorrespondingViewId();
+					if ( !selected.contains( viewB ) )
+						continue;
+					if ( compareViewIds( viewA, viewB ) >= 0 )
+						continue; // canonical: only A < B side accumulates
 
-					final Map<Integer,InterestPoint> plA = vipA.getInterestPointList( l ).getInterestPointsCopy();
-					final Map<Integer,InterestPoint> plB = vipB.getInterestPointList( l ).getInterestPointsCopy();
-	
-					//System.out.println( Group.pvid( pair.getA() ) + " <-> " + Group.pvid( pair.getB() ) + ": " + pA.size() + ", " + pB.size() );
-					final Collection<CorrespondingInterestPoints> cA = vipA.getInterestPointList( l ).getCorrespondingInterestPointsCopy();
-					//final List<CorrespondingInterestPoints> cB = vipA.getInterestPointList( l ).getCorrespondingInterestPointsCopy();
+					final Map< Integer, InterestPoint > ipsB = ipsCache.getOrDefault( viewB, Collections.emptyMap() ).get( label );
+					if ( ipsB == null )
+						continue;
+					final InterestPoint pA = ipsA.get( cpA.getDetectionId() );
+					final InterestPoint pB = ipsB.get( cpA.getCorrespondingDetectionId() );
+					if ( pA == null || pB == null )
+						continue;
 
-					//final ArrayList< PointMatch > pm = new ArrayList<>();
-					cA.forEach( cpA ->
-					{
-						if ( cpA.getCorrespondingViewId().equals( pair.getB() ) && cpA.getCorrespodingLabel().equals( l ) )
-						{
-							final InterestPoint pA = plA.get( cpA.getDetectionId() );
-							final InterestPoint pB = plB.get( cpA.getCorrespondingDetectionId() );
+					final AffineTransform3D mB = viewToModel.get( viewB );
+					mA.apply( pA.getL(), tA );
+					mB.apply( pB.getL(), tB );
+					final double dx = tA[ 0 ] - tB[ 0 ], dy = tA[ 1 ] - tB[ 1 ], dz = tA[ 2 ] - tB[ 2 ];
+					final double d = Math.sqrt( dx * dx + dy * dy + dz * dz );
 
-							mA.apply( pA.getL(), tmpA );
-							mB.apply( pB.getL(), tmpB );
-
-							final double distance = Point.distance( new Point( tmpA, tmpA ), new Point( tmpB, tmpB ) );
-							sum.add( distance * w );
-							sumWeights.add( w );
-						}
+					final Pair< ViewId, ViewId > key = new ValuePair<>( viewA, viewB );
+					pairErrors.compute( key, ( k, acc ) -> {
+						if ( acc == null )
+							acc = new ErrorAcc();
+						acc.weightedDistanceSum += d * w;
+						acc.weightSum += w;
+						return acc;
 					});
 				}
-			});
-
-			if ( sumWeights.getSum() > 0 )
-			{
-				final double error = sum.getSum() / sumWeights.getSum();
-				pairResults.add( new ValuePair<>( pair, error ) );
-				//IOFunctions.println( Group.pvid( pair.getA() ) + " <-> " + Group.pvid( pair.getB() ) + ": " + error + " px.");
 			}
 		});
 
-		// sort by error
-		Collections.sort( pairResults, (o1,o2) -> o2.getB().compareTo( o1.getB() ));
-
+		// materialise + sort desc by error
+		final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > pairResults = new ArrayList<>( pairErrors.size() );
+		for ( final Entry< Pair< ViewId, ViewId >, ErrorAcc > e : pairErrors.entrySet() )
+		{
+			final ErrorAcc acc = e.getValue();
+			if ( acc.weightSum > 0 )
+				pairResults.add( new ValuePair<>( e.getKey(), acc.weightedDistanceSum / acc.weightSum ) );
+		}
+		Collections.sort( pairResults, ( o1, o2 ) -> o2.getB().compareTo( o1.getB() ) );
 		return pairResults;
 	}
 
-	public static HashMap<String, Double > getParameters(
+	/** Mutable accumulator for the canonical-pair map. Updated under {@code ConcurrentHashMap.compute}. */
+	private static final class ErrorAcc
+	{
+		double weightedDistanceSum = 0.0;
+		double weightSum = 0.0;
+	}
+
+	/** ViewId comparison: timepointId, then viewSetupId. Mirrors the in-repo CorrespondingInterestPoints.compareTo. */
+	private static int compareViewIds( final ViewId a, final ViewId b )
+	{
+		final int t = Integer.compare( a.getTimePointId(), b.getTimePointId() );
+		if ( t != 0 )
+			return t;
+		return Integer.compare( a.getViewSetupId(), b.getViewSetupId() );
+	}
+
+	/** Backwards-compatible wrapper that returns just the labels-and-weights map. */
+	public static HashMap< String, Double > getParameters(
+			final SpimData2 data,
+			final List< ViewId > viewIds )
+	{
+		final Parameters p = getParametersExtended( data, viewIds );
+		return ( p != null ) ? p.labelAndWeights : null;
+	}
+
+	/** Extended dialog returning the full {@link Parameters} bundle (labels+weights, grouping, top/bottom caps). */
+	public static Parameters getParametersExtended(
 			final SpimData2 data,
 			final List< ViewId > viewIds )
 	{
@@ -210,11 +285,18 @@ public class Analyze_Errors implements PlugIn
 				Interest_Point_Registration.defaultLabel = 0;
 		}
 
-		System.out.println( Interest_Point_Registration.defaultLabel );
-
 		gd.addChoice( "Interest_points" , labels, labels[ Interest_Point_Registration.defaultLabel ] );
-		//gd.addCheckbox( "Print sorted results", true );
-		//gd.addCheckbox( "Select & color-code worst pair in GUI", true );
+
+		gd.addMessage( "Group by (defines what counts as one 'old tile'):", GUIHelper.largefont );
+		gd.addCheckbox( "Group_by_Tile",         Interest_Point_Registration.defaultGroupTiles );
+		gd.addCheckbox( "Group_by_Channel",      Interest_Point_Registration.defaultGroupChannels );
+		gd.addCheckbox( "Group_by_Illumination", Interest_Point_Registration.defaultGroupIllums );
+		gd.addCheckbox( "Group_by_Angle",        defaultGroupAngles );
+
+		gd.addMessage( "Per-pair listing (top-worst + bottom-best + middle-K):", GUIHelper.largefont );
+		gd.addNumericField( "Top_N_worst_pairs",   defaultTopNWorst,   0 );
+		gd.addNumericField( "Bottom_M_best_pairs", defaultBottomMBest, 0 );
+		gd.addNumericField( "Middle_K_pairs_(closest_to_median_and_average)", defaultMiddleK, 0 );
 
 		gd.showDialog();
 
@@ -223,10 +305,18 @@ public class Analyze_Errors implements PlugIn
 
 		// assemble which label has been selected
 		final int labelChoice = Interest_Point_Registration.defaultLabel = gd.getNextChoiceIndex();
-		//final boolean print = gd.getNextBoolean();
-		//final boolean select = gd.getNextBoolean();
 
-		final HashMap<String, Double > labelAndWeight = new HashMap<>();
+		final Parameters p = new Parameters();
+		p.groupTiles         = Interest_Point_Registration.defaultGroupTiles    = gd.getNextBoolean();
+		p.groupChannels      = Interest_Point_Registration.defaultGroupChannels = gd.getNextBoolean();
+		p.groupIlluminations = Interest_Point_Registration.defaultGroupIllums   = gd.getNextBoolean();
+		p.groupAngles        = defaultGroupAngles                                = gd.getNextBoolean();
+		p.topN               = defaultTopNWorst   = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+		p.bottomM            = defaultBottomMBest = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+		p.middleK            = defaultMiddleK     = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+
+		final HashMap< String, Double > labelAndWeight = new HashMap<>();
+		p.labelAndWeights = labelAndWeight;
 
 		if ( labelChoice < labels.length - 1 )
 		{
@@ -260,7 +350,265 @@ public class Analyze_Errors implements PlugIn
 			}
 		}
 
-		return labelAndWeight;
+		return p;
+	}
+
+	/**
+	 * Print top-N worst, bottom-M best, and the per-old-tile-pair / per-old-tile rollup
+	 * summary blocks that the {@link Parameters} dialog choices request.
+	 */
+	public static void printResults(
+			final SpimData2 data,
+			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+			final Parameters p )
+	{
+		if ( errors.isEmpty() )
+		{
+			IOFunctions.println( "No view pairs with correspondences found; nothing to report." );
+			return;
+		}
+
+		final int total = errors.size();
+
+		// 1) Top-N worst (errors is desc-sorted)
+		final int topN = Math.min( p.topN, total );
+		if ( topN > 0 )
+		{
+			IOFunctions.println( "Top " + topN + " of " + total + " pair(s) by error (worst first):" );
+			for ( int i = 0; i < topN; i++ )
+			{
+				final Pair< Pair< ViewId, ViewId >, Double > e = errors.get( i );
+				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + String.format( Locale.ROOT, "%.4f", e.getB() ) + " px" );
+			}
+		}
+
+		// 2) Bottom-M best
+		final int bottomM = Math.min( p.bottomM, total );
+		if ( bottomM > 0 )
+		{
+			IOFunctions.println( "Bottom " + bottomM + " of " + total + " pair(s) by error (best first):" );
+			for ( int i = total - 1, k = 0; i >= 0 && k < bottomM; i--, k++ )
+			{
+				final Pair< Pair< ViewId, ViewId >, Double > e = errors.get( i );
+				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + String.format( Locale.ROOT, "%.4f", e.getB() ) + " px" );
+			}
+		}
+
+		// 2b) Middle-K nearest median and nearest average
+		final int middleK = Math.min( p.middleK, total );
+		if ( middleK > 0 )
+		{
+			// errors is desc-sorted; median = middle of sorted-asc, equivalent to index total - 1 - (total-1)/2
+			final double median = ( total % 2 == 1 )
+					? errors.get( total / 2 ).getB()
+					: 0.5 * ( errors.get( total / 2 - 1 ).getB() + errors.get( total / 2 ).getB() );
+
+			double sum = 0.0;
+			for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+				sum += e.getB();
+			final double average = sum / total;
+
+			// helper: pick K entries with smallest |error - reference|, in original sort order
+			IOFunctions.println( "Middle " + middleK + " of " + total + " pair(s) closest to median (median=" + fmt( median ) + " px):" );
+			for ( final Pair< Pair< ViewId, ViewId >, Double > e : pickClosest( errors, median, middleK ) )
+				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + fmt( e.getB() ) + " px" );
+
+			IOFunctions.println( "Middle " + middleK + " of " + total + " pair(s) closest to average (avg=" + fmt( average ) + " px):" );
+			for ( final Pair< Pair< ViewId, ViewId >, Double > e : pickClosest( errors, average, middleK ) )
+				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + fmt( e.getB() ) + " px" );
+		}
+
+		if ( !p.anyGroupingSelected() )
+			return;
+
+		// Build the grouping factor set: collapse semantics, identical to ViewSetupExplorer / registration.
+		// (Group.combineBy with Tile.class in the factor set merges views differing only in Tile.)
+		final Set< Class< ? extends Entity > > factors = new HashSet<>();
+		if ( p.groupTiles )         factors.add( Tile.class );
+		if ( p.groupChannels )      factors.add( Channel.class );
+		if ( p.groupIlluminations ) factors.add( Illumination.class );
+		if ( p.groupAngles )        factors.add( Angle.class );
+
+		// Resolve ViewIds → ViewDescriptions for the views that actually appear in `errors`.
+		final HashSet< ViewId > seen = new HashSet<>();
+		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		{
+			seen.add( e.getA().getA() );
+			seen.add( e.getA().getB() );
+		}
+		final List< ViewDescription > vds = new ArrayList<>();
+		for ( final ViewId vid : seen )
+		{
+			final ViewDescription vd = data.getSequenceDescription().getViewDescriptions().get( vid );
+			if ( vd != null )
+				vds.add( vd );
+		}
+
+		// One walk; same code path BBS / Interest_Point_Registration uses via AdvancedRegistrationParameters.getGroups.
+		final List< Group< ViewDescription > > groups = Group.combineBy( vds, factors );
+
+		// ViewId → canonical Group reverse index, plus Group → smallest-contained-ViewId for canonical ordering.
+		final HashMap< ViewId, Group< ViewDescription > > viewToGroup = new HashMap<>();
+		final HashMap< Group< ViewDescription >, ViewId > groupRep = new HashMap<>();
+		for ( final Group< ViewDescription > g : groups )
+		{
+			for ( final ViewDescription vd : g.getViews() )
+				viewToGroup.put( vd, g );
+			groupRep.put( g, Group.getViewsSorted( g.getViews() ).get( 0 ) );
+		}
+
+		IOFunctions.println( "Grouping by " + describeFactors( factors ) + " (collapse): " + groups.size() + " group(s) over " + vds.size() + " view(s)." );
+
+		// Per-group-pair: bucket per-pair errors into (groupA, groupB) buckets, canonicalised.
+		final HashMap< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > groupPairAcc = new HashMap<>();
+		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		{
+			final Group< ViewDescription > gA = viewToGroup.get( e.getA().getA() );
+			final Group< ViewDescription > gB = viewToGroup.get( e.getA().getB() );
+			if ( gA == null || gB == null )
+				continue;
+			final Group< ViewDescription > g1, g2;
+			if ( compareViewIds( groupRep.get( gA ), groupRep.get( gB ) ) <= 0 ) { g1 = gA; g2 = gB; }
+			else                                                                 { g1 = gB; g2 = gA; }
+			final Pair< Group< ViewDescription >, Group< ViewDescription > > key = new ValuePair<>( g1, g2 );
+			groupPairAcc.computeIfAbsent( key, k -> new GroupAcc() ).add( e.getB() );
+		}
+		final ArrayList< Map.Entry< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > > groupPairs = new ArrayList<>( groupPairAcc.entrySet() );
+		groupPairs.sort( ( o1, o2 ) -> Double.compare( o2.getValue().avg(), o1.getValue().avg() ) );
+		final int totalGP = groupPairs.size();
+
+		final int gpTopN = Math.min( p.topN, totalGP );
+		if ( gpTopN > 0 )
+		{
+			IOFunctions.println( "Top " + gpTopN + " of " + totalGP + " group-pair(s) by avg error (worst first):" );
+			for ( int i = 0; i < gpTopN; i++ )
+				printGroupPair( groupPairs.get( i ) );
+		}
+		final int gpBottomM = Math.min( p.bottomM, totalGP );
+		if ( gpBottomM > 0 )
+		{
+			IOFunctions.println( "Bottom " + gpBottomM + " of " + totalGP + " group-pair(s) by avg error (best first):" );
+			for ( int i = totalGP - 1, k = 0; i >= 0 && k < gpBottomM; i--, k++ )
+				printGroupPair( groupPairs.get( i ) );
+		}
+
+		// Per-group rollup: each pair contributes once to each endpoint group (or once total if intra-group).
+		final HashMap< Group< ViewDescription >, GroupAcc > groupAcc = new HashMap<>();
+		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		{
+			final Group< ViewDescription > gA = viewToGroup.get( e.getA().getA() );
+			final Group< ViewDescription > gB = viewToGroup.get( e.getA().getB() );
+			if ( gA != null )
+				groupAcc.computeIfAbsent( gA, k -> new GroupAcc() ).add( e.getB() );
+			if ( gB != null && gB != gA )
+				groupAcc.computeIfAbsent( gB, k -> new GroupAcc() ).add( e.getB() );
+		}
+		final ArrayList< Map.Entry< Group< ViewDescription >, GroupAcc > > groupRollup = new ArrayList<>( groupAcc.entrySet() );
+		groupRollup.sort( ( o1, o2 ) -> Double.compare( o2.getValue().avg(), o1.getValue().avg() ) );
+		final int totalGR = groupRollup.size();
+
+		final int grTopN = Math.min( p.topN, totalGR );
+		if ( grTopN > 0 )
+		{
+			IOFunctions.println( "Top " + grTopN + " of " + totalGR + " group(s) by avg error across involving pairs (worst first):" );
+			for ( int i = 0; i < grTopN; i++ )
+				printGroupRollup( groupRollup.get( i ) );
+		}
+		final int grBottomM = Math.min( p.bottomM, totalGR );
+		if ( grBottomM > 0 )
+		{
+			IOFunctions.println( "Bottom " + grBottomM + " of " + totalGR + " group(s) by avg error across involving pairs (best first):" );
+			for ( int i = totalGR - 1, k = 0; i >= 0 && k < grBottomM; i--, k++ )
+				printGroupRollup( groupRollup.get( i ) );
+		}
+	}
+
+	private static void printGroupPair(
+			final Map.Entry< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > entry )
+	{
+		final GroupAcc a = entry.getValue();
+		IOFunctions.println( "  [" + Group.gvids( entry.getKey().getA() ) + "] <-> [" + Group.gvids( entry.getKey().getB() ) + "]: "
+				+ a.count + " pair(s), error min=" + fmt( a.min ) + " avg=" + fmt( a.avg() ) + " max=" + fmt( a.max ) );
+	}
+
+	private static void printGroupRollup(
+			final Map.Entry< Group< ViewDescription >, GroupAcc > entry )
+	{
+		final GroupAcc a = entry.getValue();
+		IOFunctions.println( "  [" + Group.gvids( entry.getKey() ) + "]: "
+				+ a.count + " pair(s), error min=" + fmt( a.min ) + " avg=" + fmt( a.avg() ) + " max=" + fmt( a.max ) );
+	}
+
+	private static String describeFactors( final Set< Class< ? extends Entity > > factors )
+	{
+		if ( factors.isEmpty() )
+			return "(none)";
+		final ArrayList< String > names = new ArrayList<>();
+		if ( factors.contains( Tile.class ) )         names.add( "Tile" );
+		if ( factors.contains( Channel.class ) )      names.add( "Channel" );
+		if ( factors.contains( Illumination.class ) ) names.add( "Illumination" );
+		if ( factors.contains( Angle.class ) )        names.add( "Angle" );
+		return String.join( ", ", names );
+	}
+
+	private static String fmt( final double v )
+	{
+		return String.format( Locale.ROOT, "%.4f", v );
+	}
+
+	/**
+	 * Return the K entries from {@code errors} with the smallest |error - reference|,
+	 * preserving the original (desc-by-error) order in the output. O(N log K) using a
+	 * max-heap keyed by absolute distance.
+	 */
+	private static ArrayList< Pair< Pair< ViewId, ViewId >, Double > > pickClosest(
+			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+			final double reference,
+			final int k )
+	{
+		final int kk = Math.min( k, errors.size() );
+		// max-heap on |distance| so the worst-fit at the top can be evicted
+		final java.util.PriorityQueue< int[] > heap = new java.util.PriorityQueue<>( kk,
+				( a, b ) -> Double.compare(
+						Math.abs( errors.get( b[ 0 ] ).getB() - reference ),
+						Math.abs( errors.get( a[ 0 ] ).getB() - reference ) ) );
+		for ( int i = 0; i < errors.size(); i++ )
+		{
+			if ( heap.size() < kk )
+				heap.offer( new int[] { i } );
+			else
+			{
+				final double cur = Math.abs( errors.get( i ).getB() - reference );
+				final double worst = Math.abs( errors.get( heap.peek()[ 0 ] ).getB() - reference );
+				if ( cur < worst )
+				{
+					heap.poll();
+					heap.offer( new int[] { i } );
+				}
+			}
+		}
+		final ArrayList< Integer > indices = new ArrayList<>( heap.size() );
+		for ( final int[] e : heap ) indices.add( e[ 0 ] );
+		Collections.sort( indices ); // restore original (desc-by-error) order
+		final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > out = new ArrayList<>( indices.size() );
+		for ( final int i : indices ) out.add( errors.get( i ) );
+		return out;
+	}
+
+	/** Mutable accumulator for the per-group summary blocks. */
+	private static final class GroupAcc
+	{
+		long count = 0;
+		double sum = 0.0, min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
+
+		void add( final double v )
+		{
+			count++;
+			sum += v;
+			if ( v < min ) min = v;
+			if ( v > max ) max = v;
+		}
+		double avg() { return count == 0 ? 0.0 : sum / count; }
 	}
 
 	public static void main( String[] args )
