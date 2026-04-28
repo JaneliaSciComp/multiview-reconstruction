@@ -1,1083 +1,434 @@
-# InterestPointExplorer GUI - Development Summary
+# Multi-View Reconstruction — Project Notes
 
-## Overview
-This document summarizes the recent enhancements to the InterestPointExplorer GUI system, specifically the interest point overlay rendering and interactive controls in BigDataViewer (BDV).
+## Project Context
 
-## Project Context: Multi-View Reconstruction
+Multi-view reconstruction combines multiple images of the same specimen taken from different angles/positions/illuminations into a single 3D representation. This project focuses on microscopy data, particularly **SPIM (Selective Plane Illumination Microscopy)** / light-sheet microscopy.
 
-### What is Multi-View Reconstruction?
-
-Multi-view reconstruction is the process of combining multiple images of the same specimen taken from different views (angles/positions) into a single, high-quality 3D representation. This project focuses on microscopy data, particularly **SPIM (Selective Plane Illumination Microscopy)**, also known as light-sheet microscopy.
-
-### Key Concepts
+### Core Concepts
 
 #### Views and Timepoints
 - **View**: A single image acquisition from a specific angle, position, or illumination direction
-- **ViewId**: Combination of timepoint and view setup (identifies a specific view at a specific time)
-- **ViewSetup**: The configuration/angle for a particular view
-- **Timepoint**: Time index in time-lapse acquisitions
+- **ViewId**: (timepoint, viewSetup) — identifies a specific view at a specific time
+- **ViewSetup**: configuration/angle for a particular view
+- **Timepoint**: time index in time-lapse acquisitions
 
 #### Interest Points
-- **Interest Points**: Distinctive features detected in each view (e.g., beads, nuclei, or high-contrast structures)
+- Distinctive features detected in each view (beads, nuclei, high-contrast structures)
 - Used as landmarks to establish correspondences between views
-- Each interest point has:
-  - **Local coordinates**: Position within its own view's coordinate system
-  - **Detection ID**: Unique identifier within the view
-  - **Location**: 3D position (x, y, z)
+- Each interest point has: **local coordinates** (within its view), **detection ID**, and **3D position** (x, y, z)
 
 #### Correspondences
-- **Correspondence**: A match between interest points in different views that represent the same physical location
-- **Correspondence ID**: Shared identifier for matched points across views
-- Essential for computing transformations between views
-- The InterestPointExplorer allows visual inspection of these correspondences
+- A match between interest points in different views representing the same physical location
+- Shared **correspondence ID** across views
+- Essential for computing inter-view transformations
+- The InterestPointExplorer GUI is for visual inspection of these matches
 
-#### Coordinate Systems and Transformations
-- **Local coordinates**: Interest point positions in each view's own coordinate system
-- **Global coordinates**: Common world coordinate system shared by all views
-- **Local-to-Global Transform**: AffineTransform3D that converts from view-specific to world coordinates
-- **Registration**: Process of computing these transformations to align views
+#### Coordinate Systems
+- **Local**: per-view coordinate system
+- **Global**: shared world coordinate system
+- **Local-to-Global Transform**: `AffineTransform3D` between them
+- **Registration**: the process of computing those transforms from correspondences
 
-#### The Reconstruction Workflow
-1. **Interest Point Detection**: Find distinctive features in each view
-2. **Interest Point Matching**: Find correspondences between views
-3. **Registration**: Compute transformations to align views based on correspondences
-4. **Fusion**: Combine the aligned views into a single high-quality image
+#### Reconstruction Workflow
+1. **Detect** — find features in each view
+2. **Match** — find correspondences between views
+3. **Register** — compute transformations to align views
+4. **Fuse** — combine aligned views into a single high-quality image
 
-### Role of InterestPointExplorer
+### Technologies
+- **ImgLib2** — N-D image processing
+- **BigDataViewer (BDV)** — interactive volumetric viewer
+- **SPIM Data** — XML-based multi-view dataset format
+- **N5 / Zarr** — chunked, compressed n-D array storage
+- **Fiji/ImageJ** — plugin host
+- Java 8, Maven (`mvn compile`)
 
-The InterestPointExplorer GUI serves several purposes:
-- **Visualization**: Display interest points overlaid on the image data in BigDataViewer
-- **Inspection**: Examine correspondences between views
-- **Quality Control**: Verify that matching and registration are working correctly
-- **Interactive Analysis**: Filter and highlight specific correspondences
+### Package Layout
+- `net.preibisch.mvrecon.fiji.spimdata.interestpoints` — core IP data structures
+- `net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint` — IP GUI
+- `net.preibisch.mvrecon.process.interestpointregistration` — registration
+- `net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation` — pairwise setup, subsets
+- `net.preibisch.mvrecon.process.splitting` — oct-tree image splitting
 
-### Technical Details
+### Interest Point Storage
+- **N5 format** (`InterestPointsN5.java`): modern, scalable backend
+- Legacy text-file backend (`InterestPointsTextFileList.java`) was removed
+- Stored fields: ID, position (x, y, z), optionally correspondences to other views
 
-#### Screen Space vs World Space
-- **World space**: 3D coordinates in the global coordinate system
-- **Screen space**: 2D+depth coordinates after applying the viewer transform
-  - `gPos[0]`, `gPos[1]`: x, y screen position
-  - `gPos[2]`: Distance from the current viewing plane (used for coloring/filtering)
+## InterestPointExplorer GUI
 
-#### Visualization Strategy
+Visualizes interest points + correspondences over BDV. Used for visualization, correspondence inspection, registration QC, and interactive analysis.
+
+### Screen vs World Space
+- **World**: 3D global coords
+- **Screen**: 2D + depth after the viewer transform. `gPos[0]`, `gPos[1]` = x/y on screen; `gPos[2]` = signed distance from current viewing plane (drives coloring/filtering).
+
+### Visualization Strategy
 - Points on the **current viewing plane** (within plane thickness) appear RED
-- Points **farther away** fade based on distance (exponential decay)
-- **Filter mode**: Only show points on current plane (performance optimization)
-- **Color coding**: Different views get different colors, matched correspondences share colors
-
-### Data Storage
-
-#### Interest Point Storage
-The project supports multiple storage backends for interest points:
-- **N5 format**: Modern, scalable format (InterestPointsN5.java)
-- **Text files**: Legacy format (InterestPointsTextFileList.java - recently deleted)
-- Interest points are stored as:
-  - ID (unique identifier)
-  - Position (x, y, z coordinates)
-  - Optionally: correspondences to other views
-
-#### Recent Changes (separateMatchSolve branch)
-The current branch is working towards separating correspondence handling:
-- Changed abstract method from returning `List<InterestPoint>` to `Map<ID, InterestPoint>`
-- This allows more efficient lookups when working with correspondences
-- Breaking change that requires updates throughout the codebase
-
-### Project Organization
-
-#### Package Structure
-- `net.preibisch.mvrecon.fiji.spimdata.interestpoints`: Core interest point data structures
-- `net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint`: GUI components for exploration
-- Integration with **Fiji/ImageJ** ecosystem
-- Uses **BigDataViewer** (BDV) for 3D visualization
-
-#### Key Technologies
-- **ImgLib2**: N-dimensional image processing library
-- **BigDataViewer**: Interactive viewer for large volumetric datasets
-- **SPIM Data**: XML-based format for multi-view datasets
-- **N5**: Chunked, compressed n-dimensional array storage
-
-## Key Features Implemented
-
-### 1. Interest Point Coloring System
-
-#### Per-View Color Variation
-- Each view gets a distinct color shade using HSB color space
-- Hue varies from yellow-green through green to cyan (0.15-0.55)
-- Formula: `hue = 0.15f + (viewSetupId * 0.11f) % 0.40f`
-- Consistent saturation (0.7) and brightness (0.8)
-
-#### Correspondence-Based Coloring
-- When interest points are matched between views, they get a shared color
-- Overrides per-view coloring when correspondence exists
-- Formula: `hue = 0.15f + (corrId * 0.17f) % 0.70f`
-- Higher saturation (0.8) and brightness (0.9) for visibility
-
-#### Current Plane Highlighting
-- Points within plane thickness show in RED (not in filter mode)
-- Distance from viewing plane calculated in screen space: `Math.abs(gPos[2])`
-
-### 2. Interactive Sliders with Text Fields
-
-All three sliders have editable text fields that:
-- Display actual values with 2 decimal precision (`%.2f`)
-- Accept values OUTSIDE slider range
-- Update on Enter key press OR when focus is lost
-- Slider position clamps to valid range while model accepts any value
-
-#### Point Size Slider (Range: 0-100, default: 30)
-- **Formula**: `scale = 10^((sliderValue-30)/85)`
-- **Actual pixel size**: `scale * 3.0`
-- **Range**: 1.3 - 20.0 pixels (slider range)
-- **Text field**: Shows pixel size, accepts any positive value
-- **Implementation**: InterestPointExplorerPanel.java:149-216
-
-#### Plane Thickness Slider (Range: 0-100, default: 50)
-- **Formula**: `thickness = 100 * (sliderValue/100)^5`
-- **Mapping**: slider=0 → 0, slider=50 → 3.13, slider=100 → 100
-- **Purpose**: Controls red highlighting threshold and filter mode cutoff
-- **Text field**: Shows thickness value, accepts any positive value
-- **Implementation**: InterestPointExplorerPanel.java:218-283
-
-#### Distance Fade Slider (Range: 0-100, default: 50)
-- **Formula**: `fadeFactor = (sliderValue/100)^3`
-- **Range**: 0.0 (no fade) to 1.0+ (filter mode)
-- **Filter mode**: When fadeFactor ≥ 1.0
-  - Background turns light red
-  - Only renders points within plane thickness
-  - All points fully opaque (alpha=255)
-- **Normal mode**: Exponential transparency decay
-  - Formula: `alpha = 255 * exp(-distance * fadeFactor * 0.3)`
-- **Text field**: Shows fade factor, accepts any positive value
-- **Implementation**: InterestPointExplorerPanel.java:285-400
-
-### 3. Shape Rendering System
-
-Three shape types for interest points:
-
-#### Circle (shapeType = 0, default)
-- Filled oval
-- Used for standard interest points
-
-#### Cross (shapeType = 1)
-- Plus sign (+)
-- Horizontal and vertical lines
-- 2x larger than base size
-- Used for first view in 2-view correspondences
-
-#### Diagonal Cross (shapeType = 2)
-- X shape (×)
-- Diagonal lines at 45°
-- 2x larger than base size
-- Used for second view in 2-view correspondences
-
-**Implementation**: InterestPointOverlay.java:137-149, 207-221
-
-### 4. Filter Mode Optimization
-
-When Distance Fade ≥ 1.0:
-- Performance optimization: skips rendering points outside plane thickness
-- All points within plane thickness rendered at full opacity
-- Fixed bug where exponential decay made points invisible beyond ~10 pixels
-
-**Implementation**: InterestPointOverlay.java:101-106, 191-193
-
-## File Structure
-
-### Core Files
-
-#### InterestPointOverlay.java
-`src/main/java/net/preibisch/mvrecon/fiji/spimdata/explorer/interestpoint/InterestPointOverlay.java`
-
-**Key interface**:
-```java
-public static interface InterestPointSource {
-    HashMap<? extends ViewId, ? extends Collection<? extends RealLocalizable>> getLocalCoordinates(int timepointIndex);
-    void getLocalToGlobalTransform(ViewId viewId, int timepointIndex, AffineTransform3D transform);
-    int getCorrespondenceColorId(ViewId viewId, int detectionId, int timepointIndex);
-    int getShapeType(ViewId viewId, int timepointIndex);
-    double getDistanceFade();
-    boolean isFilterMode();
-    double getPointSizeScale();
-    double getPlaneThickness();
-}
-```
-
-**Key methods**:
-- `getColor()`: Lines 91-130 - Color calculation with transparency
-- `drawOverlays()`: Lines 165-225 - Main rendering loop
-- `drawCross()`: Line 137 - Plus sign rendering
-- `drawDiagonalCross()`: Line 144 - X shape rendering
-
-#### InterestPointTableModel.java
-`src/main/java/net/preibisch/mvrecon/fiji/spimdata/explorer/interestpoint/InterestPointTableModel.java`
-
-Implements InterestPointSource interface, stores parameters:
-- `pointSizeScale`: Default 1.0
-- `planeThickness`: Default 3.0
-- `distanceFade`: Default 0.125
-- `filterMode`: Boolean flag
-
-Each setter calls `bdvPopup.updateBDV()` to trigger redraw.
-
-#### InterestPointExplorerPanel.java
-`src/main/java/net/preibisch/mvrecon/fiji/spimdata/explorer/interestpoint/InterestPointExplorerPanel.java`
-
-Contains all slider and text field UI components. Key sections:
-- Lines 146-216: Point Size slider + text field
-- Lines 218-283: Plane Thickness slider + text field
-- Lines 285-400: Distance Fade slider + text field
-
-## Text Field Update Pattern
-
-Critical pattern to prevent circular updates:
-
-```java
-final ActionListener textFieldListener = new ActionListener() {
-    @Override
-    public void actionPerformed(ActionEvent e) {
-        try {
-            double value = Double.parseDouble(textField.getText());
-
-            // 1. Apply to model FIRST
-            tableModel.setValue(value);
-
-            // 2. Calculate slider position (clamped)
-            int sliderValue = calculateInverseFormula(value);
-            sliderValue = Math.max(0, Math.min(100, sliderValue));
-
-            // 3. Temporarily remove ChangeListeners
-            ChangeListener[] listeners = slider.getChangeListeners();
-            for (ChangeListener listener : listeners)
-                slider.removeChangeListener(listener);
-
-            // 4. Set slider value
-            slider.setValue(sliderValue);
-
-            // 5. Re-add listeners
-            for (ChangeListener listener : listeners)
-                slider.addChangeListener(listener);
-        } catch (NumberFormatException ex) {
-            // Reset to current model value
-        }
-    }
-};
-
-// Trigger on Enter AND focus lost
-textField.addActionListener(textFieldListener);
-textField.addFocusListener(new FocusAdapter() {
-    @Override
-    public void focusLost(FocusEvent e) {
-        textFieldListener.actionPerformed(null);
-    }
-});
-```
-
-This pattern ensures:
-- Typed values apply to model even if outside slider range
-- Slider shows clamped position
-- No circular update loops
-
-## Recent Commits
-
-### Master Branch
-1. `34bff636` - Fix F1 help focus issue in InterestPointExplorer
-2. `8994af77` - Add comprehensive F1 help window for InterestPointExplorer
-
-### splitCorr Branch (Previous Work)
-1. `5ffb2c2b` - Change text field precision from 1 to 2 decimal digits
-2. `55c09e4c` - Add editable text fields to sliders and fix filter mode transparency
-3. `acd3c93e` - Format slider labels with smaller font and two-line layout
-4. `30883cbf` - Add plane thickness slider with power scaling
-5. `982364ac` - Add point size slider with exponential scaling
-6. `c1115605` - Add distance fade slider with exponential scaling and filter mode
-7. `e41ea3a8` - Add correspondence-based coloring and cross shapes for 2-view mode
-8. `d58f6ad3` - Add per-view color variation in interest point overlay
-
-### 5. F1 Help Window System
-
-#### Comprehensive Help Documentation
-A complete help system was added to the InterestPointExplorer:
-
-**Help Content** (InterestPointHelp.html):
-- Table columns and their meanings (#Detections, #Corresponding, #Correspondences)
-- Point Size and Plane Thickness slider controls with mathematical formulas
-- Distance Fade slider and filter mode
-- Color coding system for visualization
-- Interactive 3-state selection cycling (all corresponding → inter-visible → deselect)
-- Cell clicking and editing capabilities
-- Context menu operations (delete)
-- Common workflows (detection quality inspection, correspondence analysis, cleanup)
-- Best practices and tips
-- Technical details including scaling formulas and data structures
-
-**Implementation** (InterestPointExplorerPanel.java):
-- F1 key listener attached to both table and panel
-- Supports both `KeyEvent.VK_F1` and keyCode `112`
-- Panel made focusable with `setFocusable(true)`
-- Auto-focus on mouse enter/press for immediate F1 functionality
-- Help dialog displayed with `HelpDialog` from BDV tools
-
-**User Experience**:
-- Window title shows "(Press F1 for help)"
-- F1 works immediately when hovering or clicking anywhere in the window
-- No need to click on table rows first
-
-**Files**:
-- `src/main/resources/mvr/InterestPointHelp.html` (219 lines)
-- `src/main/java/net/preibisch/mvrecon/fiji/spimdata/explorer/interestpoint/InterestPointExplorerPanel.java`
-- `src/main/java/net/preibisch/mvrecon/fiji/spimdata/explorer/interestpoint/InterestPointExplorer.java`
-
-**Commits**:
-- `8994af77` - Initial help window implementation
-- `34bff636` - Fixed focus issue for immediate F1 response
-
-## Important Notes
-
-- **Never commit without explicit user consent**
-- Current branch: `master` (recent F1 help work)
-- Previous work branch: `splitCorr` (slider implementations)
-- Main branch: `master`
-- Build system: Maven (`mvn compile`)
-- Java version: 8
-
-## Common Issues Fixed
-
-### Filter Mode Transparency Bug
-**Problem**: Plane thickness appeared to stop working above ~10 pixels in filter mode
-**Cause**: Exponential decay formula still being applied, making points nearly invisible
-**Fix**: Disable distance fade when `isFilterMode()` is true, set alpha=255 for all points
-**Commit**: `55c09e4c`
-
-### Text Field Circular Update Bug
-**Problem**: Typed values were overwritten by slider's ChangeListener
-**Cause**: Setting slider position triggered ChangeListener which updated text field
-**Fix**: Temporarily remove/re-add ChangeListeners when updating slider from text field
-**Commit**: `55c09e4c`
-
-### F1 Help Focus Issue
-**Problem**: F1 key didn't work until user clicked on the interest point table
-**Cause**: Panel wasn't focusable and didn't have focus by default
-**Fix**:
-- Made panel focusable with `setFocusable(true)`
-- Added mouse listeners to auto-request focus on mouse enter/press
-- F1 key listener attached to both panel and table
-**Commits**: `8994af77`, `34bff636`
-
-## Registration and Subset Detection
-
-### PairwiseSetup and Subset Detection
-
-The `PairwiseSetup` class handles the setup of pairwise view comparisons for registration:
-- Located in `net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup`
-- Main workflow:
-  1. `definePairs()` - Creates all pairs that need to be compared
-  2. `removeNonOverlappingPairs()` - Filters out non-overlapping pairs (optional)
-  3. `reorderPairs()` - Orders pairs consistently (optional)
-  4. `detectSubsets()` - Identifies disconnected subsets for independent registration
-  5. `sortSubsets()` - Sorts subsets and pairs within them (optional)
-
-#### detectSubsets Algorithm
-
-The `detectSubsets()` static method (lines 320-415) groups views into subsets based on pairwise comparisons:
-
-**Input**:
-- `views`: All views to be registered
-- `pairs`: List of view pairs that need to be compared
-- `groups`: Groups of views that should be transformed together
-
-**Algorithm**:
-1. **Build subset-precursors** (lines 332-375): Iterate through pairs and group views:
-   - If neither view is in any set: create new set with both views and the pair
-   - If one view is in a set: add the other view and the pair to that set
-   - If both views are in the same set: add the pair to that set
-   - If both views are in different sets: merge the sets
-2. **Add singleton views** (lines 377-397): Views not in any pair get their own subset
-3. **Merge by groups** (lines 399-401): If groups exist, merge subsets containing grouped views
-4. **Create final subsets** (lines 403-412): Convert precursors to `Subset` objects
-
-**Critical Implementation Details**:
-- Uses two parallel ArrayLists: `vSets` (HashSets of views) and `pairSets` (lists of pairs)
-- `setId()` method finds which set contains a given view (returns -1 if not found)
-- When merging sets, the merged set is **always added at the end** (index `pairSets.size() - 1`)
-
-### detectSubsets Merge Bug and Fix (2025-12-03)
-
-**Problem**: A pair of ViewIds was present in the main pairs list but missing from the subset's pair list, even when only one subset existed. Specifically, pair (tpId=0, setupId=265) <=> (tpId=0, setupId=278) was being dropped.
-
-**Root Cause**: In the `detectSubsets()` method at line 372-374, when both views of a pair were already present in different sets, the code would merge those sets but **never add the pair that triggered the merge**:
-
-```java
-else // both are present in different sets, the sets need to be merged
-{
-    mergeSets( vSets, pairSets, i1, i2 );
-    // BUG: The pair that caused this merge was never added!
-}
-```
-
-All other branches of the conditional properly added the current pair:
-- Line 347: New set creation → adds pair
-- Line 358: One view exists → adds pair
-- Line 364: Other view exists → adds pair
-- Line 369: Both in same set → adds pair
-- Line 373: Both in different sets → **MISSING: forgot to add pair!**
-
-**The Fix** (PairwiseSetup.java:376-377):
-```java
-else // both are present in different sets, the sets need to be merged
-{
-    mergeSets( vSets, pairSets, i1, i2 );
-    // The merged set is now at the end, add the current pair to it
-    pairSets.get( pairSets.size() - 1 ).add( pair );
-}
-```
-
-**Why `pairSets.size() - 1`?**
-The `mergeSets()` method (lines 522-553):
-1. Collects all pairs and views from sets being merged
-2. Removes the old sets from the lists
-3. **Adds the merged set at the END** of both vSets and pairSets
-
-Therefore, after merging, the new merged set is always at index `pairSets.size() - 1`.
-
-**Additional Documentation**:
-- Enhanced Javadoc for `mergeSets()` (lines 510-521) to document that merged sets end at the end
-- Added inline comments explaining each section of the merge operation
-- Added comment at the fix location explaining why the pair is added there
-
-**Impact**: This bug could cause registration to fail or produce incorrect results when:
-- Multiple disconnected view groups existed initially
-- A pair connected two previously separate groups (triggering a merge)
-- That connecting pair would be lost, potentially leaving the subsets disconnected in the registration graph
-
-**Testing**: User had comprehensive debug output in `Interest_Point_Registration.identifySubsets()` that traced pairs through each step and confirmed the pair was present before `detectSubsets()` but missing from the resulting subset.
-
-**Files Modified**:
-- `src/main/java/net/preibisch/mvrecon/process/interestpointregistration/pairwise/constellation/PairwiseSetup.java`
-
-## N5/Zarr Export and Multi-Resolution Pyramids
-
-### Fusion vs Resaving
-
-The project supports two distinct export workflows:
-
-**Fusion Export** (ExportN5Api.java):
-- Combines multiple views into a single fused image volume
-- Creates new image data by blending/averaging overlapping views
-- Output: Single volume per timepoint/channel or combined 5D OME-ZARR container
-- Used for final visualization and downstream analysis
-- Supports 3D separate containers or 5D single container OME-ZARR export
-
-**Resaving** (Resave_N5Api.java):
-- Re-exports raw multi-view data to different format (N5/HDF5/Zarr)
-- Preserves original view structure - each view stays separate
-- Creates multi-resolution pyramids for each view
-- Output: BDV-compatible format with XML metadata
-- Always uses 5D OME-ZARR format when exporting to Zarr (expanding 3D to [x,y,z,c=1,t=1])
-- Used for converting legacy formats or creating cloud-compatible versions
-
-**Key difference**: Fusion creates one fused volume, resaving creates separate per-view volumes.
-
-### Zarr v3 Sharding Support
-
-**Sharding Concept**: Zarr v3 introduces sharding to group multiple small blocks (e.g., 32³) into larger shards (e.g., 128³). This reduces metadata overhead for cloud storage by storing multiple blocks in a single file.
-
-**Critical Requirement**: Shards must be written as complete units. When sharding is enabled, the write granularity (computeBlockSize) must equal the shard size, not the block size.
-
-#### Grid.create() Pattern
-
-The N5 API uses `Grid.create(dimensions, computeBlockSize, blockSize)` where:
-- **computeBlockSize**: Controls write granularity (how large each write operation is)
-- **blockSize**: Inner chunk size stored in metadata
-- **When sharding**: `computeBlockSize = shardSize`, `blockSize` = inner chunk size
-- **Without sharding**: `computeBlockSize = blockSize`
-
-#### N5Writer Initialization
-
-**Critical**: N5ZarrWriter must be initialized via `URITools.instantiateN5Writer()`, not direct instantiation:
-
-```java
-// CORRECT:
-N5Writer writer = util.URITools.instantiateN5Writer(
-    org.janelia.saalfeldlab.n5.universe.StorageFormat.ZARR,
-    outputPath.toURI()
-);
-
-// WRONG (causes issues):
-N5Writer writer = new N5ZarrWriter(outputPath.getAbsolutePath());
-```
-
-The proper initialization includes:
-- GsonBuilder with CoordinateTransformationAdapter
-- Correct boolean flags for Zarr compatibility
-- Proper URI path handling
-
-**Implementation**: util/URITools.java:271
-
-#### Multi-Resolution Pyramid Structure
-
-**MultiResolutionLevelInfo Class** (N5ApiTools.java:195+):
-- Contains all metadata for one pyramid level
-- **Key fields**: dimensions, blockSize, downsampling factors, dataset path, dataType
-- **Added field**: `shardSize` (null if sharding not used)
-
-**Shard Size Policy**:
-- Shard size remains **constant across all resolution levels** (s0, s1, s2...)
-- Does not scale with downsampling factors
-- Applied to all levels when enabled
-
-#### Export Implementation
-
-**setupMultiResolutionPyramid()** (N5ApiTools.java:227-335):
-- Creates datasets for all resolution levels
-- Passes shardSize to each MultiResolutionLevelInfo
-- For Zarr with sharding: uses ZarrDatasetAttributes with proper codec chain
-
-**writeDownsampledBlock()** (N5ApiTools.java:585-610):
-- Reads from previous level, downsamples, writes to current level
-- Must handle shard-aware writing when sharding is enabled
-
-#### Known Issues
-
-**5D OME-ZARR Sharding Bug** (Fixed):
-- **Location**: ExportN5Api.java:237
-- **Problem**: Inverted ternary operator `(useSharding) ? null : shardSize5D`
-- **Fix**: Corrected to `(useSharding) ? shardSize5D : null`
-- OME-ZARR uses 5D format: `[x, y, z, channels, timepoints]`
-
-**Test NullPointerException** (Ongoing):
-- **Symptom**: TestN5Zarr multi-resolution tests fail with NPE at `PaddedRawBlockCodec.encode()`
-- **Location**: Triggered from N5ApiTools.writeDownsampledBlock() → N5Utils.saveNonEmptyBlock()
-- **Status**: GUI export (ExportN5Api) works correctly; issue appears test-specific
-- **Hypothesis**: Incorrect parameter initialization in test setup
-
-#### Key Files
-
-**TestN5Zarr.java** (src/test/java/):
-- Tests N5/Zarr export with real fusion data
-- Tests multi-resolution pyramids with/without sharding
-- Uses TestFusion.testFusion() to generate BlockSupplier test data
-- **Test methods**: testZarrV2NoSharding, testZarrV3WithSharding, testVariousShardSizes, testN5IgnoresSharding
-
-**N5ApiTools.java** (src/main/java/):
-- MultiResolutionLevelInfo class with shardSize field
-- setupMultiResolutionPyramid() creates pyramid datasets
-- assembleJobs() generates grid blocks for parallel writing
-- writeDownsampledBlock() handles downsampling between levels
-
-**ExportN5Api.java** (src/main/java/):
-- Production export code used by GUI
-- exportImage() method handles full export pipeline
-- Uses mrInfo.shardSize for shard-aware writing
-
-#### Technical Gotchas
-
-1. **N5Utils.saveBlock() doesn't buffer**: We must write complete shard-sized chunks ourselves
-2. **Proper initialization required**: Direct N5ZarrWriter instantiation lacks proper GsonBuilder setup
-3. **5D expansion for OME-ZARR**: Sharding metadata must be expanded from 3D to 5D format
-4. **Constant shard size**: Don't scale shardSize with downsampling factors across pyramid levels
-5. **computeBlockSize = shardSize**: Critical for correct shard-aware writing
-
-#### Recent Fixes (2026-01-06)
-
-**Zarr v3 Dimensions Reading Fix**:
-- **Problem**: `writeDownsampledBlock5dOMEZARR()` used `getAttribute(DIMENSIONS_KEY)` which returns null for Zarr v3
-- **Fix**: Use `getDatasetAttributes(dataset).getDimensions()` instead (N5ApiTools.java:658)
-- **Reason**: Zarr v3 stores dimensions as "shape" in zarr.json, not as a separate attribute
-- **Commit**: 977cb9f3
-
-**Shard Size for Downsampled Levels Fix**:
-- **Problem**: Downsampled levels (s1+) used `blockSize` instead of `shardSize` for `computeBlockSize` when calling `assembleJobs()`
-- **Impact**: Grid.create() created multiple small blocks instead of shard-sized blocks, causing data written to wrong positions within shards
-- **Symptom**: "Wild" visualization - top-left quadrant for z<64, bottom-right for z≥64
-- **Fix**: Pass `mrInfo.shardSize` (resave) or `this.shardSize` (fusion) as computeBlockSize when sharding enabled
-  - Resave_N5Api.java:304
-  - ExportN5Api.java:588
-- **Commit**: 977cb9f3
-
-**ZARR2 (v2) Support**:
-- **Added**: Comprehensive `|| StorageFormat.ZARR2` checks alongside all ZARR (v3) format checks
-- **Locations**: 11 total - Resave_N5Api.java (2), ExportN5Api.java (8), N5ApiTools.java (1)
-- **Intentionally excluded**: Zarr v3-specific features (sharding dialogs/code)
-- **Commit**: dfbf31aa
-**4D (XYZC) OME-ZARR Support** (2026-01-06):
-- **Added**: Full import support for 4D OME-ZARR (spatial dimensions + channels, no time)
-- **Key Changes**:
-  1. **AllenOMEZarrLoader.java:119** - Fixed critical bug: slice dimension 3 (not 4) for 4D data
-  2. **OMEZARR.java** - Multiple changes to enable 4D import:
-     - Lines 280-288: Split sizeC and sizeT initialization (4D has only sizeC)
-     - Lines 311-322: Allow 4D in dimension check, add smart 4D→3D fallback for sizeC=1
-     - Lines 349-374: Updated UI messages to handle 4D with specific branches
-     - Lines 603-604: Timepoints initialization - for 4D, only 1 timepoint
-     - Lines 784-830: OMEZARREntry creation with proper indices:
-       - 4D: single-element array `[channelId]`
-       - 5D: two-element array `[channelId, timepointId]`
-- **Dimension Mapping**: [0,1,2]=XYZ (spatial), [3]=C (channels), [4]=T (time, 5D only)
-- **Smart Fallbacks**:
-  - 4D with sizeC=1 → treated as 3D with pattern-based channels
-  - 5D with sizeC=1 and sizeT=1 → treated as 3D with pattern-based views
-- **Use Cases**: Multi-channel single-timepoint microscopy data (e.g., multi-color fluorescence)
-- **Export**: Not implemented - import only. Fusion export creates 5D with `[x,y,z,c=1,t=1]` which works.
-- **Files Modified**:
-  - `src/main/java/net/preibisch/mvrecon/fiji/spimdata/imgloaders/AllenOMEZarrLoader.java`
-  - `src/main/java/net/preibisch/mvrecon/fiji/datasetmanager/OMEZARR.java`
-
-### 4D OME-ZARR Technical Details
-
-**Axis Order**: TCZYX (metadata) or XYZCT (data dimensions, reversed)
-
-**higherDimensionIndicies Behavior**:
-- **3D data**: `null` or `[]` (empty array)
-- **4D data**: `[channelId]` (single element)
-- **5D data**: `[channelId, timepointId]` (two elements)
-
-**extract3DVolume() Method** (AllenOMEZarrLoader.java:111-136):
-```java
-// For 4D with indices=[c]: extracts dimension 3 at index c
-// For 5D with indices=[c,t]: extracts dimensions 3 and 4 at indices c and t
-RandomAccessibleInterval< T > out = omeZarrVolume;
-for ( int d = 3 + higherDimensionIndicies.length - 1; d >= 3; --d )
-    out = Views.hyperSlice( out, d, higherDimensionIndicies[ d - 3 ] );
-```
-
-This loop automatically handles variable-length indices:
-- Length 1 (4D): Slices dimension 3 once
-- Length 2 (5D): Slices dimensions 4 then 3
-
-**Import Workflow for 4D**:
-1. OMEZARR class scans directories and detects 4D OME-ZARR files
-2. Reads sizeC from dimension[3] (no sizeT for 4D)
-3. Creates ViewSetups - one per channel
-4. Creates single timepoint (t=0) automatically
-5. For each ViewSetup, creates OMEZARREntry with `indices=[channelId]`
-6. AllenOMEZarrLoader uses indices to extract channel slice when loading
-
-**Example 4D Structure**:
-```
-dataset.zarr/
-  ├── zarr.json       # 4D metadata: axes = [C, Z, Y, X], shape = [3, 100, 512, 512]
-  ├── 0/              # Level 0 (full resolution)
-  └── 1/              # Level 1 (downsampled)
-```
-
-**Example XML Entry for 4D**:
-```xml
-<zgroup setup="0" tp="0" path="dataset.zarr" indicies="[0]"/>  <!-- Channel 0 -->
-<zgroup setup="1" tp="0" path="dataset.zarr" indicies="[1]"/>  <!-- Channel 1 -->
-<zgroup setup="2" tp="0" path="dataset.zarr" indicies="[2]"/>  <!-- Channel 2 -->
-```
-
-**Comparison with 5D**:
-```xml
-<zgroup setup="0" tp="0" path="dataset.zarr" indicies="[0 0]"/>  <!-- Channel 0, Time 0 -->
-<zgroup setup="1" tp="1" path="dataset.zarr" indicies="[0 1]"/>  <!-- Channel 0, Time 1 -->
-```
-
-## BigDataViewer Performance Optimization
-
-### Problem: Slow Data_Explorer Opening for Large Datasets
-
-Opening datasets with ~12,000+ views took 6+ minutes before the GUI appeared.
-
-**Root Cause**: BDV source visibility and coloring operations used per-source API calls, each triggering event listeners (~28ms per call × 12,000 sources = 6 minutes).
-
-### Solution: Use BDV's Batch APIs
-
-**ViewerState Batch API** (recommended by BDV author Tobias Pietzsch):
-- `state.setSourcesActive(Collection<SourceAndConverter>, boolean)` - batch activate/deactivate
-- Access via `bdv.getViewer().state()`
-- Thread-safe with `synchronized(state)` when iterating sources
-
-**ConverterSetups API for Coloring**:
-- Access via `bdv.getViewerFrame().getConverterSetups()` (NOT `bdv.getSetupAssignments()`)
-- `converterSetups.getConverterSetup(SourceAndConverter)` - get setup for a source
-- Then call `setup.setColor(ARGBType)` on each
+- Points farther from the plane fade with exponential decay
+- **Filter mode**: only points within plane thickness are drawn (perf optimization for dense data)
+- **Color coding**: each view gets a distinct color; matched correspondences share colors
+
+### Coloring Formulas
+- Per-view hue: `0.15 + (viewSetupId * 0.11) % 0.40` (range yellow-green → cyan), sat 0.7, brightness 0.8
+- Correspondence-shared hue (overrides per-view when matched): `0.15 + (corrId * 0.17) % 0.70`, sat 0.8, brightness 0.9
+- Current-plane highlight: RED for `|gPos[2]| < planeThickness` (when not in filter mode)
+
+### Sliders (range 0–100, paired with editable text fields)
+
+All three sliders have text fields that:
+- Display values with 2-decimal precision
+- Accept values **outside** the slider range (slider position clamps; model accepts the typed value)
+- Update on Enter **or** focus loss
+
+| Slider | Default | Formula | Notes |
+|--------|---------|---------|-------|
+| Point Size | 30 | `scale = 10^((s-30)/85)`, pixel = `scale * 3.0` | range ≈ 1.3–20 px on slider |
+| Plane Thickness | 50 | `100 * (s/100)^5` | s=0 → 0, s=50 → 3.13, s=100 → 100 |
+| Distance Fade | 50 | `(s/100)^3` | ≥ 1.0 enters filter mode |
+
+In normal fade mode: `alpha = 255 * exp(-distance * fadeFactor * 0.3)`.
+In filter mode (fade ≥ 1.0): background tints light red, only points within plane thickness draw, all alpha = 255.
+
+### Shapes
+- 0: filled circle (default, standard IPs)
+- 1: `+` cross (first view in 2-view correspondence) — drawn 2× base size
+- 2: `×` diagonal (second view in 2-view correspondence) — drawn 2× base size
 
 ### Key Files
+- `InterestPointOverlay.java` — `InterestPointSource` interface, `getColor()`, `drawOverlays()`, `drawCross()`, `drawDiagonalCross()`
+- `InterestPointTableModel.java` — implements `InterestPointSource`, holds slider state (`pointSizeScale`, `planeThickness`, `distanceFade`, `filterMode`); each setter calls `bdvPopup.updateBDV()`
+- `InterestPointExplorerPanel.java` — slider + text-field UI
+- `src/main/resources/mvr/InterestPointHelp.html` — F1 help content
 
-**util/BDVTools.java** - Consolidated BDV helper methods:
+### `InterestPointSource` Interface (essence)
 ```java
-// Display Mode
-setFusedModeSimple(BigDataViewer, AbstractSpimData)
-
-// Source Visibility (batch API)
-setVisibleSources(ViewerState, Collection<SourceAndConverter>)
-setVisibleSourcesBatch(BigDataViewer, Set<Integer> activeSetupIds)
-
-// Source Coloring (via ConverterSetups)
-whiteSourcesBatch(BigDataViewer)
-colorSourcesBatch(BigDataViewer, long colorOffset)
-colorByFactors(BigDataViewer, AbstractSpimData, Set<Class>, long colorOffset)
-
-// Legacy (deprecated, keep for compatibility)
-whiteSources(List<ConverterSetup>)
-sameColorSources(List<ConverterSetup>, r, g, b, a)
-
-// Transform Control
-resetBDVManualTransformations(BigDataViewer)
-
-// Index Utilities
-getBDVTimePointIndex(TimePoint, AbstractSpimData)
-getBDVSourceIndex(BasicViewSetup, AbstractSpimData)
+HashMap<? extends ViewId, ? extends Collection<? extends RealLocalizable>> getLocalCoordinates(int t);
+void   getLocalToGlobalTransform(ViewId v, int t, AffineTransform3D out);
+int    getCorrespondenceColorId(ViewId v, int detectionId, int t);
+int    getShapeType(ViewId v, int t);
+double getDistanceFade();
+boolean isFilterMode();
+double getPointSizeScale();
+double getPlaneThickness();
 ```
 
-### Implementation Pattern
+### Lesson: Text-Field ↔ Slider Circular Updates
 
-```java
-// CORRECT: Batch API for visibility
-final ViewerState state = bdv.getViewer().state();
-final List<SourceAndConverter<?>> active = new ArrayList<>();
-synchronized (state) {
-    BDVUtils.forEachAbstractSpimSource(
-        state.getSources(),
-        (soc, source) -> {
-            if (activeSetupIds.contains(source.getSetupId()))
-                active.add(soc);
-        });
-}
-final List<SourceAndConverter<?>> inactive = new ArrayList<>(state.getSources());
-inactive.removeAll(active);
-state.setSourcesActive(inactive, false);  // Batch deactivate
-state.setSourcesActive(active, true);     // Batch activate
+When a text field types a value outside the slider's clamped range, naively updating the slider triggers its `ChangeListener`, which then overwrites the typed value. Fix:
 
-// CORRECT: ConverterSetups API for coloring
-final ConverterSetups converterSetups = bdv.getViewerFrame().getConverterSetups();
-final ViewerState state = bdv.getViewer().state();
-synchronized (state) {
-    for (SourceAndConverter<?> soc : state.getSources()) {
-        ConverterSetup cs = converterSetups.getConverterSetup(soc);
-        if (cs != null)
-            cs.setColor(color);
-    }
-}
+1. Apply typed value to **model first** (so the model holds the unclamped value).
+2. Compute clamped slider position.
+3. **Temporarily detach all `ChangeListener`s** from the slider, call `setValue`, then re-attach.
+4. Trigger updates on both `ActionListener` (Enter) **and** `FocusListener.focusLost`.
 
-// WRONG: Per-source calls (slow!)
-for (int i = 0; i < numSources; i++)
-    vag.setSourceActive(i, active[i]);  // ~28ms per call!
-```
+### Lesson: Filter-Mode Transparency Bug
 
-### Performance Results
+Plane thickness "stopped working" above ~10 px in filter mode because exponential decay was still applied — points farther than ~10 px were nearly invisible. Fix: when `isFilterMode()`, skip decay and set `alpha = 255` for all rendered points (and skip points outside plane thickness entirely as a perf optimization).
 
-- **Before**: ~6 minutes to open dataset with 12,903 views
-- **After**: <1 second
+### Lesson: F1 Help Focus
 
-### API Reference (BDV Core)
+F1 didn't fire until the user clicked the table because the panel wasn't focusable. Fix: `setFocusable(true)`, request focus on mouse enter/press, attach the F1 listener to **both** panel and table, and accept both `KeyEvent.VK_F1` and keycode 112 (some envs differ).
 
-- **ViewerState**: https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ViewerState.java
-- **ConverterSetups**: https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ConverterSetups.java
+## Registration & Subset Detection
 
-### Deprecated APIs (Avoid)
+`PairwiseSetup` (`...pairwise.constellation.PairwiseSetup`) sets up pairwise view comparisons. Workflow:
+1. `definePairs()` — create all pairs to compare
+2. `removeNonOverlappingPairs()` — optional filtering
+3. `reorderPairs()` — optional consistent ordering
+4. `detectSubsets()` — connected-components grouping
+5. `sortSubsets()` — optional ordering
 
-- `bdv.getSetupAssignments().getConverterSetups()` - old API
-- `VisibilityAndGrouping.setSourceActive(int, boolean)` - per-source, slow
-- Direct instantiation of N5ZarrWriter - use `URITools.instantiateN5Writer()`
+### `detectSubsets` Algorithm
+Iterates pairs, maintaining two parallel `ArrayList`s: `vSets` (HashSets of views) and `pairSets` (lists of pairs). For each pair (a, b):
+- Neither view in any set → new set with both views and the pair
+- Only `a` in a set → add `b` and the pair to that set
+- Only `b` in a set → add `a` and the pair to that set
+- Both in the same set → add the pair
+- Both in different sets → **merge** the two sets
 
-## Oct-Tree Adaptive Image Splitting
+After pair iteration: views not in any pair get their own singleton subsets, then groups force-merge subsets containing grouped views, then precursors are converted into `Subset` objects.
 
-### Overview
+### Lesson: `detectSubsets` Merge Bug (2025-12-03)
 
-The oct-tree splitting system adaptively subdivides large images into smaller tiles based on interest point correspondence density. This is useful for processing very large datasets where registration quality varies across the image - regions with many correspondences (potential conflicts) are split into smaller tiles, while regions with few correspondences remain large.
-
-### Key Files
-
-```
-src/main/java/net/preibisch/mvrecon/process/splitting/
-├── SplitOctTree.java                    # Main splitting algorithm
-├── OctTreeSplitCriterion.java           # Interface for split criteria
-├── CrossViewCorrespondenceCriterion.java # Simple correspondence count criterion
-├── ConsensusSetCriterion.java           # Multi-consensus RANSAC set criterion
-├── SplitDistributeEvenly.java           # Uniform grid splitting (alternative)
-└── SplittingTools.java                  # Entry point utilities
-```
-
-### Split Criteria
-
-#### OctTreeSplitCriterion Interface (OctTreeSplitCriterion.java)
-
-The interface that all split criteria implement:
+When both views were already in **different** sets, the original code called `mergeSets()` but **forgot to add the triggering pair** to the merged set. Result: the pair connecting two previously-separate subsets was silently dropped.
 
 ```java
-public interface OctTreeSplitCriterion {
-    // Load correspondences for a view (called once per view)
-    List<SplitCorrespondence> loadCorrespondences(ViewId viewId);
-
-    // Decide whether to split based on correspondences in current region
-    boolean shouldSplit(List<SplitCorrespondence> correspondences);
-
-    // Check if regions can be merged (default: !shouldSplit)
-    default boolean canMerge(List<SplitCorrespondence> correspondences);
-}
-```
-
-**SplitCorrespondence Structure**:
-- `double[] location` - Detection position in local coordinates (for spatial partitioning)
-- `int detectionId` - Unique ID within the view (for counting unique detections)
-- `String corrViewKey` - Key identifying corresponding view: "timepointId_setupId"
-- `int consensusSetId` - RANSAC consensus set ID (-1 for single-consensus mode)
-
-#### CrossViewCorrespondenceCriterion
-
-Simple criterion that counts unique cross-view corresponding detections:
-- **Splits when**: unique detections > threshold (default: 20)
-- **Use case**: Basic splitting based on correspondence density
-
-#### ConsensusSetCriterion (Multi-Consensus)
-
-Advanced criterion that considers RANSAC consensus sets:
-- **Stops splitting when EITHER**:
-  1. Unique detections ≤ threshold (default: 12), OR
-  2. All corresponding views have correspondences from only ONE consensus set
-- **Continues splitting only if**: detections > threshold AND any view has >1 consensus set
-
-**Tolerance Modes**:
-- `TOLERANCE_NONE` - Any correspondence from another set triggers split
-- `TOLERANCE_PERCENTAGE` - Allow up to X% from other sets
-- `TOLERANCE_COUNT` - Allow up to N correspondences from other sets
-
-**Why This Matters**: When multi-consensus RANSAC finds multiple transformation models in a view pair, it indicates the region contains parts of the sample that moved differently. Splitting isolates these regions for separate registration.
-
-### Splitting Algorithm (SplitOctTree.java)
-
-#### Recursive Correspondence Partitioning
-
-The algorithm uses O(n log n) recursive partitioning instead of O(n × intervals) naive approach:
-
-1. **Load correspondences once** per view at the start
-2. **Partition correspondences** as intervals are split (not re-query)
-3. **Overlap handling**: Correspondences in overlap regions go to BOTH adjacent children
-
-```java
-// Partition logic for each dimension
-if (corr.location[d] < splitPoint - minStepSize)
-    belongsTo[d] = 0;  // lower only
-else if (corr.location[d] >= splitPoint + minStepSize)
-    belongsTo[d] = 1;  // upper only
-else
-    belongsTo[d] = 2;  // overlap - both children
-```
-
-#### Tile Overlap
-
-All tiles overlap by `minStepSize` to support:
-- Fake corresponding points generation at tile boundaries
-- Proper stitching after per-tile processing
-
-#### Block Re-Merging
-
-After splitting, adjacent blocks can be merged back if their combined metric is below threshold:
-1. **Full merge**: All 8 octants → parent (if canMerge succeeds)
-2. **Half-space merges**: Try merging along each dimension (4+4 octants)
-3. **Quadrant merges**: Try merging quadrants (2+2+2+2 octants)
-4. **Individual octant merges**: Merge children within each octant
-
-#### Minimum Split Levels
-
-Force a minimum number of split operations regardless of correspondence count:
-- `minSplitLevels=0` - Fully adaptive (may not split at all)
-- `minSplitLevels=1` - Always split at least once (up to 8 tiles)
-- `minSplitLevels=2` - Always split twice (up to 64 tiles)
-
-Validated upfront against tile size constraints to prevent impossible configurations.
-
-### Static vs Instance Methods
-
-The splitting supports both sequential and parallel execution:
-
-```java
-// Instance method (sequential, accumulates statistics)
-SplitOctTree splitter = new SplitOctTree(...);
-splitter.setCurrentContext(viewId, timepointId);
-ArrayList<Interval> intervals = splitter.split(input);
-
-// Static method (parallel-safe, returns SplitStatistics)
-SplitStatistics result = SplitOctTree.splitStatic(
-    input, viewId, criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels
-);
-```
-
-### GUI Integration
-
-The splitting system integrates with the standard GenericDialog workflow:
-
-```java
-// In plugin setup
-GenericDialog gd = new GenericDialog("Split Settings");
-SplitOctTree.setupGUI(gd, data, minStepSize);  // Adds criterion selection + parameters
-gd.showDialog();
-SplitOctTree splitter = SplitOctTree.queryGUI(gd, data, minStepSize);
-```
-
-Features:
-- Per-dimension minimum tile size sliders (X, Y, Z independently)
-- Criterion selection (Cross-view correspondences vs Multi-consensus sets)
-- Interest point label multi-select
-- Tolerance mode configuration for multi-consensus
-
-### Performance Optimizations
-
-1. **Recursive partitioning**: O(n log n) instead of O(n × intervals)
-2. **Cached correspondence loading**: Load once per view, partition as needed
-3. **Parallel splitting**: Static methods enable parallel stream processing
-4. **Pre-validation**: minSplitLevels validated against tile size before splitting
-
-### Default Grouping for Split Datasets
-
-When opening a Split dataset in the Data Explorer:
-- **"Group Tiles"** is enabled by default
-- **"Group Illuminations"** is disabled by default
-
-Detection via `isSplitDataset()` method checking for `SplitViewerImgLoader` or `SplitMultiResolutionImgLoader`.
-
-## Registration Performance Optimization for Large Datasets (100K+ Views)
-
-### Overview
-
-The registration workflow was optimized to handle datasets with 100,000+ views. Key bottlenecks were identified and fixed in `TransformationTools.java` and `Subset.java`.
-
-### Optimizations Completed
-
-#### 1. Parallel Interest Point Loading (TransformationTools.java:685-724)
-
-**Problem**: `getAllInterestPoints()` loaded interest points sequentially.
-
-**Solution**: Parallelized using `ForkJoinPool` with controlled thread count:
-
-```java
-public static <V> Map<V, HashMap<String, Collection<InterestPoint>>> getAllInterestPoints(...)
+else // both present in different sets
 {
-    final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
-    try {
-        return (Map<V, HashMap<String, Collection<InterestPoint>>>) pool.submit(() ->
-            viewIds.parallelStream()
-                .collect(Collectors.toConcurrentMap(
-                    viewId -> viewId,
-                    viewId -> getInterestPoints((V) viewId, registrations, interestpoints, labelMap, transform)
-                ))
-        ).get();
-    } catch (final InterruptedException e) {
-        Thread.currentThread().interrupt();
-        throw new RuntimeException("Interest point loading was interrupted", e);
-    } catch (final Exception e) {
-        throw new RuntimeException("Failed to load interest points", e);
-    } finally {
-        pool.shutdown();
-    }
+    mergeSets(vSets, pairSets, i1, i2);
+    pairSets.get(pairSets.size() - 1).add(pair);  // FIX: was missing
 }
 ```
 
-**Key decisions**:
-- Uses `Threads.numThreads()` for consistent parallelism control
-- Uses `Collectors.toConcurrentMap()` for thread-safe collection
-- No fallback code - if parallel fails due to I/O, sequential would fail too
+`mergeSets` removes the old sets and **appends the merged set at the end** of both `vSets` and `pairSets` — so the merged set is always at index `pairSets.size() - 1`. The Javadoc and inline comments now document this invariant.
 
-#### 2. Pre-computed Group Membership (TransformationTools.java:618-700)
+**Why it was hard to spot**: every other branch of the conditional correctly added the pair. The merge branch was the only one that didn't, and the bug only manifested when a pair connected previously-disconnected groups.
 
-**Problem**: `filterForOverlappingInterestPoints()` checked group membership with O(g) loop per view pair:
-```java
-for (final Group<ViewId> group : groups)
-    if (group.contains(viewId) && group.contains(otherViewId))
-        continue A;
-```
+## Performance: Large Datasets (100K+ Views)
 
-**Solution**: Pre-compute `sameGroupPairs` set for O(1) lookup:
+The registration workflow was optimized for 100K+ views. Key bottlenecks were in `TransformationTools.java` and `Subset.java`.
 
-```java
-// Pre-compute which view pairs share a group (O(g·k²) where k = avg group size)
-final Set<Pair<ViewId, ViewId>> sameGroupPairs = new HashSet<>();
-for (final Group<ViewId> group : groups) {
-    final List<ViewId> members = new ArrayList<>(group.getViews());
-    for (int i = 0; i < members.size(); i++)
-        for (int j = i + 1; j < members.size(); j++)
-            sameGroupPairs.add(new ValuePair<>(members.get(i), members.get(j)));
-}
+### Optimizations
 
-// Then O(1) lookup:
-if (sameGroupPairs.contains(new ValuePair<>(viewId, otherViewId)) ||
-    sameGroupPairs.contains(new ValuePair<>(otherViewId, viewId)))
-    continue A;
-```
+#### 1. Parallel Interest-Point Loading (`TransformationTools.getAllInterestPoints`)
+Was sequential. Now uses `ForkJoinPool(Threads.numThreads())` + `parallelStream()` + `Collectors.toConcurrentMap()`. No fallback — if parallel I/O fails, sequential would too.
 
-#### 3. Parallel Overlap Filtering (TransformationTools.java:618-700)
+#### 2. Pre-Computed Group Membership (`filterForOverlappingInterestPoints`)
+Was: `for (Group g : groups) if (g.contains(a) && g.contains(b)) skip;` — O(g) per pair.
+Now: pre-compute a `HashSet<Pair<ViewId,ViewId>> sameGroupPairs` once (O(g·k²) where k = avg group size), then O(1) lookup per pair.
 
-**Problem**: Sequential loop over views for overlap filtering.
+#### 3. Parallel Overlap Filtering
+Outer loop over views is now a `parallelStream()` inside a `ForkJoinPool`. Each view's `overlappingPoints` list is independent.
 
-**Solution**: Process each view in parallel using `ForkJoinPool`:
+#### 4. Optimized `Subset.getGroupedPairs`
+Was O(p · g²) (iterated all groups × groups for each pair).
+Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair iterate only `groupsA × groupsB` (O(p · k²) with k ≈ 1–2 typical groups per view). Uses canonical (min, max) ordering to dedupe pairs without bidirectional `HashSet` checks.
 
-```java
-final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
-try {
-    pool.submit(() ->
-        interestpoints.entrySet().parallelStream().forEach(element -> {
-            // Process each view independently
-            // Each view's overlappingPoints list is independent
-        })
-    ).get();
-} finally {
-    pool.shutdown();
-}
-```
-
-#### 4. Optimized getGroupedPairs() (Subset.java:98-145)
-
-**Problem**: `getGroupedPairs()` iterated all groups × groups for each pair: O(p·g²)
-
-**Solution**: Pre-compute view→groupIndices mapping for O(p·k²) where k = avg groups per view (typically 1-2):
-
-```java
-// Pre-compute view → group indices mapping (O(g·k) where k = avg group size)
-final Map<V, List<Integer>> viewToGroupIndices = new HashMap<>();
-for (int i = 0; i < groups.size(); ++i) {
-    final int groupIdx = i;
-    for (final V view : groups.get(i).getViews())
-        viewToGroupIndices.computeIfAbsent(view, k -> new ArrayList<>()).add(groupIdx);
-}
-
-// For each pair, look up groups directly
-for (final Pair<V, V> pair : pairs) {
-    final List<Integer> groupsA = viewToGroupIndices.getOrDefault(pair.getA(), Collections.emptyList());
-    final List<Integer> groupsB = viewToGroupIndices.getOrDefault(pair.getB(), Collections.emptyList());
-
-    for (final int i : groupsA)
-        for (final int j : groupsB) {
-            // Use canonical ordering to avoid checking both (i,j) and (j,i)
-            final int minIdx = Math.min(i, j);
-            final int maxIdx = Math.max(i, j);
-            groupPairs.add(new ValuePair<>(minIdx, maxIdx));
-        }
-}
-```
-
-**Additional optimization**: Canonical pair ordering (min, max) eliminates bidirectional HashSet checks.
-
-### Files Modified
-
-1. **TransformationTools.java** (`src/main/java/net/preibisch/mvrecon/process/interestpointregistration/TransformationTools.java`)
-   - Lines 618-700: `filterForOverlappingInterestPoints()` with pre-computed group pairs and parallel processing
-   - Lines 685-724: `getAllInterestPoints()` with parallel loading
-
-2. **Subset.java** (`src/main/java/net/preibisch/mvrecon/process/interestpointregistration/pairwise/constellation/Subset.java`)
-   - Lines 98-145: `getGroupedPairs()` with view→groups mapping and canonical ordering
-
-### Complexity Improvements
+### Complexity Summary
 
 | Operation | Before | After |
 |-----------|--------|-------|
-| Interest point loading | O(n) sequential | O(n/threads) parallel |
-| Group membership check | O(g) per pair | O(1) lookup |
-| Overlap filtering | O(n) sequential | O(n/threads) parallel |
-| getGroupedPairs() | O(p·g²) | O(p·k²) where k ≈ 1-2 |
+| Interest-point loading | O(n) sequential | O(n / threads) parallel |
+| Group-membership check | O(g) per pair | O(1) lookup |
+| Overlap filtering | O(n) sequential | O(n / threads) parallel |
+| `getGroupedPairs` | O(p · g²) | O(p · k²) where k ≈ 1–2 |
 
-### Potential Future Optimization: Lazy Correspondence Loading
+### Potential Next Optimization
+`LoadCorrespondencesPairwise.match()` calls `ipA.getCorrespondingInterestPointsCopy()`, which lazily opens an N5 reader, reads attrs, opens the dataset, and iterates correspondences — per pair. Even with `computePairs()` parallelized, each pair triggers I/O. A bulk parallel pre-load before `computePairs()` would amortize this.
 
-**Identified bottleneck**: `LoadCorrespondencesPairwise.match()` (line 97-98) triggers lazy I/O:
+## BDV Performance — Use Batch APIs
+
+### Lesson: Per-Source Calls Don't Scale
+
+Opening a 12,903-view dataset in Data_Explorer used to take **6+ minutes** before the GUI appeared. Per-source visibility/coloring calls each fire event listeners (~28 ms × 12K sources = ~6 minutes of pure event dispatch).
+
+Switching to BDV's batch APIs brought it to **<1 s**.
+
+### `ViewerState` Batch API (visibility)
+Recommended by BDV's author Tobias Pietzsch.
+- Access via `bdv.getViewer().state()`
+- `state.setSourcesActive(Collection<SourceAndConverter>, boolean)` — batch activate/deactivate
+- Use `synchronized(state)` when iterating sources
+
+### `ConverterSetups` API (coloring)
+- Access via `bdv.getViewerFrame().getConverterSetups()` — **not** `bdv.getSetupAssignments()`
+- `cs.getConverterSetup(SourceAndConverter)` → call `setup.setColor(ARGBType)`
+
+### Pattern
 ```java
-final Collection<CorrespondingInterestPoints> corrA = ipA.getCorrespondingInterestPointsCopy();
+// Visibility
+ViewerState state = bdv.getViewer().state();
+List<SourceAndConverter<?>> active = new ArrayList<>();
+synchronized (state) {
+    BDVUtils.forEachAbstractSpimSource(state.getSources(), (soc, src) -> {
+        if (activeSetupIds.contains(src.getSetupId())) active.add(soc);
+    });
+}
+List<SourceAndConverter<?>> inactive = new ArrayList<>(state.getSources());
+inactive.removeAll(active);
+state.setSourcesActive(inactive, false);
+state.setSourcesActive(active, true);
+
+// Coloring
+ConverterSetups cs = bdv.getViewerFrame().getConverterSetups();
+synchronized (state) {
+    for (SourceAndConverter<?> soc : state.getSources()) {
+        ConverterSetup s = cs.getConverterSetup(soc);
+        if (s != null) s.setColor(color);
+    }
+}
 ```
 
-This calls `InterestPointsN5.loadCorrespondences()` which:
-1. Opens N5Reader
-2. Reads N5 attributes
-3. Opens N5 dataset via `N5Utils.open()`
-4. Iterates through correspondence data
+### `util/BDVTools.java`
+Consolidated batch helpers: `setFusedModeSimple`, `setVisibleSourcesBatch`, `whiteSourcesBatch`, `colorSourcesBatch`, `colorByFactors`, `resetBDVManualTransformations`, `getBDVTimePointIndex`, `getBDVSourceIndex`. Older per-source helpers (`whiteSources`, `sameColorSources`) kept for compatibility but deprecated.
 
-Even though `computePairs()` is parallelized, each pair may trigger lazy I/O. Potential fix: pre-load all correspondences in parallel before `computePairs()` starts.
+### Avoid
+- `bdv.getSetupAssignments().getConverterSetups()` — old API
+- `VisibilityAndGrouping.setSourceActive(int, boolean)` — per-source, slow
+- Direct `new N5ZarrWriter(...)` — use `URITools.instantiateN5Writer()`
 
+References:
+- [`ViewerState`](https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ViewerState.java)
+- [`ConverterSetups`](https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ConverterSetups.java)
+
+## N5 / Zarr Export
+
+### Two Workflows
+- **Fusion Export** (`ExportN5Api.java`): blends multiple views into a single fused volume per timepoint/channel, or one combined 5D OME-ZARR `[x,y,z,c,t]` container. Used for final visualization and downstream analysis.
+- **Resave** (`Resave_N5Api.java`): per-view re-export to N5 / HDF5 / Zarr **preserving the original view structure**. Multi-resolution pyramids per view, BDV-compatible XML metadata. For Zarr, **always** uses 5D OME-ZARR (3D expanded to `[x,y,z,c=1,t=1]`). Used for converting legacy formats or producing cloud-compatible copies.
+
+**Key distinction**: fusion = one fused volume; resaving = separate per-view volumes.
+
+### Lesson: Always Use `URITools.instantiateN5Writer`
+Direct `new N5ZarrWriter(path)` is missing GsonBuilder configuration (including `CoordinateTransformationAdapter`), correct boolean flags for Zarr compatibility, and proper URI handling.
+
+```java
+// Correct
+N5Writer writer = util.URITools.instantiateN5Writer(
+    StorageFormat.ZARR, outputPath.toURI());
+```
+
+### Zarr v3 Sharding
+
+Sharding groups multiple inner blocks (e.g., 32³) into larger shards (e.g., 128³) stored in a single file, reducing metadata overhead for cloud storage. Shards must be written as **complete units**.
+
+#### Critical: `Grid.create(dimensions, computeBlockSize, blockSize)`
+- `computeBlockSize`: write granularity (size of each write op)
+- `blockSize`: inner chunk size in metadata
+- **With sharding**: `computeBlockSize = shardSize`, `blockSize` = inner chunk size
+- **Without sharding**: `computeBlockSize = blockSize`
+
+#### `MultiResolutionLevelInfo` (`N5ApiTools.java`)
+Holds per-level metadata: dimensions, blockSize, downsampling factors, dataset path, dataType, and `shardSize` (null = no sharding).
+
+**Shard size is constant across all pyramid levels** (s0, s1, s2, …). Do not scale with downsampling factors.
+
+For OME-ZARR, sharding metadata expands 3D → 5D `[x,y,z,c,t]`.
+
+#### Lesson: Inverted Ternary Bug (5D OME-ZARR Sharding)
+Was: `(useSharding) ? null : shardSize5D` — the operator was inverted, so sharding mode passed `null`. Fix: `(useSharding) ? shardSize5D : null`.
+
+#### Lesson: Downsampled-Levels Shard Size
+Originally s1+ levels passed `blockSize` instead of `shardSize` to `assembleJobs()`. `Grid.create()` then made multiple small blocks instead of shard-sized ones, scattering data to wrong positions inside shards. Symptom: "wild" visualization — top-left quadrant for z<64, bottom-right for z≥64. Fix: pass `mrInfo.shardSize` (resave) or `this.shardSize` (fusion) when sharding.
+
+#### Lesson: Zarr v3 Dimensions Reading
+`getAttribute(DIMENSIONS_KEY)` returns `null` in Zarr v3 because dimensions live in `zarr.json` as `shape`, not as a separate attribute. Use `getDatasetAttributes(ds).getDimensions()` instead.
+
+#### ZARR v2 Support
+All ZARR (v3) format checks are paired with `|| StorageFormat.ZARR2` (11 sites: `Resave_N5Api`, `ExportN5Api`, `N5ApiTools`). v3-specific features (sharding dialogs/code paths) are intentionally excluded for v2.
+
+### Gotchas Summary
+1. `N5Utils.saveBlock()` **doesn't buffer** — we must hand it complete shard-sized chunks
+2. Always use `URITools.instantiateN5Writer()`
+3. OME-ZARR sharding metadata must be 5D-expanded
+4. Don't scale `shardSize` across pyramid levels
+5. `computeBlockSize = shardSize` is critical for shard-aware writing
+
+### Test Status
+`TestN5Zarr` multi-resolution sharding tests fail with NPE at `PaddedRawBlockCodec.encode()` (via `writeDownsampledBlock` → `N5Utils.saveNonEmptyBlock`). Production GUI export works. Hypothesis: test-specific parameter init issue.
+
+## 4D / 5D OME-ZARR Import
+
+Axis order: TCZYX (in metadata) / XYZCT (data dimensions, reversed).
+
+`OMEZARREntry.indices`:
+- 3D: `null` or `[]`
+- 4D: `[channelId]`
+- 5D: `[channelId, timepointId]`
+
+`AllenOMEZarrLoader.extract3DVolume()` slices dims `3 .. 3+len-1` from the back:
+```java
+RandomAccessibleInterval<T> out = omeZarrVolume;
+for (int d = 3 + indices.length - 1; d >= 3; --d)
+    out = Views.hyperSlice(out, d, indices[d - 3]);
+```
+
+### Lesson: Slice Dimension for 4D
+`AllenOMEZarrLoader.java:119` — for 4D, slice **dimension 3**, not 4. (The 5D code path slices 4 then 3, but 4D only has dimensions 0..3.)
+
+### `OMEZARR.java` Behavior
+- Splits sizeC and sizeT init (4D has only sizeC)
+- Allows 4D in dimension checks
+- Smart fallbacks:
+  - 4D with sizeC=1 → treat as 3D with pattern-based channels
+  - 5D with sizeC=1 and sizeT=1 → treat as 3D with pattern-based views
+
+Use case: multi-channel single-timepoint microscopy (e.g., multi-color fluorescence).
+
+**Export not implemented** — import only. Fusion export creates 5D `[x,y,z,c=1,t=1]` which works for round-trips.
+
+### XML Examples
+```xml
+<zgroup setup="0" tp="0" path="dataset.zarr" indicies="[0]"/>      <!-- 4D, channel 0 -->
+<zgroup setup="1" tp="0" path="dataset.zarr" indicies="[1]"/>      <!-- 4D, channel 1 -->
+<zgroup setup="0" tp="0" path="dataset.zarr" indicies="[0 0]"/>    <!-- 5D, c=0 t=0 -->
+<zgroup setup="0" tp="1" path="dataset.zarr" indicies="[0 1]"/>    <!-- 5D, c=0 t=1 -->
+```
+
+## Oct-Tree Adaptive Image Splitting
+
+Adaptively subdivides large images into tiles based on interest-point correspondence density. Regions with many correspondences (potential conflicts / multiple consensus sets) are split into smaller tiles; regions with few correspondences stay large. Useful for very large datasets where registration quality varies spatially.
+
+### Files (`net.preibisch.mvrecon.process.splitting`)
+- `SplitOctTree.java` — main algorithm
+- `OctTreeSplitCriterion.java` — interface
+- `CrossViewCorrespondenceCriterion.java` — simple count-based
+- `ConsensusSetCriterion.java` — multi-consensus RANSAC-aware
+- `SplitDistributeEvenly.java` — alternative uniform grid splitting
+- `SplittingTools.java` — entry point utilities
+
+### `OctTreeSplitCriterion` Interface
+```java
+List<SplitCorrespondence> loadCorrespondences(ViewId viewId);   // once per view
+boolean shouldSplit(List<SplitCorrespondence> corrs);
+default boolean canMerge(List<SplitCorrespondence> corrs);      // default: !shouldSplit
+```
+
+`SplitCorrespondence`:
+- `double[] location` — local coords (for spatial partitioning)
+- `int detectionId` — unique within the view
+- `String corrViewKey` — `"timepointId_setupId"`
+- `int consensusSetId` — RANSAC consensus set, or -1 for single-consensus mode
+
+### Criteria
+- **CrossViewCorrespondenceCriterion**: split when unique cross-view detections > threshold (default 20)
+- **ConsensusSetCriterion** (multi-consensus): stop splitting when **either** unique detections ≤ threshold (default 12) **or** all corresponding views have correspondences from only one consensus set. Continue only if detections > threshold AND any view has > 1 consensus set.
+  - Tolerance modes: `TOLERANCE_NONE`, `TOLERANCE_PERCENTAGE` (X% from other sets allowed), `TOLERANCE_COUNT` (N from other sets allowed)
+
+**Why multi-consensus matters**: when RANSAC finds multiple transformation models in a view pair, that region likely contains parts of the sample that moved differently. Splitting isolates them for separate registration.
+
+### Algorithm
+
+#### Recursive Correspondence Partitioning
+O(n log n) instead of naive O(n × intervals):
+1. Load correspondences once per view at the start
+2. As intervals split, partition correspondences (don't re-query)
+3. Per dimension at split point `p` with overlap `minStepSize`:
+   - `loc[d] < p - minStepSize` → lower child only
+   - `loc[d] >= p + minStepSize` → upper child only
+   - else → **both** children (overlap region)
+
+#### Tile Overlap
+All tiles overlap by `minStepSize` to support fake corresponding-point generation at boundaries and proper stitching post-processing.
+
+#### Block Re-Merging
+After splitting, adjacent blocks can be merged back if `canMerge` permits:
+1. Full merge: 8 octants → parent
+2. Half-space merges: 4 + 4 along each dim
+3. Quadrant merges: 2 + 2 + 2 + 2
+4. Individual octant merges within each octant
+
+#### `minSplitLevels`
+Force minimum split operations regardless of correspondence count:
+- 0: fully adaptive (may not split at all)
+- 1: at least once (up to 8 tiles)
+- 2: at least twice (up to 64 tiles)
+
+Validated upfront against tile-size constraints to prevent impossible configurations.
+
+### Static vs Instance
+- **Instance**: sequential, accumulates statistics. `splitter.setCurrentContext(viewId, tpId); splitter.split(input)`.
+- **Static**: parallel-safe, returns `SplitStatistics`. `SplitOctTree.splitStatic(input, viewId, criterion, minStepSize, minSizeMultiplier, enableMerge, minSplitLevels)`.
+
+### GUI
+Standard `GenericDialog` flow:
+```java
+SplitOctTree.setupGUI(gd, data, minStepSize);  // criterion + parameters
+gd.showDialog();
+SplitOctTree splitter = SplitOctTree.queryGUI(gd, data, minStepSize);
+```
+Features: per-dimension min tile-size sliders (X, Y, Z), criterion choice, IP-label multi-select, tolerance mode for multi-consensus.
+
+### Default Grouping for Split Datasets
+When opening a Split dataset in Data Explorer:
+- **Group Tiles** is ON by default
+- **Group Illuminations** is OFF by default
+
+Detected via `isSplitDataset()` checking for `SplitViewerImgLoader` / `SplitMultiResolutionImgLoader`.
+
+## House Rules
+
+- **Never commit without explicit user consent.**
+- Branch state: read `git status` / `git log` — don't rely on stale notes here.
+- Build: `mvn compile`. Java 8.
