@@ -1,8 +1,9 @@
 package net.preibisch.mvrecon.process.fusion.tps;
 
 import java.net.URI;
-import java.util.HashMap;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import bdv.ViewerImgLoader;
@@ -15,26 +16,30 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.Localizable;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.RealInterval;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.DoubleArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.DisplacementFieldTransform;
 import net.imglib2.realtransform.RealTransform;
+import net.imglib2.realtransform.RealViews;
+import net.imglib2.realtransform.Scale3D;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
-import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import net.imglib2.view.composite.Composite;
 import net.imglib2.view.composite.GenericComposite;
+import net.imglib2.view.fluent.RandomAccessibleIntervalView;
+import net.imglib2.view.fluent.RandomAccessibleView;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
-import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion;
 
 public class TPSAssessQualityStepsize
 {
@@ -47,6 +52,70 @@ public class TPSAssessQualityStepsize
 		visualize(null, boundingBox, source, target, stepSize);
 	}
 
+	public static RandomAccessibleInterval<DoubleType> interpolatedField(
+			final ThinplateSplineTransform transform,
+			final Interval blockInterval,
+			final long[] stepSize )
+	{
+		// create a stepSize bigger interval to make sure the last pixel is interpolated properly
+		final long[] min = blockInterval.minAsLongArray();
+		final long[] max = blockInterval.maxAsLongArray();
+		Arrays.setAll( max, d -> max[ d ] + stepSize[ d ] );
+
+		final RandomAccessibleInterval<Localizable> subsampledPositionsExtended =
+				Views.subsample(
+						Intervals.positions( new FinalInterval( min, max ) ),
+						stepSize );
+
+		final int elements = (int)subsampledPositionsExtended.size();
+
+		final double[] x = new double[ elements ];
+		final double[] y = new double[ elements ];
+		final double[] z = new double[ elements ];
+
+		final double[] loc = new double[ 3 ];
+
+		int i = 0;
+		for ( final Localizable l : Views.flatIterable( subsampledPositionsExtended ) )
+		{
+			l.localize( loc );
+			transform.apply( loc, loc );
+
+			x[ i ] = loc[ 0 ];
+			y[ i ] = loc[ 1 ];
+			z[ i ] = loc[ 2 ];
+
+			++i;
+			//System.out.println( Util.printCoordinates( l ) );
+		}
+
+		final ArrayImg<DoubleType, DoubleArray > xImg = ArrayImgs.doubles( x, subsampledPositionsExtended.dimensionsAsLongArray() );
+		final ArrayImg<DoubleType, DoubleArray> yImg = ArrayImgs.doubles( y, subsampledPositionsExtended.dimensionsAsLongArray() );
+		final ArrayImg<DoubleType, DoubleArray> zImg = ArrayImgs.doubles( z, subsampledPositionsExtended.dimensionsAsLongArray() );
+
+		//ImageJFunctions.show( xImg ).setTitle( "xImg" );
+
+		final RandomAccessibleInterval<DoubleType> xInterp = Views.interval(
+				RealViews.affine(
+						xImg.view().extend( RandomAccessibleIntervalView.Extension.border()).interpolate( RandomAccessibleView.Interpolation.nLinear()),
+						new Scale3D( stepSize[ 0 ], stepSize[ 1 ], stepSize[ 2 ] )),
+				new FinalInterval(blockInterval.dimensionsAsLongArray()));
+
+		final RandomAccessibleInterval<DoubleType> yInterp = Views.interval(
+				RealViews.affine(
+						yImg.view().extend( RandomAccessibleIntervalView.Extension.border()).interpolate( RandomAccessibleView.Interpolation.nLinear()),
+						new Scale3D( stepSize[ 0 ], stepSize[ 1 ], stepSize[ 2 ] )),
+				new FinalInterval(blockInterval.dimensionsAsLongArray()));
+
+		final RandomAccessibleInterval<DoubleType> zInterp = Views.interval(
+				RealViews.affine(
+						zImg.view().extend( RandomAccessibleIntervalView.Extension.border()).interpolate( RandomAccessibleView.Interpolation.nLinear()),
+						new Scale3D( stepSize[ 0 ], stepSize[ 1 ], stepSize[ 2 ] )),
+				new FinalInterval(blockInterval.dimensionsAsLongArray()));
+
+		return Views.stack( xInterp, yInterp, zInterp );
+	}
+
 	public static void visualize(
 			final Interval sourceImageInterval,
 			final Interval boundingBox,
@@ -57,7 +126,7 @@ public class TPSAssessQualityStepsize
 		final ThinplateSplineTransform transform = new ThinplateSplineTransform( target, source ); // we go from output to input
 
 		RandomAccessibleInterval<DoubleType> interpField =
-				BlkThinPlateSplineFusion.interpolatedField( transform, boundingBox, stepSize );
+				interpolatedField( transform, boundingBox, stepSize );
 
 		final RandomAccessibleInterval<DoubleType> fullField =
 				fullDeformationField( transform, boundingBox );
@@ -74,7 +143,7 @@ public class TPSAssessQualityStepsize
 				loc[ 1 ] = gct.get( 1 ).get();
 				loc[ 2 ] = gct.get( 2 ).get();
 
-				if ( !BlkThinPlateSplineFusion.contains3d( sourceImageInterval, loc ) )
+				if ( !contains3d( sourceImageInterval, loc ) )
 				{
 					gct.get( 0 ).set( 0 );
 					gct.get( 1 ).set( 0 );
@@ -85,19 +154,19 @@ public class TPSAssessQualityStepsize
 			final RandomAccessibleInterval<DoubleType> interpFieldCopy =
 					Views.translate( ArrayImgs.doubles( interpField.dimensionsAsLongArray() ), interpField.minAsLongArray() );
 
-			final Cursor<? extends GenericComposite<DoubleType>> cIn = Views.flatIterable( Views.collapse( interpField ) ).cursor();
-			final Cursor<? extends GenericComposite<DoubleType>> cOut = Views.flatIterable( Views.collapse( interpFieldCopy ) ).cursor();
+			final Cursor< ? extends Composite< DoubleType > > cIn = Views.flatIterable( Views.collapse( interpField ) ).cursor();
+			final Cursor< ? extends Composite< DoubleType > > cOut = Views.flatIterable( Views.collapse( interpFieldCopy ) ).cursor();
 
 			while ( cIn.hasNext() )
 			{
-				final GenericComposite<DoubleType> in = cIn.next();
-				final GenericComposite<DoubleType> out = cOut.next();
+				final Composite<DoubleType> in = cIn.next();
+				final Composite<DoubleType> out = cOut.next();
 
 				loc[ 0 ] = in.get( 0 ).get();
 				loc[ 1 ] = in.get( 1 ).get();
 				loc[ 2 ] = in.get( 2 ).get();
 
-				if ( BlkThinPlateSplineFusion.contains3d( sourceImageInterval, loc ) )
+				if ( contains3d( sourceImageInterval, loc ) )
 				{
 					out.get( 0 ).set( loc[ 0 ] );
 					out.get( 1 ).set( loc[ 1 ] );
@@ -110,6 +179,20 @@ public class TPSAssessQualityStepsize
 
 		ImageJFunctions.show( interpField ).setTitle( "interpolated_"+sourceImageInterval );
 		ImageJFunctions.show( fullField ).setTitle( "full_"+sourceImageInterval );
+	}
+
+	public static boolean contains3d( final RealInterval containing, final double[] contained )
+	{
+		if ( contained[ 0 ] < containing.realMin( 0 ) || contained[ 0 ] > containing.realMax( 0 ) )
+			return false;
+
+		if ( contained[ 1 ] < containing.realMin( 1 ) || contained[ 1 ] > containing.realMax( 1 ) )
+			return false;
+
+		if ( contained[ 2 ] < containing.realMin( 2 ) || contained[ 2 ] > containing.realMax( 2 ) )
+			return false;
+
+		return true;
 	}
 
 	public static DisplacementFieldTransform interpolateTransform(
@@ -169,11 +252,11 @@ public class TPSAssessQualityStepsize
 
 	public static void main( String[] args ) throws SpimDataException
 	{
-		final SpimData2 data = 
+		final SpimData2 data =
 				new XmlIoSpimData2().load(
 						URI.create("file:/Users/preibischs/SparkTest/Stitching/dataset.split.xml") );
 
-		final ViewerImgLoader underlyingImgLoader = BlkThinPlateSplineFusion.getUnderlyingImageLoader(data);
+		final ViewerImgLoader underlyingImgLoader = SplitImgLoaderThinPlateSplineFusion.getUnderlyingImageLoader(data);
 
 		if ( underlyingImgLoader == null )
 			return;
@@ -182,7 +265,7 @@ public class TPSAssessQualityStepsize
 		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
 
 		// get all underlying ViewIds with channelId == 0
-		final List< ViewId > underlyingViewIds = 
+		final List< ViewId > underlyingViewIds =
 				underlyingSD.getViewDescriptions().values().stream()
 				.filter( vd -> vd.isPresent() )
 				.filter( vd -> vd.getViewSetup().getChannel().getId() == 0 /*&& vd.getViewSetupId() == 0*/ )
@@ -195,14 +278,14 @@ public class TPSAssessQualityStepsize
 			return;
 		}
 
-		final HashMap<Integer, List<Integer>> old2newSetupId = BlkThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() );
-		final List< ViewId > splitViewIds = BlkThinPlateSplineFusion.splitViewIds( underlyingViewIds, old2newSetupId );
+		final Map<Integer, List<Integer>> old2newSetupId = SplitImgLoaderThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() );
+		final List< ViewId > splitViewIds = SplitImgLoaderThinPlateSplineFusion.splitViewIds( underlyingViewIds, old2newSetupId );
 
 		// we estimate the bounding box using the split imagel loader, which will be closer to real bounding box
 		BoundingBox boundingBox = new BoundingBoxMaximal( splitViewIds, data ).estimate( "Full Bounding Box" );
 		System.out.println( boundingBox );
 
-		final HashMap< ViewId, Pair< double[][], double[][] > > coeff =
+		final Map< ViewId, Landmarks > coeff =
 				TestTPSFusion.getCoefficients( splitImgLoader, data.getViewRegistrations().getViewRegistrations(), underlyingViewIds, Double.NaN, Double.NaN );
 
 		new ImageJ();
@@ -212,7 +295,7 @@ public class TPSAssessQualityStepsize
 				new long[] { boundingBox.min( 0 ), boundingBox.min( 1 ), (boundingBox.min( 2 )+ boundingBox.max( 2 ))/2 },
 				new long[] { boundingBox.max( 0 ), boundingBox.max( 1 ), (boundingBox.min( 2 )+ boundingBox.max( 2 ))/2 } );
 
-		visualize( slice, coeff.get( v ).getA(), coeff.get( v ).getB(), new long[] { 10, 10, 10 } );
+		visualize( slice, coeff.get( v ).getSourcePoints(), coeff.get( v ).getTargetPoints(), new long[] { 10, 10, 10 } );
 		/*visualize(
 				new FinalInterval( underlyingSD.getViewDescription( v ).getViewSetup().getSize() ),
 				slice, coeff.get( v ).getA(), coeff.get( v ).getB(), new long[] { 10, 10, 10 } );*/
