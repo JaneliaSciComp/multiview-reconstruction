@@ -599,15 +599,11 @@ public class Interest_Point_Registration implements PlugIn
 				final ViewRegistration vr = registrations.get( viewId );
 
 				TransformationTools.storeTransformation( vr, viewId, tile, mapBack, pairwiseMatching.getMatchingModel().getDescription() );
-
-				// TODO: We assume it is Affine3D here
-				String output = Group.pvid( viewId ) + ": " + TransformationTools.printAffine3D( (Affine3D<?>)tile.getModel() );
-
-				if ( tile.getModel() instanceof RigidModel3D )
-					IOFunctions.println( output + ", " + TransformationTools.getRotationAxis( (RigidModel3D)tile.getModel() ) );
-				else
-					IOFunctions.println( output + ", " + TransformationTools.getScaling( (Affine3D<?>)tile.getModel() ) );
 			}
+
+			// print per-view transformations + identity-vs-non-identity summary,
+			// gated by TransformationTools.maxPerViewTransformLog
+			TransformationTools.printAndSummarizeTransformations( subset.getViews(), models );
 		}
 
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): DONE." );

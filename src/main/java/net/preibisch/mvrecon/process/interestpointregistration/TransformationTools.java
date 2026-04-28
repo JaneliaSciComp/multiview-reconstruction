@@ -26,6 +26,7 @@ import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -1092,6 +1093,93 @@ public class TransformationTools
 			   m[2][0], m[2][1], m[2][2], m[2][3] );
 
 		return t;
+	}
+
+	/**
+	 * Maximum number of per-view 'Transformation Models:' lines to print from
+	 * {@link #printAndSummarizeTransformations} per call before output is suppressed.
+	 * Set to {@link Integer#MAX_VALUE} to print everything (legacy behavior).
+	 * The identity-vs-non-identity summary is always emitted regardless of this threshold.
+	 *
+	 * The cap is per-call (per "Transformation Models:" block), so in TWO_ROUND global opt
+	 * round 1 and round 2 each get their own budget.
+	 */
+	public static int maxPerViewTransformLog = 1000;
+
+	/** Tolerance used by {@link #isApproximatelyIdentity}. */
+	private static final double IDENTITY_EPSILON = 1e-6;
+
+	/**
+	 * Print per-view transformation models (capped at {@link #maxPerViewTransformLog})
+	 * followed by a one-line summary of identity vs non-identity counts. Replaces the
+	 * inlined print loop that {@code GlobalOpt} and {@code GlobalOptIterative} used to have.
+	 *
+	 * @param views ordered iterable of ViewIds (the print order)
+	 * @param map mapping from ViewId to its solved Tile (raw Tile accepted to support both
+	 *        {@code HashMap<ViewId, Tile<M>>} and the raw-typed {@code HashMap<ViewId, Tile>}
+	 *        callers that exist in BBS)
+	 */
+	@SuppressWarnings({ "rawtypes" })
+	public static void printAndSummarizeTransformations(
+			final Iterable< ? extends ViewId > views,
+			final Map< ? extends ViewId, ? extends Tile > map )
+	{
+		net.preibisch.legacy.io.IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Transformation Models:" );
+
+		int printed = 0;
+		boolean noticeEmitted = false;
+		long totalIdentity = 0;
+		long totalNonIdentity = 0;
+
+		for ( final ViewId viewId : views )
+		{
+			final Tile< ? > tile = map.get( viewId );
+			final Object model = tile.getModel();
+
+			// always tally identity vs non-identity
+			if ( model instanceof Affine3D< ? > && isApproximatelyIdentity( ( Affine3D< ? > ) model, IDENTITY_EPSILON ) )
+				totalIdentity++;
+			else
+				totalNonIdentity++;
+
+			if ( printed < maxPerViewTransformLog )
+			{
+				final String output = Group.pvid( viewId ) + ": " + printAffine3D( ( Affine3D< ? > ) model );
+				if ( model instanceof RigidModel3D )
+					net.preibisch.legacy.io.IOFunctions.println( output + ", " + getRotationAxis( ( RigidModel3D ) model ) );
+				else
+					net.preibisch.legacy.io.IOFunctions.println( output + ", " + getScaling( ( Affine3D< ? > ) model ) );
+				printed++;
+			}
+			else if ( !noticeEmitted )
+			{
+				noticeEmitted = true;
+				net.preibisch.legacy.io.IOFunctions.println( "(further per-view transformation lines suppressed; --maxPerViewTransformLog=" + maxPerViewTransformLog + ". Summary follows.)" );
+			}
+		}
+
+		final long total = totalIdentity + totalNonIdentity;
+		net.preibisch.legacy.io.IOFunctions.println(
+				"Transformation Models summary: " + total + " view(s); " +
+				totalIdentity + " identity, " + totalNonIdentity + " non-identity (ε=" + IDENTITY_EPSILON + ")" );
+	}
+
+	/**
+	 * @return true iff every element of the affine 3x4 matrix is within {@code eps} of the
+	 *         3D identity matrix (diag(1,1,1) with zero translation).
+	 */
+	public static boolean isApproximatelyIdentity( final Affine3D< ? > model, final double eps )
+	{
+		final double[][] m = new double[ 3 ][ 4 ];
+		model.toMatrix( m );
+		for ( int r = 0; r < 3; r++ )
+			for ( int c = 0; c < 4; c++ )
+			{
+				final double expected = ( r == c ) ? 1.0 : 0.0;
+				if ( Math.abs( m[ r ][ c ] - expected ) > eps )
+					return false;
+			}
+		return true;
 	}
 
 	public static boolean affineTransformsEqual( final AffineTransform3D tA, final AffineTransform3D tB )

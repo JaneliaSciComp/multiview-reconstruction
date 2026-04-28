@@ -28,11 +28,15 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import net.preibisch.legacy.io.IOFunctions;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
@@ -317,6 +321,9 @@ public class MatcherPairwiseTools
 
 		final List< Pair< Pair< V, V >, PairwiseResult< I > > > r = new ArrayList<>();
 
+		// reset the per-pair load-log cap counter before this batch starts
+		PairwiseResult.resetLogCounters();
+
 		try
 		{
 			// invokeAll() returns when all tasks are complete
@@ -340,6 +347,46 @@ public class MatcherPairwiseTools
 
 		if ( exec == null )
 			taskExecutor.shutdown();
+
+		// per-(labelA,labelB) summary: how many pairs loaded matches, plus min/avg/max counts
+		// (always emitted; complements the per-pair lines that may have been capped above)
+		// stats value layout: [count, loadedCount, sumMatches, minMatches, maxMatches]
+		final TreeMap< String, long[] > stats = new TreeMap<>();
+		long total = 0;
+		for ( final Pair< Pair< V, V >, PairwiseResult< I > > p : r )
+		{
+			final PairwiseResult< I > pwr = p.getB();
+			final String key = pwr.getLabelA() + " <-> " + pwr.getLabelB();
+			final long n = ( pwr.getInliers() == null ) ? 0 : pwr.getInliers().size();
+			final long[] s = stats.computeIfAbsent( key, k -> new long[]{ 0L, 0L, 0L, Long.MAX_VALUE, Long.MIN_VALUE } );
+			s[ 0 ]++;
+			if ( n > 0 )
+			{
+				s[ 1 ]++;
+				s[ 2 ] += n;
+				if ( n < s[ 3 ] ) s[ 3 ] = n;
+				if ( n > s[ 4 ] ) s[ 4 ] = n;
+			}
+			total++;
+		}
+
+		IOFunctions.println( "Pairwise correspondence-load summary: " + total + " pair(s) total" );
+		for ( final Map.Entry< String, long[] > e : stats.entrySet() )
+		{
+			final long[] s = e.getValue();
+			final long count = s[ 0 ];
+			final long loaded = s[ 1 ];
+			final long zeros = count - loaded;
+			if ( loaded == 0 )
+			{
+				IOFunctions.println( "  (" + e.getKey() + "): " + count + " pair(s), " + zeros + " with zero matches" );
+			}
+			else
+			{
+				final double avg = ( ( double ) s[ 2 ] ) / loaded;
+				IOFunctions.println( "  (" + e.getKey() + "): " + count + " pair(s), " + loaded + " with matches (" + zeros + " with zero), matches min=" + s[ 3 ] + " avg=" + String.format( Locale.ROOT, "%.1f", avg ) + " max=" + s[ 4 ] );
+			}
+		}
 
 		return r;
 	}
