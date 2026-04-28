@@ -70,6 +70,7 @@ public class Analyze_Errors implements PlugIn
 	public static int defaultTopNWorst  = 50;
 	public static int defaultBottomMBest = 50;
 	public static int defaultMiddleK    = 50;
+	public static boolean defaultPrintAll = true;
 
 	@Override
 	public void run( final String arg0 )
@@ -105,6 +106,95 @@ public class Analyze_Errors implements PlugIn
 		{
 			return groupTiles || groupChannels || groupIlluminations || groupAngles;
 		}
+	}
+
+	/** Aggregated error statistics for one (groupA, groupB) bucket. Returned by {@link #computeGroupPairs}. */
+	public static class GroupPairResult
+	{
+		public final Group< ViewDescription > groupA, groupB;
+		public final int count;
+		public final double min, avg, max;
+
+		public GroupPairResult( final Group< ViewDescription > groupA, final Group< ViewDescription > groupB,
+				final int count, final double min, final double avg, final double max )
+		{
+			this.groupA = groupA;
+			this.groupB = groupB;
+			this.count = count;
+			this.min = min;
+			this.avg = avg;
+			this.max = max;
+		}
+	}
+
+	/**
+	 * Bucket per-pair errors into per-group-pair buckets using {@link Group#combineBy}
+	 * (collapse semantics — same as ViewSetupExplorer / Interest_Point_Registration grouping).
+	 * Returns the buckets sorted descending by average error. Empty if no grouping is selected.
+	 *
+	 * Shared by the printed-log section in {@link #printResults} and the
+	 * AnalyzeErrorsResultsWindow GUI.
+	 */
+	public static ArrayList< GroupPairResult > computeGroupPairs(
+			final SpimData2 data,
+			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+			final Parameters p )
+	{
+		if ( !p.anyGroupingSelected() )
+			return new ArrayList<>();
+
+		final Set< Class< ? extends Entity > > factors = new HashSet<>();
+		if ( p.groupTiles )         factors.add( Tile.class );
+		if ( p.groupChannels )      factors.add( Channel.class );
+		if ( p.groupIlluminations ) factors.add( Illumination.class );
+		if ( p.groupAngles )        factors.add( Angle.class );
+
+		final HashSet< ViewId > seen = new HashSet<>();
+		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		{
+			seen.add( e.getA().getA() );
+			seen.add( e.getA().getB() );
+		}
+		final List< ViewDescription > vds = new ArrayList<>();
+		for ( final ViewId vid : seen )
+		{
+			final ViewDescription vd = data.getSequenceDescription().getViewDescriptions().get( vid );
+			if ( vd != null )
+				vds.add( vd );
+		}
+
+		final List< Group< ViewDescription > > groups = Group.combineBy( vds, factors );
+
+		final HashMap< ViewId, Group< ViewDescription > > viewToGroup = new HashMap<>();
+		final HashMap< Group< ViewDescription >, ViewId > groupRep = new HashMap<>();
+		for ( final Group< ViewDescription > g : groups )
+		{
+			for ( final ViewDescription vd : g.getViews() )
+				viewToGroup.put( vd, g );
+			groupRep.put( g, Group.getViewsSorted( g.getViews() ).get( 0 ) );
+		}
+
+		final HashMap< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > groupPairAcc = new HashMap<>();
+		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		{
+			final Group< ViewDescription > gA = viewToGroup.get( e.getA().getA() );
+			final Group< ViewDescription > gB = viewToGroup.get( e.getA().getB() );
+			if ( gA == null || gB == null )
+				continue;
+			final Group< ViewDescription > g1, g2;
+			if ( compareViewIds( groupRep.get( gA ), groupRep.get( gB ) ) <= 0 ) { g1 = gA; g2 = gB; }
+			else                                                                 { g1 = gB; g2 = gA; }
+			groupPairAcc.computeIfAbsent( new ValuePair<>( g1, g2 ), k -> new GroupAcc() ).add( e.getB() );
+		}
+
+		final ArrayList< GroupPairResult > result = new ArrayList<>( groupPairAcc.size() );
+		for ( final Map.Entry< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > e : groupPairAcc.entrySet() )
+		{
+			final GroupAcc a = e.getValue();
+			result.add( new GroupPairResult( e.getKey().getA(), e.getKey().getB(), (int) a.count, a.min, a.avg(), a.max ) );
+		}
+		result.sort( ( o1, o2 ) -> Double.compare( o2.avg, o1.avg ) );
+		return result;
 	}
 
 	/**
@@ -294,6 +384,7 @@ public class Analyze_Errors implements PlugIn
 		gd.addCheckbox( "Group_by_Angle",        defaultGroupAngles );
 
 		gd.addMessage( "Per-pair listing (top-worst + bottom-best + middle-K):", GUIHelper.largefont );
+		gd.addCheckbox( "Print_everything_(ignore_Top/Bottom/Middle)", defaultPrintAll );
 		gd.addNumericField( "Top_N_worst_pairs",   defaultTopNWorst,   0 );
 		gd.addNumericField( "Bottom_M_best_pairs", defaultBottomMBest, 0 );
 		gd.addNumericField( "Middle_K_pairs_(closest_to_median_and_average)", defaultMiddleK, 0 );
@@ -311,9 +402,25 @@ public class Analyze_Errors implements PlugIn
 		p.groupChannels      = Interest_Point_Registration.defaultGroupChannels = gd.getNextBoolean();
 		p.groupIlluminations = Interest_Point_Registration.defaultGroupIllums   = gd.getNextBoolean();
 		p.groupAngles        = defaultGroupAngles                                = gd.getNextBoolean();
-		p.topN               = defaultTopNWorst   = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
-		p.bottomM            = defaultBottomMBest = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
-		p.middleK            = defaultMiddleK     = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+		final boolean printAll = defaultPrintAll = gd.getNextBoolean();
+		final int topN_raw    = defaultTopNWorst   = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+		final int bottomM_raw = defaultBottomMBest = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+		final int middleK_raw = defaultMiddleK     = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+
+		// "Print everything" prints the full desc-sorted list once via the Top section
+		// and skips Bottom + Middle to avoid emitting the same rows three times.
+		if ( printAll )
+		{
+			p.topN    = Integer.MAX_VALUE;
+			p.bottomM = 0;
+			p.middleK = 0;
+		}
+		else
+		{
+			p.topN    = topN_raw;
+			p.bottomM = bottomM_raw;
+			p.middleK = middleK_raw;
+		}
 
 		final HashMap< String, Double > labelAndWeight = new HashMap<>();
 		p.labelAndWeights = labelAndWeight;
@@ -421,61 +528,30 @@ public class Analyze_Errors implements PlugIn
 		if ( !p.anyGroupingSelected() )
 			return;
 
-		// Build the grouping factor set: collapse semantics, identical to ViewSetupExplorer / registration.
-		// (Group.combineBy with Tile.class in the factor set merges views differing only in Tile.)
+		// Build the per-group-pair buckets via the shared helper (single Group.combineBy call).
+		final ArrayList< GroupPairResult > groupPairs = computeGroupPairs( data, errors, p );
+		final int totalGP = groupPairs.size();
+
+		// Re-derive factors (cheap) and the unique groups + ViewId→Group index from the result,
+		// so the rollup section below doesn't need a second Group.combineBy walk.
 		final Set< Class< ? extends Entity > > factors = new HashSet<>();
 		if ( p.groupTiles )         factors.add( Tile.class );
 		if ( p.groupChannels )      factors.add( Channel.class );
 		if ( p.groupIlluminations ) factors.add( Illumination.class );
 		if ( p.groupAngles )        factors.add( Angle.class );
 
-		// Resolve ViewIds → ViewDescriptions for the views that actually appear in `errors`.
-		final HashSet< ViewId > seen = new HashSet<>();
-		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		final HashSet< Group< ViewDescription > > uniqueGroups = new HashSet<>();
+		for ( final GroupPairResult r : groupPairs )
 		{
-			seen.add( e.getA().getA() );
-			seen.add( e.getA().getB() );
+			uniqueGroups.add( r.groupA );
+			uniqueGroups.add( r.groupB );
 		}
-		final List< ViewDescription > vds = new ArrayList<>();
-		for ( final ViewId vid : seen )
-		{
-			final ViewDescription vd = data.getSequenceDescription().getViewDescriptions().get( vid );
-			if ( vd != null )
-				vds.add( vd );
-		}
-
-		// One walk; same code path BBS / Interest_Point_Registration uses via AdvancedRegistrationParameters.getGroups.
-		final List< Group< ViewDescription > > groups = Group.combineBy( vds, factors );
-
-		// ViewId → canonical Group reverse index, plus Group → smallest-contained-ViewId for canonical ordering.
 		final HashMap< ViewId, Group< ViewDescription > > viewToGroup = new HashMap<>();
-		final HashMap< Group< ViewDescription >, ViewId > groupRep = new HashMap<>();
-		for ( final Group< ViewDescription > g : groups )
-		{
+		for ( final Group< ViewDescription > g : uniqueGroups )
 			for ( final ViewDescription vd : g.getViews() )
 				viewToGroup.put( vd, g );
-			groupRep.put( g, Group.getViewsSorted( g.getViews() ).get( 0 ) );
-		}
 
-		IOFunctions.println( "Grouping by " + describeFactors( factors ) + " (collapse): " + groups.size() + " group(s) over " + vds.size() + " view(s)." );
-
-		// Per-group-pair: bucket per-pair errors into (groupA, groupB) buckets, canonicalised.
-		final HashMap< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > groupPairAcc = new HashMap<>();
-		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
-		{
-			final Group< ViewDescription > gA = viewToGroup.get( e.getA().getA() );
-			final Group< ViewDescription > gB = viewToGroup.get( e.getA().getB() );
-			if ( gA == null || gB == null )
-				continue;
-			final Group< ViewDescription > g1, g2;
-			if ( compareViewIds( groupRep.get( gA ), groupRep.get( gB ) ) <= 0 ) { g1 = gA; g2 = gB; }
-			else                                                                 { g1 = gB; g2 = gA; }
-			final Pair< Group< ViewDescription >, Group< ViewDescription > > key = new ValuePair<>( g1, g2 );
-			groupPairAcc.computeIfAbsent( key, k -> new GroupAcc() ).add( e.getB() );
-		}
-		final ArrayList< Map.Entry< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > > groupPairs = new ArrayList<>( groupPairAcc.entrySet() );
-		groupPairs.sort( ( o1, o2 ) -> Double.compare( o2.getValue().avg(), o1.getValue().avg() ) );
-		final int totalGP = groupPairs.size();
+		IOFunctions.println( "Grouping by " + describeFactors( factors ) + " (collapse): " + uniqueGroups.size() + " group(s) over " + viewToGroup.size() + " view(s)." );
 
 		final int gpTopN = Math.min( p.topN, totalGP );
 		if ( gpTopN > 0 )
@@ -523,12 +599,10 @@ public class Analyze_Errors implements PlugIn
 		}
 	}
 
-	private static void printGroupPair(
-			final Map.Entry< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > entry )
+	private static void printGroupPair( final GroupPairResult r )
 	{
-		final GroupAcc a = entry.getValue();
-		IOFunctions.println( "  [" + Group.gvids( entry.getKey().getA() ) + "] <-> [" + Group.gvids( entry.getKey().getB() ) + "]: "
-				+ a.count + " pair(s), error min=" + fmt( a.min ) + " avg=" + fmt( a.avg() ) + " max=" + fmt( a.max ) );
+		IOFunctions.println( "  [" + Group.gvids( r.groupA ) + "] <-> [" + Group.gvids( r.groupB ) + "]: "
+				+ r.count + " pair(s), error min=" + fmt( r.min ) + " avg=" + fmt( r.avg ) + " max=" + fmt( r.max ) );
 	}
 
 	private static void printGroupRollup(

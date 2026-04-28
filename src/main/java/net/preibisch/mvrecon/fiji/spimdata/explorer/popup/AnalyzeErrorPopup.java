@@ -38,6 +38,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.util.Pair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.AnalyzeErrorsResultsWindow;
 import net.preibisch.mvrecon.fiji.plugin.Analyze_Errors;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
@@ -104,6 +105,12 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 					if ( errors.size() > 0 )
 					{
 						Analyze_Errors.printResults( panel.getSpimData(), errors, params );
+
+						// open the sortable results browser; click on a row recenters BDV
+						javax.swing.SwingUtilities.invokeLater( () ->
+								new AnalyzeErrorsResultsWindow(
+										panel.getSpimData(), errors, params,
+										(ViewSetupExplorerPanel< ? >) panel ) );
 
 						// disable coloring
 						final BDVPopup p = panel.bdvPopup();
