@@ -35,13 +35,20 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.SimpleInfoBox;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
 
 import ij.ImageJ;
+import ij.gui.GenericDialog;
 import ij.plugin.PlugIn;
 
 public class Data_Explorer implements PlugIn
 {
 	public static boolean showNote = false;
+
+	/** View-count threshold above which the "open BDV?" warning dialog appears. */
+	private static final int LARGE_DATASET_THRESHOLD = 10_000;
 
 	@Override
 	public void run( String arg )
@@ -76,8 +83,31 @@ public class Data_Explorer implements PlugIn
 		final XmlIoSpimData2 io = result.getIO();
 		net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] getData/XML/IO took " + (System.currentTimeMillis() - start) + " ms" );
 
+		// Warn before unconditionally opening BDV on very large datasets — it's slow and often
+		// not what the user wants. Below the threshold, behavior is unchanged (BDV opens).
+		boolean openBDV = true;
+		final int totalViews = data.getSequenceDescription().getViewSetups().size()
+				* data.getSequenceDescription().getTimePoints().size();
+		if ( totalViews > LARGE_DATASET_THRESHOLD )
+		{
+			final GenericDialog gd = new GenericDialog( "Large dataset" );
+			gd.addMessage( "This dataset has " + totalViews + " views. "
+					+ "Opening BigDataViewer for many views can be slow." );
+			gd.addCheckbox( "Open_BigDataViewer_at_startup", false );
+			gd.addNumericField( "Max_per-pair_connection_log_lines", InterestPointMatchCreator.maxPerPairLog, 0 );
+			gd.addNumericField( "Max_per-pair_correspondence-load_log_lines", PairwiseResult.maxPerPairCorrLog, 0 );
+			gd.addNumericField( "Max_per-view_transformation_log_lines", TransformationTools.maxPerViewTransformLog, 0 );
+			gd.showDialog();
+			if ( gd.wasCanceled() )
+				return;
+			openBDV = gd.getNextBoolean();
+			InterestPointMatchCreator.maxPerPairLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+			PairwiseResult.maxPerPairCorrLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+			TransformationTools.maxPerViewTransformLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+		}
+
 		start = System.currentTimeMillis();
-		final ViewSetupExplorer< SpimData2 > explorer = new ViewSetupExplorer<>( data, xml, io );
+		final ViewSetupExplorer< SpimData2 > explorer = new ViewSetupExplorer<>( data, xml, io, openBDV );
 		net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] ViewSetupExplorer creation took " + (System.currentTimeMillis() - start) + " ms" );
 
 		explorer.getFrame().toFront();
