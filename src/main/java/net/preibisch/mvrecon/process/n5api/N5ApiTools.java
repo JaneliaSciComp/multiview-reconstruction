@@ -612,8 +612,9 @@ public class N5ApiTools
 
 		// For sharded datasets, we must write complete shards including empty blocks
 		// because sparse shard reading is not fully supported yet
-		//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], previousScale.getType().createVariable() );
-		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridBlock[2]);
+		// using saveNonEmptyBlock again - need to test if this is supported with sharding
+		N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], previousScale.getType().createVariable() );
+//		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridBlock[2]);
 	}
 
 	public static < T extends NativeType< T > & RealType< T > > void writeDownsampledBlock5dOMEZARR(
@@ -662,8 +663,9 @@ public class N5ApiTools
 
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled5d, blockOffset, blockSize);
 
-		// using saveNonEmptyBlock - this is supported now
+		// using saveNonEmptyBlock again - need to test if this is supported with sharding
 		N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, downsampled5d.getType().createVariable() );
+//		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridOffset );
 	}
 
 	public static List<long[][]> assembleJobs( final MultiResolutionLevelInfo mrInfo )
@@ -803,8 +805,9 @@ public class N5ApiTools
 		}
 
 		final RandomAccessibleInterval< T > sourceGridBlock = Views.offsetInterval( image, blockOffset, blockSize );
-		//N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, image.getType().createVariable() );
-		N5Utils.saveBlock( sourceGridBlock, n5, dataset, gridOffset );
+		// using saveNonEmptyBlock again - need to test if this is supported with sharding
+		N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, image.getType().createVariable() );
+//		N5Utils.saveBlock( sourceGridBlock, n5, dataset, gridOffset );
 
 		System.out.println( "ViewId " + Group.pvid( viewId ) + ", written block: offset=" + Util.printCoordinates( blockOffset ) + ", dimension=" + Util.printCoordinates( blockSize ) );
 	}
