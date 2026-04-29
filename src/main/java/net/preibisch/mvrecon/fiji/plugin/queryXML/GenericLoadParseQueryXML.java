@@ -614,19 +614,24 @@ public abstract class GenericLoadParseQueryXML<
 		}
 		else
 		{
-			String selected = "";
-			
-			for ( int e = 0; e < entitiesToProcess.size(); ++e )
+			final int total = entitiesToProcess.size();
+			final int max = Math.min( 10, total );
+			final StringBuilder selected = new StringBuilder();
+
+			for ( int e = 0; e < max; ++e )
 			{
 				if ( entitiesToProcess.get( e ) instanceof NamedEntity )
-					selected += ((NamedEntity) entitiesToProcess.get( e )).getName();
+					selected.append( ((NamedEntity) entitiesToProcess.get( e )).getName() );
 				else
-					selected += entitiesToProcess.get( e ).getId();
-				
-				if ( e != entitiesToProcess.size() - 1 )
-					selected += ", ";
+					selected.append( entitiesToProcess.get( e ).getId() );
+
+				if ( e != max - 1 )
+					selected.append( ", " );
 			}
-			
+
+			if ( total > max )
+				selected.append( ", ... (" ).append( total ).append( " in total)" );
+
 			IOFunctions.println( attribute + "s selected: " + selected );
 		}
 		

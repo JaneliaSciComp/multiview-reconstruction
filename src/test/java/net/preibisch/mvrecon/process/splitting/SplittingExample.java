@@ -80,6 +80,7 @@ public class SplittingExample
 				SplittingTools.splitImages(
 						spimData,
 						new SplitDistributeEvenly(
+								spimData,
 								new long[] { 30, 30, 10 },
 								new long[] {
 										SplitDistributeEvenly.closestLongDivisableBy( 200, minStepSize[ 0 ] ),

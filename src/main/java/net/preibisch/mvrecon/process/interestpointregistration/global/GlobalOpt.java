@@ -134,31 +134,14 @@ public class GlobalOpt
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Min Error: " + tc.getMinError() + "px" );
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Max Error: " + tc.getMaxError() + "px" );
 		}
-		catch (NotEnoughDataPointsException e)
-		{
-			IOFunctions.println( "Global optimization failed: " + e );
-			e.printStackTrace();
-		}
-		catch (IllDefinedDataPointsException e)
+		catch (Exception e)
 		{
 			IOFunctions.println( "Global optimization failed: " + e );
 			e.printStackTrace();
 		}
 		
-		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Transformation Models:" );
-
 		// TODO: We assume it is Affine3D here
-		for ( final ViewId viewId : views )
-		{
-			final Tile< M > tile = map.get( viewId );
-			
-			String output = Group.pvid( viewId ) + ": " + TransformationTools.printAffine3D( (Affine3D<?>)tile.getModel() );
-			
-			if ( tile.getModel() instanceof RigidModel3D )
-				IOFunctions.println( output + ", " + TransformationTools.getRotationAxis( (RigidModel3D)tile.getModel() ) );
-			else
-				IOFunctions.println( output + ", " + TransformationTools.getScaling( (Affine3D<?>)tile.getModel() ) );
-		}
+		TransformationTools.printAndSummarizeTransformations( views, map );
 
 		return map;
 	}

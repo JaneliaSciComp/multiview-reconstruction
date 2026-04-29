@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import mpicbg.models.Model;
 import mpicbg.models.PointMatch;
@@ -44,6 +45,15 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 
 public class InterestPointMatchCreator implements PointMatchCreator
 {
+	/**
+	 * Maximum number of per-pair "Connecting … &lt;-&gt; …" lines to print from
+	 * {@link #assignPointMatches} before the per-pair output is suppressed.
+	 * Set to {@link Integer#MAX_VALUE} to print everything (legacy behavior).
+	 * The end-of-run summary (per-(labelA,labelB) pair-count + min/avg/max
+	 * correspondences) is always emitted regardless of this threshold.
+	 */
+	public static int maxPerPairLog = 100;
+
 	final List< ? extends Pair< ? extends Pair< ViewId, ViewId >, ? extends PairwiseResult< ? > > > pairs;
 	final Map< ViewId, ? extends Map< String, Double > > labelMap;
 
@@ -75,6 +85,13 @@ public class InterestPointMatchCreator implements PointMatchCreator
 			final ArrayList< Group< ViewId > > groups,
 			final Collection< ViewId > fixedViews )
 	{
+		// per-pair print cap + per-(labelA,labelB) summary accumulator
+		// stats value layout: [count, sumMatches, minMatches, maxMatches]
+		final TreeMap< String, long[] > stats = new TreeMap<>();
+		int printed = 0;
+		boolean noticeEmitted = false;
+		long totalConnected = 0;
+
 		for ( Pair< ? extends Pair< ViewId, ViewId >, ? extends PairwiseResult< ? > > pair : pairs )
 		{
 			final Tile< ? > tileA = tileMap.get( pair.getA().getA() );
@@ -112,10 +129,39 @@ public class InterestPointMatchCreator implements PointMatchCreator
 				// therefore we need to remember them for assignWeights()
 				pair.getB().setFlippedMatches( flippedMatches );
 
-				IOFunctions.println(
-						"Connecting " + Group.pvid( pair.getA().getA() ) + " (" + pair.getB().getLabelA() + ") <-> " +
-						Group.pvid( pair.getA().getB() ) + " (" + pair.getB().getLabelB()+ "): " + pair.getB().getInliers().size() + " matches, |w|=" + (r.getSum()/correspondences.size()) );
+				// always update the per-(labelA,labelB) summary
+				final String statsKey = pair.getB().getLabelA() + " <-> " + pair.getB().getLabelB();
+				final long n = correspondences.size();
+				final long[] s = stats.computeIfAbsent( statsKey, k -> new long[]{ 0L, 0L, Long.MAX_VALUE, Long.MIN_VALUE } );
+				s[ 0 ]++;
+				s[ 1 ] += n;
+				if ( n < s[ 2 ] ) s[ 2 ] = n;
+				if ( n > s[ 3 ] ) s[ 3 ] = n;
+				totalConnected++;
+
+				// per-pair line, gated by maxPerPairLog
+				if ( printed < maxPerPairLog )
+				{
+					IOFunctions.println(
+							"Connecting " + Group.pvid( pair.getA().getA() ) + " (" + pair.getB().getLabelA() + ") <-> " +
+							Group.pvid( pair.getA().getB() ) + " (" + pair.getB().getLabelB()+ "): " + pair.getB().getInliers().size() + " matches, |w|=" + (r.getSum()/correspondences.size()) );
+					printed++;
+				}
+				else if ( !noticeEmitted )
+				{
+					IOFunctions.println( "(further per-pair connection lines suppressed; --maxPerPairLog=" + maxPerPairLog + ". Summary follows.)" );
+					noticeEmitted = true;
+				}
 			}
+		}
+
+		// summary always emitted
+		IOFunctions.println( "Pairwise connection summary: " + totalConnected + " pair(s) total" );
+		for ( final Map.Entry< String, long[] > e : stats.entrySet() )
+		{
+			final long[] s = e.getValue();
+			final double avg = s[ 0 ] == 0 ? 0.0 : ( ( double ) s[ 1 ] ) / s[ 0 ];
+			IOFunctions.println( "  (" + e.getKey() + "): " + s[ 0 ] + " pair(s), matches min=" + s[ 2 ] + " avg=" + String.format( java.util.Locale.ROOT, "%.1f", avg ) + " max=" + s[ 3 ] );
 		}
 	}
 

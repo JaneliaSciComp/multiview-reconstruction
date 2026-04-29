@@ -9,12 +9,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -71,6 +71,40 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 
 public class BlkAffineFusion
 {
+	/**
+	 * TODO javadoc
+	 *
+	 *
+	 *
+	 * @param converter
+	 * 		converts from FloatType to the output type. Maybe null,
+	 * 		in which case a default converter (clamp to output type range) is used.
+	 * @param imgloader
+	 * 		the imgloader to fetch raw data
+	 * @param viewIds
+	 * 		which viewids to fuse
+	 * @param viewRegistrations
+	 * 		the registrations (must include anisotropy and downsampling if desired)
+	 * @param viewDescriptions
+	 * 		TODO
+	 * @param fusionType
+	 * 		how to combine pixels
+	 * @param anisotropyFactor
+	 * @param interpolationMethod
+	 * 		1==linear, 0==nearest neighbor
+	 * @param intensityAdjustments
+	 * 		intensity adjustments, can be null
+	 * @param fusionInterval
+	 * 		TODO
+	 * @param type
+	 * 		instance of the output type
+	 * @param blockSize
+	 * 		TODO
+	 * @param <T>
+	 * 		output type
+	 *
+	 * @return
+	 */
 	public static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > init(
 			final Converter< FloatType, T > converter,
 			final BasicImgLoader imgloader,
@@ -118,6 +152,7 @@ public class BlkAffineFusion
 			final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions,
 			final FusionType fusionType,
 			final double anisotropyFactor, // can be Double.NAN, only for content-based fusion
+			// TODO: replace with Comparator<Integer>
 			final Map< Integer, Integer > fusionMap, // old setupId > new setupId for fusion order, only makes sense with FusionType.FIRST_LOW or FusionType.FIRST_HIGH
 			final int interpolationMethod,
 			final Map< ViewId, AffineModel1D > intensityAdjustmentModels,
@@ -137,7 +172,7 @@ public class BlkAffineFusion
 
 			//throw new UnsupportedOperationException( "BlkAffineFusion: Fusion method not supported (yet)." );
 			IOFunctions.println( "BlkAffineFusion: Fusion method not supported (yet). Falling back to LazyAffineFusion." );
-			return BlockSupplier.of( 
+			return BlockSupplier.of(
 					Views.zeroMin( LazyAffineFusion.init( converter, imgloader, viewIds, viewRegistrations, viewDescriptions, fusionType, interpolationMethod, intensityAdjustmentModels, fusionInterval, type, blockSize ) ) );
 		}
 
@@ -279,7 +314,7 @@ public class BlkAffineFusion
 				.tile( 32 );
 
 		System.out.println( Util.printInterval( new FinalInterval( fusionInterval.dimensionsAsLongArray() ) ) );
-		
+
 		return blocks;
 		//return BlockAlgoUtils.cellImg( blocks, fusionInterval.dimensionsAsLongArray(), blockSize );
 	}

@@ -107,10 +107,10 @@ HashMap<? extends ViewId, ? extends Collection<? extends RealLocalizable>> getLo
 void   getLocalToGlobalTransform(ViewId v, int t, AffineTransform3D out);
 int    getCorrespondenceColorId(ViewId v, int detectionId, int t);
 int    getShapeType(ViewId v, int t);
-    double getDistanceFade();
-    boolean isFilterMode();
-    double getPointSizeScale();
-    double getPlaneThickness();
+double getDistanceFade();
+boolean isFilterMode();
+double getPointSizeScale();
+double getPlaneThickness();
 ```
 
 ### Lesson: Text-Field ↔ Slider Circular Updates
@@ -156,7 +156,7 @@ When both views were already in **different** sets, the original code called `me
 ```java
 else // both present in different sets
 {
-    mergeSets( vSets, pairSets, i1, i2 );
+    mergeSets(vSets, pairSets, i1, i2);
     pairSets.get(pairSets.size() - 1).add(pair);  // FIX: was missing
 }
 ```
@@ -223,7 +223,7 @@ List<SourceAndConverter<?>> active = new ArrayList<>();
 synchronized (state) {
     BDVUtils.forEachAbstractSpimSource(state.getSources(), (soc, src) -> {
         if (activeSetupIds.contains(src.getSetupId())) active.add(soc);
-        });
+    });
 }
 List<SourceAndConverter<?>> inactive = new ArrayList<>(state.getSources());
 inactive.removeAll(active);

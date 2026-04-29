@@ -54,7 +54,7 @@ import net.preibisch.mvrecon.process.splitting.OctTreeSplitCriterion.SplitCorres
  *
  * All tiles overlap by minStepSize to support fake corresponding points generation.
  */
-public class SplitOctTree implements SplitInterval
+public class SplitOctTree implements SplitView
 {
 	// Available criterion types for GUI selection
 	public static final String[] CRITERION_NAMES = new String[] {
@@ -68,6 +68,11 @@ public class SplitOctTree implements SplitInterval
 	public static int defaultMinSplitLevels = 1;
 	public static int defaultAnisotropyChoice = 1;
 
+	// Lower bound for the tile-size multiplier accepted by the GUI
+	// (min tile size = minSizeMultiplierFloor * minStepSize[d]).
+	// Algorithmic floor is 2; raising this is a usability/sanity guard.
+	public static int minSizeMultiplierFloor = 2;
+
 	public static final String[] ANISOTROPY_CHOICES = {
 		"Ignore anisotropy",
 		"Global anisotropy factor",
@@ -76,23 +81,11 @@ public class SplitOctTree implements SplitInterval
 
 	// Instance fields
 	private final long[] minStepSize;
-	private final int minSizeMultiplier;
+	private final int[] minSizeMultiplier; // per-dimension tile-size multiplier; min tile = minSizeMultiplier[d] * minStepSize[d]
 	private final OctTreeSplitCriterion criterion;
 	private final int minSplitLevels;
 	private final double[] anisotropy; // per-dimension voxel size ratio, {1,1,1} for isotropic
 
-	// Current context for split() method (set per ViewSetup iteration)
-	private ViewId currentViewId;
-
-	// Statistics counters (reset per split() call)
-	private int splitCount;
-	private int leafCount;
-
-	// Aggregate statistics (accumulated across all split() calls)
-	private int totalSplitCount;
-	private int totalLeafCount;
-	private int totalFinalBlocks;
-	private int totalViewsProcessed;
 
 	/**
 	 * Result of a split operation, including intervals and statistics.
@@ -195,9 +188,10 @@ public class SplitOctTree implements SplitInterval
 	 * Result of a split operation, including intervals and statistics.
 	 * Immutable, safe to return from parallel operations.
 	 */
-	public static class SplitStatistics
+	public static class OctTreeSplitResult extends SplitResult
 	{
-		public final ArrayList< Interval > intervals;
+		private static final long serialVersionUID = 1L;
+
 		public final int splitCount;
 		public final int leafCount;
 		public final int minDepth, maxDepth;
@@ -210,9 +204,9 @@ public class SplitOctTree implements SplitInterval
 		public final double criterionSatisfiedPercent;
 		public final double withinTolerancePercent;
 
-		public SplitStatistics( final ArrayList< Interval > intervals, final SplitStatsAccumulator acc )
+		public OctTreeSplitResult( final ArrayList< Interval > intervals, final SplitStatsAccumulator acc )
 		{
-			this.intervals = intervals;
+			super( intervals );
 			this.splitCount = acc.splitCount;
 			this.leafCount = acc.leafCount;
 			this.minDepth = acc.minDepth;
@@ -235,7 +229,8 @@ public class SplitOctTree implements SplitInterval
 	 * Constructor with all parameters.
 	 *
 	 * @param minStepSize Alignment constraint and overlap size
-	 * @param minSizeMultiplier Multiplier for minimum split size (e.g., 4 means min size = 4 * minStepSize)
+	 * @param minSizeMultiplier Per-dimension multiplier for minimum split size, length must equal minStepSize.length
+	 *        (e.g., {4, 4, 2} means min tile size = {4*minStepSize[0], 4*minStepSize[1], 2*minStepSize[2]})
 	 * @param criterion The splitting criterion (determines when to stop splitting)
 	 * @param minSplitLevels Minimum number of split levels to always perform (0 = fully adaptive).
 	 *        Use minSplitLevels=1 for TPS-compatible splitting (guaranteed 8 non-co-planar tiles).
@@ -243,13 +238,17 @@ public class SplitOctTree implements SplitInterval
 	 */
 	public SplitOctTree(
 			final long[] minStepSize,
-			final int minSizeMultiplier,
+			final int[] minSizeMultiplier,
 			final OctTreeSplitCriterion criterion,
 			final int minSplitLevels,
 			final double[] anisotropy )
 	{
+		if ( minSizeMultiplier.length != minStepSize.length )
+			throw new IllegalArgumentException( "minSizeMultiplier length (" + minSizeMultiplier.length +
+					") must equal minStepSize length (" + minStepSize.length + ")" );
+
 		this.minStepSize = minStepSize.clone();
-		this.minSizeMultiplier = minSizeMultiplier;
+		this.minSizeMultiplier = minSizeMultiplier.clone();
 		this.criterion = criterion;
 		this.minSplitLevels = minSplitLevels;
 		this.anisotropy = ( anisotropy != null ) ? anisotropy.clone() : new double[] { 1, 1, 1 };
@@ -271,14 +270,14 @@ public class SplitOctTree implements SplitInterval
 	 * @param minStepSize Alignment constraint and overlap size
 	 * @param minSizeMultiplier Multiplier for minimum split size
 	 * @param minSplitLevels Minimum number of split levels (use 1 for TPS-compatible splitting)
-	 * @return SplitStatistics containing intervals and statistics, or null on error
+	 * @return OctTreeSplitResult containing intervals and statistics, or null on error
 	 */
-	public static SplitStatistics splitStatic(
+	private static OctTreeSplitResult splitStatic(
 			final Interval input,
 			final ViewId viewId,
 			final OctTreeSplitCriterion criterion,
 			final long[] minStepSize,
-			final int minSizeMultiplier,
+			final int[] minSizeMultiplier,
 			final int minSplitLevels,
 			final double[] anisotropy )
 	{
@@ -321,7 +320,7 @@ public class SplitOctTree implements SplitInterval
 				viewId.getTimePointId() + "_" + viewId.getViewSetupId() + " at " + endTime +
 				" (took " + ( endTime - startTime ) + " ms)" );
 
-		return new SplitStatistics( intervals, acc );
+		return new OctTreeSplitResult( intervals, acc );
 	}
 
 	/**
@@ -334,7 +333,7 @@ public class SplitOctTree implements SplitInterval
 			final int depth,
 			final OctTreeSplitCriterion criterion,
 			final long[] minStepSize,
-			final int minSizeMultiplier,
+			final int[] minSizeMultiplier,
 			final int minSplitLevels,
 			final double[] anisotropy,
 			final SplitStatsAccumulator acc )
@@ -418,7 +417,7 @@ public class SplitOctTree implements SplitInterval
 	private static int computeMaxSplitLevelsStatic(
 			final Interval interval,
 			final long[] minStepSize,
-			final int minSizeMultiplier )
+			final int[] minSizeMultiplier )
 	{
 		// With anisotropy-aware splitting, we only need at least one dimension to be splittable,
 		// so we take the maximum across dimensions
@@ -427,7 +426,7 @@ public class SplitOctTree implements SplitInterval
 		for ( int d = 0; d < interval.numDimensions(); d++ )
 		{
 			final long dim = interval.dimension( d );
-			final long minParentSize = 2 * ( minSizeMultiplier - 1 ) * minStepSize[ d ];
+			final long minParentSize = 2 * ( minSizeMultiplier[ d ] - 1 ) * minStepSize[ d ];
 
 			if ( dim >= minParentSize )
 			{
@@ -458,7 +457,7 @@ public class SplitOctTree implements SplitInterval
 	private static List< Interval > createOctantsWithOverlapStatic(
 			final Interval interval,
 			final long[] minStepSize,
-			final int minSizeMultiplier,
+			final int[] minSizeMultiplier,
 			final boolean[] splitDim )
 	{
 		final int n = interval.numDimensions();
@@ -479,7 +478,7 @@ public class SplitOctTree implements SplitInterval
 
 			long mid = interval.min( d ) + interval.dimension( d ) / 2;
 			splitPoints[ d ] = SplitDistributeEvenly.closestLongDivisableBy( mid, minStepSize[ d ] );
-			final long margin = ( minSizeMultiplier - 1 ) * minStepSize[ d ];
+			final long margin = ( minSizeMultiplier[ d ] - 1 ) * minStepSize[ d ];
 			splitPoints[ d ] = Math.max( interval.min( d ) + margin,
 					Math.min( splitPoints[ d ], interval.max( d ) - margin + 1 ) );
 		}
@@ -530,7 +529,7 @@ public class SplitOctTree implements SplitInterval
 	static boolean[] computeSplitDimensions(
 			final Interval interval,
 			final long[] minStepSize,
-			final int minSizeMultiplier,
+			final int[] minSizeMultiplier,
 			final double[] anisotropy,
 			final boolean forceSplit )
 	{
@@ -563,7 +562,7 @@ public class SplitOctTree implements SplitInterval
 			// Always check minimum size constraint
 			if ( splitDim[ d ] )
 			{
-				final long minParentSize = 2 * ( minSizeMultiplier - 1 ) * minStepSize[ d ];
+				final long minParentSize = 2 * ( minSizeMultiplier[ d ] - 1 ) * minStepSize[ d ];
 				if ( interval.dimension( d ) < minParentSize )
 					splitDim[ d ] = false;
 			}
@@ -588,7 +587,7 @@ public class SplitOctTree implements SplitInterval
 			final boolean[] splitDim,
 			final OctTreeSplitCriterion criterion,
 			final long[] minStepSize,
-			final int minSizeMultiplier )
+			final int[] minSizeMultiplier )
 	{
 		final int n = interval.numDimensions();
 		int bestDim = -1;
@@ -661,20 +660,26 @@ public class SplitOctTree implements SplitInterval
 		return true;
 	}
 
-	// ==================== Instance Methods ====================
+	// ==================== Instance Methods (SplitView interface) ====================
 
-	/**
-	 * Set the current context before calling split().
-	 * This is called by SplittingTools for each ViewSetup being processed.
-	 *
-	 * @param viewId The current ViewId
-	 * @param timepointId The timepoint ID (unused but kept for API compatibility)
-	 */
-	public void setCurrentContext( final ViewId viewId, final int timepointId )
+	@Override
+	public SplitResult split( final ViewId viewId )
 	{
-		this.currentViewId = viewId;
-	}
+		final ViewSetup setup = criterion.getSpimData().getSequenceDescription().getViewSetups().get( viewId.getViewSetupId() );
+		final Interval input = new FinalInterval( setup.getSize() );
 
+		final OctTreeSplitResult result = splitStatic( input, viewId, criterion,
+				minStepSize, minSizeMultiplier, minSplitLevels, anisotropy );
+
+		if ( result == null )
+		{
+			IOFunctions.println( "  Min child tile size: " + Arrays.toString( getMinTileSize() ) );
+			IOFunctions.println( "  Min parent size needed for split: " + Arrays.toString( getMinParentSizeForSplit() ) );
+			IOFunctions.println( "  Please reduce minSplitLevels or decrease min tile size." );
+		}
+
+		return result;
+	}
 
 	@Override
 	public int maxIntervalSpread( final List< ViewSetup > oldSetups )
@@ -697,67 +702,57 @@ public class SplitOctTree implements SplitInterval
 	}
 
 	@Override
-	public ArrayList< Interval > split( final Interval input )
+	public String aggregateStatistics( final List< ? extends SplitResult > results )
 	{
-		// Use static method for the actual splitting
-		final SplitStatistics result = splitStatic( input, currentViewId, criterion,
-				minStepSize, minSizeMultiplier, minSplitLevels, anisotropy );
+		int totalSplitCount = 0, totalLeafCount = 0, totalFinalBlocks = 0;
+		int globalMinDepth = Integer.MAX_VALUE, globalMaxDepth = 0;
+		int globalMinDetections = Integer.MAX_VALUE, globalMaxDetections = 0;
+		int globalMinMaxSets = Integer.MAX_VALUE, globalMaxMaxSets = 0;
+		double totalDepthSum = 0, totalDetectionsSum = 0, totalMaxSetsSum = 0;
+		double totalOutlierSum = 0;
+		long totalCriterionOk = 0, totalWithinTolerance = 0;
 
-		if ( result == null )
+		for ( final SplitResult r : results )
 		{
-			// Error already logged by splitStatic
-			IOFunctions.printErr( "  Min child tile size: " + Arrays.toString( getMinTileSize() ) );
-			IOFunctions.printErr( "  Min parent size needed for split: " + Arrays.toString( getMinParentSizeForSplit() ) );
-			IOFunctions.printErr( "  Please reduce minSplitLevels or decrease min tile size." );
-			return null;
+			final OctTreeSplitResult oct = (OctTreeSplitResult) r;
+			totalSplitCount += oct.splitCount;
+			totalLeafCount += oct.leafCount;
+			totalFinalBlocks += oct.numIntervals;
+
+			if ( oct.leafCount > 0 )
+			{
+				globalMinDepth = Math.min( globalMinDepth, oct.minDepth );
+				globalMaxDepth = Math.max( globalMaxDepth, oct.maxDepth );
+				totalDepthSum += oct.avgDepth * oct.leafCount;
+				globalMinDetections = Math.min( globalMinDetections, oct.minDetections );
+				globalMaxDetections = Math.max( globalMaxDetections, oct.maxDetections );
+				totalDetectionsSum += oct.avgDetections * oct.leafCount;
+				globalMinMaxSets = Math.min( globalMinMaxSets, oct.minMaxSets );
+				globalMaxMaxSets = Math.max( globalMaxMaxSets, oct.maxMaxSets );
+				totalMaxSetsSum += oct.avgMaxSets * oct.leafCount;
+				totalOutlierSum += oct.avgOutlierPercent * oct.leafCount;
+				totalCriterionOk += Math.round( oct.criterionSatisfiedPercent * oct.leafCount / 100.0 );
+				totalWithinTolerance += Math.round( oct.withinTolerancePercent * oct.leafCount / 100.0 );
+			}
 		}
 
-		// Copy statistics to instance fields
-		splitCount = result.splitCount;
-		leafCount = result.leafCount;
-
-		// Log statistics for this split
-		IOFunctions.println( "Oct-tree split statistics: " + splitCount + " splits, " +
-				leafCount + " leaves → " + result.intervals.size() + " tiles" +
-				( minSplitLevels > 0 ? " (minSplitLevels=" + minSplitLevels + ")" : "" ) +
-				", depth=" + result.minDepth + "/" + String.format( "%.1f", result.avgDepth ) + "/" + result.maxDepth +
-				", detections/leaf=" + result.minDetections + "/" + String.format( "%.0f", result.avgDetections ) + "/" + result.maxDetections +
-				", maxSets/leaf=" + result.minMaxSets + "/" + String.format( "%.1f", result.avgMaxSets ) + "/" + result.maxMaxSets +
-				", avgOutlier=" + String.format( "%.1f", result.avgOutlierPercent ) + "%" +
-				", criterionOk=" + String.format( "%.0f", result.criterionSatisfiedPercent ) + "%" +
-				", withinTolerance=" + String.format( "%.0f", result.withinTolerancePercent ) + "%" );
-
-		// Accumulate to totals
-		totalSplitCount += splitCount;
-		totalLeafCount += leafCount;
-		totalFinalBlocks += result.intervals.size();
-		totalViewsProcessed++;
-
-		return result.intervals;
-	}
-
-	/**
-	 * Reset aggregate statistics. Call before starting a batch of split() calls.
-	 */
-	public void resetTotalStatistics()
-	{
-		totalSplitCount = 0;
-		totalLeafCount = 0;
-		totalFinalBlocks = 0;
-		totalViewsProcessed = 0;
-	}
-
-	/**
-	 * Print aggregate statistics summary.
-	 */
-	public void printTotalStatistics()
-	{
-		IOFunctions.println( "===== Oct-tree splitting summary =====" );
-		IOFunctions.println( "Total views processed: " + totalViewsProcessed );
-		IOFunctions.println( "Total splits: " + totalSplitCount );
-		IOFunctions.println( "Total leaves: " + totalLeafCount );
-		IOFunctions.println( "Total final blocks: " + totalFinalBlocks );
-		IOFunctions.println( "======================================" );
+		final StringBuilder sb = new StringBuilder();
+		sb.append( "===== Oct-tree splitting summary =====\n" );
+		sb.append( "Total views processed: " ).append( results.size() ).append( "\n" );
+		sb.append( "Total splits: " ).append( totalSplitCount ).append( "\n" );
+		sb.append( "Total leaves: " ).append( totalLeafCount ).append( "\n" );
+		sb.append( "Total final blocks: " ).append( totalFinalBlocks ).append( "\n" );
+		if ( totalLeafCount > 0 )
+		{
+			sb.append( "Depth: " ).append( globalMinDepth ).append( "/" ).append( String.format( "%.1f", totalDepthSum / totalLeafCount ) ).append( "/" ).append( globalMaxDepth ).append( "\n" );
+			sb.append( "Detections/leaf: " ).append( globalMinDetections ).append( "/" ).append( String.format( "%.0f", totalDetectionsSum / totalLeafCount ) ).append( "/" ).append( globalMaxDetections ).append( "\n" );
+			sb.append( "MaxSets/leaf: " ).append( globalMinMaxSets ).append( "/" ).append( String.format( "%.1f", totalMaxSetsSum / totalLeafCount ) ).append( "/" ).append( globalMaxMaxSets ).append( "\n" );
+			sb.append( "Avg outlier: " ).append( String.format( "%.1f", totalOutlierSum / totalLeafCount ) ).append( "%\n" );
+			sb.append( "Criterion OK: " ).append( String.format( "%.0f", 100.0 * totalCriterionOk / totalLeafCount ) ).append( "%\n" );
+			sb.append( "Within tolerance: " ).append( String.format( "%.0f", 100.0 * totalWithinTolerance / totalLeafCount ) ).append( "%" );
+		}
+		sb.append( "\n======================================" );
+		return sb.toString();
 	}
 
 	/**
@@ -778,7 +773,7 @@ public class SplitOctTree implements SplitInterval
 		{
 			final long dim = interval.dimension( d );
 			// Minimum parent size to allow a split (ensures children >= minSizeMultiplier * minStepSize)
-			final long minParentSize = 2 * ( minSizeMultiplier - 1 ) * minStepSize[ d ];
+			final long minParentSize = 2 * ( minSizeMultiplier[ d ] - 1 ) * minStepSize[ d ];
 
 			if ( dim < minParentSize )
 			{
@@ -802,7 +797,7 @@ public class SplitOctTree implements SplitInterval
 	{
 		final long[] minTileSize = new long[ minStepSize.length ];
 		for ( int d = 0; d < minStepSize.length; d++ )
-			minTileSize[ d ] = minSizeMultiplier * minStepSize[ d ];
+			minTileSize[ d ] = minSizeMultiplier[ d ] * minStepSize[ d ];
 		return minTileSize;
 	}
 
@@ -813,7 +808,7 @@ public class SplitOctTree implements SplitInterval
 	{
 		final long[] minParentSize = new long[ minStepSize.length ];
 		for ( int d = 0; d < minStepSize.length; d++ )
-			minParentSize[ d ] = 2 * ( minSizeMultiplier - 1 ) * minStepSize[ d ];
+			minParentSize[ d ] = 2 * ( minSizeMultiplier[ d ] - 1 ) * minStepSize[ d ];
 		return minParentSize;
 	}
 
@@ -837,7 +832,7 @@ public class SplitOctTree implements SplitInterval
 	{
 		return "OctTree adaptive splitting: " + criterion.description() +
 				", minStepSize=" + Arrays.toString( minStepSize ) +
-				", minSizeMultiplier=" + minSizeMultiplier +
+				", minSizeMultiplier=" + Arrays.toString( minSizeMultiplier ) +
 				", minSplitLevels=" + minSplitLevels;
 	}
 
@@ -880,13 +875,13 @@ public class SplitOctTree implements SplitInterval
 
 		// Add per-dimension sliders for minimum tile size
 		final String[] dimNames = { "X", "Y", "Z" };
-		gd.addMessage( "Minimum tile size per dimension (must be >= 4 × minStepSize and divisible by minStepSize):",
+		gd.addMessage( "Minimum tile size per dimension (must be >= " + minSizeMultiplierFloor + " × minStepSize and divisible by minStepSize):",
 				GUIHelper.smallStatusFont, Color.DARK_GRAY );
 
 		for ( int d = 0; d < minStepSize.length; d++ )
 		{
 			final long step = minStepSize[ d ];
-			final long minVal = 4 * step;
+			final long minVal = minSizeMultiplierFloor * step;
 			final long maxVal = 32 * step;
 			final String label = "Min_tile_size_" + dimNames[ d ] + " (step=" + step + ")";
 			gd.addSlider( label, minVal, maxVal, defaultMinTileSize[ d ], step );
@@ -948,12 +943,12 @@ public class SplitOctTree implements SplitInterval
 				return null;
 			}
 
-			// Validate: must be >= 4 * minStepSize
-			final long minAllowed = 4 * minStepSize[ d ];
+			// Validate: must be >= minSizeMultiplierFloor * minStepSize
+			final long minAllowed = minSizeMultiplierFloor * minStepSize[ d ];
 			if ( tileSizes[ d ] < minAllowed )
 			{
 				IOFunctions.printErr( "ERROR: Min tile size " + dimNames[ d ] + " (" + tileSizes[ d ] +
-						") must be >= " + minAllowed + " (4 × minStepSize)" );
+						") must be >= " + minAllowed + " (" + minSizeMultiplierFloor + " × minStepSize)" );
 				return null;
 			}
 
@@ -961,13 +956,10 @@ public class SplitOctTree implements SplitInterval
 			defaultMinTileSize[ d ] = tileSizes[ d ];
 		}
 
-		// Compute multiplier as minimum ratio across dimensions
-		int minSizeMultiplier = Integer.MAX_VALUE;
+		// Per-dimension multiplier; each axis is honored independently downstream
+		final int[] minSizeMultiplier = new int[ minStepSize.length ];
 		for ( int d = 0; d < minStepSize.length; d++ )
-		{
-			final int multiplier = ( int ) ( tileSizes[ d ] / minStepSize[ d ] );
-			minSizeMultiplier = Math.min( minSizeMultiplier, multiplier );
-		}
+			minSizeMultiplier[ d ] = ( int ) ( tileSizes[ d ] / minStepSize[ d ] );
 
 		final int minSplitLevels = defaultMinSplitLevels = Math.max( 0, (int) Math.round( gd.getNextNumber() ) );
 
@@ -997,7 +989,7 @@ public class SplitOctTree implements SplitInterval
 
 		IOFunctions.println( "Created oct-tree splitter: " + criterion.description() +
 				", minTileSize=" + Arrays.toString( tileSizes ) +
-				", multiplier=" + minSizeMultiplier +
+				", multiplier=" + Arrays.toString( minSizeMultiplier ) +
 				", minSplitLevels=" + minSplitLevels +
 				", anisotropy=" + Arrays.toString( anisotropy ) );
 
@@ -1006,9 +998,8 @@ public class SplitOctTree implements SplitInterval
 
 	// Getters for testing
 	public long[] getMinStepSize() { return minStepSize.clone(); }
-	public int getMinSizeMultiplier() { return minSizeMultiplier; }
+	public int[] getMinSizeMultiplier() { return minSizeMultiplier.clone(); }
 	public OctTreeSplitCriterion getCriterion() { return criterion; }
-	public ViewId getCurrentViewId() { return currentViewId; }
 	public int getMinSplitLevels() { return minSplitLevels; }
 	public double[] getAnisotropy() { return anisotropy.clone(); }
 }
