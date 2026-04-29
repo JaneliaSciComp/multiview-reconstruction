@@ -48,7 +48,10 @@ public class Data_Explorer implements PlugIn
 	public static boolean showNote = false;
 
 	/** View-count threshold above which the "open BDV?" warning dialog appears. */
-	private static final int LARGE_DATASET_THRESHOLD = 10_000;
+	private static final int LARGE_DATASET_THRESHOLD = 1_000;
+
+	/** View-count threshold above which the "open BDV?" warning dialog appears. */
+	private static final int LARGE_DATASET_DISABLE_BDV_THRESHOLD = 10_000;
 
 	@Override
 	public void run( String arg )
@@ -93,7 +96,7 @@ public class Data_Explorer implements PlugIn
 			final GenericDialog gd = new GenericDialog( "Large dataset" );
 			gd.addMessage( "This dataset has " + totalViews + " views. "
 					+ "Opening BigDataViewer for many views can be slow." );
-			gd.addCheckbox( "Open_BigDataViewer_at_startup", false );
+			gd.addCheckbox( "Open_BigDataViewer_at_startup", totalViews < LARGE_DATASET_DISABLE_BDV_THRESHOLD );
 			gd.addNumericField( "Max_per-pair_connection_log_lines", InterestPointMatchCreator.maxPerPairLog, 0 );
 			gd.addNumericField( "Max_per-pair_correspondence-load_log_lines", PairwiseResult.maxPerPairCorrLog, 0 );
 			gd.addNumericField( "Max_per-view_transformation_log_lines", TransformationTools.maxPerViewTransformLog, 0 );

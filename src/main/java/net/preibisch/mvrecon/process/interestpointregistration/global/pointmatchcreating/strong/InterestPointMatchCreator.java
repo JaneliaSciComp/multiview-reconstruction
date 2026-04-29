@@ -52,7 +52,7 @@ public class InterestPointMatchCreator implements PointMatchCreator
 	 * The end-of-run summary (per-(labelA,labelB) pair-count + min/avg/max
 	 * correspondences) is always emitted regardless of this threshold.
 	 */
-	public static int maxPerPairLog = 1000;
+	public static int maxPerPairLog = 100;
 
 	final List< ? extends Pair< ? extends Pair< ViewId, ViewId >, ? extends PairwiseResult< ? > > > pairs;
 	final Map< ViewId, ? extends Map< String, Double > > labelMap;
