@@ -22,24 +22,19 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting;
 
-import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 
 import bdv.ViewerImgLoader;
 import bdv.ViewerSetupImgLoader;
 import bdv.cache.CacheControl;
-import bdv.img.cache.VolatileGlobalCellCache;
 import bdv.img.n5.N5ImageLoader;
-import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionSetupImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import net.imglib2.Dimensions;
 import net.imglib2.Interval;
-import net.imglib2.cache.queue.BlockingFetchQueues;
 import net.imglib2.util.Cast;
 
 public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImgLoader
@@ -78,13 +73,6 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 	 */
 	private final ConcurrentHashMap< Integer, long[][] > oldSetupLevelDims;
 
-	/**
-	 * Its own cell cache
-	 */
-	protected VolatileGlobalCellCache cache;
-
-	private int requestedNumFetcherThreads = -1;
-
 	public SplitViewerImgLoader(
 			final ViewerImgLoader underlyingImgLoader,
 			final Map< Integer, Integer > new2oldSetupId,
@@ -98,8 +86,6 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 		this.splitSetupImgLoaders = new ConcurrentHashMap<>();
 		this.oldSetupLevelDims = new ConcurrentHashMap<>();
 	}
-
-	private boolean isOpen = false;
 
 	public Map< Integer, Integer > new2oldSetupId() { return new2oldSetupId; }
 	public Map< Integer, Interval > newSetupId2Interval() { return newSetupId2Interval; }
@@ -174,44 +160,19 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 	}
 
 	@Override
-	public synchronized void setNumFetcherThreads( final int n )
+	public void setNumFetcherThreads( final int n )
 	{
-		requestedNumFetcherThreads = n;
 		underlyingImgLoader.setNumFetcherThreads( n );
-	}
-
-	private void open()
-	{
-		if ( !isOpen )
-		{
-			synchronized ( this )
-			{
-				if ( isOpen )
-					return;
-
-				isOpen = true;
-
-				int maxNumLevels = 1;
-				final List< ? extends BasicViewSetup > setups = oldSD.getViewSetupsOrdered();
-				for ( final BasicViewSetup setup : setups )
-				{
-					final double[][] resolutions = underlyingImgLoader.getSetupImgLoader( setup.getId() ).getMipmapResolutions();
-
-					if ( resolutions.length > maxNumLevels )
-						maxNumLevels = resolutions.length;
-				}
-
-				final int numFetcherThreads = ( requestedNumFetcherThreads > 0 ) ? requestedNumFetcherThreads : Runtime.getRuntime().availableProcessors();
-				final BlockingFetchQueues< Callable< ? > > queue = new BlockingFetchQueues<>( maxNumLevels, numFetcherThreads );
-				cache = new VolatileGlobalCellCache( queue );
-			}
-		}
 	}
 
 	@Override
 	public CacheControl getCacheControl()
 	{
-		open();
-		return cache;
+		// Delegate to the underlying loader. Splits don't have their own cells —
+		// every getVolatileImage() call returns a CachedCellImg backed by the
+		// underlying loader's VolatileGlobalCellCache. Returning a parallel cache
+		// here (as the previous implementation did) just spawned an idle fetcher
+		// pool and made BDV's cache pumping/invalidation aim at the wrong cache.
+		return underlyingImgLoader.getCacheControl();
 	}
 }
