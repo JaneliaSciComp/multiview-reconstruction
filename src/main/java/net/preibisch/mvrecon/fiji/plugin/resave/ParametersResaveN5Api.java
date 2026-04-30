@@ -95,6 +95,12 @@ public class ParametersResaveN5Api
 			final StorageFormat format, // if null, ask for format
 			final boolean askForPaths )
 	{
+		if ( setupsToProcess == null || setupsToProcess.isEmpty() )
+		{
+			IOFunctions.println( "ERROR: no view setups to process. Dataset may be empty or incorrectly detected." );
+			return null;
+		}
+
 		final ParametersResaveN5Api n5params = new ParametersResaveN5Api();
 
 		final Map< Integer, ExportMipmapInfo > perSetupExportMipmapInfo = Resave_HDF5.proposeMipmaps( setupsToProcess ); //xml.getViewSetupsToProcess() );
