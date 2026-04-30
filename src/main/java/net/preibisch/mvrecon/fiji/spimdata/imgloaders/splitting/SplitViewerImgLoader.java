@@ -35,7 +35,9 @@ import bdv.img.cache.VolatileGlobalCellCache;
 import bdv.img.n5.N5ImageLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
+import mpicbg.spim.data.sequence.MultiResolutionSetupImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
+import net.imglib2.Dimensions;
 import net.imglib2.Interval;
 import net.imglib2.cache.queue.BlockingFetchQueues;
 import net.imglib2.util.Cast;
@@ -67,6 +69,16 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 	private final ConcurrentHashMap< Integer, SplitViewerSetupImgLoader<?,?> > splitSetupImgLoaders;
 
 	/**
+	 * Per old-setup-id, the underlying image's dimensions at every mipmap level
+	 * ({@code dims[level][dim]}). Computed lazily on first access via
+	 * {@link ViewerSetupImgLoader#getImageSize(int, int)} on the underlying loader,
+	 * then shared across all splits of the same underlying view (typically ~100
+	 * splits share one entry). Used to eagerly clamp {@code scaledIntervals[]}
+	 * inside {@link SplitViewerSetupImgLoader}'s constructor.
+	 */
+	private final ConcurrentHashMap< Integer, long[][] > oldSetupLevelDims;
+
+	/**
 	 * Its own cell cache
 	 */
 	protected VolatileGlobalCellCache cache;
@@ -84,6 +96,7 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 		this.newSetupId2Interval = newSetupId2Interval;
 		this.oldSD = oldSD;
 		this.splitSetupImgLoaders = new ConcurrentHashMap<>();
+		this.oldSetupLevelDims = new ConcurrentHashMap<>();
 	}
 
 	private boolean isOpen = false;
@@ -101,14 +114,48 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 	private final SplitViewerSetupImgLoader<?,?> getSplitViewerSetupImgLoader( final ViewerImgLoader underlyingImgLoader, final int oldSetupId, final int newSetupId, final Interval interval )
 	{
 		return splitSetupImgLoaders.computeIfAbsent( newSetupId, id ->
-				createNewSetupImgLoader( (ViewerSetupImgLoader<?,?>)underlyingImgLoader.getSetupImgLoader( oldSetupId ), interval ) );
+				createNewSetupImgLoader(
+						(ViewerSetupImgLoader<?,?>)underlyingImgLoader.getSetupImgLoader( oldSetupId ),
+						interval,
+						getOldSetupLevelDims( oldSetupId ) ) );
 	}
 
 	private final SplitViewerSetupImgLoader<?,?> createNewSetupImgLoader(
 			final ViewerSetupImgLoader<?,?> setupImgLoader,
-			final Interval interval )
+			final Interval interval,
+			final long[][] levelDims )
 	{
-		return new SplitViewerSetupImgLoader<>( Cast.unchecked( setupImgLoader ), interval );
+		return new SplitViewerSetupImgLoader<>( Cast.unchecked( setupImgLoader ), interval, levelDims );
+	}
+
+	/**
+	 * Lazy + cached: per old-setup, query the underlying loader once for the
+	 * level dimensions and stash them. All splits sharing this old-setup-id then
+	 * reuse the same {@code long[level][dim]} array.
+	 *
+	 * Uses the first ordered timepoint of the underlying SequenceDescription;
+	 * assumes per-setup level dims are timepoint-invariant (true for N5 / OME-Zarr).
+	 */
+	private long[][] getOldSetupLevelDims( final int oldSetupId )
+	{
+		return oldSetupLevelDims.computeIfAbsent( oldSetupId, this::computeOldSetupLevelDims );
+	}
+
+	private long[][] computeOldSetupLevelDims( final int oldSetupId )
+	{
+		final ViewerSetupImgLoader<?,?> sil = (ViewerSetupImgLoader<?,?>) underlyingImgLoader.getSetupImgLoader( oldSetupId );
+		final MultiResolutionSetupImgLoader<?> mrsil = (MultiResolutionSetupImgLoader<?>) sil;
+		final int firstTp = oldSD.getTimePoints().getTimePointsOrdered().get( 0 ).getId();
+		final int levels = sil.numMipmapLevels();
+		final long[][] dims = new long[ levels ][];
+		for ( int level = 0; level < levels; ++level )
+		{
+			final Dimensions d = mrsil.getImageSize( firstTp, level );
+			final long[] arr = new long[ d.numDimensions() ];
+			d.dimensions( arr );
+			dims[ level ] = arr;
+		}
+		return dims;
 	}
 
 	public ViewerImgLoader getUnderlyingImgLoader()
