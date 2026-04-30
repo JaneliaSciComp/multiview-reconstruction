@@ -239,7 +239,7 @@ public class SplitViewerSetupImgLoader< T extends NativeType< T >, V extends Vol
 
 		updateScaledIntervals( this.scaledIntervals, level, n, full );
 
-		return Views.zeroMin( Views.interval( underlyingSetupImgLoader.getVolatileImage( timepointId, level, hints ), scaledIntervals[ level ] ) );
+		return Views.zeroMin( Views.interval( full, scaledIntervals[ level ] ) );
 	}
 
 	@Override

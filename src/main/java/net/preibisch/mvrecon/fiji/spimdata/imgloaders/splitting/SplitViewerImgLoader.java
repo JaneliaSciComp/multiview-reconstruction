@@ -22,10 +22,10 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 
 import bdv.ViewerImgLoader;
@@ -60,9 +60,11 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 	final SequenceDescription oldSD;
 
 	/**
-	 * Remembers instances of SplitSetupImgLoader
+	 * Remembers instances of SplitSetupImgLoader. ConcurrentHashMap so the
+	 * per-split-id lookup doesn't serialise through a single monitor (with
+	 * 100k split-ids this is on the BDV render hot path).
 	 */
-	private final Map< Integer, SplitViewerSetupImgLoader<?,?> > splitSetupImgLoaders;
+	private final ConcurrentHashMap< Integer, SplitViewerSetupImgLoader<?,?> > splitSetupImgLoaders;
 
 	/**
 	 * Its own cell cache
@@ -81,7 +83,7 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 		this.new2oldSetupId = new2oldSetupId;
 		this.newSetupId2Interval = newSetupId2Interval;
 		this.oldSD = oldSD;
-		this.splitSetupImgLoaders = new HashMap<>();
+		this.splitSetupImgLoaders = new ConcurrentHashMap<>();
 	}
 
 	private boolean isOpen = false;
@@ -96,18 +98,13 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 		return getSplitViewerSetupImgLoader( underlyingImgLoader, new2oldSetupId.get( setupId ), setupId, newSetupId2Interval.get( setupId ) );
 	}
 
-	private final synchronized SplitViewerSetupImgLoader<?,?> getSplitViewerSetupImgLoader( final ViewerImgLoader underlyingImgLoader, final int oldSetupId, final int newSetupId, final Interval interval )
+	private final SplitViewerSetupImgLoader<?,?> getSplitViewerSetupImgLoader( final ViewerImgLoader underlyingImgLoader, final int oldSetupId, final int newSetupId, final Interval interval )
 	{
-		SplitViewerSetupImgLoader<?,?> sil = splitSetupImgLoaders.get( newSetupId );
-		if ( sil == null )
-		{
-			sil = createNewSetupImgLoader( (ViewerSetupImgLoader<?,?>)underlyingImgLoader.getSetupImgLoader( oldSetupId ), interval );
-			splitSetupImgLoaders.put( newSetupId, sil );
-		}
-		return sil;
+		return splitSetupImgLoaders.computeIfAbsent( newSetupId, id ->
+				createNewSetupImgLoader( (ViewerSetupImgLoader<?,?>)underlyingImgLoader.getSetupImgLoader( oldSetupId ), interval ) );
 	}
 
-	private final synchronized SplitViewerSetupImgLoader<?,?> createNewSetupImgLoader(
+	private final SplitViewerSetupImgLoader<?,?> createNewSetupImgLoader(
 			final ViewerSetupImgLoader<?,?> setupImgLoader,
 			final Interval interval )
 	{
