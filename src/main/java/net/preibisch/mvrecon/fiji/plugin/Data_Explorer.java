@@ -48,7 +48,7 @@ public class Data_Explorer implements PlugIn
 	public static boolean showNote = false;
 
 	/** View-count threshold above which the "open BDV?" warning dialog appears. */
-	private static final int LARGE_DATASET_THRESHOLD = 1_000;
+	private static final int LARGE_DATASET_THRESHOLD = 100;
 
 	/** View-count threshold above which the "open BDV?" warning dialog appears. */
 	private static final int LARGE_DATASET_DISABLE_BDV_THRESHOLD = 10_000;
