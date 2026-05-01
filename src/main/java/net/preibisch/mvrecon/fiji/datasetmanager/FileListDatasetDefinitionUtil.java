@@ -146,20 +146,24 @@ public class FileListDatasetDefinitionUtil
 		public Double locationX;
 		public Double locationY;
 		public Double locationZ;
-		
+		// When >= 0, this series index is used for equality instead of position.
+		// Set for multi-series files where stage position drifts across z-plane files.
+		public int seriesIndex = -1;
+
 		public String toString()
 		{
 			return locationX + "," + locationY + "," + locationZ;
 		}
-		
+
 		@Override
 		public int hashCode()
 		{
+			if ( seriesIndex >= 0 )
+				return Integer.hashCode( seriesIndex );
 			final int prime = 31;
 			int result = 1;
 			result = prime * result + ( ( locationX == null ) ? 0 : locationX.hashCode() );
 			result = prime * result + ( ( locationY == null ) ? 0 : locationY.hashCode() );
-			result = prime * result + ( ( locationZ == null ) ? 0 : locationZ.hashCode() );
 			return result;
 		}
 		@Override
@@ -172,6 +176,9 @@ public class FileListDatasetDefinitionUtil
 			if ( getClass() != obj.getClass() )
 				return false;
 			TileInfo other = (TileInfo) obj;
+			// For multi-series files, use series index as the stable tile identity
+			if ( seriesIndex >= 0 && other.seriesIndex >= 0 )
+				return seriesIndex == other.seriesIndex;
 			if ( locationX == null )
 			{
 				if ( other.locationX != null )
@@ -185,13 +192,6 @@ public class FileListDatasetDefinitionUtil
 					return false;
 			}
 			else if ( !locationY.equals( other.locationY ) )
-				return false;
-			if ( locationZ == null )
-			{
-				if ( other.locationZ != null )
-					return false;
-			}
-			else if ( !locationZ.equals( other.locationZ ) )
 				return false;
 			return true;
 		}
@@ -457,11 +457,14 @@ public class FileListDatasetDefinitionUtil
 		for (int i = 0; i < infos.size(); i++)
 		{
 			final TileOrAngleInfo info = infos.get( i );
-			
+
 			final TileInfo tI = new TileInfo();
 			tI.locationX = info.locationX;
 			tI.locationY = info.locationY;
 			tI.locationZ = info.locationZ;
+			// For multi-series files, use series index as identity so stage drift across z-plane files doesn't split tiles
+			if ( infos.size() > 1 )
+				tI.seriesIndex = i;
 			
 			if (!tileMap.containsKey( tI ))
 				tileMap.put( tI, new ArrayList<>() );
