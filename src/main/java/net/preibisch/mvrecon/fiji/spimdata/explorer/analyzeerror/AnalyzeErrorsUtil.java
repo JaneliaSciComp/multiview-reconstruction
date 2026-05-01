@@ -55,6 +55,7 @@ import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
@@ -82,12 +83,16 @@ public class AnalyzeErrorsUtil
 		public HashMap< String, Double > labelAndWeights;
 		public boolean groupTiles, groupChannels, groupIlluminations, groupAngles;
 		public int topN, bottomM, middleK;
+		/** When true, the caller should analyse all views in the dataset, not just the explorer's selection. */
+		public boolean useAllViews;
 
 		public boolean anyGroupingSelected()
 		{
 			return groupTiles || groupChannels || groupIlluminations || groupAngles;
 		}
 	}
+
+	public static boolean defaultUseAllViews = false;
 
 	/** Aggregated error statistics for one (groupA, groupB) bucket. Returned by {@link #computeGroupPairs}. */
 	public static class GroupPairResult
@@ -358,6 +363,8 @@ public class AnalyzeErrorsUtil
 
 		gd.addChoice( "Interest_points" , labels, labels[ Interest_Point_Registration.defaultLabel ] );
 
+		gd.addCheckbox( "Include_all_views_(ignore_explorer_selection)", defaultUseAllViews );
+
 		gd.addMessage( "Group by (defines what counts as one 'old tile'):", GUIHelper.largefont );
 		gd.addCheckbox( "Group_by_Tile",         Interest_Point_Registration.defaultGroupTiles );
 		gd.addCheckbox( "Group_by_Channel",      Interest_Point_Registration.defaultGroupChannels );
@@ -379,6 +386,7 @@ public class AnalyzeErrorsUtil
 		final int labelChoice = Interest_Point_Registration.defaultLabel = gd.getNextChoiceIndex();
 
 		final Parameters p = new Parameters();
+		p.useAllViews        = defaultUseAllViews                                = gd.getNextBoolean();
 		p.groupTiles         = Interest_Point_Registration.defaultGroupTiles    = gd.getNextBoolean();
 		p.groupChannels      = Interest_Point_Registration.defaultGroupChannels = gd.getNextBoolean();
 		p.groupIlluminations = Interest_Point_Registration.defaultGroupIllums   = gd.getNextBoolean();
@@ -599,8 +607,12 @@ public class AnalyzeErrorsUtil
 			final Parameters params,
 			final Collection< ? extends ViewId > views )
 	{
-		final BDVPopup pop = panel.bdvPopup();
-		final boolean bdvOpen = pop != null && pop.bdv != null && pop.bdv.getViewerFrame().isVisible();
+		final BasicBDVPopup pop = panel.runningBdvPopup();
+		final boolean bdvOpen = pop != null && pop.getBDV() != null && pop.getBDV().getViewerFrame().isVisible();
+		// updateBDV does eager-style visibility batching; harmful (or no-op) for the
+		// lazy popup which manages its own source list via the explorer's selection
+		// listener. Skip it in lazy mode.
+		final boolean canEagerUpdate = bdvOpen && pop instanceof BDVPopup;
 
 		// target grouping = the params grouping, but Channel/Angle aren't UI-toggleable
 		// in the explorer (no checkbox), so treat those as "not compatible" and ungroup.
@@ -616,8 +628,8 @@ public class AnalyzeErrorsUtil
 		if ( !target.equals( current ) )
 		{
 			// disable coloring during the regroup so stale row-views don't drive BDV
-			if ( bdvOpen )
-				panel.updateBDV( pop.bdv, false, panel.getSpimData(), null, panel.selectedRows );
+			if ( canEagerUpdate )
+				panel.updateBDV( pop.getBDV(), false, panel.getSpimData(), null, panel.selectedRows );
 
 			if ( panel.groupTilesCheckbox != null )
 				panel.groupTilesCheckbox.setSelected( target.contains( Tile.class ) );
@@ -667,7 +679,7 @@ public class AnalyzeErrorsUtil
 		// recenter BDV on the selection
 		if ( bdvOpen )
 		{
-			TransformationTools.reCenterViews( pop.bdv,
+			TransformationTools.reCenterViews( pop.getBDV(),
 					panel.selectedRows.stream().collect(
 							HashSet< BasicViewDescription< ? > >::new,
 							( a, b ) -> a.addAll( b ), ( a, b ) -> a.addAll( b ) ),

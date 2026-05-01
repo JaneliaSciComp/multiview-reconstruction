@@ -76,7 +76,7 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 				@Override
 				public void run()
 				{
-					final List< ViewId > viewIds =
+					List< ViewId > viewIds =
 							ApplyTransformationPopup.getSelectedViews( panel );
 
 					// pre-set the grouping defaults from the explorer panel's current state
@@ -91,6 +91,13 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 
 					if ( params == null )
 						return;
+
+					// "Include all views" overrides the explorer's selection.
+					if ( params.useAllViews )
+						viewIds = net.preibisch.mvrecon.fiji.spimdata.SpimData2.getAllViewIdsSorted(
+								panel.getSpimData(),
+								panel.getSpimData().getSequenceDescription().getViewSetupsOrdered(),
+								panel.getSpimData().getSequenceDescription().getTimePoints().getTimePointsOrdered() );
 
 					final ArrayList<Pair<Pair<ViewId, ViewId>, Double>> errors =
 							AnalyzeErrorsUtil.getErrors( panel.getSpimData(), viewIds, params.labelAndWeights );

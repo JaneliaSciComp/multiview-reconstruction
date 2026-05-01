@@ -72,6 +72,13 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 {
 	private static final long serialVersionUID = 5234649267634013390L;
 
+	/**
+	 * Set by {@code Data_Explorer}'s large-dataset dialog. When {@code true}, the
+	 * explorer registers a {@link LazyBDVPopup} as the (only) BDV menu item; when
+	 * {@code false}, registers a regular {@link BDVPopup}. Defaults to eager.
+	 */
+	public static boolean useLazyMode = false;
+
 	public ExplorerWindow< ? > panel;
 	public BigDataViewer bdv = null;
 
@@ -308,6 +315,11 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 
 	public static BigDataViewer createBDV( final ExplorerWindow< ? > panel )
 	{
+		final long tStart = System.currentTimeMillis();
+		final int numSetups = panel.getSpimData().getSequenceDescription().getViewSetupsOrdered().size();
+		final int numTimepoints = panel.getSpimData().getSequenceDescription().getTimePoints().getTimePointsOrdered().size();
+		IOFunctions.println( "[BDV-open] starting (view-setups=" + numSetups + ", timepoints=" + numTimepoints + ", img-loader=" + panel.getSpimData().getSequenceDescription().getImgLoader().getClass().getSimpleName() + ")" );
+
 		final BigDataViewer bdv = createBDV( panel.getSpimData(), panel.xml() );
 
 		if ( bdv == null )
@@ -315,6 +327,7 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 
 		ViewSetupExplorerPanel.updateBDV( bdv, panel.colorMode(), panel.getSpimData(), panel.firstSelectedVD(), ((GroupedRowWindow)panel).selectedRowsGroups() );
 
+		IOFunctions.println( "[BDV-open] TOTAL: " + ( System.currentTimeMillis() - tStart ) + "ms" );
 		return bdv;
 	}
 

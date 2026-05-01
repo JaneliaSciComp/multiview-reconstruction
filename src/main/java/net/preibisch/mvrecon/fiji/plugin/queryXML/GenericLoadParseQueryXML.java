@@ -126,6 +126,11 @@ public abstract class GenericLoadParseQueryXML<
 	// add a button on demand
 	protected ArrayList< String > buttonText = null;
 	protected ArrayList< ActionListener > listener = null;
+
+	// add a checkbox on demand
+	protected String checkBoxText = null;
+	protected boolean checkBoxResult = false;
+
 	protected GenericDialog gd = null;
 
 	public Button defineNewDataset = null;
@@ -256,6 +261,22 @@ public abstract class GenericLoadParseQueryXML<
 		this.listener.add( listener );
 	}
 
+	/**
+	 * Add a checkbox to the XML-loading dialog. Read the user's choice via
+	 * {@link #isCheckBoxSelected()} after {@link #queryXML} returns.
+	 */
+	public void addCheckbox( final String checkBoxText )
+	{
+		this.checkBoxText = checkBoxText;
+		this.checkBoxResult = false;
+	}
+
+	/** Result of the checkbox added via {@link #addCheckbox(String)}; {@code false} if none was added. */
+	public boolean isCheckBoxSelected()
+	{
+		return checkBoxResult;
+	}
+
 	public GenericDialog getGenericDialog() { return gd; }
 
 	/*
@@ -352,6 +373,9 @@ public abstract class GenericLoadParseQueryXML<
 			}
 		}
 
+		if ( checkBoxText != null )
+			gd.addCheckbox( checkBoxText, false );
+
 		gd.addMessage( "" );
 		GUIHelper.addCredits( gd );
 
@@ -361,6 +385,9 @@ public abstract class GenericLoadParseQueryXML<
 			return false;
 
 		String xmlURI = gd.getNextString();
+
+		if ( checkBoxText != null )
+			checkBoxResult = gd.getNextBoolean();
 
 		// only remember XML's > easter eggs create issues down the line as they are a relative URI
 		if ( xmlURI.endsWith( ".xml" ) )
