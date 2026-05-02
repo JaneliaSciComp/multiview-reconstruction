@@ -645,6 +645,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 		table.clearSelection();
 
 		// Find and select matching rows
+		int firstMatch = -1;
 		for ( int row = 0; row < tableModel.getRowCount(); row++ )
 		{
 			final List<BasicViewDescription<?>> rowViews = tableModel.getElements().get( row );
@@ -653,10 +654,18 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 				if ( views.contains( vd ) )
 				{
 					table.addRowSelectionInterval( row, row );
+					if ( firstMatch < 0 )
+						firstMatch = row;
 					break;
 				}
 			}
 		}
+
+		// Scroll the table so the first matched row is visible — useful when
+		// the dataset has tens of thousands of rows and the selection is
+		// otherwise off-screen.
+		if ( firstMatch >= 0 )
+			table.scrollRectToVisible( table.getCellRect( firstMatch, 0, true ) );
 	}
 
 	protected void saveSelectionToHistory()
