@@ -28,6 +28,7 @@ import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 
 import javax.swing.JFrame;
 import javax.swing.JScrollPane;
@@ -68,9 +69,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 			final Parameters params,
 			final ViewSetupExplorerPanel< ? > panel )
 	{
-		super( params.anyGroupingSelected()
-				? "Analyze Errors – per group-pair"
-				: "Analyze Errors – per view-pair" );
+		super( buildTitle( params ) );
 
 		setDefaultCloseOperation( DISPOSE_ON_CLOSE );
 
@@ -128,6 +127,33 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		setSize( 900, 500 );
 		GUI.center( this );
 		setVisible( true );
+	}
+
+	private static String buildTitle( final Parameters params )
+	{
+		final StringBuilder sb = new StringBuilder( params.anyGroupingSelected() ? "Errors [Grouped]" : "Errors" );
+		if ( params.labelAndWeights != null && !params.labelAndWeights.isEmpty() )
+		{
+			sb.append( " ({" );
+			boolean first = true;
+			for ( final Map.Entry< String, Double > e : params.labelAndWeights.entrySet() )
+			{
+				if ( !first ) sb.append( ", " );
+				first = false;
+				sb.append( e.getKey() ).append( " (w=" ).append( formatWeight( e.getValue() ) ).append( ")" );
+			}
+			sb.append( "})" );
+		}
+		return sb.toString();
+	}
+
+	private static String formatWeight( final Double w )
+	{
+		if ( w == null ) return "";
+		final double d = w.doubleValue();
+		if ( d == Math.floor( d ) && !Double.isInfinite( d ) )
+			return Integer.toString( ( int ) d );
+		return FMT.format( d );
 	}
 
 	private static List< Row > buildRows(
