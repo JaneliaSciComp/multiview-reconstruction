@@ -87,7 +87,9 @@ public class RegisterInterestPointsPopup extends JMenuItem implements ExplorerWi
 					if ( new Interest_Point_Registration().register( (SpimData2)panel.getSpimData(), viewIds ) )
 					{
 						panel.updateContent(); // update interestpoint and registration panel if available
-						panel.bdvPopup().updateBDV();
+						final BasicBDVPopup p = panel.runningBdvPopup();
+						if ( p != null )
+							p.updateBDV();
 					}
 				}
 			} ).start();

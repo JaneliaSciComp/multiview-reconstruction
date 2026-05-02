@@ -839,7 +839,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 				if ( enableFlyThrough )
 				{
-					final boolean bdvRunning = bdvPopup().bdvRunning() && !(bdvPopup().bdv == null);
+					final BasicBDVPopup p = runningBdvPopup();
+					final boolean bdvRunning = p != null && p.bdvRunning() && p.getBDV() != null;
 
 					if ( arg0.getKeyChar() == 'r' )
 						if (bdvRunning)
@@ -847,14 +848,14 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 							{
 								@Override
 								public void run()
-								{ BDVFlyThrough.record( bdvPopup().bdv.getViewer() ); }
+								{ BDVFlyThrough.record( p.getBDV().getViewer() ); }
 							} ).start();
 						else
 							IOFunctions.println("Please open BigDataViewer to record a fly-through or add keypoints.");
 
 					if ( arg0.getKeyChar() == 'a' )
 						if (bdvRunning)
-							BDVFlyThrough.addCurrentViewerTransform( bdvPopup().bdv.getViewer() );
+							BDVFlyThrough.addCurrentViewerTransform( p.getBDV().getViewer() );
 						else
 							IOFunctions.println("Please open BigDataViewer to record a fly-through or add keypoints.");
 
@@ -865,7 +866,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 						BDVFlyThrough.deleteLastViewerTransform();
 
 					if ( arg0.getKeyChar() == 'j' )
-						BDVFlyThrough.jumpToLastViewerTransform( bdvPopup().bdv.getViewer() );
+						if ( bdvRunning )
+							BDVFlyThrough.jumpToLastViewerTransform( p.getBDV().getViewer() );
 
 					if ( arg0.getKeyChar() == 's' )
 						try { BDVFlyThrough.saveViewerTransforms(); } catch ( Exception e ) { IOFunctions.println( "couldn't save json: " + e ); }
@@ -875,7 +877,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 					if ( arg0.getKeyChar() == 'R' )
 						if ( bdvRunning )
-							new Thread( () -> BDVFlyThrough.renderScreenshot( bdvPopup().bdv.getViewer() ) ).start();
+							new Thread( () -> BDVFlyThrough.renderScreenshot( p.getBDV().getViewer() ) ).start();
 						else
 							IOFunctions.println( "Please open BigDataViewer to make a screenshot." );
 				}

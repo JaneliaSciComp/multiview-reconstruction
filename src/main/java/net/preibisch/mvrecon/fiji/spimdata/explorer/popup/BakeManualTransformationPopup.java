@@ -77,7 +77,13 @@ public class BakeManualTransformationPopup extends JMenuItem implements Explorer
 		SpimData2.filterMissingViews( panel.getSpimData(), views );
 
 		final ViewRegistrations vr = panel.getSpimData().getViewRegistrations();
-		ViewerState state = panel.bdvPopup().getBDV().getViewer().getState();
+		final BasicBDVPopup p = panel.runningBdvPopup();
+		if ( p == null || p.getBDV() == null )
+		{
+			IOFunctions.println( "BDV is not running, cannot bake manual transform." );
+			return;
+		}
+		ViewerState state = p.getBDV().getViewer().getState();
 		for ( SourceState< ? > s : state.getSources() )
 		{
 			if ( s.getSpimSource() instanceof TransformedSource )
@@ -106,6 +112,6 @@ public class BakeManualTransformationPopup extends JMenuItem implements Explorer
 		}
 
 		panel.updateContent();
-		panel.bdvPopup().updateBDV();
+		p.updateBDV();
 	}
 }
