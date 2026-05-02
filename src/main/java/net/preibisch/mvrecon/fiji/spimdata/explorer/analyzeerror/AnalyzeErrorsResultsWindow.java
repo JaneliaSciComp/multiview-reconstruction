@@ -23,6 +23,8 @@
 package net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror;
 
 import java.awt.BorderLayout;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.ArrayList;
@@ -31,6 +33,8 @@ import java.util.List;
 import java.util.Map;
 
 import javax.swing.JFrame;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.ListSelectionModel;
@@ -42,6 +46,7 @@ import javax.swing.table.TableRowSorter;
 import ij.gui.GUI;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
+import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil.GroupPairResult;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil.Parameters;
@@ -67,7 +72,17 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 			final Parameters params,
 			final ViewSetupExplorerPanel< ? > panel )
 	{
-		super( buildTitle( params ) );
+		this( data, errors, params, panel, null );
+	}
+
+	public AnalyzeErrorsResultsWindow(
+			final SpimData2 data,
+			final ArrayList< AnalyzeErrorsUtil.PairError > errors,
+			final Parameters params,
+			final ViewSetupExplorerPanel< ? > panel,
+			final String subtitle )
+	{
+		super( buildTitle( params, subtitle ) );
 
 		setDefaultCloseOperation( DISPOSE_ON_CLOSE );
 
@@ -122,6 +137,39 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 					AnalyzeErrorsUtil.selectViewsAndRecenter( panel, params, r.viewsForBDV ) ).start();
 		} );
 
+		// Right-click on a grouped row → drill down to ungrouped pairs within that group-pair.
+		if ( params.anyGroupingSelected() )
+		{
+			final JPopupMenu popup = new JPopupMenu();
+			final JMenuItem drillItem = new JMenuItem( "Show ungrouped pairs in this group-pair" );
+			drillItem.addActionListener( ev -> {
+				final int viewRow = table.getSelectedRow();
+				if ( viewRow < 0 )
+					return;
+				final Row r = rows.get( table.convertRowIndexToModel( viewRow ) );
+				if ( r.groupA == null || r.groupB == null )
+					return;
+				openUngroupedSubWindow( data, errors, params, panel, r );
+			} );
+			popup.add( drillItem );
+
+			table.addMouseListener( new MouseAdapter()
+			{
+				@Override public void mousePressed( final MouseEvent e )  { maybeShow( e ); }
+				@Override public void mouseReleased( final MouseEvent e ) { maybeShow( e ); }
+				private void maybeShow( final MouseEvent e )
+				{
+					if ( !e.isPopupTrigger() )
+						return;
+					final int viewRow = table.rowAtPoint( e.getPoint() );
+					if ( viewRow < 0 )
+						return;
+					table.setRowSelectionInterval( viewRow, viewRow );
+					popup.show( e.getComponent(), e.getX(), e.getY() );
+				}
+			} );
+		}
+
 		getContentPane().setLayout( new BorderLayout() );
 		getContentPane().add( new JScrollPane( table ), BorderLayout.CENTER );
 		setSize( 900, 500 );
@@ -129,9 +177,11 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		setVisible( true );
 	}
 
-	private static String buildTitle( final Parameters params )
+	private static String buildTitle( final Parameters params, final String subtitle )
 	{
 		final StringBuilder sb = new StringBuilder( params.anyGroupingSelected() ? "Errors [Grouped]" : "Errors" );
+		if ( subtitle != null && !subtitle.isEmpty() )
+			sb.append( " [" ).append( subtitle ).append( "]" );
 		if ( params.labelAndWeights != null && !params.labelAndWeights.isEmpty() )
 		{
 			sb.append( " ({" );
@@ -145,6 +195,46 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 			sb.append( "})" );
 		}
 		return sb.toString();
+	}
+
+	private static void openUngroupedSubWindow(
+			final SpimData2 data,
+			final ArrayList< AnalyzeErrorsUtil.PairError > allErrors,
+			final Parameters parentParams,
+			final ViewSetupExplorerPanel< ? > panel,
+			final Row clickedRow )
+	{
+		final HashSet< ViewId > setA = new HashSet<>();
+		for ( final ViewDescription vd : clickedRow.groupA.getViews() ) setA.add( vd );
+		final HashSet< ViewId > setB = new HashSet<>();
+		for ( final ViewDescription vd : clickedRow.groupB.getViews() ) setB.add( vd );
+
+		final ArrayList< AnalyzeErrorsUtil.PairError > filtered = new ArrayList<>();
+		for ( final AnalyzeErrorsUtil.PairError e : allErrors )
+		{
+			if ( ( setA.contains( e.a ) && setB.contains( e.b ) )
+					|| ( setA.contains( e.b ) && setB.contains( e.a ) ) )
+				filtered.add( e );
+		}
+
+		final Parameters child = ungroupedClone( parentParams );
+		final String subtitle = clickedRow.labelA + " <-> " + clickedRow.labelB;
+		new AnalyzeErrorsResultsWindow( data, filtered, child, panel, subtitle );
+	}
+
+	private static Parameters ungroupedClone( final Parameters src )
+	{
+		final Parameters p = new Parameters();
+		p.labelAndWeights = src.labelAndWeights;
+		p.groupTiles = false;
+		p.groupChannels = false;
+		p.groupIlluminations = false;
+		p.groupAngles = false;
+		p.topN = src.topN;
+		p.bottomM = src.bottomM;
+		p.middleK = src.middleK;
+		p.useAllViews = src.useAllViews;
+		return p;
 	}
 
 	private static String formatWeight( final Double w )
@@ -169,7 +259,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 				final HashSet< BasicViewDescription< ? > > views = new HashSet<>();
 				views.addAll( r.groupA.getViews() );
 				views.addAll( r.groupB.getViews() );
-				rows.add( new Row( Group.gvids( r.groupA ), Group.gvids( r.groupB ), r.count, r.numCorr, r.min, r.avg, r.max, views ) );
+				rows.add( new Row( Group.gvids( r.groupA ), Group.gvids( r.groupB ), r.count, r.numCorr, r.min, r.avg, r.max, views, r.groupA, r.groupB ) );
 			}
 		}
 		else
@@ -182,7 +272,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 				if ( vdA != null ) views.add( vdA );
 				if ( vdB != null ) views.add( vdB );
 				final double err = e.errorPx;
-				rows.add( new Row( Group.pvids( e.a ), Group.pvids( e.b ), 1, e.numCorr, err, err, err, views ) );
+				rows.add( new Row( Group.pvids( e.a ), Group.pvids( e.b ), 1, e.numCorr, err, err, err, views, null, null ) );
 			}
 		}
 		return rows;
@@ -195,10 +285,12 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		final int numCorr;
 		final double min, avg, max;
 		final HashSet< BasicViewDescription< ? > > viewsForBDV;
+		final Group< ViewDescription > groupA, groupB; // non-null only in grouped mode
 
 		Row( final String labelA, final String labelB, final int count, final int numCorr,
 				final double min, final double avg, final double max,
-				final HashSet< BasicViewDescription< ? > > viewsForBDV )
+				final HashSet< BasicViewDescription< ? > > viewsForBDV,
+				final Group< ViewDescription > groupA, final Group< ViewDescription > groupB )
 		{
 			this.labelA = labelA;
 			this.labelB = labelB;
@@ -208,6 +300,8 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 			this.avg = avg;
 			this.max = max;
 			this.viewsForBDV = viewsForBDV;
+			this.groupA = groupA;
+			this.groupB = groupB;
 		}
 	}
 
