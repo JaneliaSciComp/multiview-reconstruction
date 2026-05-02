@@ -682,7 +682,8 @@ public class N5ApiTools
 			final ViewId viewId,
 			final MultiResolutionLevelInfo mrInfo )
 	{
-		return assembleJobs( viewId, mrInfo.dimensions, mrInfo.blockSize, mrInfo.blockSize );
+		return assembleJobs( viewId, mrInfo.dimensions, mrInfo.blockSize,
+				mrInfo.shardSize != null ? mrInfo.shardSize : mrInfo.blockSize );
 	}
 
 	public static List<long[][]> assembleJobs(
