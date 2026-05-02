@@ -46,8 +46,6 @@ import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.generic.sequence.BasicViewSetup;
-import mpicbg.spim.data.sequence.Angle;
-import mpicbg.spim.data.sequence.Channel;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.Volatile;
 import net.imglib2.type.numeric.NumericType;
@@ -429,7 +427,7 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 		if ( !( type instanceof NumericType ) )
 			throw new IllegalArgumentException( "ImgLoader of type " + type.getClass() + " not supported." );
 
-		final String name = createSetupName( setup );
+		final String name = BDVSourceNaming.viewIdSourceName( setup, spimData.getSequenceDescription() );
 
 		SourceAndConverter< V > vsoc = null;
 		if ( volatileType != null )
@@ -440,21 +438,6 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 		final SpimSource< T > s = new SpimSource<>( spimData, setupId, name );
 		final SourceAndConverter< T > soc = new SourceAndConverter<>( s, BigDataViewer.<T>createConverterToARGB( type ), vsoc );
 		return BigDataViewer.<T, V>wrapWithTransformedSource( soc );
-	}
-
-	/** Mirrors BigDataViewer.createSetupName (which is private). */
-	private static String createSetupName( final BasicViewSetup setup )
-	{
-		if ( setup.hasName() )
-			return setup.getName();
-		String name = "";
-		final Angle angle = setup.getAttribute( Angle.class );
-		if ( angle != null )
-			name += ( name.isEmpty() ? "" : " " ) + "a " + angle.getName();
-		final Channel channel = setup.getAttribute( Channel.class );
-		if ( channel != null )
-			name += ( name.isEmpty() ? "" : " " ) + "c " + channel.getName();
-		return name;
 	}
 
 	/**
