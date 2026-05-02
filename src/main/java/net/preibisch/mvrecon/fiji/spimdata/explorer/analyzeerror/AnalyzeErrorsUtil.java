@@ -99,17 +99,35 @@ public class AnalyzeErrorsUtil
 	{
 		public final Group< ViewDescription > groupA, groupB;
 		public final int count;
+		public final int numCorr;
 		public final double min, avg, max;
 
 		public GroupPairResult( final Group< ViewDescription > groupA, final Group< ViewDescription > groupB,
-				final int count, final double min, final double avg, final double max )
+				final int count, final int numCorr, final double min, final double avg, final double max )
 		{
 			this.groupA = groupA;
 			this.groupB = groupB;
 			this.count = count;
+			this.numCorr = numCorr;
 			this.min = min;
 			this.avg = avg;
 			this.max = max;
+		}
+	}
+
+	/** Per-(viewA, viewB) error result returned by {@link #getErrors}. */
+	public static final class PairError
+	{
+		public final ViewId a, b;
+		public final double errorPx;
+		public final int numCorr;
+
+		public PairError( final ViewId a, final ViewId b, final double errorPx, final int numCorr )
+		{
+			this.a = a;
+			this.b = b;
+			this.errorPx = errorPx;
+			this.numCorr = numCorr;
 		}
 	}
 
@@ -123,7 +141,7 @@ public class AnalyzeErrorsUtil
 	 */
 	public static ArrayList< GroupPairResult > computeGroupPairs(
 			final SpimData2 data,
-			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+			final ArrayList< PairError > errors,
 			final Parameters p )
 	{
 		if ( !p.anyGroupingSelected() )
@@ -136,10 +154,10 @@ public class AnalyzeErrorsUtil
 		if ( p.groupAngles )        factors.add( Angle.class );
 
 		final HashSet< ViewId > seen = new HashSet<>();
-		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		for ( final PairError e : errors )
 		{
-			seen.add( e.getA().getA() );
-			seen.add( e.getA().getB() );
+			seen.add( e.a );
+			seen.add( e.b );
 		}
 		final List< ViewDescription > vds = new ArrayList<>();
 		for ( final ViewId vid : seen )
@@ -161,23 +179,23 @@ public class AnalyzeErrorsUtil
 		}
 
 		final HashMap< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > groupPairAcc = new HashMap<>();
-		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		for ( final PairError e : errors )
 		{
-			final Group< ViewDescription > gA = viewToGroup.get( e.getA().getA() );
-			final Group< ViewDescription > gB = viewToGroup.get( e.getA().getB() );
+			final Group< ViewDescription > gA = viewToGroup.get( e.a );
+			final Group< ViewDescription > gB = viewToGroup.get( e.b );
 			if ( gA == null || gB == null )
 				continue;
 			final Group< ViewDescription > g1, g2;
 			if ( compareViewIds( groupRep.get( gA ), groupRep.get( gB ) ) <= 0 ) { g1 = gA; g2 = gB; }
 			else                                                                 { g1 = gB; g2 = gA; }
-			groupPairAcc.computeIfAbsent( new ValuePair<>( g1, g2 ), k -> new GroupAcc() ).add( e.getB() );
+			groupPairAcc.computeIfAbsent( new ValuePair<>( g1, g2 ), k -> new GroupAcc() ).add( e.errorPx, e.numCorr );
 		}
 
 		final ArrayList< GroupPairResult > result = new ArrayList<>( groupPairAcc.size() );
 		for ( final Map.Entry< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > e : groupPairAcc.entrySet() )
 		{
 			final GroupAcc a = e.getValue();
-			result.add( new GroupPairResult( e.getKey().getA(), e.getKey().getB(), (int) a.count, a.min, a.avg(), a.max ) );
+			result.add( new GroupPairResult( e.getKey().getA(), e.getKey().getB(), (int) a.count, a.numCorr, a.min, a.avg(), a.max ) );
 		}
 		result.sort( ( o1, o2 ) -> Double.compare( o2.avg, o1.avg ) );
 		return result;
@@ -193,7 +211,7 @@ public class AnalyzeErrorsUtil
 	 * Same-label only (matching the previous code's filter): correspondences with a different
 	 * label on the other side are skipped.
 	 */
-	public static ArrayList< Pair< Pair< ViewId, ViewId >, Double > > getErrors(
+	public static ArrayList< PairError > getErrors(
 			final SpimData2 data,
 			final List< ViewId > viewIds,
 			final Map< String, Double > labelAndWeights )
@@ -281,6 +299,7 @@ public class AnalyzeErrorsUtil
 							acc = new ErrorAcc();
 						acc.weightedDistanceSum += d * w;
 						acc.weightSum += w;
+						acc.numCorr++;
 						return acc;
 					});
 				}
@@ -288,14 +307,15 @@ public class AnalyzeErrorsUtil
 		});
 
 		// materialise + sort desc by error
-		final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > pairResults = new ArrayList<>( pairErrors.size() );
+		final ArrayList< PairError > pairResults = new ArrayList<>( pairErrors.size() );
 		for ( final Entry< Pair< ViewId, ViewId >, ErrorAcc > e : pairErrors.entrySet() )
 		{
 			final ErrorAcc acc = e.getValue();
 			if ( acc.weightSum > 0 )
-				pairResults.add( new ValuePair<>( e.getKey(), acc.weightedDistanceSum / acc.weightSum ) );
+				pairResults.add( new PairError( e.getKey().getA(), e.getKey().getB(),
+						acc.weightedDistanceSum / acc.weightSum, acc.numCorr ) );
 		}
-		Collections.sort( pairResults, ( o1, o2 ) -> o2.getB().compareTo( o1.getB() ) );
+		Collections.sort( pairResults, ( o1, o2 ) -> Double.compare( o2.errorPx, o1.errorPx ) );
 		return pairResults;
 	}
 
@@ -304,6 +324,7 @@ public class AnalyzeErrorsUtil
 	{
 		double weightedDistanceSum = 0.0;
 		double weightSum = 0.0;
+		int numCorr = 0;
 	}
 
 	/** ViewId comparison: timepointId, then viewSetupId. Mirrors the in-repo CorrespondingInterestPoints.compareTo. */
@@ -455,7 +476,7 @@ public class AnalyzeErrorsUtil
 	 */
 	public static void printResults(
 			final SpimData2 data,
-			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+			final ArrayList< PairError > errors,
 			final Parameters p )
 	{
 		if ( errors.isEmpty() )
@@ -473,8 +494,8 @@ public class AnalyzeErrorsUtil
 			IOFunctions.println( "Top " + topN + " of " + total + " pair(s) by error (worst first):" );
 			for ( int i = 0; i < topN; i++ )
 			{
-				final Pair< Pair< ViewId, ViewId >, Double > e = errors.get( i );
-				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + String.format( Locale.ROOT, "%.4f", e.getB() ) + " px" );
+				final PairError e = errors.get( i );
+				IOFunctions.println( "  " + Group.pvid( e.a ) + " <-> " + Group.pvid( e.b ) + ": " + String.format( Locale.ROOT, "%.4f", e.errorPx ) + " px" );
 			}
 		}
 
@@ -485,8 +506,8 @@ public class AnalyzeErrorsUtil
 			IOFunctions.println( "Bottom " + bottomM + " of " + total + " pair(s) by error (best first):" );
 			for ( int i = total - 1, k = 0; i >= 0 && k < bottomM; i--, k++ )
 			{
-				final Pair< Pair< ViewId, ViewId >, Double > e = errors.get( i );
-				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + String.format( Locale.ROOT, "%.4f", e.getB() ) + " px" );
+				final PairError e = errors.get( i );
+				IOFunctions.println( "  " + Group.pvid( e.a ) + " <-> " + Group.pvid( e.b ) + ": " + String.format( Locale.ROOT, "%.4f", e.errorPx ) + " px" );
 			}
 		}
 
@@ -496,22 +517,22 @@ public class AnalyzeErrorsUtil
 		{
 			// errors is desc-sorted; median = middle of sorted-asc, equivalent to index total - 1 - (total-1)/2
 			final double median = ( total % 2 == 1 )
-					? errors.get( total / 2 ).getB()
-					: 0.5 * ( errors.get( total / 2 - 1 ).getB() + errors.get( total / 2 ).getB() );
+					? errors.get( total / 2 ).errorPx
+					: 0.5 * ( errors.get( total / 2 - 1 ).errorPx + errors.get( total / 2 ).errorPx );
 
 			double sum = 0.0;
-			for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
-				sum += e.getB();
+			for ( final PairError e : errors )
+				sum += e.errorPx;
 			final double average = sum / total;
 
 			// helper: pick K entries with smallest |error - reference|, in original sort order
 			IOFunctions.println( "Middle " + middleK + " of " + total + " pair(s) closest to median (median=" + fmt( median ) + " px):" );
-			for ( final Pair< Pair< ViewId, ViewId >, Double > e : pickClosest( errors, median, middleK ) )
-				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + fmt( e.getB() ) + " px" );
+			for ( final PairError e : pickClosest( errors, median, middleK ) )
+				IOFunctions.println( "  " + Group.pvid( e.a ) + " <-> " + Group.pvid( e.b ) + ": " + fmt( e.errorPx ) + " px" );
 
 			IOFunctions.println( "Middle " + middleK + " of " + total + " pair(s) closest to average (avg=" + fmt( average ) + " px):" );
-			for ( final Pair< Pair< ViewId, ViewId >, Double > e : pickClosest( errors, average, middleK ) )
-				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + fmt( e.getB() ) + " px" );
+			for ( final PairError e : pickClosest( errors, average, middleK ) )
+				IOFunctions.println( "  " + Group.pvid( e.a ) + " <-> " + Group.pvid( e.b ) + ": " + fmt( e.errorPx ) + " px" );
 		}
 
 		if ( !p.anyGroupingSelected() )
@@ -559,14 +580,14 @@ public class AnalyzeErrorsUtil
 
 		// Per-group rollup: each pair contributes once to each endpoint group (or once total if intra-group).
 		final HashMap< Group< ViewDescription >, GroupAcc > groupAcc = new HashMap<>();
-		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		for ( final PairError e : errors )
 		{
-			final Group< ViewDescription > gA = viewToGroup.get( e.getA().getA() );
-			final Group< ViewDescription > gB = viewToGroup.get( e.getA().getB() );
+			final Group< ViewDescription > gA = viewToGroup.get( e.a );
+			final Group< ViewDescription > gB = viewToGroup.get( e.b );
 			if ( gA != null )
-				groupAcc.computeIfAbsent( gA, k -> new GroupAcc() ).add( e.getB() );
+				groupAcc.computeIfAbsent( gA, k -> new GroupAcc() ).add( e.errorPx, e.numCorr );
 			if ( gB != null && gB != gA )
-				groupAcc.computeIfAbsent( gB, k -> new GroupAcc() ).add( e.getB() );
+				groupAcc.computeIfAbsent( gB, k -> new GroupAcc() ).add( e.errorPx, e.numCorr );
 		}
 		final ArrayList< Map.Entry< Group< ViewDescription >, GroupAcc > > groupRollup = new ArrayList<>( groupAcc.entrySet() );
 		groupRollup.sort( ( o1, o2 ) -> Double.compare( o2.getValue().avg(), o1.getValue().avg() ) );
@@ -723,8 +744,8 @@ public class AnalyzeErrorsUtil
 	 * preserving the original (desc-by-error) order in the output. O(N log K) using a
 	 * max-heap keyed by absolute distance.
 	 */
-	private static ArrayList< Pair< Pair< ViewId, ViewId >, Double > > pickClosest(
-			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+	private static ArrayList< PairError > pickClosest(
+			final ArrayList< PairError > errors,
 			final double reference,
 			final int k )
 	{
@@ -732,16 +753,16 @@ public class AnalyzeErrorsUtil
 		// max-heap on |distance| so the worst-fit at the top can be evicted
 		final java.util.PriorityQueue< int[] > heap = new java.util.PriorityQueue<>( kk,
 				( a, b ) -> Double.compare(
-						Math.abs( errors.get( b[ 0 ] ).getB() - reference ),
-						Math.abs( errors.get( a[ 0 ] ).getB() - reference ) ) );
+						Math.abs( errors.get( b[ 0 ] ).errorPx - reference ),
+						Math.abs( errors.get( a[ 0 ] ).errorPx - reference ) ) );
 		for ( int i = 0; i < errors.size(); i++ )
 		{
 			if ( heap.size() < kk )
 				heap.offer( new int[] { i } );
 			else
 			{
-				final double cur = Math.abs( errors.get( i ).getB() - reference );
-				final double worst = Math.abs( errors.get( heap.peek()[ 0 ] ).getB() - reference );
+				final double cur = Math.abs( errors.get( i ).errorPx - reference );
+				final double worst = Math.abs( errors.get( heap.peek()[ 0 ] ).errorPx - reference );
 				if ( cur < worst )
 				{
 					heap.poll();
@@ -752,7 +773,7 @@ public class AnalyzeErrorsUtil
 		final ArrayList< Integer > indices = new ArrayList<>( heap.size() );
 		for ( final int[] e : heap ) indices.add( e[ 0 ] );
 		Collections.sort( indices ); // restore original (desc-by-error) order
-		final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > out = new ArrayList<>( indices.size() );
+		final ArrayList< PairError > out = new ArrayList<>( indices.size() );
 		for ( final int i : indices ) out.add( errors.get( i ) );
 		return out;
 	}
@@ -761,11 +782,13 @@ public class AnalyzeErrorsUtil
 	private static final class GroupAcc
 	{
 		long count = 0;
+		int numCorr = 0;
 		double sum = 0.0, min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
 
-		void add( final double v )
+		void add( final double v, final int corrAdd )
 		{
 			count++;
+			numCorr += corrAdd;
 			sum += v;
 			if ( v < min ) min = v;
 			if ( v > max ) max = v;

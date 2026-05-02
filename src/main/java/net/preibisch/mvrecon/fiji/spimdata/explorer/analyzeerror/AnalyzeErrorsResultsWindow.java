@@ -42,8 +42,6 @@ import javax.swing.table.TableRowSorter;
 import ij.gui.GUI;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
-import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.util.Pair;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil.GroupPairResult;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil.Parameters;
@@ -61,11 +59,11 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 
 	private static final NumberFormat FMT = new DecimalFormat( "#.####" );
 
-	private static final int COL_A = 0, COL_B = 1, COL_COUNT = 2, COL_MIN = 3, COL_AVG = 4, COL_MAX = 5;
+	private static final int COL_A = 0, COL_B = 1, COL_COUNT = 2, COL_NUM_CORR = 3, COL_MIN = 4, COL_AVG = 5, COL_MAX = 6;
 
 	public AnalyzeErrorsResultsWindow(
 			final SpimData2 data,
-			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+			final ArrayList< AnalyzeErrorsUtil.PairError > errors,
 			final Parameters params,
 			final ViewSetupExplorerPanel< ? > panel )
 	{
@@ -85,6 +83,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		final DefaultTableCellRenderer right = new DefaultTableCellRenderer();
 		right.setHorizontalAlignment( javax.swing.SwingConstants.RIGHT );
 		table.getColumnModel().getColumn( COL_COUNT ).setCellRenderer( right );
+		table.getColumnModel().getColumn( COL_NUM_CORR ).setCellRenderer( right );
 
 		final DefaultTableCellRenderer errorRenderer = new DefaultTableCellRenderer()
 		{
@@ -104,6 +103,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		table.getColumnModel().getColumn( COL_A ).setPreferredWidth( 280 );
 		table.getColumnModel().getColumn( COL_B ).setPreferredWidth( 280 );
 		table.getColumnModel().getColumn( COL_COUNT ).setPreferredWidth( 60 );
+		table.getColumnModel().getColumn( COL_NUM_CORR ).setPreferredWidth( 70 );
 		table.getColumnModel().getColumn( COL_MIN ).setPreferredWidth( 90 );
 		table.getColumnModel().getColumn( COL_AVG ).setPreferredWidth( 90 );
 		table.getColumnModel().getColumn( COL_MAX ).setPreferredWidth( 90 );
@@ -158,7 +158,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 
 	private static List< Row > buildRows(
 			final SpimData2 data,
-			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+			final ArrayList< AnalyzeErrorsUtil.PairError > errors,
 			final Parameters params )
 	{
 		final ArrayList< Row > rows = new ArrayList<>();
@@ -169,20 +169,20 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 				final HashSet< BasicViewDescription< ? > > views = new HashSet<>();
 				views.addAll( r.groupA.getViews() );
 				views.addAll( r.groupB.getViews() );
-				rows.add( new Row( Group.gvids( r.groupA ), Group.gvids( r.groupB ), r.count, r.min, r.avg, r.max, views ) );
+				rows.add( new Row( Group.gvids( r.groupA ), Group.gvids( r.groupB ), r.count, r.numCorr, r.min, r.avg, r.max, views ) );
 			}
 		}
 		else
 		{
-			for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+			for ( final AnalyzeErrorsUtil.PairError e : errors )
 			{
-				final ViewDescription vdA = data.getSequenceDescription().getViewDescriptions().get( e.getA().getA() );
-				final ViewDescription vdB = data.getSequenceDescription().getViewDescriptions().get( e.getA().getB() );
+				final ViewDescription vdA = data.getSequenceDescription().getViewDescriptions().get( e.a );
+				final ViewDescription vdB = data.getSequenceDescription().getViewDescriptions().get( e.b );
 				final HashSet< BasicViewDescription< ? > > views = new HashSet<>();
 				if ( vdA != null ) views.add( vdA );
 				if ( vdB != null ) views.add( vdB );
-				final double err = e.getB();
-				rows.add( new Row( Group.pvids( e.getA().getA() ), Group.pvids( e.getA().getB() ), 1, err, err, err, views ) );
+				final double err = e.errorPx;
+				rows.add( new Row( Group.pvids( e.a ), Group.pvids( e.b ), 1, e.numCorr, err, err, err, views ) );
 			}
 		}
 		return rows;
@@ -192,16 +192,18 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 	{
 		final String labelA, labelB;
 		final int count;
+		final int numCorr;
 		final double min, avg, max;
 		final HashSet< BasicViewDescription< ? > > viewsForBDV;
 
-		Row( final String labelA, final String labelB, final int count,
+		Row( final String labelA, final String labelB, final int count, final int numCorr,
 				final double min, final double avg, final double max,
 				final HashSet< BasicViewDescription< ? > > viewsForBDV )
 		{
 			this.labelA = labelA;
 			this.labelB = labelB;
 			this.count = count;
+			this.numCorr = numCorr;
 			this.min = min;
 			this.avg = avg;
 			this.max = max;
@@ -212,7 +214,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 	private static final class ResultsTableModel extends AbstractTableModel
 	{
 		private static final long serialVersionUID = 1L;
-		private static final String[] COLUMNS = { "Side A", "Side B", "Count", "Min (px)", "Avg (px)", "Max (px)" };
+		private static final String[] COLUMNS = { "Side A", "Side B", "Count", "# Corr", "Min (px)", "Avg (px)", "Max (px)" };
 
 		private final List< Row > rows;
 		ResultsTableModel( final List< Row > rows ) { this.rows = rows; }
@@ -226,7 +228,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		{
 			switch ( c )
 			{
-				case COL_COUNT:                  return Integer.class;
+				case COL_COUNT: case COL_NUM_CORR: return Integer.class;
 				case COL_MIN: case COL_AVG: case COL_MAX: return Double.class;
 				default:                          return String.class;
 			}
@@ -240,13 +242,14 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 			final Row row = rows.get( r );
 			switch ( c )
 			{
-				case COL_A:     return row.labelA;
-				case COL_B:     return row.labelB;
-				case COL_COUNT: return row.count;
-				case COL_MIN:   return row.min;
-				case COL_AVG:   return row.avg;
-				case COL_MAX:   return row.max;
-				default:        return null;
+				case COL_A:        return row.labelA;
+				case COL_B:        return row.labelB;
+				case COL_COUNT:    return row.count;
+				case COL_NUM_CORR: return row.numCorr;
+				case COL_MIN:      return row.min;
+				case COL_AVG:      return row.avg;
+				case COL_MAX:      return row.max;
+				default:           return null;
 			}
 		}
 	}

@@ -31,7 +31,6 @@ import java.util.List;
 import javax.swing.JMenuItem;
 
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.util.Pair;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsResultsWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil;
@@ -99,7 +98,7 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 								panel.getSpimData().getSequenceDescription().getViewSetupsOrdered(),
 								panel.getSpimData().getSequenceDescription().getTimePoints().getTimePointsOrdered() );
 
-					final ArrayList<Pair<Pair<ViewId, ViewId>, Double>> errors =
+					final ArrayList< AnalyzeErrorsUtil.PairError > errors =
 							AnalyzeErrorsUtil.getErrors( panel.getSpimData(), viewIds, params.labelAndWeights );
 
 					if ( errors.size() > 0 )
@@ -112,9 +111,9 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 										panel.getSpimData(), errors, params, panel ) );
 
 						// auto-select the worst pair as the initial selection
-						final Pair< Pair< ViewId, ViewId >, Double > worst = errors.get( 0 );
+						final AnalyzeErrorsUtil.PairError worst = errors.get( 0 );
 						AnalyzeErrorsUtil.selectViewsAndRecenter( panel, params,
-								Arrays.asList( worst.getA().getA(), worst.getA().getB() ) );
+								Arrays.asList( worst.a, worst.b ) );
 
 						// TODO: activate overlay that shows the outlines of both stacks
 					}
