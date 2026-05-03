@@ -86,6 +86,7 @@ import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetupBigStitcher;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v05.OmeNgffV05Metadata;
 import util.BlockSupplierUtils;
 import util.Grid;
 import util.URITools;
@@ -263,17 +264,34 @@ public class ExportN5Api implements ImgExport, Calibrateable
 						IOFunctions.println( "Calibration: " + Util.printCoordinates( cal ) + " micrometer; resolution at S0: " + Util.printCoordinates( resolutionS0 ) + " " + unit);
 
 						// create metadata
-						final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
-								5, // int n
-								"/", // String name, I also saw "/"
-								resolutionS0, // double[] resolutionS0,
-								unit, //"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
-								mrInfoZarr.length, // int numResolutionLevels,
-								levelToName,
-								levelToMipmapTransform );
+						if (storageType == StorageFormat.ZARR2) {
+							final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
+									5, // int n
+									"/", // String name, I also saw "/"
+									resolutionS0, // double[] resolutionS0,
+									unit, //"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+									mrInfoZarr.length, // int numResolutionLevels,
+									levelToName,
+									levelToMipmapTransform );
 
-						// save metadata
-						driverVolumeWriter.setAttribute( "/", "multiscales", meta );
+							// save metadata
+							driverVolumeWriter.setAttribute( "/", "multiscales", meta );
+						} else {
+							// ZARR3
+							final OmeNgffV05Metadata meta = OMEZarrAttributes.createOMEv05ZarrMetadata(
+									5, // int n
+									"", // String name, I also saw "/"
+									resolutionS0, // double[] resolutionS0,
+									unit, //"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+									mrInfoZarr.length, // int numResolutionLevels,
+									levelToName,
+									levelToMipmapTransform );
+
+							// save metadata
+							driverVolumeWriter.setAttribute( "/", "ome", meta );
+							// this is hacky until OmeNgffV05Metadata gets fixed to output version
+							driverVolumeWriter.setAttribute( "/", "ome/version", "0.5" );
+						}
 					}
 				}
 				else
@@ -380,7 +398,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			IOFunctions.println( "Calibration: " + Util.printCoordinates( cal ) + " micrometer; resolution at S0: " + Util.printCoordinates( resolutionS0 ) + " " + unit);
 
 			// create metadata
-			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
+			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
 					3, // int n
 					omeZarrSubContainer, // String name, I also saw "/"
 					resolutionS0, // double[] resolutionS0,

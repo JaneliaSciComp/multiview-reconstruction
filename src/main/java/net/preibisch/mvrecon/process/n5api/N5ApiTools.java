@@ -499,7 +499,7 @@ public class N5ApiTools
 				(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
 		// create metadata
-		final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
+		final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
 				5, // int n
 				"/", // String name, I also saw "/"
 				resolutionS0, // double[] resolutionS0,

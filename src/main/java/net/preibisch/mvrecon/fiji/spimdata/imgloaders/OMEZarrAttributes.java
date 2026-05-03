@@ -40,6 +40,7 @@ import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTrans
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TranslationCoordinateTransformation;
 
 import net.imglib2.realtransform.AffineTransform3D;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v05.OmeNgffV05Metadata;
 import util.URITools;
 
 public class OMEZarrAttributes
@@ -50,9 +51,9 @@ public class OMEZarrAttributes
 	 * @param numResolutionLevels - number of multiresolution levels (e.g. s0, s1, s2 would be 3), always includes full res
 	 * @return
 	 */
-	public static OmeNgffMultiScaleMetadata[] createOMEZarrMetadata(
+	public static OmeNgffMultiScaleMetadata[] createOMEv04ZarrMetadata(
 			final int n,
-			final String name, // I also saw "/"
+			final String name,
 			final double[] resolutionS0,
 			final String unitXYZ, // e.g micrometer
 			final int numResolutionLevels,
@@ -123,10 +124,61 @@ public class OMEZarrAttributes
 		final DatasetAttributes[] childrenAttributes = null;
 		final CoordinateTransformation<?>[] coordinateTransformations = new CoordinateTransformation[] { new  ScaleCoordinateTransformation( scale ) }; // I also saw null
 		final OmeNgffDownsamplingMetadata metadata = null;
-		
+
 		meta[ 0 ] = new OmeNgffMultiScaleMetadata( n, path, name, type, "0.4", axes, datasets, childrenAttributes, coordinateTransformations, metadata );
 
 		return meta;
+	}
+
+	public static OmeNgffV05Metadata createOMEv05ZarrMetadata(
+			final int n,
+			final String name,
+			final double[] resolutionS0,
+			final String unitXYZ,
+			final int numResolutionLevels,
+			final Function<Integer, String> levelToName,
+			final Function<Integer, AffineTransform3D > levelToMipmapTransform )
+	{
+		// axis descriptions (TCZYX order, same as v0.4)
+		final Axis[] axes = new Axis[ n ];
+
+		int axisIndex = 0;
+
+		if ( n >= 5 )
+			axes[ axisIndex++ ] = new Axis( "time", "t", "millisecond" );
+		if ( n >= 4 )
+			axes[ axisIndex++ ] = new Axis( "channel", "c", null );
+		final String spatialUnit = adaptSpatialUnit( unitXYZ );
+		axes[ axisIndex++ ] = new Axis( "space", "z", spatialUnit );
+		axes[ axisIndex++ ] = new Axis( "space", "y", spatialUnit );
+		axes[ axisIndex++ ] = new Axis( "space", "x", spatialUnit );
+
+		// per-level scales / translations / paths
+		final String[] scalePaths = new String[ numResolutionLevels ];
+		final double[][] scales = new double[ numResolutionLevels ][ n ];
+		final double[][] translations = new double[ numResolutionLevels ][ n ];
+
+		for ( int s = 0; s < numResolutionLevels; ++s )
+		{
+			scalePaths[ s ] = levelToName.apply( s );
+
+			final AffineTransform3D m = levelToMipmapTransform.apply( s );
+
+			for ( int d = 0; d < 3; ++d )
+			{
+				translations[ s ][ d ] = resolutionS0[ d ] * m.getTranslation()[ d ];
+				scales[ s ][ d ] = resolutionS0[ d ] * m.get( d, d );
+			}
+
+			// if 4d and 5d, add 1's for C and T
+			for ( int d = 3; d < n; ++d )
+			{
+				translations[ s ][ d ] = 0.0;
+				scales[ s ][ d ] = 1.0;
+			}
+		}
+
+		return OmeNgffV05Metadata.buildForWriting(n, name, axes, scalePaths, scales, translations);
 	}
 
 	public static double[] getResolutionS0( final double[] cal, final double anisoF, final double downsamplingF )
