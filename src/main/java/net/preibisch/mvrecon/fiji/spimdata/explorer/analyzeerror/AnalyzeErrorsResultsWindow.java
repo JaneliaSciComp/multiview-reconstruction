@@ -72,17 +72,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 			final Parameters params,
 			final ViewSetupExplorerPanel< ? > panel )
 	{
-		this( data, errors, params, panel, null );
-	}
-
-	public AnalyzeErrorsResultsWindow(
-			final SpimData2 data,
-			final ArrayList< AnalyzeErrorsUtil.PairError > errors,
-			final Parameters params,
-			final ViewSetupExplorerPanel< ? > panel,
-			final String subtitle )
-	{
-		super( buildTitle( params, subtitle ) );
+		super( buildTitle( params ) );
 
 		setDefaultCloseOperation( DISPOSE_ON_CLOSE );
 
@@ -177,11 +167,9 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		setVisible( true );
 	}
 
-	private static String buildTitle( final Parameters params, final String subtitle )
+	private static String buildTitle( final Parameters params )
 	{
 		final StringBuilder sb = new StringBuilder( params.anyGroupingSelected() ? "Errors [Grouped]" : "Errors" );
-		if ( subtitle != null && !subtitle.isEmpty() )
-			sb.append( " [" ).append( subtitle ).append( "]" );
 		if ( params.labelAndWeights != null && !params.labelAndWeights.isEmpty() )
 		{
 			sb.append( " ({" );
@@ -218,8 +206,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		}
 
 		final Parameters child = ungroupedClone( parentParams );
-		final String subtitle = clickedRow.labelA + " <-> " + clickedRow.labelB;
-		new AnalyzeErrorsResultsWindow( data, filtered, child, panel, subtitle );
+		new AnalyzeErrorsResultsWindow( data, filtered, child, panel );
 	}
 
 	private static Parameters ungroupedClone( final Parameters src )
