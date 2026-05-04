@@ -137,9 +137,20 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 		for ( int level = 0; level < levels; ++level )
 		{
 			final Dimensions d = mrsil.getImageSize( firstTp, level );
-			final long[] arr = new long[ d.numDimensions() ];
-			d.dimensions( arr );
-			dims[ level ] = arr;
+			if ( d == null )
+			{
+				// Underlying loader has no size info for this level; use sentinel
+				// so clamping in SplitViewerSetupImgLoader is skipped (max is unreachable).
+				final long[] arr = new long[ 3 ];
+				java.util.Arrays.fill( arr, Long.MAX_VALUE );
+				dims[ level ] = arr;
+			}
+			else
+			{
+				final long[] arr = new long[ d.numDimensions() ];
+				d.dimensions( arr );
+				dims[ level ] = arr;
+			}
 		}
 		return dims;
 	}
