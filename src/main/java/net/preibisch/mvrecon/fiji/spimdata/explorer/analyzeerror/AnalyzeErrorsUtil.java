@@ -674,6 +674,7 @@ public class AnalyzeErrorsUtil
 		final List< ? extends List< ? extends BasicViewDescription< ? > > > elements =
 				panel.getTableModel().getElements();
 		boolean setFirst = false;
+		int firstMatchRow = -1;
 		for ( int r = 0; r < elements.size(); r++ )
 		{
 			boolean matches = false;
@@ -684,6 +685,8 @@ public class AnalyzeErrorsUtil
 			}
 			if ( matches )
 			{
+				if ( firstMatchRow < 0 )
+					firstMatchRow = r;
 				if ( setFirst )
 					panel.table.addRowSelectionInterval( r, r );
 				else
@@ -696,6 +699,14 @@ public class AnalyzeErrorsUtil
 
 		// wait until the table is updated (otherwise there might be an exception thrown)
 		SimpleMultiThreading.threadWait( 100 );
+
+		// scroll so the first matched row is visible (mirrors FilteredAndGroupedExplorerPanel.selectViews)
+		if ( firstMatchRow >= 0 )
+		{
+			final int row = firstMatchRow;
+			javax.swing.SwingUtilities.invokeLater( () ->
+					panel.table.scrollRectToVisible( panel.table.getCellRect( row, 0, true ) ) );
+		}
 
 		// recenter BDV on the selection
 		if ( bdvOpen )
