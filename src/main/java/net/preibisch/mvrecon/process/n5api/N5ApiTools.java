@@ -43,10 +43,10 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.RawCompression;
+import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
-import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3Compressor;
 import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 
 import bdv.export.ExportMipmapInfo;
@@ -293,16 +293,13 @@ public class N5ApiTools
 
 		if ( useSharding )
 		{
-			// Use Zarr v3 sharding via ZarrV3DatasetAttributes constructor
-			// Convert Compression to DataCodecInfo (only Blosc and Zstandard officially supported)
-			final ZarrV3Compressor codec = ZarrV3Compressor.fromCompression( compression );
-			final DatasetAttributes attributes = new ZarrV3DatasetAttributes(
-					dimensionsS0,  // shape
-					shardSize,     // shard dimensions
-					blockSize,     // inner chunk size within shards
-					dataType,
-					codec );       // compression codec (can be null for no compression)
-
+			// Use Zarr v3 sharding via ZarrV3DatasetAttributes builder
+			final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder(dimensionsS0, dataType)
+					.blockSize(blockSize) // inner chunk size within shards
+					.shardShape(shardSize) // shard dimensions
+					.compression(compression)
+					.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
+					.build();
 			driverVolumeWriter.createDataset( viewIdToDataset.apply( viewId, 0 ), attributes );
 		}
 		else
@@ -334,14 +331,13 @@ public class N5ApiTools
 
 			if ( useSharding )
 			{
-				final ZarrV3Compressor codec = ZarrV3Compressor.fromCompression( compression );
-				final DatasetAttributes attributes = new ZarrV3DatasetAttributes(
-						dim,           // shape
-						shardSize,     // shard dimensions
-						blockSize,     // inner chunk size within shards
-						dataType,
-						codec );       // compression codec
-
+				// Use Zarr v3 sharding via ZarrV3DatasetAttributes builder
+				final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder(dim, dataType)
+						.blockSize(blockSize) // inner chunk size within shards
+						.shardShape(shardSize) // shard dimensions
+						.compression(compression)
+						.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
+						.build();
 				driverVolumeWriter.createDataset( datasetLevel, attributes );
 			}
 			else
