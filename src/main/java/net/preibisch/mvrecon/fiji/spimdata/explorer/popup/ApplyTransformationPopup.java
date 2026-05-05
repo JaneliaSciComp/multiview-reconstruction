@@ -137,7 +137,9 @@ public class ApplyTransformationPopup extends JMenuItem implements ExplorerWindo
 		
 					// update registration panel if available
 					panel.updateContent();
-					panel.bdvPopup().updateBDV();
+					final BasicBDVPopup p = panel.runningBdvPopup();
+					if ( p != null )
+						p.updateBDV();
 				}
 			} ).start();
 		}

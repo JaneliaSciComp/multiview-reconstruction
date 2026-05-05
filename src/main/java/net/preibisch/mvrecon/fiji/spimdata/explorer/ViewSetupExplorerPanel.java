@@ -68,6 +68,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.AnalyzeErrorPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ApplyTransformationPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BakeManualTransformationPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BoundingBoxPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DeconvolutionPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DetectInterestPointsPopup;
@@ -79,6 +80,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.FusionPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.IntensityAdjustmentPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.InterestPointsExplorerPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.LabelPopUp;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.LazyBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.MaxProjectPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.MissingViewsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.PointSpreadFunctionsPopup;
@@ -166,11 +168,24 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 				|| data.getSequenceDescription().getImgLoader().getClass().getSimpleName().equals( "FractalImgLoader" )
 				|| FileMapImgLoaderLOCI2.class.isInstance( data.getSequenceDescription().getImgLoader() ) ) )
 		{
-			final BDVPopup bdvpopup = bdvPopup();
+			// Find whichever BDV popup was registered above (eager BDVPopup or LazyBDVPopup
+			// — exclusive based on BDVPopup.useLazyMode set by Data_Explorer's startup dialog).
+			BasicBDVPopup p = null;
+			for ( final ExplorerWindowSetable s : popups )
+				if ( s instanceof BasicBDVPopup ) { p = ( BasicBDVPopup ) s; break; }
 
-			if ( bdvpopup != null )
+			if ( p instanceof LazyBDVPopup )
 			{
-				if (!bdvPopup().bdvRunning())
+				start = System.currentTimeMillis();
+				( ( LazyBDVPopup ) p ).openBDV( this );
+				IOFunctions.println( "PERF: [ViewSetupExplorerPanel] LazyBDVPopup.openBDV() took " + (System.currentTimeMillis() - start) + " ms" );
+				// Lazy mode wires its own selection listener; nothing more to do here.
+			}
+			else if ( p instanceof BDVPopup )
+			{
+				final BDVPopup bdvpopup = ( BDVPopup ) p;
+
+				if ( !bdvpopup.bdvRunning() )
 				{
 					start = System.currentTimeMillis();
 					bdvpopup.bdv = BDVPopup.createBDV( getSpimData(), xml() );
@@ -590,7 +605,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 				if ( arg0.getKeyChar() == 'c' || arg0.getKeyChar() == 'C' )
 				{
 					colorMode = !colorMode;
-					
+
 					System.out.println( "colormode" );
 
 					if (colorMode)
@@ -598,9 +613,9 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 						// cycle between color schemes
 						colorOffset = (colorOffset + 1) % 5;
 					}
-					final BDVPopup p = bdvPopup();
-					if ( p != null && p.bdv != null && p.bdv.getViewerFrame().isVisible() )
-						updateBDV( p.bdv, colorMode, data, null, selectedRows );
+					final BasicBDVPopup p = runningBdvPopup();
+					if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
+						updateBDV( p.getBDV(), colorMode, data, null, selectedRows );
 				}
 			}
 
@@ -657,7 +672,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		final ArrayList< ExplorerWindowSetable > popups = new ArrayList< ExplorerWindowSetable >();
 
 		popups.add( new LabelPopUp( " Display/Verify" ) );
-		popups.add( new BDVPopup() );
+		popups.add( BDVPopup.useLazyMode ? new LazyBDVPopup() : new BDVPopup() );
 		popups.add( new DisplayRawImagesPopup() );
 		popups.add( new DisplayFusedImagesPopup() );
 		popups.add( new VisualizeNonRigid() );

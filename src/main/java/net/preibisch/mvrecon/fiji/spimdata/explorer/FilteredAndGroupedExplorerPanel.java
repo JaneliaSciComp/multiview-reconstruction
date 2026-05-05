@@ -63,6 +63,7 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVFlyThrough;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVUtils;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ExplorerWindowSetable;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import util.BDVTools;
@@ -139,6 +140,35 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 				return ( BDVPopup ) s;
 
 		return null;
+	}
+
+	/**
+	 * Returns the first registered popup that implements {@link BasicBDVPopup},
+	 * regardless of whether a BDV is currently open. Use this when you need the
+	 * popup instance itself (e.g. to set its {@code bdv} field) rather than just
+	 * accessing a running BDV.
+	 */
+	public BasicBDVPopup getAnyBDVPopup()
+	{
+		for ( final ExplorerWindowSetable s : popups )
+			if ( s instanceof BasicBDVPopup )
+				return ( BasicBDVPopup ) s;
+		return null;
+	}
+
+	/**
+	 * Returns whichever BDV popup currently has a running BDV (eager
+	 * {@link BDVPopup} or lazy variant — both implement {@link BasicBDVPopup}).
+	 * Falls back to the eager {@link BDVPopup} (which may have a null bdv) so
+	 * call sites that early-return on {@code bdv == null} keep their existing
+	 * behaviour when no BDV is open.
+	 */
+	public BasicBDVPopup runningBdvPopup()
+	{
+		for ( final ExplorerWindowSetable s : popups )
+			if ( s instanceof BasicBDVPopup && ( ( BasicBDVPopup ) s ).bdvRunning() )
+				return ( BasicBDVPopup ) s;
+		return bdvPopup();
 	}
 
 	@Override
@@ -489,9 +519,9 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 					System.out.println( "colormode" );
 
-					final BDVPopup p = bdvPopup();
-					if ( p != null && p.bdv != null && p.bdv.getViewerFrame().isVisible() )
-						updateBDV( p.bdv, colorMode, data, null, selectedRows );
+					final BasicBDVPopup p = runningBdvPopup();
+					if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
+						updateBDV( p.getBDV(), colorMode, data, null, selectedRows );
 				}
 			}
 		} );
@@ -506,10 +536,10 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			{
 				if ( arg0.getKeyChar() == 'v' || arg0.getKeyChar() == 'V' )
 				{
-					final BDVPopup p = bdvPopup();
-					if ( p != null && p.bdv != null && p.bdv.getViewerFrame().isVisible() )
+					final BasicBDVPopup p = runningBdvPopup();
+					if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
 					{
-						toggleViewSetupIdOverlay( p.bdv );
+						toggleViewSetupIdOverlay( p.getBDV() );
 					}
 				}
 			}
@@ -547,12 +577,12 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	{
 		if ( viewSetupIdOverlay != null )
 		{
-			final BDVPopup p = bdvPopup();
-			if ( p != null && p.bdv != null )
+			final BasicBDVPopup p = runningBdvPopup();
+			if ( p != null && p.getBDV() != null )
 			{
-				p.bdv.getViewer().renderTransformListeners().remove( viewSetupIdOverlay );
-				p.bdv.getViewer().getDisplay().overlays().remove( viewSetupIdOverlay );
-				p.bdv.getViewer().repaint();
+				p.getBDV().getViewer().renderTransformListeners().remove( viewSetupIdOverlay );
+				p.getBDV().getViewer().getDisplay().overlays().remove( viewSetupIdOverlay );
+				p.getBDV().getViewer().repaint();
 			}
 			viewSetupIdOverlay = null;
 		}
@@ -567,10 +597,10 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			{
 				if ( arg0.getKeyChar() == 'r' || arg0.getKeyChar() == 'R' )
 				{
-					final BDVPopup p = bdvPopup();
-					if ( p != null && p.bdv != null && p.bdv.getViewerFrame().isVisible() )
+					final BasicBDVPopup p = runningBdvPopup();
+					if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
 					{
-						TransformationTools.reCenterViews( p.bdv,
+						TransformationTools.reCenterViews( p.getBDV(),
 								selectedRows.stream().collect(
 										HashSet< BasicViewDescription< ? > >::new,
 										( a, b ) -> a.addAll( b ), ( a, b ) -> a.addAll( b ) ),
@@ -823,7 +853,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 				if ( enableFlyThrough )
 				{
-					final boolean bdvRunning = bdvPopup().bdvRunning() && !(bdvPopup().bdv == null);
+					final BasicBDVPopup p = runningBdvPopup();
+					final boolean bdvRunning = p != null && p.bdvRunning() && p.getBDV() != null;
 
 					if ( arg0.getKeyChar() == 'r' )
 						if (bdvRunning)
@@ -831,14 +862,14 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 							{
 								@Override
 								public void run()
-								{ BDVFlyThrough.record( bdvPopup().bdv.getViewer() ); }
+								{ BDVFlyThrough.record( p.getBDV().getViewer() ); }
 							} ).start();
 						else
 							IOFunctions.println("Please open BigDataViewer to record a fly-through or add keypoints.");
 
 					if ( arg0.getKeyChar() == 'a' )
 						if (bdvRunning)
-							BDVFlyThrough.addCurrentViewerTransform( bdvPopup().bdv.getViewer() );
+							BDVFlyThrough.addCurrentViewerTransform( p.getBDV().getViewer() );
 						else
 							IOFunctions.println("Please open BigDataViewer to record a fly-through or add keypoints.");
 
@@ -849,7 +880,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 						BDVFlyThrough.deleteLastViewerTransform();
 
 					if ( arg0.getKeyChar() == 'j' )
-						BDVFlyThrough.jumpToLastViewerTransform( bdvPopup().bdv.getViewer() );
+						if ( bdvRunning )
+							BDVFlyThrough.jumpToLastViewerTransform( p.getBDV().getViewer() );
 
 					if ( arg0.getKeyChar() == 's' )
 						try { BDVFlyThrough.saveViewerTransforms(); } catch ( Exception e ) { IOFunctions.println( "couldn't save json: " + e ); }
@@ -859,7 +891,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 					if ( arg0.getKeyChar() == 'R' )
 						if ( bdvRunning )
-							new Thread( () -> BDVFlyThrough.renderScreenshot( bdvPopup().bdv.getViewer() ) ).start();
+							new Thread( () -> BDVFlyThrough.renderScreenshot( p.getBDV().getViewer() ) ).start();
 						else
 							IOFunctions.println( "Please open BigDataViewer to make a screenshot." );
 				}

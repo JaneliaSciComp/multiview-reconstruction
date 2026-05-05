@@ -44,7 +44,7 @@ public class PairwiseResult< I extends InterestPoint >
 	 * The counter is reset by {@link #resetLogCounters()} at the start of each
 	 * {@code computePairs} invocation.
 	 */
-	public static int maxPerPairCorrLog = 1000;
+	public static int maxPerPairCorrLog = 100;
 
 	private static final java.util.concurrent.atomic.AtomicInteger printedCount = new java.util.concurrent.atomic.AtomicInteger( 0 );
 	private static volatile boolean noticeEmitted = false;

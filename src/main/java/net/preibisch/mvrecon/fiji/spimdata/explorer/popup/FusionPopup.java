@@ -82,7 +82,9 @@ public class FusionPopup extends JMenuItem implements ExplorerWindowSetable
 					if ( Image_Fusion.fuse( (SpimData2)panel.getSpimData(), viewIds ) )
 					{
 						panel.updateContent(); // update interestpoint and registration panel if available
-						panel.bdvPopup().updateBDV();
+						final BasicBDVPopup p = panel.runningBdvPopup();
+						if ( p != null )
+							p.updateBDV();
 					}
 				}
 			} ).start();

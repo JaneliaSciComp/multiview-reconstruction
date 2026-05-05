@@ -20,7 +20,7 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.fiji.plugin;
+package net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror;
 
 import java.awt.BorderLayout;
 import java.text.DecimalFormat;
@@ -43,16 +43,14 @@ import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
-import net.preibisch.mvrecon.fiji.plugin.Analyze_Errors.GroupPairResult;
-import net.preibisch.mvrecon.fiji.plugin.Analyze_Errors.Parameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil.GroupPairResult;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil.Parameters;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
-import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 /**
- * Results browser for {@link Analyze_Errors}: a single sortable table with one row
+ * Results browser for {@link AnalyzeErrorsUtil}: a single sortable table with one row
  * per view-pair (no grouping) or per group-pair (any Group_by_* selected). Clicking
  * a row recenters the explorer's BDV on the involved views, if BDV is open.
  */
@@ -120,11 +118,9 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 				return;
 			final Row r = rows.get( table.convertRowIndexToModel( viewRow ) );
 
-			// re-fetch BDV every click — it can be closed at any time
-			final BDVPopup pop = panel.bdvPopup();
-			if ( pop == null || pop.bdv == null || !pop.bdv.getViewerFrame().isVisible() )
-				return;
-			TransformationTools.reCenterViews( pop.bdv, r.viewsForBDV, data.getViewRegistrations() );
+			// off-EDT: AnalyzeErrorsUtil.selectViewsAndRecenter uses threadWait
+			new Thread( () ->
+					AnalyzeErrorsUtil.selectViewsAndRecenter( panel, params, r.viewsForBDV ) ).start();
 		} );
 
 		getContentPane().setLayout( new BorderLayout() );
@@ -142,7 +138,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		final ArrayList< Row > rows = new ArrayList<>();
 		if ( params.anyGroupingSelected() )
 		{
-			for ( final GroupPairResult r : Analyze_Errors.computeGroupPairs( data, errors, params ) )
+			for ( final GroupPairResult r : AnalyzeErrorsUtil.computeGroupPairs( data, errors, params ) )
 			{
 				final HashSet< BasicViewDescription< ? > > views = new HashSet<>();
 				views.addAll( r.groupA.getViews() );

@@ -334,9 +334,9 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		// Clear correspondence color map cache when selection changes
 		correspondenceColorMap = null;
 
-		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().bdvPopup();
+		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().runningBdvPopup();
 
-		if ( currentVDs != null && currentVDs.size() != 0 && bdvPopup.bdvRunning() && row >= 0 && row < getRowCount() && col >= 1 && col <= 2  )
+		if ( currentVDs != null && currentVDs.size() != 0 && bdvPopup != null && bdvPopup.bdvRunning() && row >= 0 && row < getRowCount() && col >= 1 && col <= 2  )
 		{
 			// Handle state cycling when clicking the same cell again
 			if ( row == selectedRow && col == selectedCol )
@@ -356,7 +356,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 						selectedState = 0;
 						this.selectedRow = this.selectedCol = -1;
 						this.points = new HashMap<>();
-						if ( bdvPopup.bdvRunning() )
+						if ( bdvPopup != null && bdvPopup.bdvRunning() )
 							bdvPopup.updateBDV();
 						return;
 					}
@@ -367,7 +367,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 					selectedState = 0;
 					this.selectedRow = this.selectedCol = -1;
 					this.points = new HashMap<>();
-					if ( bdvPopup.bdvRunning() )
+					if ( bdvPopup != null && bdvPopup.bdvRunning() )
 						bdvPopup.updateBDV();
 					return;
 				}
@@ -482,7 +482,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 			this.points = new HashMap<>();
 		}
 
-		if ( bdvPopup.bdvRunning() )
+		if ( bdvPopup != null && bdvPopup.bdvRunning() )
 			bdvPopup.updateBDV();
 	}
 
@@ -613,8 +613,8 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		this.filterMode = filterMode;
 
 		// Update BDV if it's running
-		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().bdvPopup();
-		if ( bdvPopup.bdvRunning() )
+		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().runningBdvPopup();
+		if ( bdvPopup != null && bdvPopup.bdvRunning() )
 			bdvPopup.updateBDV();
 	}
 
@@ -629,8 +629,8 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		this.pointSizeScale = pointSizeScale;
 
 		// Update BDV if it's running
-		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().bdvPopup();
-		if ( bdvPopup.bdvRunning() )
+		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().runningBdvPopup();
+		if ( bdvPopup != null && bdvPopup.bdvRunning() )
 			bdvPopup.updateBDV();
 	}
 
@@ -645,8 +645,8 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		this.planeThickness = planeThickness;
 
 		// Update BDV if it's running
-		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().bdvPopup();
-		if ( bdvPopup.bdvRunning() )
+		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().runningBdvPopup();
+		if ( bdvPopup != null && bdvPopup.bdvRunning() )
 			bdvPopup.updateBDV();
 	}
 }

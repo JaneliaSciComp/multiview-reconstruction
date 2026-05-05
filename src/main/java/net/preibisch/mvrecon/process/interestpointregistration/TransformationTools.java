@@ -1127,7 +1127,7 @@ public class TransformationTools
 	 * The cap is per-call (per "Transformation Models:" block), so in TWO_ROUND global opt
 	 * round 1 and round 2 each get their own budget.
 	 */
-	public static int maxPerViewTransformLog = 1000;
+	public static int maxPerViewTransformLog = 100;
 
 	/** Tolerance used by {@link #isApproximatelyIdentity}. */
 	private static final double IDENTITY_EPSILON = 1e-6;

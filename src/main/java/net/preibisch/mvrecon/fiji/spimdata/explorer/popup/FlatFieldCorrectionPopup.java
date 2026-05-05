@@ -176,16 +176,17 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 				data.getSequenceDescription().setImgLoader( ffIL );
 				gdp.dispose();
 
-				if ( panel.bdvPopup().bdvRunning() )
+				final BDVPopup bdvPop = ( panel.bdvPopup() instanceof BDVPopup ) ? (BDVPopup) panel.bdvPopup() : null;
+				if ( bdvPop != null && bdvPop.bdvRunning() )
 				{
 					// we have to close and re-open BDV for the changed
 					// ImgLoader to be recognized
-					Dimension oldSize = panel.bdvPopup().getBDV().getViewerFrame().getSize();
-					final Point oldLoc = panel.bdvPopup().getBDV().getViewerFrame().getLocation();
+					Dimension oldSize = bdvPop.getBDV().getViewerFrame().getSize();
+					final Point oldLoc = bdvPop.getBDV().getViewerFrame().getLocation();
 					final CountDownLatch latch = new CountDownLatch( 1 );
 
 					final Thread closeTask = new Thread( () -> {
-						panel.bdvPopup().closeBDV();
+						bdvPop.closeBDV();
 						latch.countDown();
 					} );
 					closeTask.start();
@@ -201,7 +202,7 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 
 					final CountDownLatch latch2 = new CountDownLatch( 1 );
 					new Thread( () -> {
-						( (BDVPopup) panel.bdvPopup() ).setBDV( BDVPopup.createBDV( panel ) );
+						bdvPop.setBDV( BDVPopup.createBDV( panel ) );
 						latch2.countDown();
 					} ).start();
 
@@ -214,8 +215,8 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 						e1.printStackTrace();
 					}
 
-					panel.bdvPopup().getBDV().getViewerFrame().setSize( oldSize );
-					panel.bdvPopup().getBDV().getViewerFrame().setLocation( oldLoc );
+					bdvPop.getBDV().getViewerFrame().setSize( oldSize );
+					bdvPop.getBDV().getViewerFrame().setLocation( oldLoc );
 				}
 
 				panel.updateContent();

@@ -45,6 +45,14 @@ public interface ExplorerWindow< AS extends SpimData2 >
 
 	// BDV-specific
 	public BasicBDVPopup bdvPopup();
+
+	/**
+	 * Returns whichever BDV popup currently has a running BDV (eager or lazy).
+	 * Falls back to {@link #bdvPopup()} when no BDV is open. Implementations may
+	 * override this to dispatch between multiple registered BDV popups.
+	 */
+	default BasicBDVPopup runningBdvPopup() { return bdvPopup(); }
+
 	public boolean colorMode();
 	public BasicViewDescription< ? > firstSelectedVD();
 }

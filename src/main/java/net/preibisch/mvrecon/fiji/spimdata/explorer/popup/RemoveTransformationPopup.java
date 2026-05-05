@@ -109,7 +109,9 @@ public class RemoveTransformationPopup extends JMenu implements ExplorerWindowSe
 			}
 
 			panel.updateContent();
-			panel.bdvPopup().updateBDV();
+			final BasicBDVPopup p = panel.runningBdvPopup();
+			if ( p != null )
+				p.updateBDV();
 		}
 	}
 }
