@@ -143,6 +143,20 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	}
 
 	/**
+	 * Returns the first registered popup that implements {@link BasicBDVPopup},
+	 * regardless of whether a BDV is currently open. Use this when you need the
+	 * popup instance itself (e.g. to set its {@code bdv} field) rather than just
+	 * accessing a running BDV.
+	 */
+	public BasicBDVPopup getAnyBDVPopup()
+	{
+		for ( final ExplorerWindowSetable s : popups )
+			if ( s instanceof BasicBDVPopup )
+				return ( BasicBDVPopup ) s;
+		return null;
+	}
+
+	/**
 	 * Returns whichever BDV popup currently has a running BDV (eager
 	 * {@link BDVPopup} or lazy variant — both implement {@link BasicBDVPopup}).
 	 * Falls back to the eager {@link BDVPopup} (which may have a null bdv) so

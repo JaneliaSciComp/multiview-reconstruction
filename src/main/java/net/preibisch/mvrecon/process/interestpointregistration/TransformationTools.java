@@ -35,6 +35,7 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
 
@@ -631,6 +632,16 @@ public class TransformationTools
 			final Map< ViewId, ViewRegistration > registrations,
 			final Map< ViewId, ViewDescription > viewDescriptions )
 	{
+		filterForOverlappingInterestPoints(interestpoints, groups, registrations, viewDescriptions, Threads.numThreads() );
+	}
+
+	public static void filterForOverlappingInterestPoints(
+			final Map< ViewId, HashMap< String, Collection< InterestPoint > > > interestpoints,
+			final Collection< ? extends Group< ViewId > > groups,
+			final Map< ViewId, ViewRegistration > registrations,
+			final Map< ViewId, ViewDescription > viewDescriptions,
+			final int numThreads )
+	{
 		final long startTotal = System.currentTimeMillis();
 
 		// Pre-compute which view pairs share a group for O(1) lookup
@@ -649,7 +660,7 @@ public class TransformationTools
 		final Map< ViewId, Interval > viewIntervals = new ConcurrentHashMap<>();
 		final Map< ViewId, BoundingBox > viewBoundingBoxes = new ConcurrentHashMap<>();
 
-		final ForkJoinPool precomputePool = new ForkJoinPool( Threads.numThreads() );
+		final ExecutorService precomputePool = new ForkJoinPool( numThreads );
 		try
 		{
 			precomputePool.submit( () ->
@@ -815,7 +826,6 @@ public class TransformationTools
 	}
 
 	/* call this method to load interestpoints and apply current transformation */
-	@SuppressWarnings("unchecked")
 	public static <V> Map< V, HashMap< String, Collection< InterestPoint > > > getAllInterestPoints(
 			final Collection< ? extends V > viewIds,
 			final Map< V, ViewRegistration > registrations,
@@ -823,11 +833,24 @@ public class TransformationTools
 			final Map< V, HashMap< String, Double > > labelMap,
 			final boolean transform )
 	{
+		return getAllInterestPoints(viewIds, registrations, interestpoints, labelMap, transform, Threads.numThreads() );
+	}
+
+	/* call this method to load interestpoints and apply current transformation */
+	@SuppressWarnings("unchecked")
+	public static <V> Map< V, HashMap< String, Collection< InterestPoint > > > getAllInterestPoints(
+			final Collection< ? extends V > viewIds,
+			final Map< V, ViewRegistration > registrations,
+			final Map< V, ViewInterestPointLists > interestpoints,
+			final Map< V, HashMap< String, Double > > labelMap,
+			final boolean transform,
+			final int numThreads )
+	{
 		// Thread-safe collection for missing interest points: label -> list of viewIds
 		final ConcurrentHashMap< String, ConcurrentLinkedQueue< V > > missingInterestPoints = new ConcurrentHashMap<>();
 
 		// Load interest points in parallel (I/O bound operation)
-		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
 
 		try
 		{
