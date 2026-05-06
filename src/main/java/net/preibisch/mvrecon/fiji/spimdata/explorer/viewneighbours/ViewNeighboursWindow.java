@@ -38,7 +38,6 @@ import java.util.Set;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
-import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -50,7 +49,6 @@ import ij.gui.GUI;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.type.numeric.ARGBType;
-import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVColors;
@@ -86,8 +84,12 @@ public class ViewNeighboursWindow extends JFrame
 
 	private final javax.swing.JList< String > labelList;
 	private final JComboBox< String > resetCombo;
+	private final JLabel legend;
 
 	private ResetPolicy resetPolicy = defaultResetPolicy;
+
+	// Suppress auto-apply while refreshLabels() programmatically rebuilds the JList.
+	private boolean suppressAutoApply = false;
 
 	// Snapshot of last applied selection — used to decide whether NEW_VIEW_SELECTED triggers a recenter
 	private Set< ViewId > lastApplied = Collections.emptySet();
@@ -104,7 +106,7 @@ public class ViewNeighboursWindow extends JFrame
 
 		setDefaultCloseOperation( DISPOSE_ON_CLOSE );
 
-		// --- Body: header + multi-select label list + Update ---
+		// --- Body: header + multi-select label list ---
 		final JPanel body = new JPanel( new BorderLayout( 8, 4 ) );
 		body.setBorder( BorderFactory.createEmptyBorder( 6, 8, 6, 8 ) );
 		body.add( new JLabel( "Interest-point labels (select one or more):" ), BorderLayout.NORTH );
@@ -115,14 +117,21 @@ public class ViewNeighboursWindow extends JFrame
 		labelScroll.setPreferredSize( new java.awt.Dimension( 380, 100 ) );
 		body.add( labelScroll, BorderLayout.CENTER );
 
-		final JPanel buttonRow = new JPanel( new FlowLayout( FlowLayout.RIGHT, 0, 0 ) );
-		final JButton updateBtn = new JButton( "Update" );
-		updateBtn.addActionListener( e -> apply() );
-		buttonRow.add( updateBtn );
-		body.add( buttonRow, BorderLayout.SOUTH );
+		// Initialize legend up front so apply()'s legend update is safe from the moment
+		// any listener that could call apply() is attached.
+		legend = new JLabel();
+		updateLegend( 0, 0 );
 
-		// Initial population
+		// Initial population — must happen *before* the auto-apply listener is attached
+		// so the constructor's first setSelectedIndices() doesn't trigger apply().
 		refreshLabels();
+
+		// Auto-apply when the user changes the JList selection.
+		labelList.addListSelectionListener( e -> {
+			if ( e.getValueIsAdjusting() ) return;
+			if ( suppressAutoApply ) return;
+			apply();
+		} );
 
 		// Refresh on explorer-table selection changes so labels reflect the current selection.
 		final ListSelectionListener selListener = e -> {
@@ -132,6 +141,15 @@ public class ViewNeighboursWindow extends JFrame
 		panel.table.getSelectionModel().addListSelectionListener( selListener );
 		addWindowListener( new WindowAdapter()
 		{
+			@Override
+			public void windowClosing( final WindowEvent e )
+			{
+				// Closing the window restores the original selection — same effect as
+				// pressing 'n' again while expanded.
+				if ( isExpanded() )
+					collapse();
+			}
+
 			@Override
 			public void windowClosed( final WindowEvent e )
 			{
@@ -145,10 +163,6 @@ public class ViewNeighboursWindow extends JFrame
 				BorderFactory.createMatteBorder( 1, 0, 0, 0, Color.LIGHT_GRAY ),
 				BorderFactory.createEmptyBorder( 4, 8, 4, 8 ) ) );
 
-		final JLabel legend = new JLabel(
-				"<html>Selection <font color='#00D200'>&#9632;</font> "
-				+ "&middot; Connected <font color='#D200D2'>&#9632;</font>"
-				+ " &nbsp; Press <b>n</b> in the explorer to toggle.</html>" );
 		statusBar.add( legend, BorderLayout.WEST );
 
 		final JPanel resetPanel = new JPanel( new FlowLayout( FlowLayout.RIGHT, 4, 0 ) );
@@ -186,44 +200,63 @@ public class ViewNeighboursWindow extends JFrame
 	 */
 	private void refreshLabels()
 	{
-		final List< ViewId > viewIds = new ArrayList<>();
-		for ( final List< BasicViewDescription< ? > > row : panel.selectedRows )
-			for ( final BasicViewDescription< ? > vd : row )
-				viewIds.add( vd );
-		if ( viewIds.isEmpty() )
-			viewIds.addAll( data.getSequenceDescription().getViewDescriptions().keySet() );
-
-		final String[] newLabels = InterestPointTools.getAllInterestPointLabels( data, viewIds );
-		final Set< String > previouslySelected = new HashSet<>( labelList.getSelectedValuesList() );
-
-		final DefaultListModel< String > model = new DefaultListModel<>();
-		if ( newLabels.length == 0 )
+		// Suppress auto-apply for the duration: rebuilding the model and reselecting indices
+		// fires a non-adjusting ListSelectionEvent that would otherwise re-trigger apply()
+		// from inside applyExplorerSelection().
+		suppressAutoApply = true;
+		try
 		{
-			model.addElement( "(none)" );
+			final List< ViewId > viewIds = new ArrayList<>();
+			for ( final List< BasicViewDescription< ? > > row : panel.selectedRows )
+				for ( final BasicViewDescription< ? > vd : row )
+					viewIds.add( vd );
+			if ( viewIds.isEmpty() )
+				viewIds.addAll( data.getSequenceDescription().getViewDescriptions().keySet() );
+
+			final String[] newLabels = InterestPointTools.getAllInterestPointLabels( data, viewIds );
+			final Set< String > previouslySelected = new HashSet<>( labelList.getSelectedValuesList() );
+
+			final DefaultListModel< String > model = new DefaultListModel<>();
+			if ( newLabels.length == 0 )
+			{
+				model.addElement( "(none)" );
+				labelList.setModel( model );
+				return;
+			}
+			for ( final String l : newLabels )
+				model.addElement( l );
 			labelList.setModel( model );
-			return;
-		}
-		for ( final String l : newLabels )
-			model.addElement( l );
-		labelList.setModel( model );
 
-		// Restore selection where labels still exist; otherwise pick first non-warning.
-		final List< Integer > indices = new ArrayList<>();
-		for ( int i = 0; i < newLabels.length; ++i )
-			if ( previouslySelected.contains( newLabels[ i ] ) )
-				indices.add( i );
-		if ( indices.isEmpty() )
-		{
+			// Restore selection where labels still exist; otherwise pick first non-warning.
+			final List< Integer > indices = new ArrayList<>();
 			for ( int i = 0; i < newLabels.length; ++i )
-				if ( !newLabels[ i ].contains( InterestPointTools.warningLabel ) )
-				{
+				if ( previouslySelected.contains( newLabels[ i ] ) )
 					indices.add( i );
-					break;
-				}
+			if ( indices.isEmpty() )
+			{
+				for ( int i = 0; i < newLabels.length; ++i )
+					if ( !newLabels[ i ].contains( InterestPointTools.warningLabel ) )
+					{
+						indices.add( i );
+						break;
+					}
+			}
+			final int[] arr = new int[ indices.size() ];
+			for ( int j = 0; j < arr.length; ++j ) arr[ j ] = indices.get( j );
+			labelList.setSelectedIndices( arr );
 		}
-		final int[] arr = new int[ indices.size() ];
-		for ( int j = 0; j < arr.length; ++j ) arr[ j ] = indices.get( j );
-		labelList.setSelectedIndices( arr );
+		finally
+		{
+			suppressAutoApply = false;
+		}
+	}
+
+	private void updateLegend( final int actualCount, final int connectedCount )
+	{
+		legend.setText(
+				"<html>Selection <font color='#00D200'>&#9632;</font> (" + actualCount + ") "
+				+ "&middot; Connected <font color='#D200D2'>&#9632;</font> (" + connectedCount + ")"
+				+ " &nbsp; Press <b>n</b> in the explorer to toggle.</html>" );
 	}
 
 	/**
@@ -291,6 +324,8 @@ public class ViewNeighboursWindow extends JFrame
 
 		// Mark as collapsed: lastApplied == lastActual → next toggle re-expands.
 		lastApplied = new HashSet<>( lastActual );
+
+		updateLegend( lastActual.size(), 0 );
 	}
 
 	/**
@@ -329,7 +364,7 @@ public class ViewNeighboursWindow extends JFrame
 
 		if ( actualVids.isEmpty() )
 		{
-			IOFunctions.println( "Select at least one view first." );
+			updateLegend( 0, 0 );
 			return;
 		}
 
@@ -373,6 +408,8 @@ public class ViewNeighboursWindow extends JFrame
 
 		lastApplied = visible;
 		lastActual = new HashSet<>( actualVids );
+
+		updateLegend( actualVids.size(), connected.size() );
 	}
 
 	private void applyExplorerSelection( final Set< ViewId > vids )

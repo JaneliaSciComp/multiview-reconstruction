@@ -34,8 +34,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import java.awt.event.ItemListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+
 import javax.swing.BorderFactory;
-import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JFrame;
@@ -53,7 +56,6 @@ import mpicbg.spim.data.sequence.Illumination;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.type.numeric.ARGBType;
-import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVColors;
@@ -95,6 +97,7 @@ public class ViewOverlapWindow extends JFrame
 	private final JCheckBox cbIllumination;
 	private final JCheckBox cbTimePoint;
 	private final JComboBox< String > resetCombo;
+	private final JLabel legend;
 
 	private ResetPolicy resetPolicy = defaultResetPolicy;
 	private Set< ViewId > lastApplied = Collections.emptySet();
@@ -108,7 +111,7 @@ public class ViewOverlapWindow extends JFrame
 
 		setDefaultCloseOperation( DISPOSE_ON_CLOSE );
 
-		// --- Body: checkboxes left, Update right, all in one row ---
+		// --- Body: checkboxes ---
 		final JPanel body = new JPanel( new BorderLayout( 0, 0 ) );
 		body.setBorder( BorderFactory.createEmptyBorder( 2, 6, 2, 6 ) );
 
@@ -126,22 +129,36 @@ public class ViewOverlapWindow extends JFrame
 		boxes.add( cbTimePoint );
 		body.add( boxes, BorderLayout.WEST );
 
-		final JButton updateBtn = new JButton( "Update" );
-		updateBtn.addActionListener( e -> apply() );
-		final JPanel updateRight = new JPanel( new FlowLayout( FlowLayout.RIGHT, 0, 0 ) );
-		updateRight.add( updateBtn );
-		body.add( updateRight, BorderLayout.EAST );
-
 		// --- Status bar ---
 		final JPanel statusBar = new JPanel( new BorderLayout( 12, 0 ) );
 		statusBar.setBorder( BorderFactory.createCompoundBorder(
 				BorderFactory.createMatteBorder( 1, 0, 0, 0, Color.LIGHT_GRAY ),
 				BorderFactory.createEmptyBorder( 4, 8, 4, 8 ) ) );
-		final JLabel legend = new JLabel(
-				"<html>Selection <font color='#00D200'>&#9632;</font> "
-				+ "&middot; Overlap <font color='#5DA8E2'>&#9632;</font>"
-				+ " &nbsp; Press <b>o</b> in the explorer to toggle.</html>" );
+		legend = new JLabel();
+		updateLegend( 0, 0 );
 		statusBar.add( legend, BorderLayout.WEST );
+
+		// Auto-apply on any checkbox change. ItemListener fires once per state-change
+		// (unlike ActionListener+ItemListener combos), so each click runs apply() exactly once.
+		// Attached after legend init so apply()'s legend update is safe.
+		final ItemListener autoApply = e -> apply();
+		cbTile.addItemListener( autoApply );
+		cbChannel.addItemListener( autoApply );
+		cbAngle.addItemListener( autoApply );
+		cbIllumination.addItemListener( autoApply );
+		cbTimePoint.addItemListener( autoApply );
+
+		addWindowListener( new WindowAdapter()
+		{
+			@Override
+			public void windowClosing( final WindowEvent e )
+			{
+				// Closing the window restores the original selection — same effect as
+				// pressing 'o' again while expanded.
+				if ( isExpanded() )
+					collapse();
+			}
+		} );
 
 		final JPanel resetPanel = new JPanel( new FlowLayout( FlowLayout.RIGHT, 4, 0 ) );
 		resetPanel.add( new JLabel( "Reset BDV:" ) );
@@ -165,9 +182,18 @@ public class ViewOverlapWindow extends JFrame
 		getContentPane().add( body, BorderLayout.CENTER );
 		getContentPane().add( statusBar, BorderLayout.SOUTH );
 
-		pack();
+		// Fixed size rather than pack() so the legend doesn't elide as count digits grow.
+		setSize( 720, 110 );
 		GUI.center( this );
 		setVisible( true );
+	}
+
+	private void updateLegend( final int actualCount, final int overlapCount )
+	{
+		legend.setText(
+				"<html>Selection <font color='#00D200'>&#9632;</font> (" + actualCount + ") "
+				+ "&middot; Overlap <font color='#5DA8E2'>&#9632;</font> (" + overlapCount + ")"
+				+ " &nbsp; Press <b>o</b> in the explorer to toggle.</html>" );
 	}
 
 	/**
@@ -226,6 +252,8 @@ public class ViewOverlapWindow extends JFrame
 				BDVColors.applyCategoryColors( panel.runningBdvPopup(), colorBySetupId ) );
 
 		lastApplied = new HashSet<>( lastActual );
+
+		updateLegend( lastActual.size(), 0 );
 	}
 
 	/**
@@ -248,7 +276,7 @@ public class ViewOverlapWindow extends JFrame
 
 		if ( actualVids.isEmpty() )
 		{
-			IOFunctions.println( "Select at least one view first." );
+			updateLegend( 0, 0 );
 			return;
 		}
 
@@ -308,6 +336,8 @@ public class ViewOverlapWindow extends JFrame
 
 		lastApplied = visible;
 		lastActual = new HashSet<>( actualVids );
+
+		updateLegend( actualVids.size(), overlap.size() );
 	}
 
 	/** True iff {@code u} is compatible with {@code a} given the across-flags
