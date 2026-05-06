@@ -98,7 +98,7 @@ public class ViewNeighboursWindow extends JFrame
 
 	public ViewNeighboursWindow( final ViewSetupExplorerPanel< ? > panel )
 	{
-		super( "Neighbours" );
+		super( "Neighbors" );
 		this.panel = panel;
 		this.data = panel.getSpimData();
 
@@ -148,7 +148,7 @@ public class ViewNeighboursWindow extends JFrame
 		final JLabel legend = new JLabel(
 				"<html>Selection <font color='#00D200'>&#9632;</font> "
 				+ "&middot; Connected <font color='#D200D2'>&#9632;</font>"
-				+ " &nbsp; Press <b>n</b> in the explorer to (re)apply.</html>" );
+				+ " &nbsp; Press <b>n</b> in the explorer to toggle.</html>" );
 		statusBar.add( legend, BorderLayout.WEST );
 
 		final JPanel resetPanel = new JPanel( new FlowLayout( FlowLayout.RIGHT, 4, 0 ) );
