@@ -142,6 +142,59 @@ public class ViewNeighbors
 	}
 
 	/**
+	 * Per-click connectivity query. Returns the views in {@code universe \ actual}
+	 * that share at least one same-label correspondence with any view in {@code actual}.
+	 *
+	 * Walks only the {@code actual} set's correspondence lists — much cheaper than
+	 * {@link #connectedViews(SpimData2, Collection, Map)} which materialises the full
+	 * universe-by-universe graph.
+	 *
+	 * Weight values in {@code labelAndWeights} are ignored (connectedness is binary);
+	 * only the key set matters.
+	 */
+	public static Set< ViewId > connectedFor(
+			final SpimData2 data,
+			final Collection< ? extends ViewId > actual,
+			final Collection< ? extends ViewId > universe,
+			final Map< String, Double > labelAndWeights )
+	{
+		final HashSet< ViewId > actualSet = new HashSet<>( actual );
+		if ( actualSet.isEmpty() )
+			return Collections.emptySet();
+		final HashSet< ViewId > universeSet = new HashSet<>( universe );
+		final Set< String > labels = labelAndWeights.keySet();
+
+		return runInPool( () -> actualSet.parallelStream()
+				.flatMap( viewA -> {
+					final ViewInterestPointLists vip =
+							data.getViewInterestPoints().getViewInterestPointLists( viewA );
+					if ( vip == null )
+						return java.util.stream.Stream.empty();
+					final HashSet< ViewId > hits = new HashSet<>();
+					for ( final String label : labels )
+					{
+						if ( vip.getInterestPointList( label ) == null )
+							continue;
+						final Collection< CorrespondingInterestPoints > corrs =
+								vip.getInterestPointList( label ).getCorrespondingInterestPointsCopy();
+						for ( final CorrespondingInterestPoints c : corrs )
+						{
+							if ( !c.getCorrespodingLabel().equals( label ) )
+								continue;
+							final ViewId viewB = c.getCorrespondingViewId();
+							if ( actualSet.contains( viewB ) )
+								continue;
+							if ( !universeSet.contains( viewB ) )
+								continue;
+							hits.add( viewB );
+						}
+					}
+					return hits.stream();
+				} )
+				.collect( Collectors.toSet() ) );
+	}
+
+	/**
 	 * For each view in {@code universe}, return the set of other views in {@code universe}
 	 * whose registered bounding-box overlaps it. Symmetric.
 	 */

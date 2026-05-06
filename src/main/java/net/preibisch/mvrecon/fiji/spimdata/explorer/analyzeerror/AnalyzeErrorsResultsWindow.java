@@ -72,6 +72,7 @@ import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.type.numeric.ARGBType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVColors;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil.GroupPairResult;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil.Mode;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil.Parameters;
@@ -115,11 +116,11 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 	private static final Color ROW_STATE_2_BG = new Color( 255, 245, 160 ); // yellow
 	private static final Color ROW_STATE_3_BG = new Color( 255, 200, 200 ); // light red
 
-	private static final ARGBType COLOR_ACTUAL_STATE1 = new ARGBType( ARGBType.rgba( 160, 160, 160, 255 ) ); // gray
-	private static final ARGBType COLOR_ACTUAL      = new ARGBType( ARGBType.rgba( 0,   255, 0,   255 ) ); // green
-	private static final ARGBType COLOR_CONNECTED_2 = new ARGBType( ARGBType.rgba( 255, 0,   255, 255 ) ); // magenta
-	private static final ARGBType COLOR_CONNECTED_3 = new ARGBType( ARGBType.rgba( 255, 0,   255, 255 ) ); // magenta (same as state 2; state 3 only adds overlap)
-	private static final ARGBType COLOR_OVERLAP     = new ARGBType( ARGBType.rgba( 135, 206, 250, 255 ) ); // light blue
+	private static final ARGBType COLOR_ACTUAL_STATE1 = BDVColors.GRAY;
+	private static final ARGBType COLOR_ACTUAL      = BDVColors.GREEN;
+	private static final ARGBType COLOR_CONNECTED_2 = BDVColors.MAGENTA;
+	private static final ARGBType COLOR_CONNECTED_3 = BDVColors.MAGENTA; // same as state 2; state 3 only adds overlap
+	private static final ARGBType COLOR_OVERLAP     = BDVColors.LIGHTBLUE;
 
 	/** Controls when row clicks recentre BDV. */
 	public enum BdvResetPolicy { NEVER, NEW_VIEW_SELECTED, SWITCHING_STATES }
@@ -571,26 +572,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 
 	private void applyCategoryColors( final Map< Integer, ARGBType > colorBySetupId )
 	{
-		final BasicBDVPopup pop = panel.runningBdvPopup();
-		if ( pop == null || pop.getBDV() == null ) return;
-		final BigDataViewer bdv = pop.getBDV();
-		final ConverterSetups setups = bdv.getConverterSetups();
-		for ( final SourceAndConverter< ? > soc : bdv.getViewer().state().getSources() )
-		{
-			Source< ? > src = soc.getSpimSource();
-			if ( src instanceof TransformedSource )
-				src = ( ( TransformedSource< ? > ) src ).getWrappedSource();
-			if ( !( src instanceof AbstractSpimSource ) )
-				continue;
-			final int setupId = ( ( AbstractSpimSource< ? > ) src ).getSetupId();
-			final ARGBType color = colorBySetupId.get( setupId );
-			if ( color == null )
-				continue;
-			final ConverterSetup cs = setups.getConverterSetup( soc );
-			if ( cs != null )
-				cs.setColor( color );
-		}
-		bdv.getViewer().requestRepaint();
+		BDVColors.applyCategoryColors( panel.runningBdvPopup(), colorBySetupId );
 	}
 
 	// ===================================================================================

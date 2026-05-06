@@ -611,6 +611,30 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 		} );
 	}
 
+	/** 'n'/'N' opens the {@link net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow}
+	 *  on first press (and applies); subsequent presses re-apply with the window's current params. */
+	protected void addNeighboursShortcut()
+	{
+		table.addKeyListener( new KeyAdapter()
+		{
+			@Override
+			public void keyPressed( final KeyEvent arg0 )
+			{
+				if ( arg0.getKeyChar() != 'n' && arg0.getKeyChar() != 'N' )
+					return;
+				if ( !( FilteredAndGroupedExplorerPanel.this instanceof net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel ) )
+					return; // window expects a ViewSetupExplorerPanel
+				final net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > vsPanel =
+						( net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > ) FilteredAndGroupedExplorerPanel.this;
+				if ( viewNeighboursWindow == null || !viewNeighboursWindow.isDisplayable() )
+					viewNeighboursWindow = new net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow( vsPanel );
+				viewNeighboursWindow.toggle();
+			}
+		} );
+	}
+
+	private net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow viewNeighboursWindow = null;
+
 	protected void addSelectionDialog()
 	{
 		table.addKeyListener( new KeyAdapter()
