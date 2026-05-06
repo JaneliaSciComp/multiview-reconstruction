@@ -118,7 +118,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 	private static final ARGBType COLOR_ACTUAL_STATE1 = new ARGBType( ARGBType.rgba( 160, 160, 160, 255 ) ); // gray
 	private static final ARGBType COLOR_ACTUAL      = new ARGBType( ARGBType.rgba( 0,   255, 0,   255 ) ); // green
 	private static final ARGBType COLOR_CONNECTED_2 = new ARGBType( ARGBType.rgba( 255, 0,   255, 255 ) ); // magenta
-	private static final ARGBType COLOR_CONNECTED_3 = new ARGBType( ARGBType.rgba( 255, 0,   0,   255 ) ); // red
+	private static final ARGBType COLOR_CONNECTED_3 = new ARGBType( ARGBType.rgba( 255, 0,   255, 255 ) ); // magenta (same as state 2; state 3 only adds overlap)
 	private static final ARGBType COLOR_OVERLAP     = new ARGBType( ARGBType.rgba( 135, 206, 250, 255 ) ); // light blue
 
 	/** Controls when row clicks recentre BDV. */
@@ -262,7 +262,7 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 		return "<html>Row click cycles [1&rarr;2&rarr;3] "
 				+ "&middot; <font color='#87CEFA'><b>1:</b> selected</font>(<font color='#A0A0A0'>&#9632;</font>) "
 				+ "&middot; <font color='#BBA200'><b>2:</b> +connected</font>(<font color='#00D200'>&#9632;</font><font color='#D200D2'>&#9632;</font>) "
-				+ "&middot; <font color='#AA0200'><b>3:</b> +overlapping</font>(<font color='#00D200'>&#9632;</font><font color='#FA0000'>&#9632;</font><font color='#87CEFA'>&#9632;</font>)."
+				+ "&middot; <font color='#AA0200'><b>3:</b> +overlapping</font>(<font color='#00D200'>&#9632;</font><font color='#D200D2'>&#9632;</font><font color='#87CEFA'>&#9632;</font>)."
 				+ drillHint + "</html>";
 	}//<font color='#FF8080'>&#9632;</font>
 	//(row <font color='#FF8080'>&#9632;</font>): +overlap <font color='#87CEFA'>&#9632;</font>
