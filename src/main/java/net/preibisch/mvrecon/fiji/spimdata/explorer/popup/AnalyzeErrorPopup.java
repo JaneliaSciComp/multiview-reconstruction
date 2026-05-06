@@ -31,7 +31,6 @@ import java.util.List;
 import javax.swing.JMenuItem;
 
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.util.Pair;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsResultsWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.analyzeerror.AnalyzeErrorsUtil;
@@ -76,7 +75,7 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 				@Override
 				public void run()
 				{
-					final List< ViewId > viewIds =
+					List< ViewId > viewIds =
 							ApplyTransformationPopup.getSelectedViews( panel );
 
 					// pre-set the grouping defaults from the explorer panel's current state
@@ -92,22 +91,32 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 					if ( params == null )
 						return;
 
-					final ArrayList<Pair<Pair<ViewId, ViewId>, Double>> errors =
+					// "Include all views" overrides the explorer's selection.
+					if ( params.useAllViews )
+						viewIds = net.preibisch.mvrecon.fiji.spimdata.SpimData2.getAllViewIdsSorted(
+								panel.getSpimData(),
+								panel.getSpimData().getSequenceDescription().getViewSetupsOrdered(),
+								panel.getSpimData().getSequenceDescription().getTimePoints().getTimePointsOrdered() );
+
+					final ArrayList< AnalyzeErrorsUtil.PairError > errors =
 							AnalyzeErrorsUtil.getErrors( panel.getSpimData(), viewIds, params.labelAndWeights );
 
 					if ( errors.size() > 0 )
 					{
 						AnalyzeErrorsUtil.printResults( panel.getSpimData(), errors, params );
 
+						// snapshot for the lambda (viewIds may have been reassigned earlier)
+						final List< ViewId > analyzedViews = viewIds;
+
 						// open the sortable results browser; row clicks recenter BDV + select views
 						javax.swing.SwingUtilities.invokeLater( () ->
 								new AnalyzeErrorsResultsWindow(
-										panel.getSpimData(), errors, params, panel ) );
+										panel.getSpimData(), errors, params, panel, analyzedViews ) );
 
 						// auto-select the worst pair as the initial selection
-						final Pair< Pair< ViewId, ViewId >, Double > worst = errors.get( 0 );
+						final AnalyzeErrorsUtil.PairError worst = errors.get( 0 );
 						AnalyzeErrorsUtil.selectViewsAndRecenter( panel, params,
-								Arrays.asList( worst.getA().getA(), worst.getA().getB() ) );
+								Arrays.asList( worst.a, worst.b ) );
 
 						// TODO: activate overlay that shows the outlines of both stacks
 					}

@@ -95,9 +95,9 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 		frame.setVisible( false );
 		frame.dispose();
 
-		BasicBDVPopup bdvPopup = panel.bdvPopup();
-		
-		if ( bdvPopup.bdvRunning() )
+		final BasicBDVPopup bdvPopup = panel.runningBdvPopup();
+
+		if ( bdvPopup != null && bdvPopup.bdvRunning() )
 			bdvPopup.closeBDV();
 
 		ViewSetupExplorerPanel.currentInstance = null;

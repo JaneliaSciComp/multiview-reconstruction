@@ -33,7 +33,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ForkJoinPool;
 
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.generic.base.Entity;
@@ -50,11 +53,13 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
@@ -76,12 +81,18 @@ public class AnalyzeErrorsUtil
 
 	private AnalyzeErrorsUtil() {}
 
+	/** Display mode for {@link AnalyzeErrorsResultsWindow}. */
+	public enum Mode { PAIR, SINGLE_VIEW }
+
 	/** Bundle of dialog choices returned by {@link #getParametersExtended}. */
 	public static class Parameters
 	{
 		public HashMap< String, Double > labelAndWeights;
 		public boolean groupTiles, groupChannels, groupIlluminations, groupAngles;
 		public int topN, bottomM, middleK;
+		/** When true, the caller should analyse all views in the dataset, not just the explorer's selection. */
+		public boolean useAllViews;
+		public Mode mode = Mode.PAIR;
 
 		public boolean anyGroupingSelected()
 		{
@@ -89,19 +100,81 @@ public class AnalyzeErrorsUtil
 		}
 	}
 
+	public static boolean defaultUseAllViews = false;
+	public static Mode defaultMode = Mode.PAIR;
+
 	/** Aggregated error statistics for one (groupA, groupB) bucket. Returned by {@link #computeGroupPairs}. */
 	public static class GroupPairResult
 	{
 		public final Group< ViewDescription > groupA, groupB;
 		public final int count;
+		public final int numCorr;
 		public final double min, avg, max;
 
 		public GroupPairResult( final Group< ViewDescription > groupA, final Group< ViewDescription > groupB,
-				final int count, final double min, final double avg, final double max )
+				final int count, final int numCorr, final double min, final double avg, final double max )
 		{
 			this.groupA = groupA;
 			this.groupB = groupB;
 			this.count = count;
+			this.numCorr = numCorr;
+			this.min = min;
+			this.avg = avg;
+			this.max = max;
+		}
+	}
+
+	/** Per-(viewA, viewB) error result returned by {@link #getErrors}. */
+	public static final class PairError
+	{
+		public final ViewId a, b;
+		public final double errorPx;
+		public final int numCorr;
+
+		public PairError( final ViewId a, final ViewId b, final double errorPx, final int numCorr )
+		{
+			this.a = a;
+			this.b = b;
+			this.errorPx = errorPx;
+			this.numCorr = numCorr;
+		}
+	}
+
+	/** Per-view aggregate of errors and connections (Single-view mode, ungrouped). */
+	public static final class SingleViewError
+	{
+		public final ViewId view;
+		public final List< ViewId > connectedViews;  // sorted, deduped
+		public final int numCorr;
+		public final double min, avg, max;
+
+		public SingleViewError( final ViewId view, final List< ViewId > connectedViews,
+				final int numCorr, final double min, final double avg, final double max )
+		{
+			this.view = view;
+			this.connectedViews = connectedViews;
+			this.numCorr = numCorr;
+			this.min = min;
+			this.avg = avg;
+			this.max = max;
+		}
+	}
+
+	/** Per-group aggregate of errors and connected groups (Single-view mode, grouped). */
+	public static final class SingleGroupError
+	{
+		public final Group< ViewDescription > group;
+		public final List< Group< ViewDescription > > connectedGroups;
+		public final int numCorr;
+		public final double min, avg, max;
+
+		public SingleGroupError( final Group< ViewDescription > group,
+				final List< Group< ViewDescription > > connectedGroups,
+				final int numCorr, final double min, final double avg, final double max )
+		{
+			this.group = group;
+			this.connectedGroups = connectedGroups;
+			this.numCorr = numCorr;
 			this.min = min;
 			this.avg = avg;
 			this.max = max;
@@ -109,16 +182,38 @@ public class AnalyzeErrorsUtil
 	}
 
 	/**
-	 * Bucket per-pair errors into per-group-pair buckets using {@link Group#combineBy}
-	 * (collapse semantics — same as ViewSetupExplorer / Interest_Point_Registration grouping).
-	 * Returns the buckets sorted descending by average error. Empty if no grouping is selected.
-	 *
-	 * Shared by the printed-log section in {@link #printResults} and the
-	 * AnalyzeErrorsResultsWindow GUI.
+	 * Aggregate {@link PairError}s into one {@link SingleViewError} per view that appears in
+	 * at least one pair. Each pair contributes to both endpoints. Sorted descending by avg.
 	 */
-	public static ArrayList< GroupPairResult > computeGroupPairs(
+	public static ArrayList< SingleViewError > computeSingleViewErrors(
+			final ArrayList< PairError > errors )
+	{
+		final HashMap< ViewId, ViewAcc > acc = new HashMap<>();
+		for ( final PairError e : errors )
+		{
+			acc.computeIfAbsent( e.a, k -> new ViewAcc() ).add( e.b, e.errorPx, e.numCorr );
+			acc.computeIfAbsent( e.b, k -> new ViewAcc() ).add( e.a, e.errorPx, e.numCorr );
+		}
+		final ArrayList< SingleViewError > result = new ArrayList<>( acc.size() );
+		for ( final Map.Entry< ViewId, ViewAcc > e : acc.entrySet() )
+		{
+			final ViewAcc a = e.getValue();
+			final ArrayList< ViewId > connected = new ArrayList<>( a.connected );
+			connected.sort( ( x, y ) -> compareViewIds( x, y ) );
+			result.add( new SingleViewError( e.getKey(), connected, a.numCorr, a.min, a.avg(), a.max ) );
+		}
+		result.sort( ( o1, o2 ) -> Double.compare( o2.avg, o1.avg ) );
+		return result;
+	}
+
+	/**
+	 * Aggregate {@link PairError}s into one {@link SingleGroupError} per group that participates
+	 * in at least one group-pair under the supplied grouping {@link Parameters}. Each
+	 * cross-group pair contributes once to each endpoint group. Sorted descending by avg.
+	 */
+	public static ArrayList< SingleGroupError > computeSingleGroupErrors(
 			final SpimData2 data,
-			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+			final ArrayList< PairError > errors,
 			final Parameters p )
 	{
 		if ( !p.anyGroupingSelected() )
@@ -131,10 +226,119 @@ public class AnalyzeErrorsUtil
 		if ( p.groupAngles )        factors.add( Angle.class );
 
 		final HashSet< ViewId > seen = new HashSet<>();
-		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		for ( final PairError e : errors )
 		{
-			seen.add( e.getA().getA() );
-			seen.add( e.getA().getB() );
+			seen.add( e.a );
+			seen.add( e.b );
+		}
+		final List< ViewDescription > vds = new ArrayList<>();
+		for ( final ViewId vid : seen )
+		{
+			final ViewDescription vd = data.getSequenceDescription().getViewDescriptions().get( vid );
+			if ( vd != null )
+				vds.add( vd );
+		}
+
+		final List< Group< ViewDescription > > groups = Group.combineBy( vds, factors );
+		final HashMap< ViewId, Group< ViewDescription > > viewToGroup = new HashMap<>();
+		final HashMap< Group< ViewDescription >, ViewId > groupRep = new HashMap<>();
+		for ( final Group< ViewDescription > g : groups )
+		{
+			for ( final ViewDescription vd : g.getViews() )
+				viewToGroup.put( vd, g );
+			groupRep.put( g, Group.getViewsSorted( g.getViews() ).get( 0 ) );
+		}
+
+		final HashMap< Group< ViewDescription >, GroupNeighborAcc > acc = new HashMap<>();
+		for ( final PairError e : errors )
+		{
+			final Group< ViewDescription > gA = viewToGroup.get( e.a );
+			final Group< ViewDescription > gB = viewToGroup.get( e.b );
+			if ( gA == null || gB == null || gA == gB )
+				continue;
+			acc.computeIfAbsent( gA, k -> new GroupNeighborAcc() ).add( gB, e.errorPx, e.numCorr );
+			acc.computeIfAbsent( gB, k -> new GroupNeighborAcc() ).add( gA, e.errorPx, e.numCorr );
+		}
+
+		final ArrayList< SingleGroupError > result = new ArrayList<>( acc.size() );
+		for ( final Map.Entry< Group< ViewDescription >, GroupNeighborAcc > e : acc.entrySet() )
+		{
+			final GroupNeighborAcc a = e.getValue();
+			final ArrayList< Group< ViewDescription > > connected = new ArrayList<>( a.connected );
+			connected.sort( ( x, y ) -> compareViewIds( groupRep.get( x ), groupRep.get( y ) ) );
+			result.add( new SingleGroupError( e.getKey(), connected, a.numCorr, a.min, a.avg(), a.max ) );
+		}
+		result.sort( ( o1, o2 ) -> Double.compare( o2.avg, o1.avg ) );
+		return result;
+	}
+
+	/** Mutable accumulator for {@link #computeSingleViewErrors}. */
+	private static final class ViewAcc
+	{
+		final HashSet< ViewId > connected = new HashSet<>();
+		int numCorr = 0;
+		double sum = 0.0, min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
+		long count = 0;
+
+		void add( final ViewId other, final double err, final int corrAdd )
+		{
+			connected.add( other );
+			numCorr += corrAdd;
+			sum += err;
+			if ( err < min ) min = err;
+			if ( err > max ) max = err;
+			count++;
+		}
+		double avg() { return count == 0 ? 0.0 : sum / count; }
+	}
+
+	/** Mutable accumulator for {@link #computeSingleGroupErrors}. */
+	private static final class GroupNeighborAcc
+	{
+		final HashSet< Group< ViewDescription > > connected = new HashSet<>();
+		int numCorr = 0;
+		double sum = 0.0, min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
+		long count = 0;
+
+		void add( final Group< ViewDescription > other, final double err, final int corrAdd )
+		{
+			connected.add( other );
+			numCorr += corrAdd;
+			sum += err;
+			if ( err < min ) min = err;
+			if ( err > max ) max = err;
+			count++;
+		}
+		double avg() { return count == 0 ? 0.0 : sum / count; }
+	}
+
+	/**
+	 * Bucket per-pair errors into per-group-pair buckets using {@link Group#combineBy}
+	 * (collapse semantics — same as ViewSetupExplorer / Interest_Point_Registration grouping).
+	 * Returns the buckets sorted descending by average error. Empty if no grouping is selected.
+	 *
+	 * Shared by the printed-log section in {@link #printResults} and the
+	 * AnalyzeErrorsResultsWindow GUI.
+	 */
+	public static ArrayList< GroupPairResult > computeGroupPairs(
+			final SpimData2 data,
+			final ArrayList< PairError > errors,
+			final Parameters p )
+	{
+		if ( !p.anyGroupingSelected() )
+			return new ArrayList<>();
+
+		final Set< Class< ? extends Entity > > factors = new HashSet<>();
+		if ( p.groupTiles )         factors.add( Tile.class );
+		if ( p.groupChannels )      factors.add( Channel.class );
+		if ( p.groupIlluminations ) factors.add( Illumination.class );
+		if ( p.groupAngles )        factors.add( Angle.class );
+
+		final HashSet< ViewId > seen = new HashSet<>();
+		for ( final PairError e : errors )
+		{
+			seen.add( e.a );
+			seen.add( e.b );
 		}
 		final List< ViewDescription > vds = new ArrayList<>();
 		for ( final ViewId vid : seen )
@@ -156,23 +360,23 @@ public class AnalyzeErrorsUtil
 		}
 
 		final HashMap< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > groupPairAcc = new HashMap<>();
-		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		for ( final PairError e : errors )
 		{
-			final Group< ViewDescription > gA = viewToGroup.get( e.getA().getA() );
-			final Group< ViewDescription > gB = viewToGroup.get( e.getA().getB() );
+			final Group< ViewDescription > gA = viewToGroup.get( e.a );
+			final Group< ViewDescription > gB = viewToGroup.get( e.b );
 			if ( gA == null || gB == null )
 				continue;
 			final Group< ViewDescription > g1, g2;
 			if ( compareViewIds( groupRep.get( gA ), groupRep.get( gB ) ) <= 0 ) { g1 = gA; g2 = gB; }
 			else                                                                 { g1 = gB; g2 = gA; }
-			groupPairAcc.computeIfAbsent( new ValuePair<>( g1, g2 ), k -> new GroupAcc() ).add( e.getB() );
+			groupPairAcc.computeIfAbsent( new ValuePair<>( g1, g2 ), k -> new GroupAcc() ).add( e.errorPx, e.numCorr );
 		}
 
 		final ArrayList< GroupPairResult > result = new ArrayList<>( groupPairAcc.size() );
 		for ( final Map.Entry< Pair< Group< ViewDescription >, Group< ViewDescription > >, GroupAcc > e : groupPairAcc.entrySet() )
 		{
 			final GroupAcc a = e.getValue();
-			result.add( new GroupPairResult( e.getKey().getA(), e.getKey().getB(), (int) a.count, a.min, a.avg(), a.max ) );
+			result.add( new GroupPairResult( e.getKey().getA(), e.getKey().getB(), (int) a.count, a.numCorr, a.min, a.avg(), a.max ) );
 		}
 		result.sort( ( o1, o2 ) -> Double.compare( o2.avg, o1.avg ) );
 		return result;
@@ -188,7 +392,7 @@ public class AnalyzeErrorsUtil
 	 * Same-label only (matching the previous code's filter): correspondences with a different
 	 * label on the other side are skipped.
 	 */
-	public static ArrayList< Pair< Pair< ViewId, ViewId >, Double > > getErrors(
+	public static ArrayList< PairError > getErrors(
 			final SpimData2 data,
 			final List< ViewId > viewIds,
 			final Map< String, Double > labelAndWeights )
@@ -205,20 +409,23 @@ public class AnalyzeErrorsUtil
 		final ConcurrentHashMap< ViewId, Map< String, Map< Integer, InterestPoint > > > ipsCache = new ConcurrentHashMap<>();
 		final ConcurrentHashMap< ViewId, Map< String, Collection< CorrespondingInterestPoints > > > corrsCache = new ConcurrentHashMap<>();
 
-		viewIds.parallelStream().forEach( viewId -> {
-			final ViewInterestPointLists vip = data.getViewInterestPoints().getViewInterestPointLists( viewId );
-			final HashMap< String, Map< Integer, InterestPoint > > ipsByLabel = new HashMap<>();
-			final HashMap< String, Collection< CorrespondingInterestPoints > > corrsByLabel = new HashMap<>();
-			for ( final String label : labelAndWeights.keySet() )
-			{
-				if ( vip.getInterestPointList( label ) != null )
+		runInPool( () -> {
+			viewIds.parallelStream().forEach( viewId -> {
+				final ViewInterestPointLists vip = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+				final HashMap< String, Map< Integer, InterestPoint > > ipsByLabel = new HashMap<>();
+				final HashMap< String, Collection< CorrespondingInterestPoints > > corrsByLabel = new HashMap<>();
+				for ( final String label : labelAndWeights.keySet() )
 				{
-					ipsByLabel.put( label, vip.getInterestPointList( label ).getInterestPointsCopy() );
-					corrsByLabel.put( label, vip.getInterestPointList( label ).getCorrespondingInterestPointsCopy() );
+					if ( vip.getInterestPointList( label ) != null )
+					{
+						ipsByLabel.put( label, vip.getInterestPointList( label ).getInterestPointsCopy() );
+						corrsByLabel.put( label, vip.getInterestPointList( label ).getCorrespondingInterestPointsCopy() );
+					}
 				}
-			}
-			ipsCache.put( viewId, ipsByLabel );
-			corrsCache.put( viewId, corrsByLabel );
+				ipsCache.put( viewId, ipsByLabel );
+				corrsCache.put( viewId, corrsByLabel );
+			});
+			return null;
 		});
 
 		// O(1) lookup of "is this view in the user-selected set"
@@ -227,70 +434,75 @@ public class AnalyzeErrorsUtil
 		// Canonical pair map: only one side accumulates per pair (viewA < viewB).
 		final ConcurrentHashMap< Pair< ViewId, ViewId >, ErrorAcc > pairErrors = new ConcurrentHashMap<>();
 
-		viewIds.parallelStream().forEach( viewA -> {
-			final AffineTransform3D mA = viewToModel.get( viewA );
-			final Map< String, Map< Integer, InterestPoint > > aIps = ipsCache.get( viewA );
-			final Map< String, Collection< CorrespondingInterestPoints > > aCorrs = corrsCache.get( viewA );
+		runInPool( () -> {
+			viewIds.parallelStream().forEach( viewA -> {
+				final AffineTransform3D mA = viewToModel.get( viewA );
+				final Map< String, Map< Integer, InterestPoint > > aIps = ipsCache.get( viewA );
+				final Map< String, Collection< CorrespondingInterestPoints > > aCorrs = corrsCache.get( viewA );
 
-			for ( final Entry< String, Double > e : labelAndWeights.entrySet() )
-			{
-				final String label = e.getKey();
-				final double w = e.getValue();
-
-				final Map< Integer, InterestPoint > ipsA = aIps.get( label );
-				final Collection< CorrespondingInterestPoints > corrs = aCorrs.get( label );
-				if ( ipsA == null || corrs == null )
-					continue;
-
-				final double[] tA = new double[ 3 ];
-				final double[] tB = new double[ 3 ];
-
-				for ( final CorrespondingInterestPoints cpA : corrs )
+				for ( final Entry< String, Double > e : labelAndWeights.entrySet() )
 				{
-					// same-label only — preserves prior semantics
-					if ( !cpA.getCorrespodingLabel().equals( label ) )
-						continue;
-					final ViewId viewB = cpA.getCorrespondingViewId();
-					if ( !selected.contains( viewB ) )
-						continue;
-					if ( compareViewIds( viewA, viewB ) >= 0 )
-						continue; // canonical: only A < B side accumulates
+					final String label = e.getKey();
+					final double w = e.getValue();
 
-					final Map< Integer, InterestPoint > ipsB = ipsCache.getOrDefault( viewB, Collections.emptyMap() ).get( label );
-					if ( ipsB == null )
-						continue;
-					final InterestPoint pA = ipsA.get( cpA.getDetectionId() );
-					final InterestPoint pB = ipsB.get( cpA.getCorrespondingDetectionId() );
-					if ( pA == null || pB == null )
+					final Map< Integer, InterestPoint > ipsA = aIps.get( label );
+					final Collection< CorrespondingInterestPoints > corrs = aCorrs.get( label );
+					if ( ipsA == null || corrs == null )
 						continue;
 
-					final AffineTransform3D mB = viewToModel.get( viewB );
-					mA.apply( pA.getL(), tA );
-					mB.apply( pB.getL(), tB );
-					final double dx = tA[ 0 ] - tB[ 0 ], dy = tA[ 1 ] - tB[ 1 ], dz = tA[ 2 ] - tB[ 2 ];
-					final double d = Math.sqrt( dx * dx + dy * dy + dz * dz );
+					final double[] tA = new double[ 3 ];
+					final double[] tB = new double[ 3 ];
 
-					final Pair< ViewId, ViewId > key = new ValuePair<>( viewA, viewB );
-					pairErrors.compute( key, ( k, acc ) -> {
-						if ( acc == null )
-							acc = new ErrorAcc();
-						acc.weightedDistanceSum += d * w;
-						acc.weightSum += w;
-						return acc;
-					});
+					for ( final CorrespondingInterestPoints cpA : corrs )
+					{
+						// same-label only — preserves prior semantics
+						if ( !cpA.getCorrespodingLabel().equals( label ) )
+							continue;
+						final ViewId viewB = cpA.getCorrespondingViewId();
+						if ( !selected.contains( viewB ) )
+							continue;
+						if ( compareViewIds( viewA, viewB ) >= 0 )
+							continue; // canonical: only A < B side accumulates
+
+						final Map< Integer, InterestPoint > ipsB = ipsCache.getOrDefault( viewB, Collections.emptyMap() ).get( label );
+						if ( ipsB == null )
+							continue;
+						final InterestPoint pA = ipsA.get( cpA.getDetectionId() );
+						final InterestPoint pB = ipsB.get( cpA.getCorrespondingDetectionId() );
+						if ( pA == null || pB == null )
+							continue;
+
+						final AffineTransform3D mB = viewToModel.get( viewB );
+						mA.apply( pA.getL(), tA );
+						mB.apply( pB.getL(), tB );
+						final double dx = tA[ 0 ] - tB[ 0 ], dy = tA[ 1 ] - tB[ 1 ], dz = tA[ 2 ] - tB[ 2 ];
+						final double d = Math.sqrt( dx * dx + dy * dy + dz * dz );
+
+						final Pair< ViewId, ViewId > key = new ValuePair<>( viewA, viewB );
+						pairErrors.compute( key, ( k, acc ) -> {
+							if ( acc == null )
+								acc = new ErrorAcc();
+							acc.weightedDistanceSum += d * w;
+							acc.weightSum += w;
+							acc.numCorr++;
+							return acc;
+						});
+					}
 				}
-			}
+			});
+			return null;
 		});
 
 		// materialise + sort desc by error
-		final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > pairResults = new ArrayList<>( pairErrors.size() );
+		final ArrayList< PairError > pairResults = new ArrayList<>( pairErrors.size() );
 		for ( final Entry< Pair< ViewId, ViewId >, ErrorAcc > e : pairErrors.entrySet() )
 		{
 			final ErrorAcc acc = e.getValue();
 			if ( acc.weightSum > 0 )
-				pairResults.add( new ValuePair<>( e.getKey(), acc.weightedDistanceSum / acc.weightSum ) );
+				pairResults.add( new PairError( e.getKey().getA(), e.getKey().getB(),
+						acc.weightedDistanceSum / acc.weightSum, acc.numCorr ) );
 		}
-		Collections.sort( pairResults, ( o1, o2 ) -> o2.getB().compareTo( o1.getB() ) );
+		Collections.sort( pairResults, ( o1, o2 ) -> Double.compare( o2.errorPx, o1.errorPx ) );
 		return pairResults;
 	}
 
@@ -299,6 +511,27 @@ public class AnalyzeErrorsUtil
 	{
 		double weightedDistanceSum = 0.0;
 		double weightSum = 0.0;
+		int numCorr = 0;
+	}
+
+	/** Run {@code task} on a fresh ForkJoinPool sized to {@link Threads#numThreads()} so any
+	 *  {@code parallelStream()} inside uses that pool instead of the JVM-wide common one. */
+	private static < T > T runInPool( final Callable< T > task )
+	{
+		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+		try
+		{
+			return pool.submit( task ).get();
+		}
+		catch ( final InterruptedException | ExecutionException e )
+		{
+			Thread.currentThread().interrupt();
+			throw new RuntimeException( e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
 	}
 
 	/** ViewId comparison: timepointId, then viewSetupId. Mirrors the in-repo CorrespondingInterestPoints.compareTo. */
@@ -358,6 +591,11 @@ public class AnalyzeErrorsUtil
 
 		gd.addChoice( "Interest_points" , labels, labels[ Interest_Point_Registration.defaultLabel ] );
 
+		final String[] modeChoices = new String[] { "Pair", "Single view" };
+		gd.addChoice( "Display_mode", modeChoices, modeChoices[ defaultMode == Mode.PAIR ? 0 : 1 ] );
+
+		gd.addCheckbox( "Include_all_views_(ignore_explorer_selection)", defaultUseAllViews );
+
 		gd.addMessage( "Group by (defines what counts as one 'old tile'):", GUIHelper.largefont );
 		gd.addCheckbox( "Group_by_Tile",         Interest_Point_Registration.defaultGroupTiles );
 		gd.addCheckbox( "Group_by_Channel",      Interest_Point_Registration.defaultGroupChannels );
@@ -379,6 +617,8 @@ public class AnalyzeErrorsUtil
 		final int labelChoice = Interest_Point_Registration.defaultLabel = gd.getNextChoiceIndex();
 
 		final Parameters p = new Parameters();
+		p.mode               = defaultMode                                       = ( gd.getNextChoiceIndex() == 0 ? Mode.PAIR : Mode.SINGLE_VIEW );
+		p.useAllViews        = defaultUseAllViews                                = gd.getNextBoolean();
 		p.groupTiles         = Interest_Point_Registration.defaultGroupTiles    = gd.getNextBoolean();
 		p.groupChannels      = Interest_Point_Registration.defaultGroupChannels = gd.getNextBoolean();
 		p.groupIlluminations = Interest_Point_Registration.defaultGroupIllums   = gd.getNextBoolean();
@@ -447,7 +687,7 @@ public class AnalyzeErrorsUtil
 	 */
 	public static void printResults(
 			final SpimData2 data,
-			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+			final ArrayList< PairError > errors,
 			final Parameters p )
 	{
 		if ( errors.isEmpty() )
@@ -465,8 +705,8 @@ public class AnalyzeErrorsUtil
 			IOFunctions.println( "Top " + topN + " of " + total + " pair(s) by error (worst first):" );
 			for ( int i = 0; i < topN; i++ )
 			{
-				final Pair< Pair< ViewId, ViewId >, Double > e = errors.get( i );
-				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + String.format( Locale.ROOT, "%.4f", e.getB() ) + " px" );
+				final PairError e = errors.get( i );
+				IOFunctions.println( "  " + Group.pvid( e.a ) + " <-> " + Group.pvid( e.b ) + ": " + String.format( Locale.ROOT, "%.4f", e.errorPx ) + " px" );
 			}
 		}
 
@@ -477,8 +717,8 @@ public class AnalyzeErrorsUtil
 			IOFunctions.println( "Bottom " + bottomM + " of " + total + " pair(s) by error (best first):" );
 			for ( int i = total - 1, k = 0; i >= 0 && k < bottomM; i--, k++ )
 			{
-				final Pair< Pair< ViewId, ViewId >, Double > e = errors.get( i );
-				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + String.format( Locale.ROOT, "%.4f", e.getB() ) + " px" );
+				final PairError e = errors.get( i );
+				IOFunctions.println( "  " + Group.pvid( e.a ) + " <-> " + Group.pvid( e.b ) + ": " + String.format( Locale.ROOT, "%.4f", e.errorPx ) + " px" );
 			}
 		}
 
@@ -488,22 +728,22 @@ public class AnalyzeErrorsUtil
 		{
 			// errors is desc-sorted; median = middle of sorted-asc, equivalent to index total - 1 - (total-1)/2
 			final double median = ( total % 2 == 1 )
-					? errors.get( total / 2 ).getB()
-					: 0.5 * ( errors.get( total / 2 - 1 ).getB() + errors.get( total / 2 ).getB() );
+					? errors.get( total / 2 ).errorPx
+					: 0.5 * ( errors.get( total / 2 - 1 ).errorPx + errors.get( total / 2 ).errorPx );
 
 			double sum = 0.0;
-			for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
-				sum += e.getB();
+			for ( final PairError e : errors )
+				sum += e.errorPx;
 			final double average = sum / total;
 
 			// helper: pick K entries with smallest |error - reference|, in original sort order
 			IOFunctions.println( "Middle " + middleK + " of " + total + " pair(s) closest to median (median=" + fmt( median ) + " px):" );
-			for ( final Pair< Pair< ViewId, ViewId >, Double > e : pickClosest( errors, median, middleK ) )
-				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + fmt( e.getB() ) + " px" );
+			for ( final PairError e : pickClosest( errors, median, middleK ) )
+				IOFunctions.println( "  " + Group.pvid( e.a ) + " <-> " + Group.pvid( e.b ) + ": " + fmt( e.errorPx ) + " px" );
 
 			IOFunctions.println( "Middle " + middleK + " of " + total + " pair(s) closest to average (avg=" + fmt( average ) + " px):" );
-			for ( final Pair< Pair< ViewId, ViewId >, Double > e : pickClosest( errors, average, middleK ) )
-				IOFunctions.println( "  " + Group.pvid( e.getA().getA() ) + " <-> " + Group.pvid( e.getA().getB() ) + ": " + fmt( e.getB() ) + " px" );
+			for ( final PairError e : pickClosest( errors, average, middleK ) )
+				IOFunctions.println( "  " + Group.pvid( e.a ) + " <-> " + Group.pvid( e.b ) + ": " + fmt( e.errorPx ) + " px" );
 		}
 
 		if ( !p.anyGroupingSelected() )
@@ -551,14 +791,14 @@ public class AnalyzeErrorsUtil
 
 		// Per-group rollup: each pair contributes once to each endpoint group (or once total if intra-group).
 		final HashMap< Group< ViewDescription >, GroupAcc > groupAcc = new HashMap<>();
-		for ( final Pair< Pair< ViewId, ViewId >, Double > e : errors )
+		for ( final PairError e : errors )
 		{
-			final Group< ViewDescription > gA = viewToGroup.get( e.getA().getA() );
-			final Group< ViewDescription > gB = viewToGroup.get( e.getA().getB() );
+			final Group< ViewDescription > gA = viewToGroup.get( e.a );
+			final Group< ViewDescription > gB = viewToGroup.get( e.b );
 			if ( gA != null )
-				groupAcc.computeIfAbsent( gA, k -> new GroupAcc() ).add( e.getB() );
+				groupAcc.computeIfAbsent( gA, k -> new GroupAcc() ).add( e.errorPx, e.numCorr );
 			if ( gB != null && gB != gA )
-				groupAcc.computeIfAbsent( gB, k -> new GroupAcc() ).add( e.getB() );
+				groupAcc.computeIfAbsent( gB, k -> new GroupAcc() ).add( e.errorPx, e.numCorr );
 		}
 		final ArrayList< Map.Entry< Group< ViewDescription >, GroupAcc > > groupRollup = new ArrayList<>( groupAcc.entrySet() );
 		groupRollup.sort( ( o1, o2 ) -> Double.compare( o2.getValue().avg(), o1.getValue().avg() ) );
@@ -599,8 +839,27 @@ public class AnalyzeErrorsUtil
 			final Parameters params,
 			final Collection< ? extends ViewId > views )
 	{
-		final BDVPopup pop = panel.bdvPopup();
-		final boolean bdvOpen = pop != null && pop.bdv != null && pop.bdv.getViewerFrame().isVisible();
+		selectViewsAndRecenter( panel, params, views, true );
+	}
+
+	/**
+	 * Same as {@link #selectViewsAndRecenter(ViewSetupExplorerPanel, Parameters, Collection)}
+	 * but skips the {@code TransformationTools.reCenterViews(...)} call when
+	 * {@code recenter == false}. Selection in the explorer (and therefore BDV
+	 * source visibility) still updates either way.
+	 */
+	public static void selectViewsAndRecenter(
+			final ViewSetupExplorerPanel< ? > panel,
+			final Parameters params,
+			final Collection< ? extends ViewId > views,
+			final boolean recenter )
+	{
+		final BasicBDVPopup pop = panel.runningBdvPopup();
+		final boolean bdvOpen = pop != null && pop.getBDV() != null && pop.getBDV().getViewerFrame().isVisible();
+		// updateBDV does eager-style visibility batching; harmful (or no-op) for the
+		// lazy popup which manages its own source list via the explorer's selection
+		// listener. Skip it in lazy mode.
+		final boolean canEagerUpdate = bdvOpen && pop instanceof BDVPopup;
 
 		// target grouping = the params grouping, but Channel/Angle aren't UI-toggleable
 		// in the explorer (no checkbox), so treat those as "not compatible" and ungroup.
@@ -616,8 +875,8 @@ public class AnalyzeErrorsUtil
 		if ( !target.equals( current ) )
 		{
 			// disable coloring during the regroup so stale row-views don't drive BDV
-			if ( bdvOpen )
-				panel.updateBDV( pop.bdv, false, panel.getSpimData(), null, panel.selectedRows );
+			if ( canEagerUpdate )
+				panel.updateBDV( pop.getBDV(), false, panel.getSpimData(), null, panel.selectedRows );
 
 			if ( panel.groupTilesCheckbox != null )
 				panel.groupTilesCheckbox.setSelected( target.contains( Tile.class ) );
@@ -641,6 +900,7 @@ public class AnalyzeErrorsUtil
 		final List< ? extends List< ? extends BasicViewDescription< ? > > > elements =
 				panel.getTableModel().getElements();
 		boolean setFirst = false;
+		int firstMatchRow = -1;
 		for ( int r = 0; r < elements.size(); r++ )
 		{
 			boolean matches = false;
@@ -651,6 +911,8 @@ public class AnalyzeErrorsUtil
 			}
 			if ( matches )
 			{
+				if ( firstMatchRow < 0 )
+					firstMatchRow = r;
 				if ( setFirst )
 					panel.table.addRowSelectionInterval( r, r );
 				else
@@ -664,10 +926,18 @@ public class AnalyzeErrorsUtil
 		// wait until the table is updated (otherwise there might be an exception thrown)
 		SimpleMultiThreading.threadWait( 100 );
 
-		// recenter BDV on the selection
-		if ( bdvOpen )
+		// scroll so the first matched row is visible (mirrors FilteredAndGroupedExplorerPanel.selectViews)
+		if ( firstMatchRow >= 0 )
 		{
-			TransformationTools.reCenterViews( pop.bdv,
+			final int row = firstMatchRow;
+			javax.swing.SwingUtilities.invokeLater( () ->
+					panel.table.scrollRectToVisible( panel.table.getCellRect( row, 0, true ) ) );
+		}
+
+		// recenter BDV on the selection
+		if ( bdvOpen && recenter )
+		{
+			TransformationTools.reCenterViews( pop.getBDV(),
 					panel.selectedRows.stream().collect(
 							HashSet< BasicViewDescription< ? > >::new,
 							( a, b ) -> a.addAll( b ), ( a, b ) -> a.addAll( b ) ),
@@ -711,8 +981,8 @@ public class AnalyzeErrorsUtil
 	 * preserving the original (desc-by-error) order in the output. O(N log K) using a
 	 * max-heap keyed by absolute distance.
 	 */
-	private static ArrayList< Pair< Pair< ViewId, ViewId >, Double > > pickClosest(
-			final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors,
+	private static ArrayList< PairError > pickClosest(
+			final ArrayList< PairError > errors,
 			final double reference,
 			final int k )
 	{
@@ -720,16 +990,16 @@ public class AnalyzeErrorsUtil
 		// max-heap on |distance| so the worst-fit at the top can be evicted
 		final java.util.PriorityQueue< int[] > heap = new java.util.PriorityQueue<>( kk,
 				( a, b ) -> Double.compare(
-						Math.abs( errors.get( b[ 0 ] ).getB() - reference ),
-						Math.abs( errors.get( a[ 0 ] ).getB() - reference ) ) );
+						Math.abs( errors.get( b[ 0 ] ).errorPx - reference ),
+						Math.abs( errors.get( a[ 0 ] ).errorPx - reference ) ) );
 		for ( int i = 0; i < errors.size(); i++ )
 		{
 			if ( heap.size() < kk )
 				heap.offer( new int[] { i } );
 			else
 			{
-				final double cur = Math.abs( errors.get( i ).getB() - reference );
-				final double worst = Math.abs( errors.get( heap.peek()[ 0 ] ).getB() - reference );
+				final double cur = Math.abs( errors.get( i ).errorPx - reference );
+				final double worst = Math.abs( errors.get( heap.peek()[ 0 ] ).errorPx - reference );
 				if ( cur < worst )
 				{
 					heap.poll();
@@ -740,7 +1010,7 @@ public class AnalyzeErrorsUtil
 		final ArrayList< Integer > indices = new ArrayList<>( heap.size() );
 		for ( final int[] e : heap ) indices.add( e[ 0 ] );
 		Collections.sort( indices ); // restore original (desc-by-error) order
-		final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > out = new ArrayList<>( indices.size() );
+		final ArrayList< PairError > out = new ArrayList<>( indices.size() );
 		for ( final int i : indices ) out.add( errors.get( i ) );
 		return out;
 	}
@@ -749,11 +1019,13 @@ public class AnalyzeErrorsUtil
 	private static final class GroupAcc
 	{
 		long count = 0;
+		int numCorr = 0;
 		double sum = 0.0, min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
 
-		void add( final double v )
+		void add( final double v, final int corrAdd )
 		{
 			count++;
+			numCorr += corrAdd;
 			sum += v;
 			if ( v < min ) min = v;
 			if ( v > max ) max = v;

@@ -22,22 +22,19 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting;
 
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 
 import bdv.ViewerImgLoader;
 import bdv.ViewerSetupImgLoader;
 import bdv.cache.CacheControl;
-import bdv.img.cache.VolatileGlobalCellCache;
 import bdv.img.n5.N5ImageLoader;
-import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
+import mpicbg.spim.data.sequence.MultiResolutionSetupImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
+import net.imglib2.Dimensions;
 import net.imglib2.Interval;
-import net.imglib2.cache.queue.BlockingFetchQueues;
 import net.imglib2.util.Cast;
 
 public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImgLoader
@@ -60,16 +57,21 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 	final SequenceDescription oldSD;
 
 	/**
-	 * Remembers instances of SplitSetupImgLoader
+	 * Remembers instances of SplitSetupImgLoader. ConcurrentHashMap so the
+	 * per-split-id lookup doesn't serialise through a single monitor (with
+	 * 100k split-ids this is on the BDV render hot path).
 	 */
-	private final Map< Integer, SplitViewerSetupImgLoader<?,?> > splitSetupImgLoaders;
+	private final ConcurrentHashMap< Integer, SplitViewerSetupImgLoader<?,?> > splitSetupImgLoaders;
 
 	/**
-	 * Its own cell cache
+	 * Per old-setup-id, the underlying image's dimensions at every mipmap level
+	 * ({@code dims[level][dim]}). Computed lazily on first access via
+	 * {@link ViewerSetupImgLoader#getImageSize(int, int)} on the underlying loader,
+	 * then shared across all splits of the same underlying view (typically ~100
+	 * splits share one entry). Used to eagerly clamp {@code scaledIntervals[]}
+	 * inside {@link SplitViewerSetupImgLoader}'s constructor.
 	 */
-	protected VolatileGlobalCellCache cache;
-
-	private int requestedNumFetcherThreads = -1;
+	private final ConcurrentHashMap< Integer, long[][] > oldSetupLevelDims;
 
 	public SplitViewerImgLoader(
 			final ViewerImgLoader underlyingImgLoader,
@@ -81,10 +83,9 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 		this.new2oldSetupId = new2oldSetupId;
 		this.newSetupId2Interval = newSetupId2Interval;
 		this.oldSD = oldSD;
-		this.splitSetupImgLoaders = new HashMap<>();
+		this.splitSetupImgLoaders = new ConcurrentHashMap<>();
+		this.oldSetupLevelDims = new ConcurrentHashMap<>();
 	}
-
-	private boolean isOpen = false;
 
 	public Map< Integer, Integer > new2oldSetupId() { return new2oldSetupId; }
 	public Map< Integer, Interval > newSetupId2Interval() { return newSetupId2Interval; }
@@ -96,22 +97,62 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 		return getSplitViewerSetupImgLoader( underlyingImgLoader, new2oldSetupId.get( setupId ), setupId, newSetupId2Interval.get( setupId ) );
 	}
 
-	private final synchronized SplitViewerSetupImgLoader<?,?> getSplitViewerSetupImgLoader( final ViewerImgLoader underlyingImgLoader, final int oldSetupId, final int newSetupId, final Interval interval )
+	private final SplitViewerSetupImgLoader<?,?> getSplitViewerSetupImgLoader( final ViewerImgLoader underlyingImgLoader, final int oldSetupId, final int newSetupId, final Interval interval )
 	{
-		SplitViewerSetupImgLoader<?,?> sil = splitSetupImgLoaders.get( newSetupId );
-		if ( sil == null )
-		{
-			sil = createNewSetupImgLoader( (ViewerSetupImgLoader<?,?>)underlyingImgLoader.getSetupImgLoader( oldSetupId ), interval );
-			splitSetupImgLoaders.put( newSetupId, sil );
-		}
-		return sil;
+		return splitSetupImgLoaders.computeIfAbsent( newSetupId, id ->
+				createNewSetupImgLoader(
+						(ViewerSetupImgLoader<?,?>)underlyingImgLoader.getSetupImgLoader( oldSetupId ),
+						interval,
+						getOldSetupLevelDims( oldSetupId ) ) );
 	}
 
-	private final synchronized SplitViewerSetupImgLoader<?,?> createNewSetupImgLoader(
+	private final SplitViewerSetupImgLoader<?,?> createNewSetupImgLoader(
 			final ViewerSetupImgLoader<?,?> setupImgLoader,
-			final Interval interval )
+			final Interval interval,
+			final long[][] levelDims )
 	{
-		return new SplitViewerSetupImgLoader<>( Cast.unchecked( setupImgLoader ), interval );
+		return new SplitViewerSetupImgLoader<>( Cast.unchecked( setupImgLoader ), interval, levelDims );
+	}
+
+	/**
+	 * Lazy + cached: per old-setup, query the underlying loader once for the
+	 * level dimensions and stash them. All splits sharing this old-setup-id then
+	 * reuse the same {@code long[level][dim]} array.
+	 *
+	 * Uses the first ordered timepoint of the underlying SequenceDescription;
+	 * assumes per-setup level dims are timepoint-invariant (true for N5 / OME-Zarr).
+	 */
+	private long[][] getOldSetupLevelDims( final int oldSetupId )
+	{
+		return oldSetupLevelDims.computeIfAbsent( oldSetupId, this::computeOldSetupLevelDims );
+	}
+
+	private long[][] computeOldSetupLevelDims( final int oldSetupId )
+	{
+		final ViewerSetupImgLoader<?,?> sil = (ViewerSetupImgLoader<?,?>) underlyingImgLoader.getSetupImgLoader( oldSetupId );
+		final MultiResolutionSetupImgLoader<?> mrsil = (MultiResolutionSetupImgLoader<?>) sil;
+		final int firstTp = oldSD.getTimePoints().getTimePointsOrdered().get( 0 ).getId();
+		final int levels = sil.numMipmapLevels();
+		final long[][] dims = new long[ levels ][];
+		for ( int level = 0; level < levels; ++level )
+		{
+			final Dimensions d = mrsil.getImageSize( firstTp, level );
+			if ( d == null )
+			{
+				// Underlying loader has no size info for this level; use sentinel
+				// so clamping in SplitViewerSetupImgLoader is skipped (max is unreachable).
+				final long[] arr = new long[ 3 ];
+				java.util.Arrays.fill( arr, Long.MAX_VALUE );
+				dims[ level ] = arr;
+			}
+			else
+			{
+				final long[] arr = new long[ d.numDimensions() ];
+				d.dimensions( arr );
+				dims[ level ] = arr;
+			}
+		}
+		return dims;
 	}
 
 	public ViewerImgLoader getUnderlyingImgLoader()
@@ -130,44 +171,19 @@ public class SplitViewerImgLoader implements ViewerImgLoader, MultiResolutionImg
 	}
 
 	@Override
-	public synchronized void setNumFetcherThreads( final int n )
+	public void setNumFetcherThreads( final int n )
 	{
-		requestedNumFetcherThreads = n;
 		underlyingImgLoader.setNumFetcherThreads( n );
-	}
-
-	private void open()
-	{
-		if ( !isOpen )
-		{
-			synchronized ( this )
-			{
-				if ( isOpen )
-					return;
-
-				isOpen = true;
-
-				int maxNumLevels = 1;
-				final List< ? extends BasicViewSetup > setups = oldSD.getViewSetupsOrdered();
-				for ( final BasicViewSetup setup : setups )
-				{
-					final double[][] resolutions = underlyingImgLoader.getSetupImgLoader( setup.getId() ).getMipmapResolutions();
-
-					if ( resolutions.length > maxNumLevels )
-						maxNumLevels = resolutions.length;
-				}
-
-				final int numFetcherThreads = ( requestedNumFetcherThreads > 0 ) ? requestedNumFetcherThreads : Runtime.getRuntime().availableProcessors();
-				final BlockingFetchQueues< Callable< ? > > queue = new BlockingFetchQueues<>( maxNumLevels, numFetcherThreads );
-				cache = new VolatileGlobalCellCache( queue );
-			}
-		}
 	}
 
 	@Override
 	public CacheControl getCacheControl()
 	{
-		open();
-		return cache;
+		// Delegate to the underlying loader. Splits don't have their own cells —
+		// every getVolatileImage() call returns a CachedCellImg backed by the
+		// underlying loader's VolatileGlobalCellCache. Returning a parallel cache
+		// here (as the previous implementation did) just spawned an idle fetcher
+		// pool and made BDV's cache pumping/invalidation aim at the wrong cache.
+		return underlyingImgLoader.getCacheControl();
 	}
 }

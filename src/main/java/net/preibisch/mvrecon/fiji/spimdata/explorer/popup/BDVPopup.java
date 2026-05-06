@@ -22,6 +22,8 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 
+import bdv.cache.CacheControl;
+import bdv.spimdata.WrapBasicImgLoader;
 import bdv.tools.brightness.ConverterSetup;
 import bdv.util.Bounds;
 import bdv.viewer.ConverterSetups;
@@ -33,6 +35,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.WindowEvent;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Collection;
 
 import javax.swing.JMenuItem;
@@ -40,12 +43,15 @@ import javax.swing.JOptionPane;
 
 import bdv.AbstractSpimSource;
 import bdv.BigDataViewer;
+import bdv.ViewerImgLoader;
 import bdv.tools.InitializeViewerState;
 import bdv.tools.transformation.TransformedSource;
 import bdv.viewer.Source;
 import bdv.viewer.ViewerOptions;
 import bdv.viewer.ViewerPanel;
 import mpicbg.spim.data.generic.AbstractSpimData;
+import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
+import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.registration.ViewRegistration;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
@@ -71,6 +77,13 @@ import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AbstractImgLoader;
 public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicBDVPopup
 {
 	private static final long serialVersionUID = 5234649267634013390L;
+
+	/**
+	 * Set by {@code Data_Explorer}'s large-dataset dialog. When {@code true}, the
+	 * explorer registers a {@link LazyBDVPopup} as the (only) BDV menu item; when
+	 * {@code false}, registers a regular {@link BDVPopup}. Defaults to eager.
+	 */
+	public static boolean useLazyMode = false;
 
 	public ExplorerWindow< ? > panel;
 	public BigDataViewer bdv = null;
@@ -308,6 +321,11 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 
 	public static BigDataViewer createBDV( final ExplorerWindow< ? > panel )
 	{
+		final long tStart = System.currentTimeMillis();
+		final int numSetups = panel.getSpimData().getSequenceDescription().getViewSetupsOrdered().size();
+		final int numTimepoints = panel.getSpimData().getSequenceDescription().getTimePoints().getTimePointsOrdered().size();
+		IOFunctions.println( "[BDV-open] starting (view-setups=" + numSetups + ", timepoints=" + numTimepoints + ", img-loader=" + panel.getSpimData().getSequenceDescription().getImgLoader().getClass().getSimpleName() + ")" );
+
 		final BigDataViewer bdv = createBDV( panel.getSpimData(), panel.xml() );
 
 		if ( bdv == null )
@@ -315,6 +333,7 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 
 		ViewSetupExplorerPanel.updateBDV( bdv, panel.colorMode(), panel.getSpimData(), panel.firstSelectedVD(), ((GroupedRowWindow)panel).selectedRowsGroups() );
 
+		IOFunctions.println( "[BDV-open] TOTAL: " + ( System.currentTimeMillis() - tStart ) + "ms" );
 		return bdv;
 	}
 
@@ -333,7 +352,29 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 				return null;
 		}
 
-		final BigDataViewer bdv = BigDataViewer.open( spimData, xml.toString(), IOFunctions.getProgressWriter(), ViewerOptions.options() );
+		// Build sources/converterSetups ourselves so we can name them as
+		// "VS: <id> TP: <id>" instead of BDV-core's default "a <angle> c <channel>".
+		final ArrayList< ConverterSetup > converterSetups = new ArrayList<>();
+		final ArrayList< SourceAndConverter< ? > > sources = new ArrayList<>();
+		final boolean wrapped = WrapBasicImgLoader.wrapImgLoaderIfNecessary( spimData );
+		if ( wrapped )
+			IOFunctions.println( "WARNING: <SpimData> dataset wrapped for BDV browsing; consider resaving as HDF5/N5." );
+
+		final AbstractSequenceDescription< ?, ?, ? > seq = spimData.getSequenceDescription();
+		for ( final BasicViewSetup setup : seq.getViewSetupsOrdered() )
+			BDVSourceNaming.initSetupViewIdName( spimData, setup, converterSetups, sources );
+
+		final int numTimepoints = seq.getTimePoints().size();
+		final CacheControl cache = ( ( ViewerImgLoader ) seq.getImgLoader() ).getCacheControl();
+
+		final BigDataViewer bdv = new BigDataViewer( converterSetups, sources, spimData, numTimepoints, cache,
+				xml.toString(), IOFunctions.getProgressWriter(), ViewerOptions.options() );
+
+		if ( wrapped )
+			WrapBasicImgLoader.removeWrapperIfPresent( spimData );
+
+		bdv.getViewerFrame().setVisible( true );
+
 		if ( !bdv.tryLoadSettings( xml.toString() ) )
 			InitializeViewerState.initBrightness( 0.001, 0.999, bdv.getViewerFrame() );
 

@@ -352,8 +352,9 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 					}
 
 					// re-open BDV if active
-					if ( panel.bdvPopup().bdvRunning() )
-						panel.bdvPopup().reStartBDV();
+					final BDVPopup bdvPop = ( panel.bdvPopup() instanceof BDVPopup ) ? (BDVPopup) panel.bdvPopup() : null;
+					if ( bdvPop != null && bdvPop.bdvRunning() )
+						bdvPop.reStartBDV();
 				}
 			} ).start();
 		}

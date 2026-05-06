@@ -89,7 +89,9 @@ public class BoundingBoxPopup extends JMenuItem implements ExplorerWindowSetable
 					if ( new Define_Bounding_Box().defineBoundingBox( (SpimData2)panel.getSpimData(), viewIds ) != null )
 					{
 						panel.updateContent(); // update main table and registration panel if available
-						panel.bdvPopup().updateBDV();
+						final BasicBDVPopup p = panel.runningBdvPopup();
+						if ( p != null )
+							p.updateBDV();
 					}
 				}
 			} ).start();

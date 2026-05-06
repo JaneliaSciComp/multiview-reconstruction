@@ -1108,11 +1108,13 @@ public class FileListDatasetDefinition implements MultiViewDatasetDefinition
 		final File prefixPath;
 		if (filenames.size() > 1)
 			prefixPath = getLongestPathPrefix( filenames );
-		else
+		else if (filenames.size() == 1)
 		{
 			String fi = filenames.iterator().next();
 			prefixPath = new File((String)fi.subSequence( 0, fi.lastIndexOf( File.separator )));
 		}
+		else
+			prefixPath = new File( System.getProperty( "user.home" ) );
 
 		gdSave.addDirectoryField( "metadata_save_path (XML)", prefixPath.getAbsolutePath(), 65 );
 		gdSave.addDirectoryField( "image_data_save_path", prefixPath.getAbsolutePath(), 65 );

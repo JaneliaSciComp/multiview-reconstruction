@@ -28,7 +28,6 @@ import java.util.List;
 import ij.ImageJ;
 import ij.plugin.PlugIn;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.util.Pair;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.GenericLoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -57,7 +56,7 @@ public class Analyze_Errors implements PlugIn
 		if ( params == null )
 			return;
 
-		final ArrayList< Pair< Pair< ViewId, ViewId >, Double > > errors =
+		final ArrayList< AnalyzeErrorsUtil.PairError > errors =
 				AnalyzeErrorsUtil.getErrors( data, viewIds, params.labelAndWeights );
 
 		AnalyzeErrorsUtil.printResults( data, errors, params );

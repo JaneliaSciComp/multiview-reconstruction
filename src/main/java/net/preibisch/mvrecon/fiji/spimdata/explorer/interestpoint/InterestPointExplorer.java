@@ -127,9 +127,9 @@ public class InterestPointExplorer< AS extends SpimData2 >
 	@Override
 	public void quit()
 	{
-		final BasicBDVPopup bdvPopup = viewSetupExplorer.getPanel().bdvPopup();
+		final BasicBDVPopup bdvPopup = viewSetupExplorer.getPanel().runningBdvPopup();
 
-		if ( bdvPopup.bdvRunning() && panel.tableModel.interestPointOverlay != null )
+		if ( bdvPopup != null && bdvPopup.bdvRunning() && panel.tableModel.interestPointOverlay != null )
 		{
 			final BigDataViewer bdv = bdvPopup.getBDV();
 			bdv.getViewer().removeTransformListener( panel.tableModel.interestPointOverlay );
