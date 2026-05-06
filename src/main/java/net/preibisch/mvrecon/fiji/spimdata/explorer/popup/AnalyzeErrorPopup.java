@@ -105,10 +105,13 @@ public class AnalyzeErrorPopup extends JMenuItem implements ExplorerWindowSetabl
 					{
 						AnalyzeErrorsUtil.printResults( panel.getSpimData(), errors, params );
 
+						// snapshot for the lambda (viewIds may have been reassigned earlier)
+						final List< ViewId > analyzedViews = viewIds;
+
 						// open the sortable results browser; row clicks recenter BDV + select views
 						javax.swing.SwingUtilities.invokeLater( () ->
 								new AnalyzeErrorsResultsWindow(
-										panel.getSpimData(), errors, params, panel ) );
+										panel.getSpimData(), errors, params, panel, analyzedViews ) );
 
 						// auto-select the worst pair as the initial selection
 						final AnalyzeErrorsUtil.PairError worst = errors.get( 0 );

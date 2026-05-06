@@ -77,6 +77,9 @@ public class AnalyzeErrorsUtil
 
 	private AnalyzeErrorsUtil() {}
 
+	/** Display mode for {@link AnalyzeErrorsResultsWindow}. */
+	public enum Mode { PAIR, SINGLE_VIEW }
+
 	/** Bundle of dialog choices returned by {@link #getParametersExtended}. */
 	public static class Parameters
 	{
@@ -85,6 +88,7 @@ public class AnalyzeErrorsUtil
 		public int topN, bottomM, middleK;
 		/** When true, the caller should analyse all views in the dataset, not just the explorer's selection. */
 		public boolean useAllViews;
+		public Mode mode = Mode.PAIR;
 
 		public boolean anyGroupingSelected()
 		{
@@ -93,6 +97,7 @@ public class AnalyzeErrorsUtil
 	}
 
 	public static boolean defaultUseAllViews = false;
+	public static Mode defaultMode = Mode.PAIR;
 
 	/** Aggregated error statistics for one (groupA, groupB) bucket. Returned by {@link #computeGroupPairs}. */
 	public static class GroupPairResult
@@ -129,6 +134,178 @@ public class AnalyzeErrorsUtil
 			this.errorPx = errorPx;
 			this.numCorr = numCorr;
 		}
+	}
+
+	/** Per-view aggregate of errors and connections (Single-view mode, ungrouped). */
+	public static final class SingleViewError
+	{
+		public final ViewId view;
+		public final List< ViewId > connectedViews;  // sorted, deduped
+		public final int numCorr;
+		public final double min, avg, max;
+
+		public SingleViewError( final ViewId view, final List< ViewId > connectedViews,
+				final int numCorr, final double min, final double avg, final double max )
+		{
+			this.view = view;
+			this.connectedViews = connectedViews;
+			this.numCorr = numCorr;
+			this.min = min;
+			this.avg = avg;
+			this.max = max;
+		}
+	}
+
+	/** Per-group aggregate of errors and connected groups (Single-view mode, grouped). */
+	public static final class SingleGroupError
+	{
+		public final Group< ViewDescription > group;
+		public final List< Group< ViewDescription > > connectedGroups;
+		public final int numCorr;
+		public final double min, avg, max;
+
+		public SingleGroupError( final Group< ViewDescription > group,
+				final List< Group< ViewDescription > > connectedGroups,
+				final int numCorr, final double min, final double avg, final double max )
+		{
+			this.group = group;
+			this.connectedGroups = connectedGroups;
+			this.numCorr = numCorr;
+			this.min = min;
+			this.avg = avg;
+			this.max = max;
+		}
+	}
+
+	/**
+	 * Aggregate {@link PairError}s into one {@link SingleViewError} per view that appears in
+	 * at least one pair. Each pair contributes to both endpoints. Sorted descending by avg.
+	 */
+	public static ArrayList< SingleViewError > computeSingleViewErrors(
+			final ArrayList< PairError > errors )
+	{
+		final HashMap< ViewId, ViewAcc > acc = new HashMap<>();
+		for ( final PairError e : errors )
+		{
+			acc.computeIfAbsent( e.a, k -> new ViewAcc() ).add( e.b, e.errorPx, e.numCorr );
+			acc.computeIfAbsent( e.b, k -> new ViewAcc() ).add( e.a, e.errorPx, e.numCorr );
+		}
+		final ArrayList< SingleViewError > result = new ArrayList<>( acc.size() );
+		for ( final Map.Entry< ViewId, ViewAcc > e : acc.entrySet() )
+		{
+			final ViewAcc a = e.getValue();
+			final ArrayList< ViewId > connected = new ArrayList<>( a.connected );
+			connected.sort( ( x, y ) -> compareViewIds( x, y ) );
+			result.add( new SingleViewError( e.getKey(), connected, a.numCorr, a.min, a.avg(), a.max ) );
+		}
+		result.sort( ( o1, o2 ) -> Double.compare( o2.avg, o1.avg ) );
+		return result;
+	}
+
+	/**
+	 * Aggregate {@link PairError}s into one {@link SingleGroupError} per group that participates
+	 * in at least one group-pair under the supplied grouping {@link Parameters}. Each
+	 * cross-group pair contributes once to each endpoint group. Sorted descending by avg.
+	 */
+	public static ArrayList< SingleGroupError > computeSingleGroupErrors(
+			final SpimData2 data,
+			final ArrayList< PairError > errors,
+			final Parameters p )
+	{
+		if ( !p.anyGroupingSelected() )
+			return new ArrayList<>();
+
+		final Set< Class< ? extends Entity > > factors = new HashSet<>();
+		if ( p.groupTiles )         factors.add( Tile.class );
+		if ( p.groupChannels )      factors.add( Channel.class );
+		if ( p.groupIlluminations ) factors.add( Illumination.class );
+		if ( p.groupAngles )        factors.add( Angle.class );
+
+		final HashSet< ViewId > seen = new HashSet<>();
+		for ( final PairError e : errors )
+		{
+			seen.add( e.a );
+			seen.add( e.b );
+		}
+		final List< ViewDescription > vds = new ArrayList<>();
+		for ( final ViewId vid : seen )
+		{
+			final ViewDescription vd = data.getSequenceDescription().getViewDescriptions().get( vid );
+			if ( vd != null )
+				vds.add( vd );
+		}
+
+		final List< Group< ViewDescription > > groups = Group.combineBy( vds, factors );
+		final HashMap< ViewId, Group< ViewDescription > > viewToGroup = new HashMap<>();
+		final HashMap< Group< ViewDescription >, ViewId > groupRep = new HashMap<>();
+		for ( final Group< ViewDescription > g : groups )
+		{
+			for ( final ViewDescription vd : g.getViews() )
+				viewToGroup.put( vd, g );
+			groupRep.put( g, Group.getViewsSorted( g.getViews() ).get( 0 ) );
+		}
+
+		final HashMap< Group< ViewDescription >, GroupNeighborAcc > acc = new HashMap<>();
+		for ( final PairError e : errors )
+		{
+			final Group< ViewDescription > gA = viewToGroup.get( e.a );
+			final Group< ViewDescription > gB = viewToGroup.get( e.b );
+			if ( gA == null || gB == null || gA == gB )
+				continue;
+			acc.computeIfAbsent( gA, k -> new GroupNeighborAcc() ).add( gB, e.errorPx, e.numCorr );
+			acc.computeIfAbsent( gB, k -> new GroupNeighborAcc() ).add( gA, e.errorPx, e.numCorr );
+		}
+
+		final ArrayList< SingleGroupError > result = new ArrayList<>( acc.size() );
+		for ( final Map.Entry< Group< ViewDescription >, GroupNeighborAcc > e : acc.entrySet() )
+		{
+			final GroupNeighborAcc a = e.getValue();
+			final ArrayList< Group< ViewDescription > > connected = new ArrayList<>( a.connected );
+			connected.sort( ( x, y ) -> compareViewIds( groupRep.get( x ), groupRep.get( y ) ) );
+			result.add( new SingleGroupError( e.getKey(), connected, a.numCorr, a.min, a.avg(), a.max ) );
+		}
+		result.sort( ( o1, o2 ) -> Double.compare( o2.avg, o1.avg ) );
+		return result;
+	}
+
+	/** Mutable accumulator for {@link #computeSingleViewErrors}. */
+	private static final class ViewAcc
+	{
+		final HashSet< ViewId > connected = new HashSet<>();
+		int numCorr = 0;
+		double sum = 0.0, min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
+		long count = 0;
+
+		void add( final ViewId other, final double err, final int corrAdd )
+		{
+			connected.add( other );
+			numCorr += corrAdd;
+			sum += err;
+			if ( err < min ) min = err;
+			if ( err > max ) max = err;
+			count++;
+		}
+		double avg() { return count == 0 ? 0.0 : sum / count; }
+	}
+
+	/** Mutable accumulator for {@link #computeSingleGroupErrors}. */
+	private static final class GroupNeighborAcc
+	{
+		final HashSet< Group< ViewDescription > > connected = new HashSet<>();
+		int numCorr = 0;
+		double sum = 0.0, min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
+		long count = 0;
+
+		void add( final Group< ViewDescription > other, final double err, final int corrAdd )
+		{
+			connected.add( other );
+			numCorr += corrAdd;
+			sum += err;
+			if ( err < min ) min = err;
+			if ( err > max ) max = err;
+			count++;
+		}
+		double avg() { return count == 0 ? 0.0 : sum / count; }
 	}
 
 	/**
@@ -384,6 +561,9 @@ public class AnalyzeErrorsUtil
 
 		gd.addChoice( "Interest_points" , labels, labels[ Interest_Point_Registration.defaultLabel ] );
 
+		final String[] modeChoices = new String[] { "Pair", "Single view" };
+		gd.addChoice( "Display_mode", modeChoices, modeChoices[ defaultMode == Mode.PAIR ? 0 : 1 ] );
+
 		gd.addCheckbox( "Include_all_views_(ignore_explorer_selection)", defaultUseAllViews );
 
 		gd.addMessage( "Group by (defines what counts as one 'old tile'):", GUIHelper.largefont );
@@ -407,6 +587,7 @@ public class AnalyzeErrorsUtil
 		final int labelChoice = Interest_Point_Registration.defaultLabel = gd.getNextChoiceIndex();
 
 		final Parameters p = new Parameters();
+		p.mode               = defaultMode                                       = ( gd.getNextChoiceIndex() == 0 ? Mode.PAIR : Mode.SINGLE_VIEW );
 		p.useAllViews        = defaultUseAllViews                                = gd.getNextBoolean();
 		p.groupTiles         = Interest_Point_Registration.defaultGroupTiles    = gd.getNextBoolean();
 		p.groupChannels      = Interest_Point_Registration.defaultGroupChannels = gd.getNextBoolean();
@@ -628,6 +809,21 @@ public class AnalyzeErrorsUtil
 			final Parameters params,
 			final Collection< ? extends ViewId > views )
 	{
+		selectViewsAndRecenter( panel, params, views, true );
+	}
+
+	/**
+	 * Same as {@link #selectViewsAndRecenter(ViewSetupExplorerPanel, Parameters, Collection)}
+	 * but skips the {@code TransformationTools.reCenterViews(...)} call when
+	 * {@code recenter == false}. Selection in the explorer (and therefore BDV
+	 * source visibility) still updates either way.
+	 */
+	public static void selectViewsAndRecenter(
+			final ViewSetupExplorerPanel< ? > panel,
+			final Parameters params,
+			final Collection< ? extends ViewId > views,
+			final boolean recenter )
+	{
 		final BasicBDVPopup pop = panel.runningBdvPopup();
 		final boolean bdvOpen = pop != null && pop.getBDV() != null && pop.getBDV().getViewerFrame().isVisible();
 		// updateBDV does eager-style visibility batching; harmful (or no-op) for the
@@ -709,7 +905,7 @@ public class AnalyzeErrorsUtil
 		}
 
 		// recenter BDV on the selection
-		if ( bdvOpen )
+		if ( bdvOpen && recenter )
 		{
 			TransformationTools.reCenterViews( pop.getBDV(),
 					panel.selectedRows.stream().collect(
