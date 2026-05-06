@@ -145,9 +145,6 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 	private int activeRowModelIdx = -1;
 	private int activeClickState = 0; // 0 = none, 1/2/3 = active
 
-	// Cached overlap map (computed lazily on first state-3 click).
-	private Map< ViewId, Set< ViewId > > overlapCache = null;
-
 	// Cached map ViewId → universe-level Group (computed lazily in grouped single-view mode
 	// to expand the errors-derived actual/connected/overlap sets to full group members).
 	private Map< ViewId, Group< ViewDescription > > universeGroupMapCache = null;
@@ -522,16 +519,10 @@ public class AnalyzeErrorsResultsWindow extends JFrame
 
 	private Set< ViewId > lookupOverlap( final Set< ViewId > forViews )
 	{
-		if ( overlapCache == null )
-			overlapCache = ViewNeighbors.overlappingViews( data, overlapUniverse );
-		final HashSet< ViewId > out = new HashSet<>();
-		for ( final ViewId v : forViews )
-		{
-			final Set< ViewId > s = overlapCache.get( v );
-			if ( s != null ) out.addAll( s );
-		}
-		out.removeAll( forViews );
-		return out;
+		// Per-click query: AABB broad-phase scan over the universe + SAT narrow-phase on
+		// candidates. No precomputed full-graph cache (would be O(N²) and prohibitive on
+		// 200k-view datasets).
+		return ViewNeighbors.overlappingFor( data, forViews, overlapUniverse );
 	}
 
 	/** Build (lazily) the ViewId → universe-level Group map for the current grouping factors. */

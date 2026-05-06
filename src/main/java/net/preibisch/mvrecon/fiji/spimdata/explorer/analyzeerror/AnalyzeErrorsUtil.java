@@ -33,7 +33,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ForkJoinPool;
 
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.generic.base.Entity;
@@ -50,6 +53,7 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -405,20 +409,23 @@ public class AnalyzeErrorsUtil
 		final ConcurrentHashMap< ViewId, Map< String, Map< Integer, InterestPoint > > > ipsCache = new ConcurrentHashMap<>();
 		final ConcurrentHashMap< ViewId, Map< String, Collection< CorrespondingInterestPoints > > > corrsCache = new ConcurrentHashMap<>();
 
-		viewIds.parallelStream().forEach( viewId -> {
-			final ViewInterestPointLists vip = data.getViewInterestPoints().getViewInterestPointLists( viewId );
-			final HashMap< String, Map< Integer, InterestPoint > > ipsByLabel = new HashMap<>();
-			final HashMap< String, Collection< CorrespondingInterestPoints > > corrsByLabel = new HashMap<>();
-			for ( final String label : labelAndWeights.keySet() )
-			{
-				if ( vip.getInterestPointList( label ) != null )
+		runInPool( () -> {
+			viewIds.parallelStream().forEach( viewId -> {
+				final ViewInterestPointLists vip = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+				final HashMap< String, Map< Integer, InterestPoint > > ipsByLabel = new HashMap<>();
+				final HashMap< String, Collection< CorrespondingInterestPoints > > corrsByLabel = new HashMap<>();
+				for ( final String label : labelAndWeights.keySet() )
 				{
-					ipsByLabel.put( label, vip.getInterestPointList( label ).getInterestPointsCopy() );
-					corrsByLabel.put( label, vip.getInterestPointList( label ).getCorrespondingInterestPointsCopy() );
+					if ( vip.getInterestPointList( label ) != null )
+					{
+						ipsByLabel.put( label, vip.getInterestPointList( label ).getInterestPointsCopy() );
+						corrsByLabel.put( label, vip.getInterestPointList( label ).getCorrespondingInterestPointsCopy() );
+					}
 				}
-			}
-			ipsCache.put( viewId, ipsByLabel );
-			corrsCache.put( viewId, corrsByLabel );
+				ipsCache.put( viewId, ipsByLabel );
+				corrsCache.put( viewId, corrsByLabel );
+			});
+			return null;
 		});
 
 		// O(1) lookup of "is this view in the user-selected set"
@@ -427,60 +434,63 @@ public class AnalyzeErrorsUtil
 		// Canonical pair map: only one side accumulates per pair (viewA < viewB).
 		final ConcurrentHashMap< Pair< ViewId, ViewId >, ErrorAcc > pairErrors = new ConcurrentHashMap<>();
 
-		viewIds.parallelStream().forEach( viewA -> {
-			final AffineTransform3D mA = viewToModel.get( viewA );
-			final Map< String, Map< Integer, InterestPoint > > aIps = ipsCache.get( viewA );
-			final Map< String, Collection< CorrespondingInterestPoints > > aCorrs = corrsCache.get( viewA );
+		runInPool( () -> {
+			viewIds.parallelStream().forEach( viewA -> {
+				final AffineTransform3D mA = viewToModel.get( viewA );
+				final Map< String, Map< Integer, InterestPoint > > aIps = ipsCache.get( viewA );
+				final Map< String, Collection< CorrespondingInterestPoints > > aCorrs = corrsCache.get( viewA );
 
-			for ( final Entry< String, Double > e : labelAndWeights.entrySet() )
-			{
-				final String label = e.getKey();
-				final double w = e.getValue();
-
-				final Map< Integer, InterestPoint > ipsA = aIps.get( label );
-				final Collection< CorrespondingInterestPoints > corrs = aCorrs.get( label );
-				if ( ipsA == null || corrs == null )
-					continue;
-
-				final double[] tA = new double[ 3 ];
-				final double[] tB = new double[ 3 ];
-
-				for ( final CorrespondingInterestPoints cpA : corrs )
+				for ( final Entry< String, Double > e : labelAndWeights.entrySet() )
 				{
-					// same-label only — preserves prior semantics
-					if ( !cpA.getCorrespodingLabel().equals( label ) )
-						continue;
-					final ViewId viewB = cpA.getCorrespondingViewId();
-					if ( !selected.contains( viewB ) )
-						continue;
-					if ( compareViewIds( viewA, viewB ) >= 0 )
-						continue; // canonical: only A < B side accumulates
+					final String label = e.getKey();
+					final double w = e.getValue();
 
-					final Map< Integer, InterestPoint > ipsB = ipsCache.getOrDefault( viewB, Collections.emptyMap() ).get( label );
-					if ( ipsB == null )
-						continue;
-					final InterestPoint pA = ipsA.get( cpA.getDetectionId() );
-					final InterestPoint pB = ipsB.get( cpA.getCorrespondingDetectionId() );
-					if ( pA == null || pB == null )
+					final Map< Integer, InterestPoint > ipsA = aIps.get( label );
+					final Collection< CorrespondingInterestPoints > corrs = aCorrs.get( label );
+					if ( ipsA == null || corrs == null )
 						continue;
 
-					final AffineTransform3D mB = viewToModel.get( viewB );
-					mA.apply( pA.getL(), tA );
-					mB.apply( pB.getL(), tB );
-					final double dx = tA[ 0 ] - tB[ 0 ], dy = tA[ 1 ] - tB[ 1 ], dz = tA[ 2 ] - tB[ 2 ];
-					final double d = Math.sqrt( dx * dx + dy * dy + dz * dz );
+					final double[] tA = new double[ 3 ];
+					final double[] tB = new double[ 3 ];
 
-					final Pair< ViewId, ViewId > key = new ValuePair<>( viewA, viewB );
-					pairErrors.compute( key, ( k, acc ) -> {
-						if ( acc == null )
-							acc = new ErrorAcc();
-						acc.weightedDistanceSum += d * w;
-						acc.weightSum += w;
-						acc.numCorr++;
-						return acc;
-					});
+					for ( final CorrespondingInterestPoints cpA : corrs )
+					{
+						// same-label only — preserves prior semantics
+						if ( !cpA.getCorrespodingLabel().equals( label ) )
+							continue;
+						final ViewId viewB = cpA.getCorrespondingViewId();
+						if ( !selected.contains( viewB ) )
+							continue;
+						if ( compareViewIds( viewA, viewB ) >= 0 )
+							continue; // canonical: only A < B side accumulates
+
+						final Map< Integer, InterestPoint > ipsB = ipsCache.getOrDefault( viewB, Collections.emptyMap() ).get( label );
+						if ( ipsB == null )
+							continue;
+						final InterestPoint pA = ipsA.get( cpA.getDetectionId() );
+						final InterestPoint pB = ipsB.get( cpA.getCorrespondingDetectionId() );
+						if ( pA == null || pB == null )
+							continue;
+
+						final AffineTransform3D mB = viewToModel.get( viewB );
+						mA.apply( pA.getL(), tA );
+						mB.apply( pB.getL(), tB );
+						final double dx = tA[ 0 ] - tB[ 0 ], dy = tA[ 1 ] - tB[ 1 ], dz = tA[ 2 ] - tB[ 2 ];
+						final double d = Math.sqrt( dx * dx + dy * dy + dz * dz );
+
+						final Pair< ViewId, ViewId > key = new ValuePair<>( viewA, viewB );
+						pairErrors.compute( key, ( k, acc ) -> {
+							if ( acc == null )
+								acc = new ErrorAcc();
+							acc.weightedDistanceSum += d * w;
+							acc.weightSum += w;
+							acc.numCorr++;
+							return acc;
+						});
+					}
 				}
-			}
+			});
+			return null;
 		});
 
 		// materialise + sort desc by error
@@ -502,6 +512,26 @@ public class AnalyzeErrorsUtil
 		double weightedDistanceSum = 0.0;
 		double weightSum = 0.0;
 		int numCorr = 0;
+	}
+
+	/** Run {@code task} on a fresh ForkJoinPool sized to {@link Threads#numThreads()} so any
+	 *  {@code parallelStream()} inside uses that pool instead of the JVM-wide common one. */
+	private static < T > T runInPool( final Callable< T > task )
+	{
+		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+		try
+		{
+			return pool.submit( task ).get();
+		}
+		catch ( final InterruptedException | ExecutionException e )
+		{
+			Thread.currentThread().interrupt();
+			throw new RuntimeException( e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
 	}
 
 	/** ViewId comparison: timepointId, then viewSetupId. Mirrors the in-repo CorrespondingInterestPoints.compareTo. */
