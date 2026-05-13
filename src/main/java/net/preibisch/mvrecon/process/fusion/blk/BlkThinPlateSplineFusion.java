@@ -113,10 +113,8 @@ public class BlkThinPlateSplineFusion
 			final int[] blockSize )
 	{
 		final Map< ViewId, Dimensions > viewDimensions = LazyFusionTools.assembleDimensions( viewIds, viewDescriptions );
-		final Interpolation interpolation = ( interpolationMethod == 1 ) ? NLINEAR : NEARESTNEIGHBOR;
 		final double[] spacing = defaultDisplacementFieldSpacing;
 
-		// to be able to use the "lowest ViewId" wins strategy
 		final List< ? extends ViewId > sortedViewIds = new ArrayList<>( viewIds );
 		sortedViewIds.sort( fusionOrder != null ? fusionOrder : Comparator.naturalOrder() );
 
@@ -129,13 +127,73 @@ public class BlkThinPlateSplineFusion
 					// we go from output to input
 					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
 			final Dimensions dims = viewDimensions.get( viewId );
-			final Interval bbox = inverseTransformedBoundingBox( tps, dims );
-			viewBounds.put( viewId, bbox );
+			viewBounds.put( viewId, inverseTransformedBoundingBox( tps, dims ) );
 		}
 
+		// Sample the dfield (eager ArrayImg allocation) only for views that overlap
+		// the fusionInterval. This preserves the historical optimization where
+		// non-overlapping views never trigger a TPS rasterization.
+		final Overlap preFilterOverlap = new Overlap( sortedViewIds, viewBounds, 3 ).filter( fusionInterval );
+		final Map< ViewId, TransformedDisplacementField< DoubleType > > rawDfields = new HashMap<>();
+		for ( final ViewId viewId : preFilterOverlap.getViewIds() )
+		{
+			final Landmarks landmarks = viewLandmarks.get( viewId );
+			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
+					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
+			rawDfields.put( viewId, DisplacementFields.sample( tps, viewBounds.get( viewId ), spacing ) );
+		}
+
+		return initWithLoadedDfields(
+				converter, imgLoader, viewIds, viewDescriptions, viewLandmarks,
+				viewBounds, rawDfields,
+				fusionType, anisotropyFactor, interpolationMethod,
+				fusionOrder, intensityAdjustmentCoefficients, fusionInterval,
+				type, blockSize );
+	}
+
+	/**
+	 * Entry point that accepts pre-sampled (un-offset) displacement fields
+	 * instead of building them from landmarks. Use this when the dfields are
+	 * computed elsewhere (e.g. distributed via Spark and cached on disk) and
+	 * loaded back here as full {@code ArrayImg}s. The per-block evaluation
+	 * downstream is perf-tuned for {@code ArrayImg}-backed dfields, so always
+	 * pass arrays (not lazy {@code CachedCellImg}s).
+	 *
+	 * @param viewBounds
+	 * 		back-projected bounding box (render coordinates) per view, as
+	 * 		produced by {@link #inverseTransformedBoundingBox(ThinplateSplineTransform, Dimensions)}.
+	 * @param rawDfields
+	 * 		un-offset displacement fields per view, as produced by
+	 * 		{@code DisplacementFields.sample(tps, viewBounds.get(viewId), spacing)}.
+	 * 		Must contain entries at least for all views overlapping {@code fusionInterval};
+	 * 		extra entries (for non-overlapping views) are ignored.
+	 */
+	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
+			final Converter< FloatType, T > converter,
+			final BasicImgLoader imgLoader,
+			final Collection< ? extends ViewId > viewIds,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions,
+			final Map< ViewId, Landmarks > viewLandmarks,
+			final Map< ViewId, Interval > viewBounds,
+			final Map< ViewId, TransformedDisplacementField< D > > rawDfields,
+			final FusionType fusionType,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Comparator< ViewId > fusionOrder,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize )
+	{
+		final Map< ViewId, Dimensions > viewDimensions = LazyFusionTools.assembleDimensions( viewIds, viewDescriptions );
+		final Interpolation interpolation = ( interpolationMethod == 1 ) ? NLINEAR : NEARESTNEIGHBOR;
+
+		final List< ? extends ViewId > sortedViewIds = new ArrayList<>( viewIds );
+		sortedViewIds.sort( fusionOrder != null ? fusionOrder : Comparator.naturalOrder() );
+
 		// Which views to process (use un-altered bounding box and registrations).
-		// Final filtering happens per Cell.
-		// Here we just pre-filter everything outside the fusionInterval.
+		// Final filtering happens per Cell. Here we just pre-filter everything
+		// outside the fusionInterval.
 		final Overlap overlap = new Overlap( sortedViewIds, viewBounds, 3 )
 				.filter( fusionInterval )
 				.offset( fusionInterval.minAsLongArray() );
@@ -147,20 +205,12 @@ public class BlkThinPlateSplineFusion
 		for ( final ViewId viewId : overlap.getViewIds() )
 		{
 			final Landmarks landmarks = viewLandmarks.get( viewId );
-			final Interval bbox = viewBounds.get( viewId );
-
-			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
-					// we go from output to input
-					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
-			final TransformedDisplacementField< DoubleType > dfield = concatenateBoundingBoxOffset(
-					DisplacementFields.sample( tps, bbox, spacing ),
-					fusionInterval );
+			final TransformedDisplacementField< D > dfield = concatenateBoundingBoxOffset( rawDfields.get( viewId ), fusionInterval );
 
 			final Coefficients coefficients = intensityAdjustmentCoefficients == null ? null : intensityAdjustmentCoefficients.get( viewId );
 
 			// TODO: support loading downsampled images, but this means we will need to update the source[][] coefficients too
 			final RandomAccessibleInterval inputImg =
-					//DownsampleTools.openDownsampled( under, viewId, model, usedDownsampleFactors );
 					imgLoader.getSetupImgLoader( viewId.getViewSetupId() ).getImage( viewId.getTimePointId() );
 
 			final BlockSupplier< FloatType > viewBlocks = transformedBlocks(
@@ -169,7 +219,6 @@ public class BlkThinPlateSplineFusion
 					dfield, interpolation );
 			images.add( viewBlocks );
 
-			// instantiate blending if necessary
 			final float[] blending = Util.getArrayFromValue( FusionTools.defaultBlendingRange, 3 );
 			final float[] border = Util.getArrayFromValue( FusionTools.defaultBlendingBorder, 3 );
 
@@ -177,14 +226,7 @@ public class BlkThinPlateSplineFusion
 			// Note that this is from source to target points, whereas TPS is from target to source point!
 			final AffineTransform3D approximateAffine = fitAffineTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() );
 
-			// adjust both for z-scaling (anisotropy), downsampling, and registrations itself
 			FusionTools.adjustBlending( viewDimensions.get( viewId ), Group.pvid( viewId ), blending, border, approximateAffine );
-
-			// TODO support content-based
-			// adjust content-based for downsampling
-//			final double[] sigma1 = Util.getArrayFromValue( ContentBased.defaultContentBasedSigma1, 3 );
-//			final double[] sigma2 = Util.getArrayFromValue( ContentBased.defaultContentBasedSigma2, 3 );
-//			FusionTools.adjustContentBased( viewDescriptions.get( viewId ), sigma1, sigma2, usedDownsampleFactors, anisotropyFactor );
 
 			switch ( fusionType )
 			{
@@ -197,15 +239,13 @@ public class BlkThinPlateSplineFusion
 				masks.add( createMasking( inputImg, border, dfield, new UnsignedByteType() ) );
 				break;
 			case AVG_BLEND:
-			case CLOSEST_PIXEL_WINS: // we need to use the blending weights, whatever weight is highest wins
+			case CLOSEST_PIXEL_WINS:
 				weights.add( createBlending( inputImg, border, blending, dfield ) );
 				break;
 			case AVG_BLEND_CONTENT:
 			case AVG_CONTENT:
-				// TODO support content-based
 				throw new UnsupportedOperationException();
 			default:
-				// should never happen
 				throw new IllegalStateException();
 			}
 		}
@@ -232,21 +272,13 @@ public class BlkThinPlateSplineFusion
 			floatBlocks = ClosestPixelWins.of( images, weights, overlap );
 			break;
 		default:
-			// should never happen
 			throw new IllegalStateException();
 		}
 
-		final BlockSupplier< T > blocks = convertToOutputType(
-				floatBlocks,
-				converter, type )
-				.tile( blockSize );
-
-		//System.out.println( Util.printInterval( new FinalInterval( fusionInterval.dimensionsAsLongArray() ) ) );
-
-		return blocks;
+		return convertToOutputType( floatBlocks, converter, type ).tile( blockSize );
 	}
 
-	private static < D extends NativeType< D > & RealType< D > > TransformedDisplacementField< D > concatenateBoundingBoxOffset(
+	public static < D extends NativeType< D > & RealType< D > > TransformedDisplacementField< D > concatenateBoundingBoxOffset(
 			final TransformedDisplacementField< D > dfield,
 			final Interval boundingBoxInTarget )
 	{
@@ -347,7 +379,7 @@ public class BlkThinPlateSplineFusion
 	 *
 	 * @return bounding box in render coordinates
 	 */
-	private static Interval inverseTransformedBoundingBox(
+	public static Interval inverseTransformedBoundingBox(
 			final ThinplateSplineTransform transform,
 			final Dimensions dimensions )
 	{

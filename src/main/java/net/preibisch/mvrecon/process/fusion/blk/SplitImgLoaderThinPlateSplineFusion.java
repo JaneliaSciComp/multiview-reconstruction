@@ -76,7 +76,9 @@ public class SplitImgLoaderThinPlateSplineFusion
 			// TODO: we may want to put extra coefficients in the overlapping areas based on "real correspondences"
 		}
 
-		final Comparator< ViewId > fusionOrder = Comparator.comparingInt( c -> fusionMap.get( c.getViewSetupId() ) );
+		final Comparator< ViewId > fusionOrder = fusionMap == null
+				? null
+				: Comparator.comparingInt( c -> fusionMap.get( c.getViewSetupId() ) );
 
 		return BlkThinPlateSplineFusion.init(
 				converter,
@@ -84,6 +86,79 @@ public class SplitImgLoaderThinPlateSplineFusion
 				underlyingViewIds,
 				underlyingViewDescription,
 				underlyingViewLandmarks,
+				fusionType,
+				anisotropyFactor,
+				interpolationMethod,
+				fusionOrder,
+				intensityAdjustmentCoefficients,
+				fusionInterval,
+				type,
+				blockSize );
+	}
+
+	/**
+	 * Same as {@link #init} but accepts pre-built per-underlying-view dfields
+	 * (e.g. loaded from disk after a distributed Phase-1.5 materialization).
+	 * Skips per-task TPS rasterization.
+	 *
+	 * @param viewBounds
+	 * 		back-projected bounding box (render coordinates) per underlying view.
+	 * @param rawDfields
+	 * 		un-offset displacement fields per underlying view, as produced by
+	 * 		{@code DisplacementFields.sample(tps, viewBounds.get(viewId), spacing)}.
+	 * 		Must contain entries at least for all underlying views overlapping
+	 * 		{@code fusionInterval}; extra entries are ignored. Must be backed by
+	 * 		{@code ArrayImg} (perf requirement of {@code BlkThinPlateSplineFusion}).
+	 */
+	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
+			final Converter< FloatType, T > converter,
+			final SplitViewerImgLoader splitImgLoader,
+			final Collection< ? extends ViewId > splitViewIdsInput,
+			final Map< ViewId, ViewRegistration > splitViewRegistrations,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
+			final Map< ViewId, Interval > viewBounds,
+			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
+			final FusionGUI.FusionType fusionType,
+			final int intervalExpansion,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Map< Integer, Integer > fusionMap,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize )
+	{
+		final List< ViewId > underlyingViewIds = underlyingViewIds( splitViewIdsInput, splitImgLoader.new2oldSetupId() );
+		final Map< Integer, List< Integer > > old2newSetupId = old2newSetupId( splitImgLoader.new2oldSetupId() );
+		final List< ViewId > splitViewIds = splitViewIds( underlyingViewIds, old2newSetupId );
+
+		if ( BlkAffineFusion.is2d( splitViewIds, splitViewDescriptions ) )
+			throw new UnsupportedOperationException( "BlkThinPlateSplineFusion: 2D fusion not supported." );
+
+		final ViewerImgLoader underlyingImgLoader = splitImgLoader.getUnderlyingImgLoader();
+		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
+		final Map< ViewId, ViewDescription > underlyingViewDescription = underlyingSD.getViewDescriptions();
+
+		// Landmarks per underlying view (still cheap to recompute on each executor).
+		final Map< ViewId, Landmarks > underlyingViewLandmarks = new HashMap<>();
+		for ( final ViewId underlyingViewId : underlyingViewIds )
+		{
+			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewId, Double.NaN, Double.NaN );
+			underlyingViewLandmarks.put( underlyingViewId, landmarks );
+		}
+
+		final Comparator< ViewId > fusionOrder = fusionMap == null
+				? null
+				: Comparator.comparingInt( c -> fusionMap.get( c.getViewSetupId() ) );
+
+		return BlkThinPlateSplineFusion.initWithLoadedDfields(
+				converter,
+				underlyingImgLoader,
+				underlyingViewIds,
+				underlyingViewDescription,
+				underlyingViewLandmarks,
+				viewBounds,
+				rawDfields,
 				fusionType,
 				anisotropyFactor,
 				interpolationMethod,
