@@ -37,7 +37,7 @@ public class SplitImgLoaderThinPlateSplineFusion
 			final Converter< FloatType, T > converter,
 			final SplitViewerImgLoader splitImgLoader,
 			final Collection< ? extends ViewId > splitViewIdsInput,
-			final Map< ViewId, ViewRegistration > splitViewRegistrations, // already adjusted for anisotropy
+			final Map< ViewId, ViewRegistration > splitViewRegistrations, // raw registrations; anisotropy is applied internally via getCoefficients(anisotropyFactor, ...)
 			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
 			final FusionGUI.FusionType fusionType,
 			final int intervalExpansion,
@@ -70,7 +70,7 @@ public class SplitImgLoaderThinPlateSplineFusion
 		for ( final ViewId underlyingViewId : underlyingViewIds )
 		{
 			// ignore downsampling for now
-			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewId, Double.NaN, Double.NaN );
+			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewId, anisotropyFactor, Double.NaN );
 			underlyingViewLandmarks.put( underlyingViewId, landmarks );
 
 			// TODO: we may want to put extra coefficients in the overlapping areas based on "real correspondences"
@@ -140,10 +140,12 @@ public class SplitImgLoaderThinPlateSplineFusion
 		final Map< ViewId, ViewDescription > underlyingViewDescription = underlyingSD.getViewDescriptions();
 
 		// Landmarks per underlying view (still cheap to recompute on each executor).
+		// Pass anisotropyFactor through so the Landmarks (and the downstream
+		// fitAffineTransform / adjustBlending) match the dfield produced at Phase 1.5.
 		final Map< ViewId, Landmarks > underlyingViewLandmarks = new HashMap<>();
 		for ( final ViewId underlyingViewId : underlyingViewIds )
 		{
-			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewId, Double.NaN, Double.NaN );
+			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewId, anisotropyFactor, Double.NaN );
 			underlyingViewLandmarks.put( underlyingViewId, landmarks );
 		}
 
