@@ -48,6 +48,8 @@ public final class DisplacementFieldN5Tools
 	private static final String ATTR_OFFSET = "offset";
 	private static final String ATTR_BBOX_MIN = "bbox_min";
 	private static final String ATTR_BBOX_MAX = "bbox_max";
+	private static final String ATTR_CORRESPONDENCE_LABEL = "correspondence_label";
+	private static final String ATTR_MIN_NUM_CORRESPONDENCES = "min_num_correspondences";
 
 	public static final String CACHE_GROUP = "_displacement_field_cache";
 
@@ -127,11 +129,8 @@ public final class DisplacementFieldN5Tools
 	}
 
 	/**
-	 * Pre-create an empty dfield dataset (4D, shape {@code (n, gridX, gridY, gridZ)})
-	 * with the right block size, datatype, compression, and attributes. Designed
-	 * to be called once on the driver before block-level Spark tasks each sample
-	 * and save one block via {@link #writeDisplacementFieldBlock}, so executors
-	 * don't race on dataset creation.
+	 * Backward-compatible overload: no correspondence-label / min annotation
+	 * (treated as "no correspondence midpoints used").
 	 */
 	public static < D extends NativeType< D > & RealType< D > > void createEmptyDataset(
 			final N5Writer n5Writer,
@@ -141,6 +140,32 @@ public final class DisplacementFieldN5Tools
 			final int[] blockSize3d,
 			final D type,
 			final Compression compression )
+	{
+		createEmptyDataset( n5Writer, datasetPath, bbox, spacing, blockSize3d, type, compression, null, 0 );
+	}
+
+	/**
+	 * Pre-create an empty dfield dataset (4D, shape {@code (n, gridX, gridY, gridZ)})
+	 * with the right block size, datatype, compression, and attributes. Designed
+	 * to be called once on the driver before block-level Spark tasks each sample
+	 * and save one block via {@link #writeDisplacementFieldBlock}, so executors
+	 * don't race on dataset creation.
+	 *
+	 * Also records the correspondence-label and min-N used to build the
+	 * dfield's landmarks (see
+	 * {@code SplitImgLoaderThinPlateSplineFusion.getCoefficients(...)}), so
+	 * the cache can be invalidated when these change.
+	 */
+	public static < D extends NativeType< D > & RealType< D > > void createEmptyDataset(
+			final N5Writer n5Writer,
+			final String datasetPath,
+			final Interval bbox,
+			final double[] spacing,
+			final int[] blockSize3d,
+			final D type,
+			final Compression compression,
+			final String correspondenceLabel,    // nullable
+			final int minNumCorrespondences )    // ignored when label is null
 	{
 		final int n = bbox.numDimensions();
 		if ( n != 3 )
@@ -169,6 +194,11 @@ public final class DisplacementFieldN5Tools
 		n5Writer.setAttribute( datasetPath, ATTR_OFFSET, bbox.minAsDoubleArray() );
 		n5Writer.setAttribute( datasetPath, ATTR_BBOX_MIN, bbox.minAsLongArray() );
 		n5Writer.setAttribute( datasetPath, ATTR_BBOX_MAX, bbox.maxAsLongArray() );
+		if ( correspondenceLabel != null )
+		{
+			n5Writer.setAttribute( datasetPath, ATTR_CORRESPONDENCE_LABEL, correspondenceLabel );
+			n5Writer.setAttribute( datasetPath, ATTR_MIN_NUM_CORRESPONDENCES, minNumCorrespondences );
+		}
 	}
 
 	/**
@@ -357,16 +387,31 @@ public final class DisplacementFieldN5Tools
 	}
 
 	/**
-	 * Check whether a dfield dataset already exists at the given path with the
-	 * expected {@code spacing} and {@code offset} (= {@code bbox.min}). Used to
-	 * skip recomputation across repeated runs that use the same output
-	 * container.
+	 * Backward-compatible overload: no correspondence-label check.
 	 */
 	public static boolean datasetMatches(
 			final N5Reader n5Reader,
 			final String datasetPath,
 			final Interval expectedBbox,
 			final double[] expectedSpacing )
+	{
+		return datasetMatches( n5Reader, datasetPath, expectedBbox, expectedSpacing, null, 0 );
+	}
+
+	/**
+	 * Check whether a dfield dataset already exists at the given path with the
+	 * expected {@code spacing}, {@code offset} (= {@code bbox.min}),
+	 * correspondence label, and min-N. {@code null} expected label matches an
+	 * absent attribute (i.e., a dataset that was written without
+	 * correspondence midpoints).
+	 */
+	public static boolean datasetMatches(
+			final N5Reader n5Reader,
+			final String datasetPath,
+			final Interval expectedBbox,
+			final double[] expectedSpacing,
+			final String expectedCorrespondenceLabel,
+			final int expectedMinNumCorrespondences )
 	{
 		if ( !n5Reader.datasetExists( datasetPath ) )
 			return false;
@@ -377,6 +422,18 @@ public final class DisplacementFieldN5Tools
 		if ( !Arrays.equals( spacing, expectedSpacing ) )
 			return false;
 		final double[] expectedOffset = expectedBbox.minAsDoubleArray();
-		return Arrays.equals( offset, expectedOffset );
+		if ( !Arrays.equals( offset, expectedOffset ) )
+			return false;
+
+		final String storedLabel = n5Reader.getAttribute( datasetPath, ATTR_CORRESPONDENCE_LABEL, String.class );
+		if ( !java.util.Objects.equals( storedLabel, expectedCorrespondenceLabel ) )
+			return false;
+		if ( expectedCorrespondenceLabel != null )
+		{
+			final Integer storedMin = n5Reader.getAttribute( datasetPath, ATTR_MIN_NUM_CORRESPONDENCES, Integer.class );
+			if ( storedMin == null || storedMin.intValue() != expectedMinNumCorrespondences )
+				return false;
+		}
+		return true;
 	}
 }
