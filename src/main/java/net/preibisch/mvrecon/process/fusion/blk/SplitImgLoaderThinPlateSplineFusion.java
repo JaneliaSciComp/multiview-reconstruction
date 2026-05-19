@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import bdv.ViewerImgLoader;
@@ -42,6 +43,36 @@ import net.preibisch.mvrecon.process.splitting.SplittingTools;
 public class SplitImgLoaderThinPlateSplineFusion
 {
 	/**
+	 * One TPS landmark, classified by category. Emitted to an optional visitor
+	 * passed to {@link #getCoefficients}, primarily for diagnostic / overlay
+	 * tooling (export to CSV, draw on top of the fused image, etc.).
+	 *
+	 * Source coords are in underlying-view pixel space (matching how
+	 * {@link Landmarks#getSourcePoints()} stores them). Target coords are in
+	 * render/global space (anisotropy already applied).
+	 */
+	public static final class LandmarkRecord
+	{
+		public static final String TYPE_CENTER = "center";
+		public static final String TYPE_MIDPOINT = "midpoint";
+		public static final String TYPE_NAIL = "nail";
+
+		public final ViewId underlyingViewId;
+		public final String type;       // one of TYPE_*
+		public final double[] source;   // length 3, underlying-view pixel coords
+		public final double[] target;   // length 3, render coords
+
+		public LandmarkRecord( final ViewId underlyingViewId, final String type, final double[] source, final double[] target )
+		{
+			this.underlyingViewId = underlyingViewId;
+			this.type = type;
+			this.source = source;
+			this.target = target;
+		}
+	}
+
+
+	/**
 	 * Backward-compatible overload — center landmarks only (no
 	 * correspondence-based midpoint landmarks).
 	 */
@@ -64,7 +95,132 @@ public class SplitImgLoaderThinPlateSplineFusion
 		return init( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
 				splitViewDescriptions, fusionType, intervalExpansion, anisotropyFactor,
 				interpolationMethod, fusionMap, intensityAdjustmentCoefficients, fusionInterval,
-				type, blockSize, null, null, 0 );
+				type, blockSize, null, null, 0, false, 0.0 );
+	}
+
+	/**
+	 * Backward-compatible overload — correspondence midpoints, no corner anchors.
+	 */
+	public static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > init(
+			final Converter< FloatType, T > converter,
+			final SplitViewerImgLoader splitImgLoader,
+			final Collection< ? extends ViewId > splitViewIdsInput,
+			final Map< ViewId, ViewRegistration > splitViewRegistrations,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
+			final FusionGUI.FusionType fusionType,
+			final int intervalExpansion,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Map< Integer, Integer > fusionMap,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences )
+	{
+		return init( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
+				splitViewDescriptions, fusionType, intervalExpansion, anisotropyFactor,
+				interpolationMethod, fusionMap, intensityAdjustmentCoefficients, fusionInterval,
+				type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				false, 0.0 );
+	}
+
+	/**
+	 * Backward-compatible overload — corner anchors with N=2 (corners only).
+	 */
+	public static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > init(
+			final Converter< FloatType, T > converter,
+			final SplitViewerImgLoader splitImgLoader,
+			final Collection< ? extends ViewId > splitViewIdsInput,
+			final Map< ViewId, ViewRegistration > splitViewRegistrations,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
+			final FusionGUI.FusionType fusionType,
+			final int intervalExpansion,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Map< Integer, Integer > fusionMap,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius )
+	{
+		return init( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
+				splitViewDescriptions, fusionType, intervalExpansion, anisotropyFactor,
+				interpolationMethod, fusionMap, intensityAdjustmentCoefficients, fusionInterval,
+				type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, 2, null );
+	}
+
+	/**
+	 * Backward-compatible overload — no landmark visitor.
+	 */
+	public static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > init(
+			final Converter< FloatType, T > converter,
+			final SplitViewerImgLoader splitImgLoader,
+			final Collection< ? extends ViewId > splitViewIdsInput,
+			final Map< ViewId, ViewRegistration > splitViewRegistrations,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
+			final FusionGUI.FusionType fusionType,
+			final int intervalExpansion,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Map< Integer, Integer > fusionMap,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis )
+	{
+		return init( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
+				splitViewDescriptions, fusionType, intervalExpansion, anisotropyFactor,
+				interpolationMethod, fusionMap, intensityAdjustmentCoefficients, fusionInterval,
+				type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, null );
+	}
+
+	/**
+	 * Backward-compatible overload — visitor only, no per-split schedule.
+	 */
+	public static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > init(
+			final Converter< FloatType, T > converter,
+			final SplitViewerImgLoader splitImgLoader,
+			final Collection< ? extends ViewId > splitViewIdsInput,
+			final Map< ViewId, ViewRegistration > splitViewRegistrations,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
+			final FusionGUI.FusionType fusionType,
+			final int intervalExpansion,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Map< Integer, Integer > fusionMap,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis,
+			final Consumer< LandmarkRecord > landmarkVisitor )
+	{
+		return init( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
+				splitViewDescriptions, fusionType, intervalExpansion, anisotropyFactor,
+				interpolationMethod, fusionMap, intensityAdjustmentCoefficients, fusionInterval,
+				type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, landmarkVisitor );
 	}
 
 	public static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > init(
@@ -84,7 +240,13 @@ public class SplitImgLoaderThinPlateSplineFusion
 			final int[] blockSize,
 			final ViewInterestPoints viewInterestPoints, // nullable: when non-null + label non-null, append cross-view midpoint landmarks
 			final String correspondenceLabel,            // nullable
-			final int minNumCorrespondences )            // ignored when label/vip is null
+			final int minNumCorrespondences,             // ignored when label/vip is null
+			final boolean anchorOverlapCorners,          // when true, add corner-anchor landmarks (requires non-null vip+label)
+			final double cornerCoverageRadius,           // render-space radius; 0 = nail every candidate, larger = only nail far-from-CoM corners
+			final int seamSamplesPerAxis,                // surface samples per axis fallback; 2 = corners only
+			final int[] seamSamplesScheduleThresholds,   // nullable; sorted ascending. Per-split: count <= thresholds[i] -> values[i]
+			final int[] seamSamplesScheduleValues,       // nullable; parallel to thresholds; fallback = seamSamplesPerAxis
+			final Consumer< LandmarkRecord > landmarkVisitor )  // nullable; invoked once per emitted landmark
 	{
 		// assemble all underlying viewIds (which will expand the list of splitViews to all the underlying viewids consist of)
 		final List< ViewId > underlyingViewIds = underlyingViewIds( splitViewIdsInput, splitImgLoader.new2oldSetupId() );
@@ -108,7 +270,9 @@ public class SplitImgLoaderThinPlateSplineFusion
 		{
 			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations,
 					underlyingViewId, anisotropyFactor, Double.NaN,
-					viewInterestPoints, correspondenceLabel, minNumCorrespondences );
+					viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+					anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+					seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor );
 			underlyingViewLandmarks.put( underlyingViewId, landmarks );
 		}
 
@@ -167,9 +331,12 @@ public class SplitImgLoaderThinPlateSplineFusion
 		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
 				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
 				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
-				fusionInterval, type, blockSize, null, null, 0 );
+				fusionInterval, type, blockSize, null, null, 0, false, 0.0 );
 	}
 
+	/**
+	 * Backward-compatible overload — correspondence midpoints, no corner anchors.
+	 */
 	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
 			final Converter< FloatType, T > converter,
 			final SplitViewerImgLoader splitImgLoader,
@@ -191,6 +358,142 @@ public class SplitImgLoaderThinPlateSplineFusion
 			final String correspondenceLabel,
 			final int minNumCorrespondences )
 	{
+		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
+				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
+				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
+				fusionInterval, type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				false, 0.0 );
+	}
+
+	/**
+	 * Backward-compatible overload — corner anchors with N=2 (corners only).
+	 */
+	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
+			final Converter< FloatType, T > converter,
+			final SplitViewerImgLoader splitImgLoader,
+			final Collection< ? extends ViewId > splitViewIdsInput,
+			final Map< ViewId, ViewRegistration > splitViewRegistrations,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
+			final Map< ViewId, Interval > viewBounds,
+			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
+			final FusionGUI.FusionType fusionType,
+			final int intervalExpansion,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Map< Integer, Integer > fusionMap,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius )
+	{
+		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
+				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
+				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
+				fusionInterval, type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, 2, null );
+	}
+
+	/**
+	 * Backward-compatible overload — no landmark visitor.
+	 */
+	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
+			final Converter< FloatType, T > converter,
+			final SplitViewerImgLoader splitImgLoader,
+			final Collection< ? extends ViewId > splitViewIdsInput,
+			final Map< ViewId, ViewRegistration > splitViewRegistrations,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
+			final Map< ViewId, Interval > viewBounds,
+			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
+			final FusionGUI.FusionType fusionType,
+			final int intervalExpansion,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Map< Integer, Integer > fusionMap,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis )
+	{
+		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
+				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
+				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
+				fusionInterval, type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, null );
+	}
+
+	/**
+	 * Backward-compatible overload — visitor only, no per-split schedule.
+	 */
+	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
+			final Converter< FloatType, T > converter,
+			final SplitViewerImgLoader splitImgLoader,
+			final Collection< ? extends ViewId > splitViewIdsInput,
+			final Map< ViewId, ViewRegistration > splitViewRegistrations,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
+			final Map< ViewId, Interval > viewBounds,
+			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
+			final FusionGUI.FusionType fusionType,
+			final int intervalExpansion,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Map< Integer, Integer > fusionMap,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis,
+			final Consumer< LandmarkRecord > landmarkVisitor )
+	{
+		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
+				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
+				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
+				fusionInterval, type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, landmarkVisitor );
+	}
+
+	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
+			final Converter< FloatType, T > converter,
+			final SplitViewerImgLoader splitImgLoader,
+			final Collection< ? extends ViewId > splitViewIdsInput,
+			final Map< ViewId, ViewRegistration > splitViewRegistrations,
+			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
+			final Map< ViewId, Interval > viewBounds,
+			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
+			final FusionGUI.FusionType fusionType,
+			final int intervalExpansion,
+			final double anisotropyFactor,
+			final int interpolationMethod,
+			final Map< Integer, Integer > fusionMap,
+			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
+			final Interval fusionInterval,
+			final T type,
+			final int[] blockSize,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis,
+			final int[] seamSamplesScheduleThresholds,
+			final int[] seamSamplesScheduleValues,
+			final Consumer< LandmarkRecord > landmarkVisitor )
+	{
 		final List< ViewId > underlyingViewIds = underlyingViewIds( splitViewIdsInput, splitImgLoader.new2oldSetupId() );
 		final Map< Integer, List< Integer > > old2newSetupId = old2newSetupId( splitImgLoader.new2oldSetupId() );
 		final List< ViewId > splitViewIds = splitViewIds( underlyingViewIds, old2newSetupId );
@@ -203,16 +506,14 @@ public class SplitImgLoaderThinPlateSplineFusion
 		final Map< ViewId, ViewDescription > underlyingViewDescription = underlyingSD.getViewDescriptions();
 
 		// Landmarks per underlying view (still cheap to recompute on each executor).
-		// Pass anisotropyFactor through so the Landmarks (and the downstream
-		// fitAffineTransform / adjustBlending) match the dfield produced at Phase 1.5.
-		// Pass viewInterestPoints + correspondenceLabel to add cross-view midpoint landmarks
-		// at view boundaries (helps TPS converge across underlying-view seams).
 		final Map< ViewId, Landmarks > underlyingViewLandmarks = new HashMap<>();
 		for ( final ViewId underlyingViewId : underlyingViewIds )
 		{
 			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations,
 					underlyingViewId, anisotropyFactor, Double.NaN,
-					viewInterestPoints, correspondenceLabel, minNumCorrespondences );
+					viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+					anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+					seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor );
 			underlyingViewLandmarks.put( underlyingViewId, landmarks );
 		}
 
@@ -285,7 +586,92 @@ public class SplitImgLoaderThinPlateSplineFusion
 			final double downsampling )
 	{
 		return getCoefficients( splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId,
-				anisotropyFactor, downsampling, null, null, 0 );
+				anisotropyFactor, downsampling, null, null, 0, false, 0.0, 2, null );
+	}
+
+	/**
+	 * Backward-compatible overload — correspondence midpoints but no corner anchors.
+	 */
+	public static Landmarks getCoefficients(
+			final SplitViewerImgLoader splitImgLoader,
+			final Map<Integer, List<Integer>> old2newSetupId,
+			final Map<ViewId, ViewRegistration> splitRegMap,
+			final ViewId underlyingViewId,
+			final double anisotropyFactor,
+			final double downsampling,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences )
+	{
+		return getCoefficients( splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId,
+				anisotropyFactor, downsampling, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				false, 0.0, 2, null );
+	}
+
+	/**
+	 * Backward-compatible overload — corner anchors with N=2 (corners only).
+	 */
+	public static Landmarks getCoefficients(
+			final SplitViewerImgLoader splitImgLoader,
+			final Map<Integer, List<Integer>> old2newSetupId,
+			final Map<ViewId, ViewRegistration> splitRegMap,
+			final ViewId underlyingViewId,
+			final double anisotropyFactor,
+			final double downsampling,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius )
+	{
+		return getCoefficients( splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId,
+				anisotropyFactor, downsampling, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, 2, null );
+	}
+
+	/**
+	 * Backward-compatible overload — no landmark visitor.
+	 */
+	public static Landmarks getCoefficients(
+			final SplitViewerImgLoader splitImgLoader,
+			final Map<Integer, List<Integer>> old2newSetupId,
+			final Map<ViewId, ViewRegistration> splitRegMap,
+			final ViewId underlyingViewId,
+			final double anisotropyFactor,
+			final double downsampling,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis )
+	{
+		return getCoefficients( splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId,
+				anisotropyFactor, downsampling, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, null );
+	}
+
+	/**
+	 * Backward-compatible overload — visitor only, no per-split schedule.
+	 */
+	public static Landmarks getCoefficients(
+			final SplitViewerImgLoader splitImgLoader,
+			final Map<Integer, List<Integer>> old2newSetupId,
+			final Map<ViewId, ViewRegistration> splitRegMap,
+			final ViewId underlyingViewId,
+			final double anisotropyFactor,
+			final double downsampling,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis,
+			final Consumer< LandmarkRecord > landmarkVisitor )
+	{
+		return getCoefficients( splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId,
+				anisotropyFactor, downsampling, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, landmarkVisitor );
 	}
 
 	/**
@@ -313,9 +699,16 @@ public class SplitImgLoaderThinPlateSplineFusion
 			final double downsampling,
 			final ViewInterestPoints viewInterestPoints,
 			final String correspondenceLabel,
-			final int minNumCorrespondences )
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis,
+			final int[] seamSamplesScheduleThresholds,            // nullable; sorted ascending. count <= thresholds[i] -> values[i]
+			final int[] seamSamplesScheduleValues,                 // nullable; parallel to thresholds; fallback = seamSamplesPerAxis
+			final Consumer< LandmarkRecord > landmarkVisitor )    // nullable; invoked once per emitted landmark
 	{
 		final int n = 3;
+		final int nSamplesFallback = Math.max( 2, seamSamplesPerAxis );
 		final List<Integer> splitSetupIds = old2newSetupId.get( underlyingViewId.getViewSetupId() );
 
 		final List< double[] > sourceList = new ArrayList<>( splitSetupIds.size() );
@@ -370,17 +763,24 @@ public class SplitImgLoaderThinPlateSplineFusion
 				src[ d ] = p[ d ] + splitTranslation[ d ];
 			sourceList.add( src );
 			targetList.add( q );
+
+			if ( landmarkVisitor != null )
+				landmarkVisitor.accept( new LandmarkRecord( underlyingViewId, LandmarkRecord.TYPE_CENTER, src.clone(), q.clone() ) );
 		}
 
 		// ----- Pass 2: cross-view correspondence midpoint landmarks. -----
 		int midpointCount = 0;
+		// Per-split state needed by the optional Pass 3 (corner anchors).
+		final Map< Integer, double[] > cmGlobalSumBySplit = new HashMap<>();      // running sum of p_S over all validated partner correspondences
+		final Map< Integer, Integer > cmGlobalCountBySplit = new HashMap<>();     // count of contributing correspondences
+		final Map< Integer, List< ViewId > > validatedPartnersBySplit = new HashMap<>();
+		final Map< ViewId, AffineTransform3D > partnerModelCache = new HashMap<>();
 		if ( viewInterestPoints != null && correspondenceLabel != null && minNumCorrespondences > 0 )
 		{
 			final Set< Integer > siblingSetupIds = new HashSet<>( splitSetupIds );
 
 			// Caches for partner-view interest-point maps so each partner is hit once.
 			final Map< ViewId, Map< Integer, InterestPoint > > partnerIpsCache = new HashMap<>();
-			final Map< ViewId, AffineTransform3D > partnerModelCache = new HashMap<>();
 
 			for ( final int splitViewSetupId : splitSetupIds )
 			{
@@ -429,6 +829,9 @@ public class SplitImgLoaderThinPlateSplineFusion
 					final double[] cm_S = new double[ n ];
 					final double[] cm_Sp = new double[ n ];
 					int count = 0;
+					// Track the partner's contribution to S's global CoM separately so we can
+					// roll it back if the group ends up below threshold after null-filtering.
+					final double[] partnerSumOnS = new double[ n ];
 					for ( final CorrespondingInterestPoints cip : group )
 					{
 						final InterestPoint p_S = ips_S.get( cip.getDetectionId() );
@@ -440,6 +843,7 @@ public class SplitImgLoaderThinPlateSplineFusion
 						{
 							cm_S[ d ] += l_S[ d ];
 							cm_Sp[ d ] += l_Sp[ d ];
+							partnerSumOnS[ d ] += l_S[ d ];
 						}
 						++count;
 					}
@@ -449,6 +853,13 @@ public class SplitImgLoaderThinPlateSplineFusion
 						cm_S[ d ] /= count;
 						cm_Sp[ d ] /= count;
 					}
+
+					// Accumulate this partner's contribution into S's global CoM (for Pass 3).
+					final double[] sumAccum = cmGlobalSumBySplit.computeIfAbsent( splitViewSetupId, k -> new double[ n ] );
+					for ( int d = 0; d < n; ++d )
+						sumAccum[ d ] += partnerSumOnS[ d ];
+					cmGlobalCountBySplit.merge( splitViewSetupId, count, Integer::sum );
+					validatedPartnersBySplit.computeIfAbsent( splitViewSetupId, k -> new ArrayList<>() ).add( partnerVid );
 
 					// Map to render coords via each split's full model (incl. split transform).
 					final AffineTransform3D model_S = modelByLocalSplitSetupId.get( splitViewSetupId );
@@ -471,6 +882,9 @@ public class SplitImgLoaderThinPlateSplineFusion
 					sourceList.add( src );
 					targetList.add( midpoint );
 					++midpointCount;
+
+					if ( landmarkVisitor != null )
+						landmarkVisitor.accept( new LandmarkRecord( underlyingViewId, LandmarkRecord.TYPE_MIDPOINT, src.clone(), midpoint.clone() ) );
 				}
 			}
 
@@ -479,6 +893,122 @@ public class SplitImgLoaderThinPlateSplineFusion
 						+ " landmarks: " + splitSetupIds.size() + " centers + "
 						+ midpointCount + " correspondence midpoints (label='" + correspondenceLabel
 						+ "', minN=" + minNumCorrespondences + ")" );
+		}
+
+		// ----- Pass 3: corner-anchor "nail" landmarks (optional). -----
+		int cornerNailCount = 0;
+		int minNailN = Integer.MAX_VALUE;
+		int maxNailN = Integer.MIN_VALUE;
+		if ( anchorOverlapCorners && !validatedPartnersBySplit.isEmpty() )
+		{
+			for ( final int splitViewSetupId : splitSetupIds )
+			{
+				final List< ViewId > validatedPartners = validatedPartnersBySplit.get( splitViewSetupId );
+				if ( validatedPartners == null || validatedPartners.isEmpty() )
+					continue;
+
+				final Integer totalCount = cmGlobalCountBySplit.get( splitViewSetupId );
+				if ( totalCount == null || totalCount.intValue() == 0 )
+					continue;
+				final double[] sum = cmGlobalSumBySplit.get( splitViewSetupId );
+				final double[] cm_S_global = new double[ n ];
+				for ( int d = 0; d < n; ++d )
+					cm_S_global[ d ] = sum[ d ] / totalCount;
+
+				final AffineTransform3D model_S = modelByLocalSplitSetupId.get( splitViewSetupId );
+				final double[] splitTranslation = splitTranslationByLocalSetupId.get( splitViewSetupId );
+
+				// CoM in render coords.
+				final double[] r_CoM = new double[ n ];
+				model_S.apply( cm_S_global, r_CoM );
+
+				final Interval splitInterval_S = splitImgLoader.newSetupId2Interval().get( splitViewSetupId );
+
+				// Per-split N: optional schedule maps total correspondence count -> N.
+				// Schedule entries (sorted ascending by threshold): count <= thresholds[i] -> values[i].
+				final int nSamples = pickSamplesPerAxis(
+						totalCount.intValue(),
+						seamSamplesScheduleThresholds,
+						seamSamplesScheduleValues,
+						nSamplesFallback );
+				if ( nSamples < minNailN ) minNailN = nSamples;
+				if ( nSamples > maxNailN ) maxNailN = nSamples;
+
+				// Iterate the surface of S sampled at nSamples points per axis.
+				// A point is on the surface iff at least one of (i, j, k) is at the boundary
+				// (0 or nSamples-1). At nSamples=2, this collapses to the 8 corners exactly.
+				for ( int i = 0; i < nSamples; ++i )
+					for ( int j = 0; j < nSamples; ++j )
+						for ( int k = 0; k < nSamples; ++k )
+						{
+							if ( i != 0 && i != nSamples - 1 && j != 0 && j != nSamples - 1 && k != 0 && k != nSamples - 1 )
+								continue; // interior — not a surface sample
+							final double[] sampleZeroMin = new double[ n ];
+							final long[] dims = splitInterval_S.dimensionsAsLongArray();
+							final int[] idx = { i, j, k };
+							for ( int d = 0; d < n; ++d )
+								sampleZeroMin[ d ] = idx[ d ] * ( dims[ d ] - 1 ) / ( double ) ( nSamples - 1 );
+							final double[] r_C = new double[ n ];
+							model_S.apply( sampleZeroMin, r_C );
+
+							// "Shared with another underlying view?" check — short-circuit.
+							boolean sharedWithPartner = false;
+							for ( final ViewId partnerVid : validatedPartners )
+							{
+								final AffineTransform3D model_Sp = partnerModelCache.get( partnerVid );
+								if ( model_Sp == null ) continue;
+								final Interval splitInterval_Sp = splitImgLoader.newSetupId2Interval().get( partnerVid.getViewSetupId() );
+								if ( splitInterval_Sp == null ) continue;
+								final double[] sampleInSp = new double[ n ];
+								model_Sp.applyInverse( sampleInSp, r_C );
+								boolean inside = true;
+								for ( int d = 0; d < n; ++d )
+									if ( sampleInSp[ d ] < 0.0 || sampleInSp[ d ] >= splitInterval_Sp.dimension( d ) )
+									{
+										inside = false;
+										break;
+									}
+								if ( inside )
+								{
+									sharedWithPartner = true;
+									break;
+								}
+							}
+							if ( !sharedWithPartner )
+								continue;
+
+							// Coverage check in render coords.
+							double sq = 0.0;
+							for ( int d = 0; d < n; ++d )
+							{
+								final double diff = r_C[ d ] - r_CoM[ d ];
+								sq += diff * diff;
+							}
+							if ( Math.sqrt( sq ) <= cornerCoverageRadius )
+								continue;
+
+							// Emit nail: source = sampleZeroMin + splitTranslation, target = r_C.
+							final double[] src = new double[ n ];
+							for ( int d = 0; d < n; ++d )
+								src[ d ] = sampleZeroMin[ d ] + splitTranslation[ d ];
+							sourceList.add( src );
+							targetList.add( r_C );
+							++cornerNailCount;
+
+							if ( landmarkVisitor != null )
+								landmarkVisitor.accept( new LandmarkRecord( underlyingViewId, LandmarkRecord.TYPE_NAIL, src.clone(), r_C.clone() ) );
+						}
+			}
+
+			if ( cornerNailCount > 0 )
+			{
+				final String label = ( minNailN == maxNailN )
+						? ( minNailN == 2 ? " corner nails" : " surface nails (samplesPerAxis=" + minNailN + ")" )
+						: " surface nails (samplesPerAxis in [" + minNailN + ".." + maxNailN + "] per schedule)";
+				IOFunctions.println( "[TPS] " + Group.pvid( underlyingViewId )
+						+ " landmarks: + " + cornerNailCount + label
+						+ " (radius=" + cornerCoverageRadius + ")" );
+			}
 		}
 
 		// Pack lists into the [n][N] layout expected by Landmarks.
@@ -514,5 +1044,25 @@ public class SplitImgLoaderThinPlateSplineFusion
 		if ( !Double.isNaN( downsampling ) )
 			TransformVirtual.scaleTransform( model, 1.0 / downsampling );
 		return model;
+	}
+
+	/**
+	 * Map a correspondence count to a samples-per-axis using the schedule.
+	 * Schedule entries (sorted ascending by threshold): count <= thresholds[i] -> values[i].
+	 * If no threshold matches (or schedule is null/empty), returns {@code fallback}.
+	 */
+	private static int pickSamplesPerAxis(
+			final int count,
+			final int[] thresholds,
+			final int[] values,
+			final int fallback )
+	{
+		if ( thresholds == null || values == null || thresholds.length == 0 )
+			return fallback;
+		final int len = Math.min( thresholds.length, values.length );
+		for ( int i = 0; i < len; ++i )
+			if ( count <= thresholds[ i ] )
+				return Math.max( 2, values[ i ] );
+		return fallback;
 	}
 }

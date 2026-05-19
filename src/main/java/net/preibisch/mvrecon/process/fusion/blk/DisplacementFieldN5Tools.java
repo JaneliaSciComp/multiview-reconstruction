@@ -50,6 +50,11 @@ public final class DisplacementFieldN5Tools
 	private static final String ATTR_BBOX_MAX = "bbox_max";
 	private static final String ATTR_CORRESPONDENCE_LABEL = "correspondence_label";
 	private static final String ATTR_MIN_NUM_CORRESPONDENCES = "min_num_correspondences";
+	private static final String ATTR_ANCHOR_OVERLAP_CORNERS = "anchor_overlap_corners";
+	private static final String ATTR_CORNER_COVERAGE_RADIUS = "corner_coverage_radius";
+	private static final String ATTR_SAMPLES_PER_AXIS = "samples_per_axis";
+	private static final String ATTR_SCHEDULE_THRESHOLDS = "samples_schedule_thresholds";
+	private static final String ATTR_SCHEDULE_VALUES = "samples_schedule_values";
 
 	public static final String CACHE_GROUP = "_displacement_field_cache";
 
@@ -130,7 +135,7 @@ public final class DisplacementFieldN5Tools
 
 	/**
 	 * Backward-compatible overload: no correspondence-label / min annotation
-	 * (treated as "no correspondence midpoints used").
+	 * (treated as "no correspondence midpoints used") and no corner anchors.
 	 */
 	public static < D extends NativeType< D > & RealType< D > > void createEmptyDataset(
 			final N5Writer n5Writer,
@@ -141,7 +146,67 @@ public final class DisplacementFieldN5Tools
 			final D type,
 			final Compression compression )
 	{
-		createEmptyDataset( n5Writer, datasetPath, bbox, spacing, blockSize3d, type, compression, null, 0 );
+		createEmptyDataset( n5Writer, datasetPath, bbox, spacing, blockSize3d, type, compression, null, 0, false, 0.0, 2, null, null );
+	}
+
+	/**
+	 * Backward-compatible overload: correspondence label + min, no corner anchors.
+	 */
+	public static < D extends NativeType< D > & RealType< D > > void createEmptyDataset(
+			final N5Writer n5Writer,
+			final String datasetPath,
+			final Interval bbox,
+			final double[] spacing,
+			final int[] blockSize3d,
+			final D type,
+			final Compression compression,
+			final String correspondenceLabel,
+			final int minNumCorrespondences )
+	{
+		createEmptyDataset( n5Writer, datasetPath, bbox, spacing, blockSize3d, type, compression,
+				correspondenceLabel, minNumCorrespondences, false, 0.0, 2, null, null );
+	}
+
+	/**
+	 * Backward-compatible overload: corner anchors with N=2 (corners only).
+	 */
+	public static < D extends NativeType< D > & RealType< D > > void createEmptyDataset(
+			final N5Writer n5Writer,
+			final String datasetPath,
+			final Interval bbox,
+			final double[] spacing,
+			final int[] blockSize3d,
+			final D type,
+			final Compression compression,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius )
+	{
+		createEmptyDataset( n5Writer, datasetPath, bbox, spacing, blockSize3d, type, compression,
+				correspondenceLabel, minNumCorrespondences, anchorOverlapCorners, cornerCoverageRadius, 2, null, null );
+	}
+
+	/**
+	 * Backward-compatible overload: no per-split schedule.
+	 */
+	public static < D extends NativeType< D > & RealType< D > > void createEmptyDataset(
+			final N5Writer n5Writer,
+			final String datasetPath,
+			final Interval bbox,
+			final double[] spacing,
+			final int[] blockSize3d,
+			final D type,
+			final Compression compression,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int samplesPerAxis )
+	{
+		createEmptyDataset( n5Writer, datasetPath, bbox, spacing, blockSize3d, type, compression,
+				correspondenceLabel, minNumCorrespondences, anchorOverlapCorners, cornerCoverageRadius,
+				samplesPerAxis, null, null );
 	}
 
 	/**
@@ -165,7 +230,12 @@ public final class DisplacementFieldN5Tools
 			final D type,
 			final Compression compression,
 			final String correspondenceLabel,    // nullable
-			final int minNumCorrespondences )    // ignored when label is null
+			final int minNumCorrespondences,    // ignored when label is null
+			final boolean anchorOverlapCorners, // false = no corner-anchor attrs written
+			final double cornerCoverageRadius,  // only relevant when anchorOverlapCorners=true
+			final int samplesPerAxis,           // surface samples per axis fallback (>= 2); 2 = corners only
+			final int[] samplesScheduleThresholds, // nullable; sorted ascending. count <= thresholds[i] -> values[i]
+			final int[] samplesScheduleValues )    // nullable; parallel to thresholds; fallback = samplesPerAxis
 	{
 		final int n = bbox.numDimensions();
 		if ( n != 3 )
@@ -198,6 +268,17 @@ public final class DisplacementFieldN5Tools
 		{
 			n5Writer.setAttribute( datasetPath, ATTR_CORRESPONDENCE_LABEL, correspondenceLabel );
 			n5Writer.setAttribute( datasetPath, ATTR_MIN_NUM_CORRESPONDENCES, minNumCorrespondences );
+		}
+		if ( anchorOverlapCorners )
+		{
+			n5Writer.setAttribute( datasetPath, ATTR_ANCHOR_OVERLAP_CORNERS, true );
+			n5Writer.setAttribute( datasetPath, ATTR_CORNER_COVERAGE_RADIUS, cornerCoverageRadius );
+			n5Writer.setAttribute( datasetPath, ATTR_SAMPLES_PER_AXIS, samplesPerAxis );
+			if ( samplesScheduleThresholds != null && samplesScheduleValues != null && samplesScheduleThresholds.length > 0 )
+			{
+				n5Writer.setAttribute( datasetPath, ATTR_SCHEDULE_THRESHOLDS, samplesScheduleThresholds );
+				n5Writer.setAttribute( datasetPath, ATTR_SCHEDULE_VALUES, samplesScheduleValues );
+			}
 		}
 	}
 
@@ -387,7 +468,7 @@ public final class DisplacementFieldN5Tools
 	}
 
 	/**
-	 * Backward-compatible overload: no correspondence-label check.
+	 * Backward-compatible overload: no correspondence-label / anchor checks.
 	 */
 	public static boolean datasetMatches(
 			final N5Reader n5Reader,
@@ -395,15 +476,11 @@ public final class DisplacementFieldN5Tools
 			final Interval expectedBbox,
 			final double[] expectedSpacing )
 	{
-		return datasetMatches( n5Reader, datasetPath, expectedBbox, expectedSpacing, null, 0 );
+		return datasetMatches( n5Reader, datasetPath, expectedBbox, expectedSpacing, null, 0, false, 0.0, 2, null, null );
 	}
 
 	/**
-	 * Check whether a dfield dataset already exists at the given path with the
-	 * expected {@code spacing}, {@code offset} (= {@code bbox.min}),
-	 * correspondence label, and min-N. {@code null} expected label matches an
-	 * absent attribute (i.e., a dataset that was written without
-	 * correspondence midpoints).
+	 * Backward-compatible overload: correspondence-label + min check, no anchor check.
 	 */
 	public static boolean datasetMatches(
 			final N5Reader n5Reader,
@@ -412,6 +489,69 @@ public final class DisplacementFieldN5Tools
 			final double[] expectedSpacing,
 			final String expectedCorrespondenceLabel,
 			final int expectedMinNumCorrespondences )
+	{
+		return datasetMatches( n5Reader, datasetPath, expectedBbox, expectedSpacing,
+				expectedCorrespondenceLabel, expectedMinNumCorrespondences, false, 0.0, 2, null, null );
+	}
+
+	/**
+	 * Backward-compatible overload: corner anchors with N=2 (corners only).
+	 */
+	public static boolean datasetMatches(
+			final N5Reader n5Reader,
+			final String datasetPath,
+			final Interval expectedBbox,
+			final double[] expectedSpacing,
+			final String expectedCorrespondenceLabel,
+			final int expectedMinNumCorrespondences,
+			final boolean expectedAnchorOverlapCorners,
+			final double expectedCornerCoverageRadius )
+	{
+		return datasetMatches( n5Reader, datasetPath, expectedBbox, expectedSpacing,
+				expectedCorrespondenceLabel, expectedMinNumCorrespondences,
+				expectedAnchorOverlapCorners, expectedCornerCoverageRadius, 2, null, null );
+	}
+
+	/**
+	 * Backward-compatible overload: no per-split schedule.
+	 */
+	public static boolean datasetMatches(
+			final N5Reader n5Reader,
+			final String datasetPath,
+			final Interval expectedBbox,
+			final double[] expectedSpacing,
+			final String expectedCorrespondenceLabel,
+			final int expectedMinNumCorrespondences,
+			final boolean expectedAnchorOverlapCorners,
+			final double expectedCornerCoverageRadius,
+			final int expectedSamplesPerAxis )
+	{
+		return datasetMatches( n5Reader, datasetPath, expectedBbox, expectedSpacing,
+				expectedCorrespondenceLabel, expectedMinNumCorrespondences,
+				expectedAnchorOverlapCorners, expectedCornerCoverageRadius, expectedSamplesPerAxis,
+				null, null );
+	}
+
+	/**
+	 * Check whether a dfield dataset already exists at the given path with the
+	 * expected {@code spacing}, {@code offset} (= {@code bbox.min}),
+	 * correspondence label/min, and corner-anchor config. Absent attributes
+	 * are treated as {@code null} label / {@code false} anchor / {@code 0}
+	 * thresholds, so datasets written before these features are detected as
+	 * stale when any of them is requested.
+	 */
+	public static boolean datasetMatches(
+			final N5Reader n5Reader,
+			final String datasetPath,
+			final Interval expectedBbox,
+			final double[] expectedSpacing,
+			final String expectedCorrespondenceLabel,
+			final int expectedMinNumCorrespondences,
+			final boolean expectedAnchorOverlapCorners,
+			final double expectedCornerCoverageRadius,
+			final int expectedSamplesPerAxis,
+			final int[] expectedScheduleThresholds, // nullable
+			final int[] expectedScheduleValues )    // nullable
 	{
 		if ( !n5Reader.datasetExists( datasetPath ) )
 			return false;
@@ -433,6 +573,36 @@ public final class DisplacementFieldN5Tools
 			final Integer storedMin = n5Reader.getAttribute( datasetPath, ATTR_MIN_NUM_CORRESPONDENCES, Integer.class );
 			if ( storedMin == null || storedMin.intValue() != expectedMinNumCorrespondences )
 				return false;
+		}
+
+		final Boolean storedAnchor = n5Reader.getAttribute( datasetPath, ATTR_ANCHOR_OVERLAP_CORNERS, Boolean.class );
+		final boolean storedAnchorBool = storedAnchor != null && storedAnchor.booleanValue();
+		if ( storedAnchorBool != expectedAnchorOverlapCorners )
+			return false;
+		if ( expectedAnchorOverlapCorners )
+		{
+			final Double storedRadius = n5Reader.getAttribute( datasetPath, ATTR_CORNER_COVERAGE_RADIUS, Double.class );
+			if ( storedRadius == null || storedRadius.doubleValue() != expectedCornerCoverageRadius )
+				return false;
+			final Integer storedSamples = n5Reader.getAttribute( datasetPath, ATTR_SAMPLES_PER_AXIS, Integer.class );
+			final int storedSamplesInt = storedSamples == null ? 2 : storedSamples.intValue(); // back-compat: absent = 2
+			if ( storedSamplesInt != expectedSamplesPerAxis )
+				return false;
+
+			final int[] storedThresholds = n5Reader.getAttribute( datasetPath, ATTR_SCHEDULE_THRESHOLDS, int[].class );
+			final int[] storedValues = n5Reader.getAttribute( datasetPath, ATTR_SCHEDULE_VALUES, int[].class );
+			final boolean expectHasSchedule = expectedScheduleThresholds != null && expectedScheduleValues != null
+					&& expectedScheduleThresholds.length > 0;
+			final boolean storedHasSchedule = storedThresholds != null && storedValues != null && storedThresholds.length > 0;
+			if ( expectHasSchedule != storedHasSchedule )
+				return false;
+			if ( expectHasSchedule )
+			{
+				if ( !Arrays.equals( storedThresholds, expectedScheduleThresholds ) )
+					return false;
+				if ( !Arrays.equals( storedValues, expectedScheduleValues ) )
+					return false;
+			}
 		}
 		return true;
 	}
