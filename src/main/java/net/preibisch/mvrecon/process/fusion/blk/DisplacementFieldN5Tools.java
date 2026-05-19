@@ -55,6 +55,8 @@ public final class DisplacementFieldN5Tools
 	private static final String ATTR_SAMPLES_PER_AXIS = "samples_per_axis";
 	private static final String ATTR_SCHEDULE_THRESHOLDS = "samples_schedule_thresholds";
 	private static final String ATTR_SCHEDULE_VALUES = "samples_schedule_values";
+	/** Row-major 3x4 (i.e. 12 doubles) of the affine that approximates the TPS for blending-weight adjustment. */
+	private static final String ATTR_APPROX_AFFINE = "approx_affine_row_major";
 
 	public static final String CACHE_GROUP = "_displacement_field_cache";
 
@@ -383,6 +385,38 @@ public final class DisplacementFieldN5Tools
 			throw new IllegalArgumentException( "Dataset '" + datasetPath
 					+ "' is missing bbox_min/bbox_max attributes; was it written with DisplacementFieldN5Tools.writeDisplacementField?" );
 		return new FinalInterval( min, max );
+	}
+
+	/**
+	 * Write the per-view approximate affine (the affine that
+	 * {@link net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion#fitAffineTransform fits}
+	 * from the TPS landmarks for blending-weight adjustment) as an N5 attribute on the
+	 * dfield dataset. Stored as a flat {@code double[12]} in row-major 3x4 order — the
+	 * same layout produced by {@link AffineTransform3D#toArray(double[])}.
+	 */
+	public static void writeApproxAffine( final N5Writer n5Writer, final String datasetPath, final AffineTransform3D affine )
+	{
+		final double[] m = new double[ 12 ];
+		affine.toArray( m );
+		n5Writer.setAttribute( datasetPath, ATTR_APPROX_AFFINE, m );
+	}
+
+	/**
+	 * Read the per-view approximate affine from a dfield dataset's attributes.
+	 * Returns {@code null} if the attribute is absent (so callers can fall back to
+	 * recomputing it from landmarks for back-compat with pre-cache containers).
+	 */
+	public static AffineTransform3D readApproxAffine( final N5Reader n5Reader, final String datasetPath )
+	{
+		final double[] m = n5Reader.getAttribute( datasetPath, ATTR_APPROX_AFFINE, double[].class );
+		if ( m == null )
+			return null;
+		if ( m.length != 12 )
+			throw new IllegalArgumentException( "Dataset '" + datasetPath + "' attribute '"
+					+ ATTR_APPROX_AFFINE + "' has length " + m.length + ", expected 12 (row-major 3x4)." );
+		final AffineTransform3D a = new AffineTransform3D();
+		a.set( m );
+		return a;
 	}
 
 	/**

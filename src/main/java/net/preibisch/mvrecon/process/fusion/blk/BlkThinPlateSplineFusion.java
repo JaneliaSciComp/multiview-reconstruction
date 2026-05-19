@@ -143,8 +143,19 @@ public class BlkThinPlateSplineFusion
 			rawDfields.put( viewId, DisplacementFields.sample( tps, viewBounds.get( viewId ), spacing ) );
 		}
 
+		// Pre-fit per-view approximate affines from the landmarks (used downstream only for
+		// blending-weight adjustment). Done once here so initWithLoadedDfields no longer needs
+		// the full landmark map and can be driven from a cached-affines container instead.
+		final Map< ViewId, AffineTransform3D > approximateAffines = new HashMap<>();
+		for ( final ViewId viewId : sortedViewIds )
+		{
+			final Landmarks landmarks = viewLandmarks.get( viewId );
+			approximateAffines.put( viewId,
+					fitAffineTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() ) );
+		}
+
 		return initWithLoadedDfields(
-				converter, imgLoader, viewIds, viewDescriptions, viewLandmarks,
+				converter, imgLoader, viewIds, viewDescriptions, approximateAffines,
 				viewBounds, rawDfields,
 				fusionType, anisotropyFactor, interpolationMethod,
 				fusionOrder, intensityAdjustmentCoefficients, fusionInterval,
@@ -173,7 +184,7 @@ public class BlkThinPlateSplineFusion
 			final BasicImgLoader imgLoader,
 			final Collection< ? extends ViewId > viewIds,
 			final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions,
-			final Map< ViewId, Landmarks > viewLandmarks,
+			final Map< ViewId, AffineTransform3D > approximateAffines,
 			final Map< ViewId, Interval > viewBounds,
 			final Map< ViewId, TransformedDisplacementField< D > > rawDfields,
 			final FusionType fusionType,
@@ -204,7 +215,6 @@ public class BlkThinPlateSplineFusion
 
 		for ( final ViewId viewId : overlap.getViewIds() )
 		{
-			final Landmarks landmarks = viewLandmarks.get( viewId );
 			final TransformedDisplacementField< D > dfield = concatenateBoundingBoxOffset( rawDfields.get( viewId ), fusionInterval );
 
 			final Coefficients coefficients = intensityAdjustmentCoefficients == null ? null : intensityAdjustmentCoefficients.get( viewId );
@@ -222,9 +232,11 @@ public class BlkThinPlateSplineFusion
 			final float[] blending = Util.getArrayFromValue( FusionTools.defaultBlendingRange, 3 );
 			final float[] border = Util.getArrayFromValue( FusionTools.defaultBlendingBorder, 3 );
 
-			// Approximate affine transform for adjusting blending weights.
-			// Note that this is from source to target points, whereas TPS is from target to source point!
-			final AffineTransform3D approximateAffine = fitAffineTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() );
+			// Approximate affine transform for adjusting blending weights — supplied by caller
+			// (either fit from landmarks by init(), or loaded from the dfield N5 cache by Spark
+			// Phase 2). Saves re-loading correspondences for every fusion block.
+			// Note: this is from source to target points, whereas TPS is from target to source.
+			final AffineTransform3D approximateAffine = approximateAffines.get( viewId );
 
 			FusionTools.adjustBlending( viewDimensions.get( viewId ), Group.pvid( viewId ), blending, border, approximateAffine );
 
@@ -330,7 +342,14 @@ public class BlkThinPlateSplineFusion
 				BlendingFunction3D.of( dfield.getType(), interval, border, blending ) );
 	}
 
-	private static AffineTransform3D fitAffineTransform( final double[][] source, final double[][] target )
+	/**
+	 * Fit an affine that approximates the TPS mapping from {@code source} to {@code target}
+	 * landmarks. Used to derive the per-view "approximate affine" that drives blending-weight
+	 * adjustment in {@link FusionTools#adjustBlending}. The same fit is invoked by
+	 * {@link #init init} on the driver and (when caching is wired up) the result is persisted
+	 * to N5 so that distributed block-fusion tasks don't have to recompute landmarks.
+	 */
+	public static AffineTransform3D fitAffineTransform( final double[][] source, final double[][] target )
 	{
 		final ArrayList< PointMatch > matches = new ArrayList<>();
 

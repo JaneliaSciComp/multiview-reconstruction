@@ -20,6 +20,7 @@ import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Interval;
 import net.imglib2.algorithm.blocks.BlockSupplier;
+import net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField;
 import net.imglib2.converter.Converter;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
@@ -297,9 +298,9 @@ public class SplitImgLoaderThinPlateSplineFusion
 	}
 
 	/**
-	 * Same as {@link #init} but accepts pre-built per-underlying-view dfields
-	 * (e.g. loaded from disk after a distributed Phase-1.5 materialization).
-	 * Skips per-task TPS rasterization.
+	 * Same as {@link #init} but accepts pre-built per-underlying-view dfields and approximate
+	 * affines (e.g. loaded from disk after a distributed Phase-1.5 materialization).
+	 * Skips per-task TPS rasterization and landmark computation.
 	 *
 	 * @param viewBounds
 	 * 		back-projected bounding box (render coordinates) per underlying view.
@@ -309,44 +310,19 @@ public class SplitImgLoaderThinPlateSplineFusion
 	 * 		Must contain entries at least for all underlying views overlapping
 	 * 		{@code fusionInterval}; extra entries are ignored. Must be backed by
 	 * 		{@code ArrayImg} (perf requirement of {@code BlkThinPlateSplineFusion}).
+	 * @param approximateAffines
+	 * 		per-underlying-view affine that approximates the TPS, used downstream for
+	 * 		blending-weight adjustment. Typically read from the dfield dataset's
+	 * 		{@code approx_affine_row_major} attribute (populated by Phase 1.5).
 	 */
 	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
 			final Converter< FloatType, T > converter,
 			final SplitViewerImgLoader splitImgLoader,
 			final Collection< ? extends ViewId > splitViewIdsInput,
-			final Map< ViewId, ViewRegistration > splitViewRegistrations,
 			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
 			final Map< ViewId, Interval > viewBounds,
-			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
+			final Map< ViewId, TransformedDisplacementField< D > > rawDfields,
 			final FusionGUI.FusionType fusionType,
-			final int intervalExpansion,
-			final double anisotropyFactor,
-			final int interpolationMethod,
-			final Map< Integer, Integer > fusionMap,
-			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
-			final Interval fusionInterval,
-			final T type,
-			final int[] blockSize )
-	{
-		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
-				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
-				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
-				fusionInterval, type, blockSize, null, null, 0, false, 0.0 );
-	}
-
-	/**
-	 * Backward-compatible overload — correspondence midpoints, no corner anchors.
-	 */
-	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
-			final Converter< FloatType, T > converter,
-			final SplitViewerImgLoader splitImgLoader,
-			final Collection< ? extends ViewId > splitViewIdsInput,
-			final Map< ViewId, ViewRegistration > splitViewRegistrations,
-			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
-			final Map< ViewId, Interval > viewBounds,
-			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
-			final FusionGUI.FusionType fusionType,
-			final int intervalExpansion,
 			final double anisotropyFactor,
 			final int interpolationMethod,
 			final Map< Integer, Integer > fusionMap,
@@ -354,146 +330,13 @@ public class SplitImgLoaderThinPlateSplineFusion
 			final Interval fusionInterval,
 			final T type,
 			final int[] blockSize,
-			final ViewInterestPoints viewInterestPoints,
-			final String correspondenceLabel,
-			final int minNumCorrespondences )
+			final Map< ViewId, AffineTransform3D > approximateAffines )
 	{
-		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
-				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
-				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
-				fusionInterval, type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
-				false, 0.0 );
-	}
+		if ( approximateAffines == null )
+			throw new IllegalArgumentException(
+					"approximateAffines must be non-null; SparkFusion Phase 1.5 is expected to have populated "
+					+ "the 'approx_affine_row_major' attribute on each dfield dataset." );
 
-	/**
-	 * Backward-compatible overload — corner anchors with N=2 (corners only).
-	 */
-	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
-			final Converter< FloatType, T > converter,
-			final SplitViewerImgLoader splitImgLoader,
-			final Collection< ? extends ViewId > splitViewIdsInput,
-			final Map< ViewId, ViewRegistration > splitViewRegistrations,
-			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
-			final Map< ViewId, Interval > viewBounds,
-			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
-			final FusionGUI.FusionType fusionType,
-			final int intervalExpansion,
-			final double anisotropyFactor,
-			final int interpolationMethod,
-			final Map< Integer, Integer > fusionMap,
-			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
-			final Interval fusionInterval,
-			final T type,
-			final int[] blockSize,
-			final ViewInterestPoints viewInterestPoints,
-			final String correspondenceLabel,
-			final int minNumCorrespondences,
-			final boolean anchorOverlapCorners,
-			final double cornerCoverageRadius )
-	{
-		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
-				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
-				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
-				fusionInterval, type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
-				anchorOverlapCorners, cornerCoverageRadius, 2, null );
-	}
-
-	/**
-	 * Backward-compatible overload — no landmark visitor.
-	 */
-	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
-			final Converter< FloatType, T > converter,
-			final SplitViewerImgLoader splitImgLoader,
-			final Collection< ? extends ViewId > splitViewIdsInput,
-			final Map< ViewId, ViewRegistration > splitViewRegistrations,
-			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
-			final Map< ViewId, Interval > viewBounds,
-			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
-			final FusionGUI.FusionType fusionType,
-			final int intervalExpansion,
-			final double anisotropyFactor,
-			final int interpolationMethod,
-			final Map< Integer, Integer > fusionMap,
-			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
-			final Interval fusionInterval,
-			final T type,
-			final int[] blockSize,
-			final ViewInterestPoints viewInterestPoints,
-			final String correspondenceLabel,
-			final int minNumCorrespondences,
-			final boolean anchorOverlapCorners,
-			final double cornerCoverageRadius,
-			final int seamSamplesPerAxis )
-	{
-		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
-				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
-				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
-				fusionInterval, type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
-				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, null );
-	}
-
-	/**
-	 * Backward-compatible overload — visitor only, no per-split schedule.
-	 */
-	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
-			final Converter< FloatType, T > converter,
-			final SplitViewerImgLoader splitImgLoader,
-			final Collection< ? extends ViewId > splitViewIdsInput,
-			final Map< ViewId, ViewRegistration > splitViewRegistrations,
-			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
-			final Map< ViewId, Interval > viewBounds,
-			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
-			final FusionGUI.FusionType fusionType,
-			final int intervalExpansion,
-			final double anisotropyFactor,
-			final int interpolationMethod,
-			final Map< Integer, Integer > fusionMap,
-			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
-			final Interval fusionInterval,
-			final T type,
-			final int[] blockSize,
-			final ViewInterestPoints viewInterestPoints,
-			final String correspondenceLabel,
-			final int minNumCorrespondences,
-			final boolean anchorOverlapCorners,
-			final double cornerCoverageRadius,
-			final int seamSamplesPerAxis,
-			final Consumer< LandmarkRecord > landmarkVisitor )
-	{
-		return initWithLoadedDfields( converter, splitImgLoader, splitViewIdsInput, splitViewRegistrations,
-				splitViewDescriptions, viewBounds, rawDfields, fusionType, intervalExpansion,
-				anisotropyFactor, interpolationMethod, fusionMap, intensityAdjustmentCoefficients,
-				fusionInterval, type, blockSize, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
-				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, landmarkVisitor );
-	}
-
-	public static < T extends RealType< T > & NativeType< T >, D extends NativeType< D > & RealType< D > > BlockSupplier< T > initWithLoadedDfields(
-			final Converter< FloatType, T > converter,
-			final SplitViewerImgLoader splitImgLoader,
-			final Collection< ? extends ViewId > splitViewIdsInput,
-			final Map< ViewId, ViewRegistration > splitViewRegistrations,
-			final Map< ViewId, ? extends BasicViewDescription< ? > > splitViewDescriptions,
-			final Map< ViewId, Interval > viewBounds,
-			final Map< ViewId, net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField< D > > rawDfields,
-			final FusionGUI.FusionType fusionType,
-			final int intervalExpansion,
-			final double anisotropyFactor,
-			final int interpolationMethod,
-			final Map< Integer, Integer > fusionMap,
-			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
-			final Interval fusionInterval,
-			final T type,
-			final int[] blockSize,
-			final ViewInterestPoints viewInterestPoints,
-			final String correspondenceLabel,
-			final int minNumCorrespondences,
-			final boolean anchorOverlapCorners,
-			final double cornerCoverageRadius,
-			final int seamSamplesPerAxis,
-			final int[] seamSamplesScheduleThresholds,
-			final int[] seamSamplesScheduleValues,
-			final Consumer< LandmarkRecord > landmarkVisitor )
-	{
 		final List< ViewId > underlyingViewIds = underlyingViewIds( splitViewIdsInput, splitImgLoader.new2oldSetupId() );
 		final Map< Integer, List< Integer > > old2newSetupId = old2newSetupId( splitImgLoader.new2oldSetupId() );
 		final List< ViewId > splitViewIds = splitViewIds( underlyingViewIds, old2newSetupId );
@@ -505,18 +348,6 @@ public class SplitImgLoaderThinPlateSplineFusion
 		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
 		final Map< ViewId, ViewDescription > underlyingViewDescription = underlyingSD.getViewDescriptions();
 
-		// Landmarks per underlying view (still cheap to recompute on each executor).
-		final Map< ViewId, Landmarks > underlyingViewLandmarks = new HashMap<>();
-		for ( final ViewId underlyingViewId : underlyingViewIds )
-		{
-			final Landmarks landmarks = getCoefficients( splitImgLoader, old2newSetupId, splitViewRegistrations,
-					underlyingViewId, anisotropyFactor, Double.NaN,
-					viewInterestPoints, correspondenceLabel, minNumCorrespondences,
-					anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
-					seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor );
-			underlyingViewLandmarks.put( underlyingViewId, landmarks );
-		}
-
 		final Comparator< ViewId > fusionOrder = fusionMap == null
 				? null
 				: Comparator.comparingInt( c -> fusionMap.get( c.getViewSetupId() ) );
@@ -526,7 +357,7 @@ public class SplitImgLoaderThinPlateSplineFusion
 				underlyingImgLoader,
 				underlyingViewIds,
 				underlyingViewDescription,
-				underlyingViewLandmarks,
+				approximateAffines,
 				viewBounds,
 				rawDfields,
 				fusionType,
