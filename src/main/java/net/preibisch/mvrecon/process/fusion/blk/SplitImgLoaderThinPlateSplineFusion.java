@@ -812,11 +812,6 @@ public class SplitImgLoaderThinPlateSplineFusion
 				}
 			}
 
-			if ( midpointCount > 0 )
-				IOFunctions.println( "[TPS] " + Group.pvid( underlyingViewId )
-						+ " landmarks: " + splitSetupIds.size() + " centers + "
-						+ midpointCount + " correspondence midpoints (label='" + correspondenceLabel
-						+ "', minN=" + minNumCorrespondences + ")" );
 		}
 
 		// ----- Pass 3: append cross-view nail donations (computed globally; see computeCrossViewNailDonations). -----
@@ -835,10 +830,19 @@ public class SplitImgLoaderThinPlateSplineFusion
 				targetList.add( nail.target.clone() );
 				++nailCount;
 			}
-
-			IOFunctions.println( "[TPS] " + Group.pvid( underlyingViewId )
-					+ " landmarks: + " + nailCount + " cross-view nail donations" );
 		}
+
+		// Consolidated per-underlying-view landmark summary: always print, with explicit counts
+		// for all three landmark categories. Makes it obvious from the log whether nails were
+		// added (and how many), rather than silently omitting the line when count is zero.
+		final StringBuilder sb = new StringBuilder( "[TPS] " ).append( Group.pvid( underlyingViewId ) )
+				.append( " landmarks: " ).append( splitSetupIds.size() ).append( " centers" );
+		if ( correspondenceLabel != null && minNumCorrespondences > 0 )
+			sb.append( " + " ).append( midpointCount ).append( " correspondence midpoints (label='" )
+					.append( correspondenceLabel ).append( "', minN=" ).append( minNumCorrespondences ).append( ")" );
+		if ( donatedNails != null )
+			sb.append( " + " ).append( nailCount ).append( " cross-view nail donations" );
+		IOFunctions.println( sb.toString() );
 
 		// Pack lists into the [n][N] layout expected by Landmarks.
 		final int N = sourceList.size();
@@ -903,7 +907,13 @@ public class SplitImgLoaderThinPlateSplineFusion
 		final Map< ViewId, List< DonatedNail > > donations = new HashMap<>();
 
 		if ( viewInterestPoints == null || correspondenceLabel == null || minNumCorrespondences <= 0 )
+		{
+			IOFunctions.println( "[TPS] cross-view nail donations: skipped"
+					+ " (viewInterestPoints=" + ( viewInterestPoints == null ? "null" : "present" )
+					+ ", correspondenceLabel=" + correspondenceLabel
+					+ ", minNumCorrespondences=" + minNumCorrespondences + ")" );
 			return donations;
+		}
 
 		// Per-split (= split sub-view setup id) caches, shared across all underlying-view passes.
 		final Map< Integer, AffineTransform3D > modelBySplitSetupId = new HashMap<>();
@@ -1137,10 +1147,10 @@ public class SplitImgLoaderThinPlateSplineFusion
 			}
 		}
 
-		if ( totalNailSites > 0 )
-			IOFunctions.println( "[TPS] cross-view nail donations: " + totalNailSites
-					+ " sites -> " + totalDonations + " landmarks across "
-					+ donations.size() + " recipient view(s) (radius=" + cornerCoverageRadius + ")" );
+		IOFunctions.println( "[TPS] cross-view nail donations: " + totalNailSites
+				+ " sites -> " + totalDonations + " landmarks across "
+				+ donations.size() + " recipient view(s) (radius=" + cornerCoverageRadius
+				+ ", samplesPerAxis fallback=" + nSamplesFallback + ")" );
 
 		return donations;
 	}
