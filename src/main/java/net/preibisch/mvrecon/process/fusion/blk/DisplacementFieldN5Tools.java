@@ -55,6 +55,10 @@ public final class DisplacementFieldN5Tools
 	private static final String ATTR_SAMPLES_PER_AXIS = "samples_per_axis";
 	private static final String ATTR_SCHEDULE_THRESHOLDS = "samples_schedule_thresholds";
 	private static final String ATTR_SCHEDULE_VALUES = "samples_schedule_values";
+	// Bumped when the surface-nail logic changed from single-view anchors (legacy, buggy)
+	// to symmetric cross-view donations. Old caches lack this attr and must regenerate.
+	private static final String ATTR_NAIL_SCHEME_VERSION = "nail_scheme_version";
+	private static final int CURRENT_NAIL_SCHEME_VERSION = 2;
 	/** Row-major 3x4 (i.e. 12 doubles) of the affine that approximates the TPS for blending-weight adjustment. */
 	private static final String ATTR_APPROX_AFFINE = "approx_affine_row_major";
 
@@ -282,6 +286,8 @@ public final class DisplacementFieldN5Tools
 				n5Writer.setAttribute( datasetPath, ATTR_SCHEDULE_VALUES, samplesScheduleValues );
 			}
 		}
+		// Always tag the scheme version so v1 caches (single-view nails) invalidate.
+		n5Writer.setAttribute( datasetPath, ATTR_NAIL_SCHEME_VERSION, CURRENT_NAIL_SCHEME_VERSION );
 	}
 
 	/**
@@ -588,6 +594,10 @@ public final class DisplacementFieldN5Tools
 			final int[] expectedScheduleValues )    // nullable
 	{
 		if ( !n5Reader.datasetExists( datasetPath ) )
+			return false;
+		// Reject caches written by the legacy single-view nail logic (no version attr or v1).
+		final Integer storedVersion = n5Reader.getAttribute( datasetPath, ATTR_NAIL_SCHEME_VERSION, Integer.class );
+		if ( storedVersion == null || storedVersion.intValue() < CURRENT_NAIL_SCHEME_VERSION )
 			return false;
 		final double[] spacing = n5Reader.getAttribute( datasetPath, ATTR_SPACING, double[].class );
 		final double[] offset = n5Reader.getAttribute( datasetPath, ATTR_OFFSET, double[].class );

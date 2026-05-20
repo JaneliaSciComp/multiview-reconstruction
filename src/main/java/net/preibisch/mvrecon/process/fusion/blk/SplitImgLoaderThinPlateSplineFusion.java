@@ -51,6 +51,13 @@ public class SplitImgLoaderThinPlateSplineFusion
 	 * Source coords are in underlying-view pixel space (matching how
 	 * {@link Landmarks#getSourcePoints()} stores them). Target coords are in
 	 * render/global space (anisotropy already applied).
+	 *
+	 * For {@code TYPE_NAIL} records, {@link #underlyingViewId} is the
+	 * <em>recipient</em> underlying view (whose TPS the landmark feeds) and
+	 * {@link #donorViewId} is the underlying view whose split sub-view's
+	 * surface produced the corner; the two coincide for "self" donations and
+	 * differ for cross-view tie nails. For {@code TYPE_CENTER}/{@code
+	 * TYPE_MIDPOINT} the donor field equals the underlying view.
 	 */
 	public static final class LandmarkRecord
 	{
@@ -59,16 +66,45 @@ public class SplitImgLoaderThinPlateSplineFusion
 		public static final String TYPE_NAIL = "nail";
 
 		public final ViewId underlyingViewId;
+		public final ViewId donorViewId; // donor underlying view; equals underlyingViewId for non-nail records
 		public final String type;       // one of TYPE_*
 		public final double[] source;   // length 3, underlying-view pixel coords
 		public final double[] target;   // length 3, render coords
 
 		public LandmarkRecord( final ViewId underlyingViewId, final String type, final double[] source, final double[] target )
 		{
+			this( underlyingViewId, underlyingViewId, type, source, target );
+		}
+
+		public LandmarkRecord( final ViewId underlyingViewId, final ViewId donorViewId, final String type, final double[] source, final double[] target )
+		{
 			this.underlyingViewId = underlyingViewId;
+			this.donorViewId = donorViewId;
 			this.type = type;
 			this.source = source;
 			this.target = target;
+		}
+	}
+
+	/**
+	 * A single nail landmark donated from one split sub-view's surface onto
+	 * the recipient underlying view's TPS. {@code src} is in the
+	 * <em>recipient</em>'s underlying-view pixel coords (already includes the
+	 * recipient's split translation); {@code target} is in render coords.
+	 *
+	 * @see #computeCrossViewNailDonations
+	 */
+	public static final class DonatedNail
+	{
+		public final double[] src;       // length 3, recipient underlying-view pixel coords
+		public final double[] target;    // length 3, render coords
+		public final ViewId donorViewId; // underlying view whose surface sample generated this nail
+
+		public DonatedNail( final double[] src, final double[] target, final ViewId donorViewId )
+		{
+			this.src = src;
+			this.target = target;
+			this.donorViewId = donorViewId;
 		}
 	}
 
@@ -265,6 +301,18 @@ public class SplitImgLoaderThinPlateSplineFusion
 		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
 		final Map< ViewId, ViewDescription > underlyingViewDescription = underlyingSD.getViewDescriptions();
 
+		// Cross-view nail donations are computed globally so both views' TPS see the same
+		// render-space target at each shared corner. The legacy per-view nail logic placed
+		// single-view anchors at each split's own affine corner, which broke the tie.
+		final Map< ViewId, List< DonatedNail > > nailDonations = anchorOverlapCorners
+				? computeCrossViewNailDonations(
+						splitImgLoader, old2newSetupId, splitViewRegistrations, underlyingViewIds,
+						anisotropyFactor, Double.NaN,
+						viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+						cornerCoverageRadius, seamSamplesPerAxis,
+						seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor )
+				: java.util.Collections.emptyMap();
+
 		// the coefficients (source > target) for each underlying view, used to construct the TPS
 		final Map< ViewId, Landmarks > underlyingViewLandmarks = new HashMap<>();
 		for ( final ViewId underlyingViewId : underlyingViewIds )
@@ -273,7 +321,8 @@ public class SplitImgLoaderThinPlateSplineFusion
 					underlyingViewId, anisotropyFactor, Double.NaN,
 					viewInterestPoints, correspondenceLabel, minNumCorrespondences,
 					anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
-					seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor );
+					seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor,
+					nailDonations.get( underlyingViewId ) );
 			underlyingViewLandmarks.put( underlyingViewId, landmarks );
 		}
 
@@ -483,7 +532,12 @@ public class SplitImgLoaderThinPlateSplineFusion
 	}
 
 	/**
-	 * Backward-compatible overload — visitor only, no per-split schedule.
+	 * Backward-compatible overload — visitor only, no per-split schedule, no
+	 * donated nails. The {@code anchorOverlapCorners}/{@code cornerCoverageRadius}/
+	 * {@code seamSamplesPerAxis} params are accepted for signature stability
+	 * but no longer cause per-view nail emission here — call
+	 * {@link #computeCrossViewNailDonations} at the driver and pass the result
+	 * via the new overload's {@code donatedNails} parameter.
 	 */
 	public static Landmarks getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
@@ -502,7 +556,35 @@ public class SplitImgLoaderThinPlateSplineFusion
 	{
 		return getCoefficients( splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId,
 				anisotropyFactor, downsampling, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
-				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, landmarkVisitor );
+				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis, null, null, landmarkVisitor, null );
+	}
+
+	/**
+	 * Backward-compatible overload — no donated nails. Centers + correspondence
+	 * midpoints only. Cross-view nails must be supplied via the new overload's
+	 * {@code donatedNails} parameter (see {@link #computeCrossViewNailDonations}).
+	 */
+	public static Landmarks getCoefficients(
+			final SplitViewerImgLoader splitImgLoader,
+			final Map<Integer, List<Integer>> old2newSetupId,
+			final Map<ViewId, ViewRegistration> splitRegMap,
+			final ViewId underlyingViewId,
+			final double anisotropyFactor,
+			final double downsampling,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis,
+			final int[] seamSamplesScheduleThresholds,
+			final int[] seamSamplesScheduleValues,
+			final Consumer< LandmarkRecord > landmarkVisitor )
+	{
+		return getCoefficients( splitImgLoader, old2newSetupId, splitRegMap, underlyingViewId,
+				anisotropyFactor, downsampling, viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+				seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor, null );
 	}
 
 	/**
@@ -520,6 +602,16 @@ public class SplitImgLoaderThinPlateSplineFusion
 	 * 0.5*(model_S.apply(mean(p_S)) + model_S'.apply(mean(p_S')))}.
 	 * The symmetric counterpart is added to {@code S'}'s underlying view in
 	 * its own pass.
+	 *
+	 * <p>If {@code donatedNails} is non-null, each entry is appended as an
+	 * additional landmark on U's TPS. Nail donations are computed globally by
+	 * {@link #computeCrossViewNailDonations} so that the partner view's TPS
+	 * sees a paired landmark pointing at the same render-space target —
+	 * something the legacy per-view nail logic could not guarantee. The
+	 * {@code anchorOverlapCorners}/{@code cornerCoverageRadius}/{@code
+	 * seamSamplesPerAxis}/{@code seamSamplesScheduleXxx} parameters are kept
+	 * in the signature for API stability but are no longer consulted here;
+	 * the driver controls them via the donation pass.
 	 */
 	public static Landmarks getCoefficients(
 			final SplitViewerImgLoader splitImgLoader,
@@ -531,12 +623,13 @@ public class SplitImgLoaderThinPlateSplineFusion
 			final ViewInterestPoints viewInterestPoints,
 			final String correspondenceLabel,
 			final int minNumCorrespondences,
-			final boolean anchorOverlapCorners,
-			final double cornerCoverageRadius,
-			final int seamSamplesPerAxis,
-			final int[] seamSamplesScheduleThresholds,            // nullable; sorted ascending. count <= thresholds[i] -> values[i]
-			final int[] seamSamplesScheduleValues,                 // nullable; parallel to thresholds; fallback = seamSamplesPerAxis
-			final Consumer< LandmarkRecord > landmarkVisitor )    // nullable; invoked once per emitted landmark
+			final boolean anchorOverlapCorners,                    // no-op here; controls computeCrossViewNailDonations at the driver
+			final double cornerCoverageRadius,                     // no-op here; see above
+			final int seamSamplesPerAxis,                          // no-op here; see above
+			final int[] seamSamplesScheduleThresholds,             // no-op here; see above
+			final int[] seamSamplesScheduleValues,                 // no-op here; see above
+			final Consumer< LandmarkRecord > landmarkVisitor,      // nullable; invoked once per emitted CENTER/MIDPOINT landmark
+			final List< DonatedNail > donatedNails )               // nullable; per-recipient list from computeCrossViewNailDonations
 	{
 		final int n = 3;
 		final int nSamplesFallback = Math.max( 2, seamSamplesPerAxis );
@@ -726,120 +819,25 @@ public class SplitImgLoaderThinPlateSplineFusion
 						+ "', minN=" + minNumCorrespondences + ")" );
 		}
 
-		// ----- Pass 3: corner-anchor "nail" landmarks (optional). -----
-		int cornerNailCount = 0;
-		int minNailN = Integer.MAX_VALUE;
-		int maxNailN = Integer.MIN_VALUE;
-		if ( anchorOverlapCorners && !validatedPartnersBySplit.isEmpty() )
+		// ----- Pass 3: append cross-view nail donations (computed globally; see computeCrossViewNailDonations). -----
+		// The legacy in-line Pass 3 emitted single-view nails at each split's own affine corners.
+		// That broke the cross-view tie: each underlying view's pass placed its corner at its OWN
+		// affine position, so two overlapping splits never agreed on the corner in render space.
+		// Donations are now built globally so both views' TPS see paired landmarks at the same target.
+		// LandmarkRecord visitor emission for TYPE_NAIL happens inside computeCrossViewNailDonations
+		// (so the visitor sees each emitted nail exactly once); here we just append into U's lists.
+		int nailCount = 0;
+		if ( donatedNails != null && !donatedNails.isEmpty() )
 		{
-			for ( final int splitViewSetupId : splitSetupIds )
+			for ( final DonatedNail nail : donatedNails )
 			{
-				final List< ViewId > validatedPartners = validatedPartnersBySplit.get( splitViewSetupId );
-				if ( validatedPartners == null || validatedPartners.isEmpty() )
-					continue;
-
-				final Integer totalCount = cmGlobalCountBySplit.get( splitViewSetupId );
-				if ( totalCount == null || totalCount.intValue() == 0 )
-					continue;
-				final double[] sum = cmGlobalSumBySplit.get( splitViewSetupId );
-				final double[] cm_S_global = new double[ n ];
-				for ( int d = 0; d < n; ++d )
-					cm_S_global[ d ] = sum[ d ] / totalCount;
-
-				final AffineTransform3D model_S = modelByLocalSplitSetupId.get( splitViewSetupId );
-				final double[] splitTranslation = splitTranslationByLocalSetupId.get( splitViewSetupId );
-
-				// CoM in render coords.
-				final double[] r_CoM = new double[ n ];
-				model_S.apply( cm_S_global, r_CoM );
-
-				final Interval splitInterval_S = splitImgLoader.newSetupId2Interval().get( splitViewSetupId );
-
-				// Per-split N: optional schedule maps total correspondence count -> N.
-				// Schedule entries (sorted ascending by threshold): count <= thresholds[i] -> values[i].
-				final int nSamples = pickSamplesPerAxis(
-						totalCount.intValue(),
-						seamSamplesScheduleThresholds,
-						seamSamplesScheduleValues,
-						nSamplesFallback );
-				if ( nSamples < minNailN ) minNailN = nSamples;
-				if ( nSamples > maxNailN ) maxNailN = nSamples;
-
-				// Iterate the surface of S sampled at nSamples points per axis.
-				// A point is on the surface iff at least one of (i, j, k) is at the boundary
-				// (0 or nSamples-1). At nSamples=2, this collapses to the 8 corners exactly.
-				for ( int i = 0; i < nSamples; ++i )
-					for ( int j = 0; j < nSamples; ++j )
-						for ( int k = 0; k < nSamples; ++k )
-						{
-							if ( i != 0 && i != nSamples - 1 && j != 0 && j != nSamples - 1 && k != 0 && k != nSamples - 1 )
-								continue; // interior — not a surface sample
-							final double[] sampleZeroMin = new double[ n ];
-							final long[] dims = splitInterval_S.dimensionsAsLongArray();
-							final int[] idx = { i, j, k };
-							for ( int d = 0; d < n; ++d )
-								sampleZeroMin[ d ] = idx[ d ] * ( dims[ d ] - 1 ) / ( double ) ( nSamples - 1 );
-							final double[] r_C = new double[ n ];
-							model_S.apply( sampleZeroMin, r_C );
-
-							// "Shared with another underlying view?" check — short-circuit.
-							boolean sharedWithPartner = false;
-							for ( final ViewId partnerVid : validatedPartners )
-							{
-								final AffineTransform3D model_Sp = partnerModelCache.get( partnerVid );
-								if ( model_Sp == null ) continue;
-								final Interval splitInterval_Sp = splitImgLoader.newSetupId2Interval().get( partnerVid.getViewSetupId() );
-								if ( splitInterval_Sp == null ) continue;
-								final double[] sampleInSp = new double[ n ];
-								model_Sp.applyInverse( sampleInSp, r_C );
-								boolean inside = true;
-								for ( int d = 0; d < n; ++d )
-									if ( sampleInSp[ d ] < 0.0 || sampleInSp[ d ] >= splitInterval_Sp.dimension( d ) )
-									{
-										inside = false;
-										break;
-									}
-								if ( inside )
-								{
-									sharedWithPartner = true;
-									break;
-								}
-							}
-							if ( !sharedWithPartner )
-								continue;
-
-							// Coverage check in render coords.
-							double sq = 0.0;
-							for ( int d = 0; d < n; ++d )
-							{
-								final double diff = r_C[ d ] - r_CoM[ d ];
-								sq += diff * diff;
-							}
-							if ( Math.sqrt( sq ) <= cornerCoverageRadius )
-								continue;
-
-							// Emit nail: source = sampleZeroMin + splitTranslation, target = r_C.
-							final double[] src = new double[ n ];
-							for ( int d = 0; d < n; ++d )
-								src[ d ] = sampleZeroMin[ d ] + splitTranslation[ d ];
-							sourceList.add( src );
-							targetList.add( r_C );
-							++cornerNailCount;
-
-							if ( landmarkVisitor != null )
-								landmarkVisitor.accept( new LandmarkRecord( underlyingViewId, LandmarkRecord.TYPE_NAIL, src.clone(), r_C.clone() ) );
-						}
+				sourceList.add( nail.src.clone() );
+				targetList.add( nail.target.clone() );
+				++nailCount;
 			}
 
-			if ( cornerNailCount > 0 )
-			{
-				final String label = ( minNailN == maxNailN )
-						? ( minNailN == 2 ? " corner nails" : " surface nails (samplesPerAxis=" + minNailN + ")" )
-						: " surface nails (samplesPerAxis in [" + minNailN + ".." + maxNailN + "] per schedule)";
-				IOFunctions.println( "[TPS] " + Group.pvid( underlyingViewId )
-						+ " landmarks: + " + cornerNailCount + label
-						+ " (radius=" + cornerCoverageRadius + ")" );
-			}
+			IOFunctions.println( "[TPS] " + Group.pvid( underlyingViewId )
+					+ " landmarks: + " + nailCount + " cross-view nail donations" );
 		}
 
 		// Pack lists into the [n][N] layout expected by Landmarks.
@@ -858,6 +856,293 @@ public class SplitImgLoaderThinPlateSplineFusion
 		}
 
 		return new Landmarks( source, target );
+	}
+
+	/**
+	 * Compute cross-view nail donations across all underlying views in one pass.
+	 *
+	 * <p>For each underlying view {@code U} and each split sub-view {@code S}
+	 * of {@code U}, sample {@code S}'s surface (corners at {@code N=2}, edge
+	 * midpoints + face centers at {@code N=3}, denser at higher {@code N})
+	 * and, for each accepted sample that overlaps a partner split {@code S'}
+	 * of {@code U'} (where {@code S} has at least {@code minNumCorrespondences}
+	 * validated correspondences with {@code S'}), emit <em>two</em> donations
+	 * pointing at the same render-space target {@code r_C = model_S(sampleZeroMin)}:
+	 * <ul>
+	 *   <li>One into {@code U}'s TPS: {@code src = sampleZeroMin + splitTr_S}.</li>
+	 *   <li>One into {@code U'}'s TPS: {@code src = sampleInSp + splitTr_S'},
+	 *       where {@code sampleInSp = model_S'.applyInverse(r_C)} — the same
+	 *       physical render-space position expressed in S''s zero-min coords.</li>
+	 * </ul>
+	 *
+	 * <p>This is the fix for the legacy per-view nail logic, which placed
+	 * single-view anchors at each split's own affine corner and therefore did
+	 * not pull overlapping underlying views to the same render-space point.
+	 *
+	 * @return per-recipient-underlying-view donations. Pass the entry for U
+	 *         into {@code getCoefficients}'s {@code donatedNails} parameter.
+	 */
+	public static Map< ViewId, List< DonatedNail > > computeCrossViewNailDonations(
+			final SplitViewerImgLoader splitImgLoader,
+			final Map< Integer, List< Integer > > old2newSetupId,
+			final Map< ViewId, ViewRegistration > splitRegMap,
+			final Collection< ? extends ViewId > underlyingViewIds,
+			final double anisotropyFactor,
+			final double downsampling,
+			final ViewInterestPoints viewInterestPoints,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis,
+			final int[] seamSamplesScheduleThresholds,
+			final int[] seamSamplesScheduleValues,
+			final Consumer< LandmarkRecord > landmarkVisitor )
+	{
+		final int n = 3;
+		final int nSamplesFallback = Math.max( 2, seamSamplesPerAxis );
+		final Map< ViewId, List< DonatedNail > > donations = new HashMap<>();
+
+		if ( viewInterestPoints == null || correspondenceLabel == null || minNumCorrespondences <= 0 )
+			return donations;
+
+		// Per-split (= split sub-view setup id) caches, shared across all underlying-view passes.
+		final Map< Integer, AffineTransform3D > modelBySplitSetupId = new HashMap<>();
+		final Map< Integer, double[] > splitTranslationBySplitSetupId = new HashMap<>();
+		final Map< Integer, ViewId > splitSetupIdToUnderlyingView = new HashMap<>();
+		final Map< Integer, Interval > splitInterval = new HashMap<>();
+
+		for ( final ViewId U : underlyingViewIds )
+		{
+			final List< Integer > splitSetupIds = old2newSetupId.get( U.getViewSetupId() );
+			if ( splitSetupIds == null ) continue;
+			for ( final int splitSetupId : splitSetupIds )
+			{
+				splitSetupIdToUnderlyingView.put( splitSetupId, U );
+				final ViewId splitViewId = new ViewId( U.getTimePointId(), splitSetupId );
+
+				final ViewRegistration vr = splitRegMap.get( splitViewId );
+				if ( vr == null ) continue;
+				final List< ViewTransform > vrList = vr.getTransformList();
+				if ( !vrList.get( vrList.size() - 1 ).getName().equals( SplittingTools.IMAGE_SPLITTING_NAME ) )
+					throw new RuntimeException( "Last transformation is not " + SplittingTools.IMAGE_SPLITTING_NAME
+							+ " for " + Group.pvid( splitViewId ) + ", stopping." );
+				final ViewTransform splitTransform = vrList.get( vrList.size() - 1 );
+				vr.updateModel();
+				final AffineTransform3D model = vr.getModel().copy();
+				if ( !Double.isNaN( anisotropyFactor ) )
+					TransformVirtual.scaleTransform( model, new double[] { 1.0, 1.0, 1.0 / anisotropyFactor } );
+				if ( !Double.isNaN( downsampling ) )
+					TransformVirtual.scaleTransform( model, 1.0 / downsampling );
+				modelBySplitSetupId.put( splitSetupId, model );
+
+				final double[] tr = new double[ n ];
+				for ( int d = 0; d < n; ++d )
+					tr[ d ] = splitTransform.asAffine3D().get( d, 3 );
+				splitTranslationBySplitSetupId.put( splitSetupId, tr );
+
+				final Interval iv = splitImgLoader.newSetupId2Interval().get( splitSetupId );
+				if ( iv != null )
+					splitInterval.put( splitSetupId, iv );
+			}
+		}
+
+		final Map< ViewId, Map< Integer, InterestPoint > > partnerIpsCache = new HashMap<>();
+		int totalDonations = 0;
+		int totalNailSites = 0;
+
+		// For each underlying view U: replicate the Pass 2 accumulation (to derive
+		// global per-split correspondence CoMs + validated partners), then walk the
+		// surface of each split and emit symmetric donations.
+		for ( final ViewId U : underlyingViewIds )
+		{
+			final List< Integer > splitSetupIds = old2newSetupId.get( U.getViewSetupId() );
+			if ( splitSetupIds == null ) continue;
+			final Set< Integer > siblingSetupIds = new HashSet<>( splitSetupIds );
+
+			final Map< Integer, double[] > cmGlobalSumBySplit = new HashMap<>();
+			final Map< Integer, Integer > cmGlobalCountBySplit = new HashMap<>();
+			final Map< Integer, List< ViewId > > validatedPartnersBySplit = new HashMap<>();
+
+			for ( final int splitViewSetupId : splitSetupIds )
+			{
+				final ViewId splitViewId = new ViewId( U.getTimePointId(), splitViewSetupId );
+				final ViewInterestPointLists vipl_S = viewInterestPoints.getViewInterestPointLists( splitViewId );
+				if ( vipl_S == null ) continue;
+				final InterestPoints splitIps_S = vipl_S.getInterestPointList( correspondenceLabel );
+				if ( splitIps_S == null ) continue;
+
+				final Map< Integer, InterestPoint > ips_S = splitIps_S.getInterestPointsCopy();
+				final Collection< CorrespondingInterestPoints > corrs = splitIps_S.getCorrespondingInterestPointsCopy();
+				if ( corrs == null || corrs.isEmpty() ) continue;
+
+				final Map< ViewId, List< CorrespondingInterestPoints > > byPartner = new HashMap<>();
+				for ( final CorrespondingInterestPoints cip : corrs )
+				{
+					final ViewId partnerVid = cip.getCorrespondingViewId();
+					if ( partnerVid.getTimePointId() == splitViewId.getTimePointId()
+							&& siblingSetupIds.contains( partnerVid.getViewSetupId() ) )
+						continue;
+					byPartner.computeIfAbsent( partnerVid, k -> new ArrayList<>() ).add( cip );
+				}
+
+				for ( final Map.Entry< ViewId, List< CorrespondingInterestPoints > > entry : byPartner.entrySet() )
+				{
+					final List< CorrespondingInterestPoints > group = entry.getValue();
+					if ( group.size() < minNumCorrespondences ) continue;
+					final ViewId partnerVid = entry.getKey();
+					if ( modelBySplitSetupId.get( partnerVid.getViewSetupId() ) == null ) continue;
+					final String partnerLabel = group.get( 0 ).getCorrespodingLabel();
+
+					final Map< Integer, InterestPoint > ips_Sp = partnerIpsCache.computeIfAbsent( partnerVid, vid -> {
+						final ViewInterestPointLists vipl_p = viewInterestPoints.getViewInterestPointLists( vid );
+						if ( vipl_p == null ) return null;
+						final InterestPoints ips = vipl_p.getInterestPointList( partnerLabel );
+						return ips == null ? null : ips.getInterestPointsCopy();
+					} );
+					if ( ips_Sp == null ) continue;
+
+					int count = 0;
+					final double[] partnerSumOnS = new double[ n ];
+					for ( final CorrespondingInterestPoints cip : group )
+					{
+						final InterestPoint p_S = ips_S.get( cip.getDetectionId() );
+						final InterestPoint p_Sp = ips_Sp.get( cip.getCorrespondingDetectionId() );
+						if ( p_S == null || p_Sp == null ) continue;
+						final double[] l_S = p_S.getL();
+						for ( int d = 0; d < n; ++d )
+							partnerSumOnS[ d ] += l_S[ d ];
+						++count;
+					}
+					if ( count < minNumCorrespondences ) continue;
+
+					final double[] sumAccum = cmGlobalSumBySplit.computeIfAbsent( splitViewSetupId, k -> new double[ n ] );
+					for ( int d = 0; d < n; ++d )
+						sumAccum[ d ] += partnerSumOnS[ d ];
+					cmGlobalCountBySplit.merge( splitViewSetupId, count, Integer::sum );
+					validatedPartnersBySplit.computeIfAbsent( splitViewSetupId, k -> new ArrayList<>() ).add( partnerVid );
+				}
+			}
+
+			// Surface sampling per split of U.
+			for ( final int splitViewSetupId : splitSetupIds )
+			{
+				final List< ViewId > validatedPartners = validatedPartnersBySplit.get( splitViewSetupId );
+				if ( validatedPartners == null || validatedPartners.isEmpty() ) continue;
+
+				final Integer totalCount = cmGlobalCountBySplit.get( splitViewSetupId );
+				if ( totalCount == null || totalCount.intValue() == 0 ) continue;
+				final double[] sum = cmGlobalSumBySplit.get( splitViewSetupId );
+				final double[] cm_S_global = new double[ n ];
+				for ( int d = 0; d < n; ++d )
+					cm_S_global[ d ] = sum[ d ] / totalCount;
+
+				final AffineTransform3D model_S = modelBySplitSetupId.get( splitViewSetupId );
+				final double[] splitTr_S = splitTranslationBySplitSetupId.get( splitViewSetupId );
+				if ( model_S == null || splitTr_S == null ) continue;
+				final Interval splitInterval_S = splitInterval.get( splitViewSetupId );
+				if ( splitInterval_S == null ) continue;
+
+				final double[] r_CoM = new double[ n ];
+				model_S.apply( cm_S_global, r_CoM );
+
+				final int nSamples = pickSamplesPerAxis(
+						totalCount.intValue(),
+						seamSamplesScheduleThresholds,
+						seamSamplesScheduleValues,
+						nSamplesFallback );
+
+				for ( int i = 0; i < nSamples; ++i )
+					for ( int j = 0; j < nSamples; ++j )
+						for ( int k = 0; k < nSamples; ++k )
+						{
+							if ( i != 0 && i != nSamples - 1 && j != 0 && j != nSamples - 1 && k != 0 && k != nSamples - 1 )
+								continue;
+							final double[] sampleZeroMin = new double[ n ];
+							final long[] dims = splitInterval_S.dimensionsAsLongArray();
+							final int[] idx = { i, j, k };
+							for ( int d = 0; d < n; ++d )
+								sampleZeroMin[ d ] = idx[ d ] * ( dims[ d ] - 1 ) / ( double ) ( nSamples - 1 );
+							final double[] r_C = new double[ n ];
+							model_S.apply( sampleZeroMin, r_C );
+
+							// Find a partner containing r_C; capture its sampleInSp for the
+							// symmetric donation.
+							ViewId sharedPartner = null;
+							double[] sampleInSp = null;
+							for ( final ViewId partnerVid : validatedPartners )
+							{
+								final AffineTransform3D model_Sp = modelBySplitSetupId.get( partnerVid.getViewSetupId() );
+								if ( model_Sp == null ) continue;
+								final Interval splitInterval_Sp = splitInterval.get( partnerVid.getViewSetupId() );
+								if ( splitInterval_Sp == null ) continue;
+								final double[] candidate = new double[ n ];
+								model_Sp.applyInverse( candidate, r_C );
+								boolean inside = true;
+								for ( int d = 0; d < n; ++d )
+									if ( candidate[ d ] < 0.0 || candidate[ d ] >= splitInterval_Sp.dimension( d ) )
+									{
+										inside = false;
+										break;
+									}
+								if ( inside )
+								{
+									sharedPartner = partnerVid;
+									sampleInSp = candidate;
+									break;
+								}
+							}
+							if ( sharedPartner == null ) continue;
+
+							// Coverage check (skip nails too close to the correspondence CoM).
+							double sq = 0.0;
+							for ( int d = 0; d < n; ++d )
+							{
+								final double diff = r_C[ d ] - r_CoM[ d ];
+								sq += diff * diff;
+							}
+							if ( Math.sqrt( sq ) <= cornerCoverageRadius )
+								continue;
+
+							++totalNailSites;
+
+							// Self donation: U gets src = sampleZeroMin + splitTr_S, target = r_C.
+							final double[] srcInU = new double[ n ];
+							for ( int d = 0; d < n; ++d )
+								srcInU[ d ] = sampleZeroMin[ d ] + splitTr_S[ d ];
+							donations.computeIfAbsent( U, vid -> new ArrayList<>() )
+									.add( new DonatedNail( srcInU, r_C.clone(), U ) );
+							++totalDonations;
+							if ( landmarkVisitor != null )
+								landmarkVisitor.accept( new LandmarkRecord(
+										U, U, LandmarkRecord.TYPE_NAIL,
+										srcInU.clone(), r_C.clone() ) );
+
+							// Cross-view donation: U' gets src = sampleInSp + splitTr_S', target = r_C.
+							final ViewId partnerU = splitSetupIdToUnderlyingView.get( sharedPartner.getViewSetupId() );
+							final double[] splitTr_Sp = splitTranslationBySplitSetupId.get( sharedPartner.getViewSetupId() );
+							if ( partnerU != null && splitTr_Sp != null )
+							{
+								final double[] srcInPartnerU = new double[ n ];
+								for ( int d = 0; d < n; ++d )
+									srcInPartnerU[ d ] = sampleInSp[ d ] + splitTr_Sp[ d ];
+								donations.computeIfAbsent( partnerU, vid -> new ArrayList<>() )
+										.add( new DonatedNail( srcInPartnerU, r_C.clone(), U ) );
+								++totalDonations;
+								if ( landmarkVisitor != null )
+									landmarkVisitor.accept( new LandmarkRecord(
+											partnerU, U, LandmarkRecord.TYPE_NAIL,
+											srcInPartnerU.clone(), r_C.clone() ) );
+							}
+						}
+			}
+		}
+
+		if ( totalNailSites > 0 )
+			IOFunctions.println( "[TPS] cross-view nail donations: " + totalNailSites
+					+ " sites -> " + totalDonations + " landmarks across "
+					+ donations.size() + " recipient view(s) (radius=" + cornerCoverageRadius + ")" );
+
+		return donations;
 	}
 
 	private static AffineTransform3D buildPartnerModel(
