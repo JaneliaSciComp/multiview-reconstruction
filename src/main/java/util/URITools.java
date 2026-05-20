@@ -54,6 +54,7 @@ import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.s3.AmazonS3Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformationAdapter;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
@@ -67,6 +68,8 @@ import org.jdom2.output.Format;
 import org.jdom2.output.XMLOutputter;
 
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSerializer;
 
 import bdv.ViewerImgLoader;
 import bdv.img.n5.N5ImageLoader;
@@ -263,9 +266,24 @@ public class URITools
 
 	public static N5Writer instantiateN5Writer( final StorageFormat format, final URI uri )
 	{
-		final GsonBuilder builder = new GsonBuilder().registerTypeAdapter(
-				CoordinateTransformation.class,
-				new CoordinateTransformationAdapter() );
+		final GsonBuilder builder = new GsonBuilder()
+				.registerTypeAdapter(
+						CoordinateTransformation.class,
+						new CoordinateTransformationAdapter() )
+				.registerTypeAdapter(
+						Axis.class,
+						(JsonSerializer<Axis>) ( src, typeOfSrc, ctx ) -> {
+							// Skip "unit" when null so OME-NGFF .zattrs doesn't contain
+							// {"unit":null} (breaks Neuroglancer / BDV). n5-zarr's writer Gson
+							// forces serializeNulls(); without this adapter Axis is reflected
+							// and the channel axis's null unit leaks through.
+							final JsonObject obj = new JsonObject();
+							obj.addProperty( "type", src.getType() );
+							obj.addProperty( "name", src.getName() );
+							if ( src.getUnit() != null )
+								obj.addProperty( "unit", src.getUnit() );
+							return obj;
+						} );
 
 		if ( URITools.isFile( uri ) )
 		{
