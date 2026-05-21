@@ -59,8 +59,10 @@ public class SplitImgLoaderThinPlateSplineFusion
 	 * differ for cross-view tie nails. For {@code TYPE_CORR_COM}/{@code
 	 * TYPE_MIDPOINT} the donor field equals the underlying view.
 	 */
-	public static final class LandmarkRecord
+	public static final class LandmarkRecord implements java.io.Serializable
 	{
+		private static final long serialVersionUID = 1L;
+
 		public static final String TYPE_CORR_COM = "corrCOM";
 		public static final String TYPE_MIDPOINT = "midpoint";
 		public static final String TYPE_NAIL = "nail";
@@ -94,8 +96,9 @@ public class SplitImgLoaderThinPlateSplineFusion
 	 *
 	 * @see #computeCrossViewNailDonations
 	 */
-	public static final class DonatedNail
+	public static final class DonatedNail implements java.io.Serializable
 	{
+		private static final long serialVersionUID = 1L;
 		public final double[] src;       // length 3, recipient underlying-view pixel coords
 		public final double[] target;    // length 3, render coords
 		public final ViewId donorViewId; // underlying view whose surface sample generated this nail
