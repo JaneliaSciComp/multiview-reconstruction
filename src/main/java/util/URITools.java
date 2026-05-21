@@ -604,7 +604,7 @@ public class URITools
 		final boolean hasScheme = scheme != null;
 		if ( !hasScheme )
 			return false;
-		if ( AmazonS3Utils.S3_SCHEME.asPredicate().test( scheme ) )
+		if ( "s3".equalsIgnoreCase( scheme ) )
 			return true;
 		return uri.getHost() != null && HTTPS_SCHEME.asPredicate().test( scheme );
 	}
