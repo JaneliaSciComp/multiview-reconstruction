@@ -56,12 +56,12 @@ public class SplitImgLoaderThinPlateSplineFusion
 	 * <em>recipient</em> underlying view (whose TPS the landmark feeds) and
 	 * {@link #donorViewId} is the underlying view whose split sub-view's
 	 * surface produced the corner; the two coincide for "self" donations and
-	 * differ for cross-view tie nails. For {@code TYPE_CENTER}/{@code
+	 * differ for cross-view tie nails. For {@code TYPE_CORR_COM}/{@code
 	 * TYPE_MIDPOINT} the donor field equals the underlying view.
 	 */
 	public static final class LandmarkRecord
 	{
-		public static final String TYPE_CENTER = "center";
+		public static final String TYPE_CORR_COM = "corrCOM";
 		public static final String TYPE_MIDPOINT = "midpoint";
 		public static final String TYPE_NAIL = "nail";
 
@@ -628,7 +628,7 @@ public class SplitImgLoaderThinPlateSplineFusion
 			final int seamSamplesPerAxis,                          // no-op here; see above
 			final int[] seamSamplesScheduleThresholds,             // no-op here; see above
 			final int[] seamSamplesScheduleValues,                 // no-op here; see above
-			final Consumer< LandmarkRecord > landmarkVisitor,      // nullable; invoked once per emitted CENTER/MIDPOINT landmark
+			final Consumer< LandmarkRecord > landmarkVisitor,      // nullable; invoked once per emitted CORR_COM/MIDPOINT landmark
 			final List< DonatedNail > donatedNails )               // nullable; per-recipient list from computeCrossViewNailDonations
 	{
 		final int n = 3;
@@ -689,7 +689,7 @@ public class SplitImgLoaderThinPlateSplineFusion
 			targetList.add( q );
 
 			if ( landmarkVisitor != null )
-				landmarkVisitor.accept( new LandmarkRecord( underlyingViewId, LandmarkRecord.TYPE_CENTER, src.clone(), q.clone() ) );
+				landmarkVisitor.accept( new LandmarkRecord( underlyingViewId, LandmarkRecord.TYPE_CORR_COM, src.clone(), q.clone() ) );
 		}
 
 		// ----- Pass 2: cross-view correspondence midpoint landmarks. -----
