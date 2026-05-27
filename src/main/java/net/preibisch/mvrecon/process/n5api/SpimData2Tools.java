@@ -664,6 +664,8 @@ public class SpimData2Tools
 				new PointSpreadFunctions(), //oldSpimData.getPointSpreadFunctions()
 				oldSpimData.getStitchingResults(),
 				oldSpimData.getIntensityAdjustments() );
+		// preserve the action history across the resave-reduce so the new XML keeps the provenance
+		newSpimData.setActionHistory( oldSpimData.getActionHistory() );
 
 		return newSpimData;
 	}

@@ -111,4 +111,26 @@ public class IterativeClosestPointGUI extends PairwiseGUI
 
 	@Override
 	public double globalOptError() { return parameters.getMaxDistance(); }
+
+	@Override
+	public java.util.Map<String,String> describeParameters()
+	{
+		final java.util.LinkedHashMap<String,String> p = new java.util.LinkedHashMap<>();
+		p.put( "matchingMethod", "ICP" );
+		if ( model != null )
+		{
+			final String tm = TransformationModelGUI.modelIndexToSparkName( model.getModelIndex() );
+			if ( tm != null ) p.put( "transformationModel", tm );
+			if ( model.isRegularize() )
+			{
+				final String rm = TransformationModelGUI.regularizationIndexToSparkName( model.getRegularizedModelIndex() );
+				if ( rm != null ) p.put( "regularizationModel", rm );
+				p.put( "lambda", Double.toString( model.getLambda() ) );
+			}
+		}
+		p.put( "icpMaxError", Double.toString( IterativeClosestPointParameters.maxDistance ) );
+		p.put( "icpIterations", Integer.toString( IterativeClosestPointParameters.maxIterations ) );
+		p.put( "icpUseRANSAC", Boolean.toString( IterativeClosestPointParameters.defaultUseRANSAC ) );
+		return p;
+	}
 }

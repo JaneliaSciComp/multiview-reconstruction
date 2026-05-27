@@ -138,6 +138,40 @@ public class Image_Fusion implements PlugIn
 		if ( !exporter.queryParameters( fusion ) )
 			return false;
 
+		// record action history
+		{
+			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "fusion", fusion.getFusionType() );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "downsampling", fusion.getDownsampling() );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "anisotropyFactor", fusion.getAnisotropyFactor() );
+			// translate mvrecon pixel-type int to BigStitcher-Spark dataType name
+			final String dataType;
+			switch ( fusion.getPixelType() )
+			{
+				case 2: dataType = "UINT8"; break;
+				case 1: dataType = "UINT16"; break;
+				default: dataType = "FLOAT32"; break;
+			}
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "pixelType", dataType );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "exporter", exporter.getDescription() );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "boundingBox", fusion.getBoundingBox() == null ? null : fusion.getBoundingBox().toString() );
+			// pull exporter-specific params (n5Path, storage, blockSize, compression, …)
+			try
+			{
+				for ( final java.util.Map.Entry<String,String> e : exporter.describeParameters().entrySet() )
+					if ( e.getValue() != null )
+						params.put( e.getKey(), e.getValue() );
+			}
+			catch ( final Throwable ignore ) {}
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.record(
+					spimData,
+					"fusion",
+					Image_Fusion.class.getName(),
+					params,
+					viewsToProcess,
+					"fusion" );
+		}
+
 		// one common executerservice
 		final ExecutorService taskExecutor = Executors.newFixedThreadPool( Threads.numThreads() );
 

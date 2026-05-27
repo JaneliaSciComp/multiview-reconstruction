@@ -79,4 +79,19 @@ public interface ImgExport
 	 * @return - to be displayed in the generic dialog
 	 */
 	String getDescription();
+
+	/**
+	 * Optional hook used by the action-history feature to capture exporter-specific
+	 * parameters (output path, storage format, block size, compression, …) after
+	 * {@link #queryParameters(FusionExportInterface)} has run. Keys should match the
+	 * neutral param names the action-history translator expects so the resulting
+	 * record can be rendered as a BigStitcher-Spark CLI invocation.
+	 *
+	 * <p>Default: empty map. Implementations that map cleanly to a Spark command
+	 * (e.g. N5/Zarr/HDF5 export) should override.</p>
+	 */
+	default java.util.Map<String,String> describeParameters()
+	{
+		return java.util.Collections.emptyMap();
+	}
 }
