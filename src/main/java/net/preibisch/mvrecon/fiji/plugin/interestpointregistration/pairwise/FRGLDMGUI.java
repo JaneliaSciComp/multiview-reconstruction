@@ -124,4 +124,33 @@ public class FRGLDMGUI extends PairwiseGUI
 
 	@Override
 	public double globalOptError() { return ransacParams.getMaxEpsilon(); }
+
+	@Override
+	public java.util.Map<String,String> describeParameters()
+	{
+		final java.util.LinkedHashMap<String,String> p = new java.util.LinkedHashMap<>();
+		p.put( "matchingMethod", "FAST_TRANSLATION" );
+		if ( model != null )
+		{
+			final String tm = TransformationModelGUI.modelIndexToSparkName( model.getModelIndex() );
+			if ( tm != null ) p.put( "transformationModel", tm );
+			if ( model.isRegularize() )
+			{
+				final String rm = TransformationModelGUI.regularizationIndexToSparkName( model.getRegularizedModelIndex() );
+				if ( rm != null ) p.put( "regularizationModel", rm );
+				p.put( "lambda", Double.toString( model.getLambda() ) );
+			}
+		}
+		p.put( "redundancy", Integer.toString( FRGLDMParameters.redundancy ) );
+		p.put( "significance", Double.toString( FRGLDMParameters.ratioOfDistance ) );
+		if ( ransacParams != null )
+		{
+			p.put( "ransacMaxError", Double.toString( ransacParams.getMaxEpsilon() ) );
+			p.put( "ransacMinInlierRatio", Double.toString( ransacParams.getMinInlierRatio() ) );
+			p.put( "ransacMinNumInliers", Integer.toString( ransacParams.getMinNumMatches() ) );
+			p.put( "ransacIterations", Integer.toString( ransacParams.getNumIterations() ) );
+			p.put( "ransacMultiConsensus", Boolean.toString( ransacParams.multiConsensus() ) );
+		}
+		return p;
+	}
 }

@@ -254,6 +254,54 @@ public class Interest_Point_Registration implements PlugIn
 				arp.showStatistics ) )
 			return false;
 
+		// record action history
+		{
+			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
+			// collapse the per-view label map to a comma-separated unique label list
+			final java.util.LinkedHashSet<String> labels = new java.util.LinkedHashSet<>();
+			if ( brp.labelMap != null )
+				for ( final java.util.HashMap<String,Double> m : brp.labelMap.values() )
+					if ( m != null ) labels.addAll( m.keySet() );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "label", String.join( ",", labels ) );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "registrationType", brp.registrationType );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "overlapType", brp.overlapType );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "interestpointsForReg", brp.interestPointOverlapType );
+			// matchingMethod (e.g. FAST_TRANSLATION, ICP) is set by pwr.describeParameters() below
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "groupTiles", brp.groupTiles );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "groupIllums", brp.groupIllums );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "groupChannels", brp.groupChannels );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "matchAcrossLabels", brp.matchAcrossLabels );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "interestPointMergeDistance", gp == null ? null : gp.mergeDistance );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "sourcePoints", "IP" );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "clearCorrespondences", "true" );
+			if ( arp != null && arp.globalOptParams != null )
+			{
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "globalOptMethod", arp.globalOptParams.method );
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "preAlign", arp.globalOptParams.preAlign ? "PREALIGN" : "NO_PREALIGN" );
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "relativeThreshold", arp.globalOptParams.relativeThreshold );
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "absoluteThreshold", arp.globalOptParams.absoluteThreshold );
+			}
+			// pull matcher-specific params (transformation model, regularization, RANSAC, descriptor params, ICP params, …)
+			try
+			{
+				if ( brp.pwr != null )
+					for ( final java.util.Map.Entry<String,String> e : brp.pwr.describeParameters().entrySet() )
+						if ( e.getValue() != null )
+							params.put( e.getKey(), e.getValue() );
+			}
+			catch ( final Throwable ignore ) {}
+			final String resultRef = labels.isEmpty()
+					? "registrations"
+					: "interestpoints:" + labels.iterator().next();
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.record(
+					data,
+					"register-interestpoints",
+					Interest_Point_Registration.class.getName(),
+					params,
+					viewIds,
+					resultRef );
+		}
+
 		// save the XML including transforms and correspondences
 		if ( saveXML )
 			new XmlIoSpimData2().saveWithFilename( data, xmlFileName );

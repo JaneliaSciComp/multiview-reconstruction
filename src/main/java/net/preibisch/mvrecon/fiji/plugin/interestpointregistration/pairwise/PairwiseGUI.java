@@ -169,4 +169,18 @@ public abstract class PairwiseGUI
 	 * @return - the error allowed for the global optimization
 	 */
 	public abstract double globalOptError();
+
+	/**
+	 * Optional hook used by the action-history feature to capture matcher-specific
+	 * parameters (RANSAC iterations, search radius, neighbors, …) after
+	 * {@link #parseDialog(ij.gui.GenericDialog)} has run. Keys should match the
+	 * neutral param names the action-history translator expects, e.g.
+	 * {@code ransacIterations}, {@code ransacMaxError}, {@code numNeighbors}.
+	 *
+	 * <p>Default: empty map. Subclasses that have CLI-translatable params should override.</p>
+	 */
+	public java.util.Map<String,String> describeParameters()
+	{
+		return java.util.Collections.emptyMap();
+	}
 }

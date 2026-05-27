@@ -200,6 +200,23 @@ public class Intensity_Adjustment implements PlugIn
 
 		data.getIntensityAdjustments().getIntensityAdjustments().putAll( intensityMapping );
 
+		{
+			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "boundingBox", boundingBox );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "downsampling", downsampling );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "maxInliers", maxInliers );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "affine", affine );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "translationRegularization", regTrans );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "identityRegularization", regIdentity );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.record(
+					data,
+					"intensity-adjustment",
+					Intensity_Adjustment.class.getName(),
+					params,
+					viewIds,
+					"intensity-adjustments" );
+		}
+
 		if ( saveXML )
 			new XmlIoSpimData2().saveWithFilename( data, xmlFileName );
 

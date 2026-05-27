@@ -42,6 +42,7 @@ import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AbstractImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -194,6 +195,23 @@ public class Interest_Point_Detection implements PlugIn
 
 		// if grouped, we need to get the min/max intensity for all groups
 		ipd.preprocess();
+
+		// record action history before processing — params reflect the GUI choices that drive ipd
+		{
+			final java.util.LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+			ActionHistoryRecorder.put( params, "label", label );
+			ActionHistoryRecorder.put( params, "type", staticAlgorithms.get( algorithm ).getDescription() );
+			ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
+			ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
+			ActionHistoryRecorder.put( params, "algorithmParameters", ipd.getParameters() );
+			ActionHistoryRecorder.record(
+					data,
+					"detect-interestpoints",
+					Interest_Point_Detection.class.getName(),
+					params,
+					viewIds,
+					"interestpoints:" + label );
+		}
 
 		// now extract all the detections
 		for ( final TimePoint tp : SpimData2.getAllTimePointsSorted( data, viewIds ) )

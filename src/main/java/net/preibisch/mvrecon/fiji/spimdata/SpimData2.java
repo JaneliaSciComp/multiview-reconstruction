@@ -48,6 +48,7 @@ import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
@@ -68,6 +69,7 @@ public class SpimData2 extends SpimData
 	private PointSpreadFunctions pointSpreadFunctions;
 	private StitchingResults stitchingResults;
 	private IntensityAdjustments intensityAdjustments;
+	private ActionHistory actionHistory = new ActionHistory();
 	public boolean gridMoveRequested = false;
 
 	/*
@@ -112,6 +114,7 @@ public class SpimData2 extends SpimData
 	public PointSpreadFunctions getPointSpreadFunctions() { return pointSpreadFunctions; }
 	public StitchingResults getStitchingResults() { return stitchingResults; }
 	public  IntensityAdjustments getIntensityAdjustments() { return intensityAdjustments; }
+	public ActionHistory getActionHistory() { return actionHistory; }
 
 	protected void setViewsInterestPoints( final ViewInterestPoints viewsInterestPoints )
 	{
@@ -136,6 +139,11 @@ public class SpimData2 extends SpimData
 	protected void setIntensityAdjustments( final IntensityAdjustments intensityAdjustments )
 	{
 		this.intensityAdjustments = intensityAdjustments;
+	}
+
+	public void setActionHistory( final ActionHistory actionHistory )
+	{
+		this.actionHistory = actionHistory == null ? new ActionHistory() : actionHistory;
 	}
 
 	/**
