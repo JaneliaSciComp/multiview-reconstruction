@@ -118,4 +118,37 @@ public class GeometricHashingGUI extends PairwiseGUI
 
 	@Override
 	public double globalOptError() { return ransacParams.getMaxEpsilon(); }
+
+	@Override
+	public java.util.Map<String,String> describeParameters()
+	{
+		final java.util.LinkedHashMap<String,String> p = new java.util.LinkedHashMap<>();
+		// matching method name as used on the Spark CLI
+		p.put( "matchingMethod", "FAST_ROTATION" );
+		// transformation/regularization model + lambda
+		if ( model != null )
+		{
+			final String tm = TransformationModelGUI.modelIndexToSparkName( model.getModelIndex() );
+			if ( tm != null ) p.put( "transformationModel", tm );
+			if ( model.isRegularize() )
+			{
+				final String rm = TransformationModelGUI.regularizationIndexToSparkName( model.getRegularizedModelIndex() );
+				if ( rm != null ) p.put( "regularizationModel", rm );
+				p.put( "lambda", Double.toString( model.getLambda() ) );
+			}
+		}
+		// descriptor params
+		p.put( "redundancy", Integer.toString( net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingParameters.redundancy ) );
+		p.put( "significance", Double.toString( net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingParameters.ratioOfDistance ) );
+		// RANSAC params
+		if ( ransacParams != null )
+		{
+			p.put( "ransacMaxError", Double.toString( ransacParams.getMaxEpsilon() ) );
+			p.put( "ransacMinInlierRatio", Double.toString( ransacParams.getMinInlierRatio() ) );
+			p.put( "ransacMinNumInliers", Integer.toString( ransacParams.getMinNumMatches() ) );
+			p.put( "ransacIterations", Integer.toString( ransacParams.getNumIterations() ) );
+			p.put( "ransacMultiConsensus", Boolean.toString( ransacParams.multiConsensus() ) );
+		}
+		return p;
+	}
 }

@@ -182,6 +182,21 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	@Override
 	public String getDescription() { return "OME-ZARR/N5/HDF5 export using N5-API"; }
 
+	@Override
+	public java.util.Map<String,String> describeParameters()
+	{
+		final java.util.LinkedHashMap<String,String> p = new java.util.LinkedHashMap<>();
+		if ( path != null ) p.put( "n5Path", path.toString() );
+		if ( storageType != null ) p.put( "storage", storageType.toString() );
+		p.put( "blockSize", bsX + "," + bsY + "," + bsZ );
+		p.put( "blockScale", bsFactorX + "," + bsFactorY + "," + bsFactorZ );
+		if ( compression != null ) p.put( "compression", compression.getClass().getSimpleName() );
+		p.put( "useSharding", Boolean.toString( useSharding ) );
+		if ( bdv && xmlOut != null ) p.put( "xmlOut", xmlOut.toString() );
+		p.put( "multiRes", Boolean.toString( downsampling != null ) );
+		return p;
+	}
+
 	private MultiResolutionLevelInfo[] mrInfoZarr = null;
 	private ArrayList<TimePoint> timepoints;
 	private ArrayList<Channel> channels;

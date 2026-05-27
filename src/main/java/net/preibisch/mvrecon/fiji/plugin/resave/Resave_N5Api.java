@@ -458,6 +458,27 @@ public class Resave_N5Api implements PlugIn
 
 		sdReduced.setBasePathURI( URITools.getParentURINoEx( n5Params.xmlURI ) );
 
+		{
+			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "n5Path", n5Params.n5URI );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "xmlOut", n5Params.xmlURI );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "storage", n5Params.format );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "blockSize", java.util.Arrays.toString( n5Params.subdivisions[ 0 ] ).replace(" ", "") );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "blockScale", java.util.Arrays.toString( n5Params.blockSizeFactor ).replace(" ", "") );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "compression", n5Params.compression == null ? null : n5Params.compression.getClass().getSimpleName() );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "useSharding", n5Params.useSharding );
+			final java.util.ArrayList<mpicbg.spim.data.sequence.ViewId> vidCopy = new java.util.ArrayList<>();
+			for ( final mpicbg.spim.data.sequence.ViewId v : vidsToResave )
+				vidCopy.add( v );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.record(
+					sdReduced,
+					"resave",
+					Resave_N5Api.class.getName(),
+					params,
+					vidCopy,
+					"resave:" + n5Params.n5URI );
+		}
+
 		if ( saveXML )
 		{
 			progressWriter.out().println( new Date( System.currentTimeMillis() ) + ": Saving " + n5Params.xmlURI );

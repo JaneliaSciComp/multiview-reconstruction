@@ -555,6 +555,15 @@ public class InterestPointExplorerPanel extends JPanel
 						vd ) );
 	
 				vip.getViewInterestPointLists( vd ).getHashMap().remove( label );
+
+				// drop matching action-history entries so the history reflects current data state
+				try
+				{
+					final net.preibisch.mvrecon.fiji.spimdata.SpimData2 sd = viewSetupExplorer.getSpimData();
+					if ( sd != null && sd.getActionHistory() != null )
+						sd.getActionHistory().removeByResultRef( "interestpoints:" + label );
+				}
+				catch ( final Throwable ignore ) {}
 			}
 		}
 
