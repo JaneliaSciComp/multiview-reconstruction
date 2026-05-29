@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.scijava</groupId>
 		<artifactId>pom-scijava</artifactId>
-		<version>43.0.0</version>
+		<version>44.0.0</version>
 		<relativePath />
 	</parent>
 
@@ -98,6 +98,7 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 
 		<license.licenseName>gpl_v2</license.licenseName>
 		<license.copyrightOwners>Multiview Reconstruction developers.</license.copyrightOwners>
+		<scijava.jvm.version>8</scijava.jvm.version>
 
 		<!-- NB: Deploy releases to the SciJava Maven repository. -->
 		<releaseProfiles>sign,deploy-to-scijava</releaseProfiles>
@@ -106,12 +107,9 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<ijp-kheops.version>0.6.2</ijp-kheops.version>
 		<generic-archiver.version>1.1.0</generic-archiver.version>
 
-		<mpicbg.version>1.6.6</mpicbg.version>
-
-		<!-- TEMP: Until pom-scijava 44.0.0 is released. -->
-		<imglib2.version>8.0.0</imglib2.version>
+		<!-- TEMP: Until pom-scijava 45.0.0 is released. -->
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
-		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
+		<mpicbg.version>1.6.6</mpicbg.version>
 	</properties>
 
 	<repositories>
