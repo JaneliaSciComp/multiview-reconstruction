@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * Renders an {@link ActionRecord} as one or more BigStitcher-Spark CLI command lines.
@@ -56,6 +57,23 @@ public class ActionToSparkCli
 		 * not the currently open project (which is the resave's output).
 		 */
 		String xmlParamKey = null;
+		/**
+		 * Suppress this key's flag when {@link #suppressWhen} evaluates true against the recorded
+		 * params. Used for the single case of {@code --blockScale} being rejected by SparkFusion
+		 * once the container is sharded.
+		 */
+		String suppressKey = null;
+		Predicate<Map<String,String>> suppressWhen = null;
+		/**
+		 * Whole-recipe gate on the affine-vs-nonrigid fusion branch: {@code null} = always apply,
+		 * {@code true} = only when {@code nonRigid=true} was recorded, {@code false} = only when not.
+		 */
+		Boolean requiresNonRigid = null;
+		/**
+		 * Single key whose recorded value is a {@value #MULTI_VALUE_DELIM}-delimited list expanded
+		 * into repeated flag occurrences (e.g. {@code -ip beads -ip nuclei}). Used for {@code -ip}.
+		 */
+		String repeatKey = null;
 
 		Recipe( final String script, final boolean includeXml, final String[]... keyFlagPairs )
 		{
@@ -66,6 +84,9 @@ public class ActionToSparkCli
 				keyToFlag.put( kv[ 0 ], kv[ 1 ] );
 		}
 	}
+
+	/** Delimiter for multi-valued recorded params expanded into repeated flags (see {@code Recipe.repeatKeys}). */
+	public static final String MULTI_VALUE_DELIM = ";";
 
 	private static final Map<String,List<Recipe>> REGISTRY = buildRegistry();
 
@@ -165,10 +186,13 @@ public class ActionToSparkCli
 				new String[]{ "disableSubpixelResolution", "--disableSubpixelResolution" }
 		) ) );
 
-		// Spark fusion is a two-phase workflow: create-fusion-container first (driver-only,
-		// uses -x), then fusion (distributed, reads container metadata, no -x).
+		// Spark affine fusion is a two-phase workflow: create-fusion-container first (driver-only,
+		// uses -x), then fusion (distributed, reads container metadata, no -x). The TPS nonrigid
+		// path is a single-shot nonrigid-fusion that creates its own writer/dataset
+		// (see SparkNonRigidFusion.java:237,242) and does not consume a pre-created container, so
+		// create-fusion-container is skipped on that branch.
 		final List<Recipe> fusion = new ArrayList<>();
-		fusion.add( new Recipe(
+		final Recipe createContainer = new Recipe(
 				"create-fusion-container", true,
 				new String[]{ "n5Path", "-o" },
 				new String[]{ "storage", "-s" },
@@ -187,8 +211,10 @@ public class ActionToSparkCli
 				new String[]{ "useSharding", "--useSharding" },
 				new String[]{ "bdv", "--bdv" },
 				new String[]{ "xmlOut", "-xo" }
-		) );
-		fusion.add( new Recipe(
+		);
+		createContainer.requiresNonRigid = false;
+		fusion.add( createContainer );
+		final Recipe fusionRun = new Recipe(
 				"fusion", false, // fusion uses container metadata, not -x
 				new String[]{ "n5Path", "-o" },
 				new String[]{ "storage", "-s" },
@@ -198,7 +224,41 @@ public class ActionToSparkCli
 				new String[]{ "blockScale", "--blockScale" },
 				new String[]{ "channelId", "--channelId" },
 				new String[]{ "timepointId", "--timepointId" }
-		) );
+		);
+		// SparkFusion rejects --blockScale once the container is sharded; shard size determines
+		// the compute-block size. Omit it whenever the create-fusion-container step would shard.
+		fusionRun.suppressKey = "blockScale";
+		fusionRun.suppressWhen = ActionToSparkCli::shardingEnabled;
+		fusionRun.requiresNonRigid = false;
+		fusion.add( fusionRun );
+
+		// Single-shot nonrigid (TPS) fusion: takes -x, writes its own dataset, requires -ip.
+		// SparkNonRigidFusion validates exactly-one-of -d / --bdv. The GUI records `bdvFirst` as
+		// the (tp,vs) the first fusion group would receive — only meaningful in BDV mode, and only
+		// the first group (no fan-out today, see ExportN5Api.firstAssignedViewId). If the GUI ran
+		// without BDV, `bdvFirst` is absent and the recorded command will need `-d <path>` filled
+		// in by hand before it runs.
+		// NOTE: SparkNonRigidFusion does not accept -c / -cl / -ds (compression,
+		// compressionLevel, downsampling pyramid) — see its @Option list — so those keys are
+		// recorded by the GUI exporter but intentionally not mapped here.
+		final Recipe nonRigidRun = new Recipe(
+				"nonrigid-fusion", true,
+				new String[]{ "n5Path", "-o" },
+				new String[]{ "storage", "-s" },
+				new String[]{ "blockSize", "--blockSize" },
+				new String[]{ "blockScale", "--blockScale" },
+				new String[]{ "pixelType", "-p" },
+				new String[]{ "minIntensity", "--minIntensity" },
+				new String[]{ "maxIntensity", "--maxIntensity" },
+				new String[]{ "boundingBox", "-b" },
+				new String[]{ "bdvFirst", "--bdv" },
+				new String[]{ "xmlOut", "-xo" },
+				new String[]{ "n5Dataset", "-d" },
+				new String[]{ "interestPoints", "-ip" }
+		);
+		nonRigidRun.requiresNonRigid = true;
+		nonRigidRun.repeatKey = "interestPoints";
+		fusion.add( nonRigidRun );
 		r.put( "fusion", fusion );
 
 		// intensity-adjustment is intentionally NOT registered: its Spark equivalent is a two-stage
@@ -252,29 +312,45 @@ public class ActionToSparkCli
 			return Collections.singletonList( "# unknown action: " + record.getActionId() );
 
 		final ArrayList<String> out = new ArrayList<>( recipes.size() );
+		final Map<String,String> params = record.getParams();
+		final boolean nonRigid = nonRigid( params );
 		for ( final Recipe recipe : recipes )
-			out.add( renderOne( recipe, record, xmlPath ) );
+		{
+			if ( recipe.requiresNonRigid != null && recipe.requiresNonRigid != nonRigid )
+				continue;
+			out.add( renderOne( recipe, params, xmlPath ) );
+		}
 		return out;
 	}
 
-	private static String renderOne( final Recipe recipe, final ActionRecord r, final String xmlPath )
+	private static String renderOne( final Recipe recipe, final Map<String,String> params, final String xmlPath )
 	{
 		final StringBuilder sb = new StringBuilder();
-		sb.append( recipe.script );
+		// emitted with a `./` prefix so it matches the install-script wrapper invocation convention
+		sb.append( "./" ).append( recipe.script );
 		if ( recipe.includeXml )
 		{
-			final String x = recipe.xmlParamKey != null ? r.getParams().get( recipe.xmlParamKey ) : xmlPath;
+			final String x = recipe.xmlParamKey != null ? params.get( recipe.xmlParamKey ) : xmlPath;
 			if ( x != null && !x.isEmpty() )
 				sb.append( " -x " ).append( quote( x ) );
 		}
 
-		final Map<String,String> params = r.getParams();
 		for ( final Map.Entry<String,String> mapping : recipe.keyToFlag.entrySet() )
 		{
 			final String value = params.get( mapping.getKey() );
 			if ( value == null || value.isEmpty() )
 				continue;
+			if ( mapping.getKey().equals( recipe.suppressKey ) && recipe.suppressWhen.test( params ) )
+				continue;
 			final String flag = mapping.getValue();
+			// multi-valued: emit `flag value` per non-empty element
+			if ( mapping.getKey().equals( recipe.repeatKey ) )
+			{
+				for ( final String part : value.split( java.util.regex.Pattern.quote( MULTI_VALUE_DELIM ) ) )
+					if ( !part.isEmpty() )
+						sb.append( ' ' ).append( flag ).append( ' ' ).append( quote( part ) );
+				continue;
+			}
 			// boolean flag (value "true"): emit just the flag; "false": omit entirely
 			if ( "true".equalsIgnoreCase( value ) )
 				sb.append( ' ' ).append( flag );
@@ -284,6 +360,28 @@ public class ActionToSparkCli
 				sb.append( ' ' ).append( flag ).append( ' ' ).append( quote( value ) );
 		}
 		return sb.toString();
+	}
+
+	/**
+	 * Mirrors CreateFusionContainer's sharding decision: sharding is on when explicitly enabled,
+	 * or when left to auto-detect (param absent) and the storage is ZARR v3. ZARR2/N5/HDF5 never
+	 * shard. Storage absent defaults to ZARR v3, matching the CLI default.
+	 */
+	private static boolean shardingEnabled( final Map<String,String> params )
+	{
+		final String useSharding = params.get( "useSharding" );
+		if ( "true".equalsIgnoreCase( useSharding ) )
+			return true;
+		if ( "false".equalsIgnoreCase( useSharding ) )
+			return false;
+		final String storage = params.get( "storage" );
+		return storage == null || storage.isEmpty() || "ZARR".equalsIgnoreCase( storage );
+	}
+
+	/** True when the recorded fusion action ran the TPS nonrigid pathway (labels selected in GUI). */
+	private static boolean nonRigid( final Map<String,String> params )
+	{
+		return "true".equalsIgnoreCase( params.get( "nonRigid" ) );
 	}
 
 	private static String quote( final String s )

@@ -194,6 +194,12 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		p.put( "useSharding", Boolean.toString( useSharding ) );
 		if ( bdv ) p.put( "bdv", "true" );
 		if ( bdv && xmlOut != null ) p.put( "xmlOut", xmlOut.toString() );
+		// "tp,vs" for the first fusion group; consumed by the nonrigid-fusion recipe as --bdv
+		if ( bdv && firstAssignedViewId != null )
+			p.put( "bdvFirst", firstAssignedViewId.getTimePointId() + "," + firstAssignedViewId.getViewSetupId() );
+		// non-BDV: predicted first-group s0 dataset path; consumed by the nonrigid-fusion recipe as -d
+		if ( !bdv && firstAssignedDatasetPath != null )
+			p.put( "n5Dataset", firstAssignedDatasetPath );
 		p.put( "multiRes", Boolean.toString( downsampling != null ) );
 		// the multi-resolution pyramid as Spark's -ds expects it (split=";"): "1,1,1;2,2,1;4,4,2;..."
 		if ( downsampling != null )
@@ -212,6 +218,23 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	private MultiResolutionLevelInfo[] mrInfoZarr = null;
 	private ArrayList<TimePoint> timepoints;
 	private ArrayList<Channel> channels;
+	/**
+	 * (tp, vs) the first fusion group would receive if the run executed now. Computed at the
+	 * end of {@link #queryParameters} using the same logic as {@link #getViewIdForGroup} for
+	 * a fresh {@code countViewIds} map. Surfaces in {@link #describeParameters} as
+	 * {@code bdvFirst} so the action history can put a meaningful {@code --bdv tp,vs} on the
+	 * single recorded nonrigid-fusion command.
+	 */
+	private ViewId firstAssignedViewId = null;
+	/**
+	 * Predicted s0 dataset path for the first fusion group in non-BDV mode. Surfaces in
+	 * {@link #describeParameters} as {@code n5Dataset} so the recorded nonrigid-fusion command
+	 * has a populated {@code -d <path>} value (the only dataset path SparkNonRigidFusion accepts
+	 * when {@code --bdv} is absent). Layout depends on the storage variant:
+	 * N5/HDF5 → {@code title/s0}; ZARR sub-container → {@code title.zarr/0};
+	 * ZARR single container → {@code /0}.
+	 */
+	private String firstAssignedDatasetPath = null;
 
 	@Override
 	public <T extends RealType<T> & NativeType<T>> boolean exportImage(
@@ -1086,6 +1109,47 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		else
 		{
 			this.downsampling = new int[][] {{1,1,1}}; // no downsampling
+		}
+
+		// Record a (tp,vs) for action history. Prefer the user-picked value when the GUI asked
+		// for one (single-group BDV); otherwise pick a real ViewId from the current bounding-box
+		// selection rather than inventing one from the assignment algorithm — that way --bdv
+		// always points to a view that actually exists in the input data.
+		if ( bdv )
+		{
+			if ( manuallyAssignViewId )
+			{
+				firstAssignedViewId = new ViewId( tpId, vsId );
+			}
+			else if ( fusion.getViews() != null && !fusion.getViews().isEmpty() )
+			{
+				final ViewId v = fusion.getViews().iterator().next();
+				firstAssignedViewId = new ViewId( v.getTimePointId(), v.getViewSetupId() );
+			}
+		}
+		// Non-BDV: predict the first fusion group's s0 dataset path so the recorded nonrigid-fusion
+		// command can populate `-d <path>`. Title format mirrors Image_Fusion.getTitle exactly;
+		// inlined here to avoid a fiji.plugin → process.export dependency. Per-group path layout
+		// depends on the storage variant — see exportImage's branches around lines 341/394/405/451.
+		else if ( fusion.getFusionGroups() != null && !fusion.getFusionGroups().isEmpty() )
+		{
+			final Group< ViewDescription > firstGroup =
+					Group.getGroupsSorted( fusion.getFusionGroups() ).iterator().next();
+			final ViewDescription vd0 = firstGroup.iterator().next();
+			final String title;
+			if ( splittingType == 0 ) // each tp & channel
+				title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId();
+			else if ( splittingType == 1 ) // each tp, channel & illumination
+				title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId() + "_illum_" + vd0.getViewSetup().getIllumination().getId();
+			else if ( splittingType == 2 ) // all views together
+				title = "fused";
+			else // each view
+				title = "fused_tp_" + vd0.getTimePointId() + "_vs_" + vd0.getViewSetupId();
+
+			if ( storageType == StorageFormat.N5 || storageType == StorageFormat.HDF5 )
+				firstAssignedDatasetPath = title + "/s0";
+			else if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
+				firstAssignedDatasetPath = omeZarrOneContainer ? "/0" : title + ".zarr/0";
 		}
 
 		return true;
