@@ -184,6 +184,25 @@ public class Image_Fusion implements PlugIn
 			}
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "exporter", exporter.getDescription() );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "boundingBox", bbTitle );
+			// nonrigid (TPS): routes the second Spark step from `fusion` to `nonrigid-fusion`.
+			// Labels are joined with the multi-value delimiter so the translator can re-emit them
+			// as repeated `-ip <label>` flags. Requires at least one label; falling back to affine
+			// for an empty label list, since SparkNonRigidFusion requires `-ip`.
+			if ( fusion.getNonRigidParameters().isActive()
+					&& fusion.getNonRigidParameters().getLabels() != null
+					&& !fusion.getNonRigidParameters().getLabels().isEmpty() )
+			{
+				// labels from the GUI may carry an InterestPointTools.warningLabel suffix
+				// ("... (WARNING: Only available for N)") for incomplete coverage; strip it so the
+				// emitted -ip arg matches the actual label name
+				final String warn = net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools.warningLabel;
+				final java.util.ArrayList<String> cleaned = new java.util.ArrayList<>();
+				for ( final String raw : fusion.getNonRigidParameters().getLabels() )
+					cleaned.add( raw.contains( warn ) ? raw.substring( 0, raw.indexOf( warn ) ) : raw );
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "nonRigid", Boolean.TRUE );
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "interestPoints",
+						String.join( net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli.MULTI_VALUE_DELIM, cleaned ) );
+			}
 			// pull exporter-specific params (n5Path, storage, blockSize, compression, …)
 			try
 			{
