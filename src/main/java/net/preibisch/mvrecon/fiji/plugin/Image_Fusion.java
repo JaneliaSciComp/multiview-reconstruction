@@ -105,6 +105,21 @@ public class Image_Fusion implements PlugIn
 		if ( !fusion.queryDetails() )
 			return false;
 
+		// capture the named bounding box BEFORE it is rewrapped (and retitled "DefaultBoundingBox")
+		// by the anisotropy/downsampling adjustments below. Spark's -b takes the box name listed in
+		// the XML, so the Interval coordinates are useless here — only the title is.
+		// The fusion box list also contains two COMPUTED boxes ("Currently Selected Views", "All Views")
+		// that are NOT persisted in the XML; emitting -b with those names would fail in Spark. They map
+		// to Spark's default (no -b = fuse the full extent), so only a saved box is recorded as a name.
+		String bbTitleTmp = null;
+		if ( fusion.getBoundingBox() instanceof net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox )
+		{
+			final String t = ( (net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox) fusion.getBoundingBox() ).getTitle();
+			for ( final net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox saved : spimData.getBoundingBoxes().getBoundingBoxes() )
+				if ( saved.getTitle().equals( t ) ) { bbTitleTmp = t; break; }
+		}
+		final String bbTitle = bbTitleTmp;
+
 		final List< Group< ViewDescription > > groups = fusion.getFusionGroups();
 		int i = 0;
 
@@ -142,8 +157,15 @@ public class Image_Fusion implements PlugIn
 		{
 			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "fusion", fusion.getFusionType() );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "downsampling", fusion.getDownsampling() );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "anisotropyFactor", fusion.getAnisotropyFactor() );
+			// the GUI downsampling factor pre-scales the bounding box in-process; Spark fuses at the
+			// box's native resolution, so it is NOT a Spark flag. The -ds pyramid comes from the
+			// exporter's multi-resolution settings (see exporter.describeParameters() below).
+			// anisotropy: a non-NaN factor means "preserve anisotropy" was selected in the GUI
+			if ( !Double.isNaN( fusion.getAnisotropyFactor() ) )
+			{
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "preserveAnisotropy", Boolean.TRUE );
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "anisotropyFactor", fusion.getAnisotropyFactor() );
+			}
 			// translate mvrecon pixel-type int to BigStitcher-Spark dataType name
 			final String dataType;
 			switch ( fusion.getPixelType() )
@@ -153,8 +175,15 @@ public class Image_Fusion implements PlugIn
 				default: dataType = "FLOAT32"; break;
 			}
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "pixelType", dataType );
+			// min/max are the intensity range that integer output is scaled from; only meaningful when
+			// the output is UINT8/UINT16 (FLOAT32 keeps raw values, Spark ignores the flags)
+			if ( fusion.getPixelType() == 1 || fusion.getPixelType() == 2 )
+			{
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "minIntensity", fusion.minIntensity() );
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "maxIntensity", fusion.maxIntensity() );
+			}
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "exporter", exporter.getDescription() );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "boundingBox", fusion.getBoundingBox() == null ? null : fusion.getBoundingBox().toString() );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "boundingBox", bbTitle );
 			// pull exporter-specific params (n5Path, storage, blockSize, compression, …)
 			try
 			{

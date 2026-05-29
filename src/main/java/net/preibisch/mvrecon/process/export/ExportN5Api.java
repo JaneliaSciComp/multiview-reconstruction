@@ -190,10 +190,22 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		if ( storageType != null ) p.put( "storage", storageType.toString() );
 		p.put( "blockSize", bsX + "," + bsY + "," + bsZ );
 		p.put( "blockScale", bsFactorX + "," + bsFactorY + "," + bsFactorZ );
-		if ( compression != null ) p.put( "compression", compression.getClass().getSimpleName() );
+		if ( compression != null ) p.put( "compression", net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.sparkCompression( compression ) );
 		p.put( "useSharding", Boolean.toString( useSharding ) );
+		if ( bdv ) p.put( "bdv", "true" );
 		if ( bdv && xmlOut != null ) p.put( "xmlOut", xmlOut.toString() );
 		p.put( "multiRes", Boolean.toString( downsampling != null ) );
+		// the multi-resolution pyramid as Spark's -ds expects it (split=";"): "1,1,1;2,2,1;4,4,2;..."
+		if ( downsampling != null )
+		{
+			final StringBuilder ds = new StringBuilder();
+			for ( int d = 0; d < downsampling.length; ++d )
+			{
+				if ( d > 0 ) ds.append( ';' );
+				ds.append( downsampling[ d ][ 0 ] ).append( ',' ).append( downsampling[ d ][ 1 ] ).append( ',' ).append( downsampling[ d ][ 2 ] );
+			}
+			p.put( "downsampling", ds.toString() );
+		}
 		return p;
 	}
 

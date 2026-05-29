@@ -92,6 +92,7 @@ public class RemoveTransformationPopup extends JMenu implements ExplorerWindowSe
 			SpimData2.filterMissingViews( panel.getSpimData(), viewIds );
 
 			final ViewRegistrations vr = panel.getSpimData().getViewRegistrations();
+			final ArrayList< ViewId > unregistered = new ArrayList<>();
 			for ( final ViewId viewId : viewIds )
 			{
 				final ViewRegistration v = vr.getViewRegistrations().get( viewId );
@@ -106,6 +107,19 @@ public class RemoveTransformationPopup extends JMenu implements ExplorerWindowSe
 					v.getTransformList().remove( v.getTransformList().size() - 1 );
 
 				v.updateModel();
+				unregistered.add( viewId );
+			}
+
+			// data-tied removal: removing the latest transform undoes the most recent registration,
+			// so purge register-interestpoints history entries whose views were all just un-registered.
+			// the oldest transform is typically calibration, not a recorded registration, so skip it.
+			if ( index == 0 && !unregistered.isEmpty() )
+			{
+				try
+				{
+					panel.getSpimData().getActionHistory().removeRegistrationsForViews( unregistered );
+				}
+				catch ( final Throwable ignore ) {}
 			}
 
 			panel.updateContent();
