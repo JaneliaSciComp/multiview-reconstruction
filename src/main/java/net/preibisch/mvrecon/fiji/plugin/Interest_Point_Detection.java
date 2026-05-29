@@ -200,10 +200,13 @@ public class Interest_Point_Detection implements PlugIn
 		{
 			final java.util.LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
 			ActionHistoryRecorder.put( params, "label", label );
-			ActionHistoryRecorder.put( params, "type", staticAlgorithms.get( algorithm ).getDescription() );
 			ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
 			ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
-			ActionHistoryRecorder.put( params, "algorithmParameters", ipd.getParameters() );
+			// individual detection params (sigma, threshold, type, localization, intensities,
+			// downsampling) so the BigStitcher-Spark translator can emit them as CLI flags
+			for ( final java.util.Map.Entry<String,String> e : ipd.describeParameters().entrySet() )
+				if ( e.getValue() != null )
+					params.put( e.getKey(), e.getValue() );
 			ActionHistoryRecorder.record(
 					data,
 					"detect-interestpoints",

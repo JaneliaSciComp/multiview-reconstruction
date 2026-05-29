@@ -87,6 +87,38 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	public String getDescription() { return "Difference-of-Gaussian"; }
 
 	@Override
+	public java.util.Map<String,String> describeParameters()
+	{
+		final java.util.LinkedHashMap<String,String> p = new java.util.LinkedHashMap<>();
+		p.put( "sigma", Double.toString( sigma ) );
+		p.put( "threshold", Double.toString( threshold ) );
+		// Spark --type is the detection point type (MIN/MAX/BOTH), not the algorithm
+		if ( findMin && findMax )
+			p.put( "type", "BOTH" );
+		else if ( findMax )
+			p.put( "type", "MAX" );
+		else if ( findMin )
+			p.put( "type", "MIN" );
+		// Spark --localization only supports NONE or QUADRATIC (no Gaussian-mask fit)
+		p.put( "localization", localization == 0 ? "NONE" : "QUADRATIC" );
+		if ( !Double.isNaN( minIntensity ) )
+			p.put( "minIntensity", Double.toString( minIntensity ) );
+		if ( !Double.isNaN( maxIntensity ) )
+			p.put( "maxIntensity", Double.toString( maxIntensity ) );
+		// downsampleXYIndex holds the actual factor (1,2,4,...) for fixed choices, or 0/-1 for the
+		// view-dependent "match Z resolution" modes which have no single CLI value -> omit those
+		if ( downsampleXYIndex >= 1 )
+			p.put( "downsampleXY", Integer.toString( downsampleXYIndex ) );
+		p.put( "downsampleZ", Integer.toString( downsampleZ ) );
+		// Spark --maxSpots keeps the brightest N per view. mvrecon's "Limit amount of detections"
+		// offers three modes (brightest / around median / weakest); only the brightest mode (index 0)
+		// matches Spark's semantics, so only then is it translatable.
+		if ( limitDetections && maxDetectionsTypeIndex == 0 )
+			p.put( "maxSpots", Integer.toString( maxDetections ) );
+		return p;
+	}
+
+	@Override
 	public DifferenceOfGaussianGUI newInstance( final SpimData2 spimData, final List< ViewId > viewIdsToProcess )
 	{
 		return new DifferenceOfGaussianGUI( spimData, viewIdsToProcess );

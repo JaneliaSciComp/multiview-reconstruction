@@ -317,7 +317,7 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 							basePathURI = data.getBasePathURI();
 						}
 
-						final SpimData2 newSpimData = Resave_N5Api.resaveN5( data, viewIds, n5params, false );
+						final SpimData2 newSpimData = Resave_N5Api.resaveN5( data, viewIds, n5params, false, panel.xml() );
 
 						// make sure interestpoints are saved to the new location as well
 						if ( (index == 5 || index ==7) && !n5params.xmlURI.equals( panel.xml() ) )

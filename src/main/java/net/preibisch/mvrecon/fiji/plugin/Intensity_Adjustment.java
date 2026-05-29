@@ -200,22 +200,10 @@ public class Intensity_Adjustment implements PlugIn
 
 		data.getIntensityAdjustments().getIntensityAdjustments().putAll( intensityMapping );
 
-		{
-			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "boundingBox", boundingBox );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "downsampling", downsampling );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "maxInliers", maxInliers );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "affine", affine );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "translationRegularization", regTrans );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "identityRegularization", regIdentity );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.record(
-					data,
-					"intensity-adjustment",
-					Intensity_Adjustment.class.getName(),
-					params,
-					viewIds,
-					"intensity-adjustments" );
-		}
+		// NOTE: intensity adjustment is intentionally NOT recorded in the action history. The Spark
+		// equivalent is a two-stage workflow (SparkIntensityMatching + IntensitySolver) operating on
+		// an N5 coefficient container, whereas mvrecon stores coefficients in the XML — there is no
+		// faithful single-action translation, so recording it would only emit a misleading CLI.
 
 		if ( saveXML )
 			new XmlIoSpimData2().saveWithFilename( data, xmlFileName );
