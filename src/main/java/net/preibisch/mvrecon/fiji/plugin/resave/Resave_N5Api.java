@@ -91,7 +91,7 @@ public class Resave_N5Api implements PlugIn
 			for ( final ViewSetup vs : xml.getViewSetupsToProcess() )
 				vidsToProcess.add( new ViewId( tp.getId(), vs.getId() ) );
 
-		resaveN5( xml.getData(), vidsToProcess, n5params, true );
+		resaveN5( xml.getData(), vidsToProcess, n5params, true, xml.getXMLURI() );
 	}
 
 
@@ -100,6 +100,21 @@ public class Resave_N5Api implements PlugIn
 			final Collection<? extends ViewId> vidsToResave,
 			final ParametersResaveN5Api n5Params,
 			final boolean saveXML )
+	{
+		return resaveN5( data, vidsToResave, n5Params, saveXML, null );
+	}
+
+	/**
+	 * @param inputXmlURI URI of the source/input BigStitcher XML this resave reads from; recorded in
+	 *        the action history so the BigStitcher-Spark translation can emit the correct {@code -x}
+	 *        (input) rather than the resaved output. May be null when unknown (e.g. initial import).
+	 */
+	public static SpimData2 resaveN5(
+			final SpimData2 data,
+			final Collection<? extends ViewId> vidsToResave,
+			final ParametersResaveN5Api n5Params,
+			final boolean saveXML,
+			final java.net.URI inputXmlURI )
 	{
 		final SpimData2 sdReduced = SpimData2Tools.reduceSpimData2( data, vidsToResave.stream().collect( Collectors.toList() ) );
 
@@ -460,12 +475,29 @@ public class Resave_N5Api implements PlugIn
 
 		{
 			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "inputXml", inputXmlURI );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "n5Path", n5Params.n5URI );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "xmlOut", n5Params.xmlURI );
+			// Zarr v3 embeds the SpimData JSON into the -o container's zarr.json and writes no separate
+			// xml (see XmlIoSpimData2.save), so -xo is meaningless there; only record it for formats
+			// that actually produce a standalone output xml (N5, HDF5, Zarr v2).
+			if ( n5Params.format != StorageFormat.ZARR )
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "xmlOut", n5Params.xmlURI );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "storage", n5Params.format );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "blockSize", java.util.Arrays.toString( n5Params.subdivisions[ 0 ] ).replace(" ", "") );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "blockScale", java.util.Arrays.toString( n5Params.blockSizeFactor ).replace(" ", "") );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "compression", n5Params.compression == null ? null : n5Params.compression.getClass().getSimpleName() );
+			// Spark expects bare "x,y,z" — Arrays.toString would yield "[x,y,z]" which picocli rejects
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "blockSize", net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.csv( n5Params.subdivisions[ 0 ] ) );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "blockScale", net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.csv( n5Params.blockSizeFactor ) );
+			// downsampling pyramid as Spark's -ds expects it: "1,1,1;2,2,1;4,4,2;..."
+			if ( n5Params.resolutions != null )
+			{
+				final StringBuilder ds = new StringBuilder();
+				for ( int d = 0; d < n5Params.resolutions.length; ++d )
+				{
+					if ( d > 0 ) ds.append( ';' );
+					ds.append( net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.csv( n5Params.resolutions[ d ] ) );
+				}
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "downsampling", ds.toString() );
+			}
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "compression", net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.sparkCompression( n5Params.compression ) );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "useSharding", n5Params.useSharding );
 			final java.util.ArrayList<mpicbg.spim.data.sequence.ViewId> vidCopy = new java.util.ArrayList<>();
 			for ( final mpicbg.spim.data.sequence.ViewId v : vidsToResave )

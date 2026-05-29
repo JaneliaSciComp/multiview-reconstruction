@@ -101,4 +101,11 @@ public abstract class InterestPointDetectionGUI
 	 * @return - stored in the XML so that it is reproducible how the points were segmented
 	 */
 	public abstract String getParameters();
+
+	/**
+	 * Neutral key/value parameters for the action history, using keys that the
+	 * BigStitcher-Spark translator maps to detect-interestpoints CLI flags
+	 * (e.g. "sigma" -&gt; -s, "type" -&gt; --type). Default: none.
+	 */
+	public java.util.Map<String,String> describeParameters() { return java.util.Collections.emptyMap(); }
 }

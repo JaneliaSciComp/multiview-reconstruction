@@ -264,6 +264,11 @@ public class Interest_Point_Registration implements PlugIn
 					if ( m != null ) labels.addAll( m.keySet() );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "label", String.join( ",", labels ) );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "registrationType", brp.registrationType );
+			// timepoint-registration sub-parameters only apply to specific registration types
+			if ( arp != null && brp.registrationType == net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType.TO_REFERENCE_TIMEPOINT )
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "referenceTP", arp.referenceTimePoint );
+			if ( arp != null && brp.registrationType == net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType.ALL_TO_ALL_WITH_RANGE )
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "rangeTP", arp.range );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "overlapType", brp.overlapType );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "interestpointsForReg", brp.interestPointOverlapType );
 			// matchingMethod (e.g. FAST_TRANSLATION, ICP) is set by pwr.describeParameters() below
@@ -278,8 +283,14 @@ public class Interest_Point_Registration implements PlugIn
 			{
 				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "globalOptMethod", arp.globalOptParams.method );
 				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "preAlign", arp.globalOptParams.preAlign ? "PREALIGN" : "NO_PREALIGN" );
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "relativeThreshold", arp.globalOptParams.relativeThreshold );
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "absoluteThreshold", arp.globalOptParams.absoluteThreshold );
+				// thresholds are only meaningful for ITERATIVE strategies; SIMPLE/NO_OPTIMIZATION
+				// encode them as Double.MAX_VALUE, which would render as a garbage CLI value — skip those
+				final double relTh = arp.globalOptParams.relativeThreshold;
+				final double absTh = arp.globalOptParams.absoluteThreshold;
+				if ( Double.isFinite( relTh ) && relTh < Double.MAX_VALUE )
+					net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "relativeThreshold", relTh );
+				if ( Double.isFinite( absTh ) && absTh < Double.MAX_VALUE )
+					net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "absoluteThreshold", absTh );
 			}
 			// pull matcher-specific params (transformation model, regularization, RANSAC, descriptor params, ICP params, …)
 			try
