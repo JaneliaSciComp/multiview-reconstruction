@@ -358,9 +358,11 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 							ipl.saveCorrespondingInterestPoints( false );
 						}
 					}
-					catch ( Exception e )
+					catch ( Throwable t )
 					{
-						IOFunctions.println( "Could not save interest points for (trying to skip): " + ipl.getXMLRepresentation() );
+						IOFunctions.println( "Could not save interest points for '" + ipl.getXMLRepresentation() + "': " + t );
+						t.printStackTrace();
+						throw new RuntimeException( "Failed to save interest points for " + ipl.getXMLRepresentation(), t );
 					}
 				})
 			).get();

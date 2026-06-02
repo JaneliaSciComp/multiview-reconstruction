@@ -37,9 +37,10 @@ import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.ScaleCoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TranslationCoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.ScaleCoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.TranslationCoordinateTransformation;
 
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewRegistrations;
@@ -190,19 +191,19 @@ public class ExampleOMEZarrXMLGeneration
 		// Add OME-ZARR multiscales metadata to the container root
 		if ( datasetBaseName.isEmpty() )
 		{
-			org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata[] metadata =
-				OMEZarrAttributes.createOMEv04ZarrMetadata(
+			OmeNgffMetadata metadata = OMEZarrAttributes.createOMEZarrMetadata(
 					is3D ? 3 : 4,
 					"/",
-					is3D ? new double[] { voxelSizeX, voxelSizeY, voxelSizeZ } :
-					       new double[] { voxelSizeX, voxelSizeY, voxelSizeZ, 1.0 },
+					"0.4",
+					is3D ? new double[]{voxelSizeX, voxelSizeY, voxelSizeZ} :
+							new double[]{voxelSizeX, voxelSizeY, voxelSizeZ, 1.0},
 					"um",
 					1,  // single resolution level
-					level -> String.valueOf( level ),
+                    String::valueOf,
 					level -> new AffineTransform3D()
-				);
+			);
 
-			writer.setAttribute( "/", "multiscales", metadata );
+			writer.setAttribute( "/", "multiscales", metadata.multiscales );
 		}
 
 		System.out.println( "  ✓ Created " + (is3D ? "3D" : "4D") + " with dimensions: " + java.util.Arrays.toString( dimensions ) );

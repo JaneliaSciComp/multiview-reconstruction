@@ -47,7 +47,7 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 
 import bdv.export.ExportMipmapInfo;
 import bdv.export.ProposeMipmaps;
@@ -86,7 +86,6 @@ import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetupBigStitcher;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v05.OmeNgffV05Metadata;
 import util.BlockSupplierUtils;
 import util.Grid;
 import util.URITools;
@@ -265,9 +264,10 @@ public class ExportN5Api implements ImgExport, Calibrateable
 
 						// create metadata
 						if (storageType == StorageFormat.ZARR2) {
-							final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
+							final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 									5, // int n
 									"/", // String name, I also saw "/"
+									"0.4",
 									resolutionS0, // double[] resolutionS0,
 									unit, //"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 									mrInfoZarr.length, // int numResolutionLevels,
@@ -275,18 +275,18 @@ public class ExportN5Api implements ImgExport, Calibrateable
 									levelToMipmapTransform );
 
 							// save metadata
-							driverVolumeWriter.setAttribute( "/", "multiscales", meta );
+							driverVolumeWriter.setAttribute( "/", "multiscales", meta.multiscales );
 						} else {
 							// ZARR3
-							final OmeNgffV05Metadata meta = OMEZarrAttributes.createOMEv05ZarrMetadata(
+							final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 									5, // int n
 									"", // String name, I also saw "/"
+									"0.5",
 									resolutionS0, // double[] resolutionS0,
 									unit, //"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 									mrInfoZarr.length, // int numResolutionLevels,
 									levelToName,
 									levelToMipmapTransform );
-
 							// save metadata
 							driverVolumeWriter.setAttribute( "/", "ome", meta );
 							// this is hacky until OmeNgffV05Metadata gets fixed to output version
@@ -398,9 +398,10 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			IOFunctions.println( "Calibration: " + Util.printCoordinates( cal ) + " micrometer; resolution at S0: " + Util.printCoordinates( resolutionS0 ) + " " + unit);
 
 			// create metadata
-			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
+			final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 					3, // int n
 					omeZarrSubContainer, // String name, I also saw "/"
+					storageType == StorageFormat.ZARR2 ? "0.4" : "0.5",
 					resolutionS0, // double[] resolutionS0,
 					unit, // might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfo.length, // int numResolutionLevels,
@@ -408,11 +409,10 @@ public class ExportN5Api implements ImgExport, Calibrateable
 					levelToMipmapTransform );
 
 			// save metadata
-
-			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
-			// for this to work you need to register an adapter in the N5Factory class
-			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
-			driverVolumeWriter.setAttribute( omeZarrSubContainer, "multiscales", meta );
+			if (storageType == StorageFormat.ZARR2)
+				driverVolumeWriter.setAttribute( omeZarrSubContainer, "multiscales", meta.multiscales );
+			else
+				driverVolumeWriter.setAttribute( omeZarrSubContainer, "ome", meta );
 
 			omeZarrEntry = new OMEZARREntry(
 					mrInfo[ 0 ].dataset.substring(0, mrInfo[ 0 ].dataset.lastIndexOf( "/" ) ),

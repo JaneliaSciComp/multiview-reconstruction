@@ -46,7 +46,8 @@ import org.janelia.saalfeldlab.n5.RawCompression;
 import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3Compressor;
 import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 
 import bdv.export.ExportMipmapInfo;
@@ -296,7 +297,7 @@ public class N5ApiTools
 			// Use Zarr v3 sharding via ZarrV3DatasetAttributes builder
 			final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder(dimensionsS0, dataType)
 					.blockSize(blockSize) // inner chunk size within shards
-					.shardShape(shardSize) // shard dimensions
+					.chunkSize(shardSize) // shard dimensions
 					.compression(compression)
 					.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
 					.build();
@@ -334,7 +335,7 @@ public class N5ApiTools
 				// Use Zarr v3 sharding via ZarrV3DatasetAttributes builder
 				final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder(dim, dataType)
 						.blockSize(blockSize) // inner chunk size within shards
-						.shardShape(shardSize) // shard dimensions
+						.chunkSize(shardSize) // shard dimensions
 						.compression(compression)
 						.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
 						.build();
@@ -495,9 +496,10 @@ public class N5ApiTools
 				(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
 		// create metadata
-		final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
+		final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 				5, // int n
 				"/", // String name, I also saw "/"
+				"0.5",
 				resolutionS0, // double[] resolutionS0,
 				resolutionUnit, //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 				mrInfo.length, // int numResolutionLevels,
@@ -505,7 +507,11 @@ public class N5ApiTools
 				levelToMipmapTransform );
 
 		// save metadata
-		driverVolumeWriter.setAttribute( baseDataset, "multiscales", meta );
+
+		//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata
+		// for this to work you need to register an adapter in the N5Factory class
+		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
+		driverVolumeWriter.setAttribute( baseDataset, "ome", meta );
 
 		return mrInfo;
 	}

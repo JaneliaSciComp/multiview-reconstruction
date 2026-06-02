@@ -857,8 +857,20 @@ public class FusionTools
 		final ReadOnlyCachedCellImgFactory factory = new ReadOnlyCachedCellImgFactory( options );
 
 		final long[] dim = input.dimensionsAsLongArray();
+		final int[] cellDimExpanded;
+		if ( cellDim.length == dim.length )
+		{
+			cellDimExpanded = cellDim;
+		}
+		else
+		{
+			// broadcast scalar (or shorter array) across all dimensions; CellGrid requires cellDim.length == dim.length
+			cellDimExpanded = new int[ dim.length ];
+			for ( int d = 0; d < dim.length; ++d )
+				cellDimExpanded[ d ] = cellDim[ Math.min( d, cellDim.length - 1 ) ];
+		}
 		final CacheLoader< Long, Cell< A > > loader = RandomAccessibleCacheLoader.get(
-				new CellGrid( dim, cellDim ),
+				new CellGrid( dim, cellDimExpanded ),
 				input.view().zeroMin(),
 				AccessFlags.setOf( AccessFlags.VOLATILE ) );
 		final RandomAccessibleInterval<T> copy = factory.createWithCacheLoader( dim, type, loader );

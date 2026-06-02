@@ -27,20 +27,17 @@ import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.function.Function;
 
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.OmeNgffDataset;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.OmeNgffDownsamplingMetadata;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.ScaleCoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TranslationCoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata.OmeNgffDataset;
 
 import net.imglib2.realtransform.AffineTransform3D;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v05.OmeNgffV05Metadata;
 import util.URITools;
 
 public class OMEZarrAttributes
@@ -51,88 +48,10 @@ public class OMEZarrAttributes
 	 * @param numResolutionLevels - number of multiresolution levels (e.g. s0, s1, s2 would be 3), always includes full res
 	 * @return
 	 */
-	public static OmeNgffMultiScaleMetadata[] createOMEv04ZarrMetadata(
+	public static OmeNgffMetadata createOMEZarrMetadata(
 			final int n,
 			final String name,
-			final double[] resolutionS0,
-			final String unitXYZ, // e.g micrometer
-			final int numResolutionLevels,
-			final Function<Integer, String> levelToName,
-			final Function<Integer, AffineTransform3D > levelToMipmapTransform )
-	{
-		final OmeNgffMultiScaleMetadata[] meta = new OmeNgffMultiScaleMetadata[ 1 ];
-
-		// dataset name and co
-		final String path = "";
-		final String type = null;
-
-		// axis descriptions
-		// TODO: seem to be TCZYX order
-		final Axis[] axes = new Axis[ n ];
-
-		int axisIndex = 0;
-
-		if ( n >= 5 )
-			axes[ axisIndex++ ] = new Axis( "time", "t", "millisecond" );
-		if ( n >= 4 )
-			axes[ axisIndex++ ] = new Axis( "channel", "c", null );
-		String spatialUnit = adaptSpatialUnit( unitXYZ );
-		axes[ axisIndex++ ] = new Axis( "space", "z", spatialUnit );
-		axes[ axisIndex++ ] = new Axis( "space", "y", spatialUnit );
-		axes[ axisIndex++ ] = new Axis( "space", "x", spatialUnit );
-
-		// multiresolution-pyramid
-		// TODO: seem to be in XYZCT order (but in the file it seems reversed)
-		final OmeNgffDataset[] datasets = new OmeNgffDataset[ numResolutionLevels ];
-
-		for ( int s = 0; s < numResolutionLevels; ++s )
-		{
-			datasets[ s ] = new OmeNgffDataset();
-
-			datasets[ s ].path = levelToName.apply( s );
-
-			final AffineTransform3D m = levelToMipmapTransform.apply( s );
-
-			final double[] translation = new double[ n ];
-			final double[] scale = new double[ n ];
-
-			for ( int d = 0; d < 3; ++d )
-			{
-				translation[ d ] = resolutionS0[d] * m.getTranslation()[ d ];
-				scale[ d ] = resolutionS0[d] * m.get( d, d );
-			}
-
-			// if 4d and 5d, add 1's for C and T
-			for ( int d = 3; d < n; ++d )
-			{
-				translation[ d ] = 0.0;
-				scale[ d ] = 1.0;
-			}
-
-			datasets[ s ].coordinateTransformations = new CoordinateTransformation[] {
-					new ScaleCoordinateTransformation( scale ),
-					new TranslationCoordinateTransformation( translation )
-			};
-		}
-
-		final double[] scale = new double[ n ];
-
-		for ( int d = 0; d < n; ++d )
-			scale[ d ] = 1.0;
-
-		// just saw these being null everywhere
-		final DatasetAttributes[] childrenAttributes = null;
-		final CoordinateTransformation<?>[] coordinateTransformations = new CoordinateTransformation[] { new  ScaleCoordinateTransformation( scale ) }; // I also saw null
-		final OmeNgffDownsamplingMetadata metadata = null;
-
-		meta[ 0 ] = new OmeNgffMultiScaleMetadata( n, path, name, type, "0.4", axes, datasets, childrenAttributes, coordinateTransformations, metadata );
-
-		return meta;
-	}
-
-	public static OmeNgffV05Metadata createOMEv05ZarrMetadata(
-			final int n,
-			final String name,
+			final String version,
 			final double[] resolutionS0,
 			final String unitXYZ,
 			final int numResolutionLevels,
@@ -177,8 +96,7 @@ public class OMEZarrAttributes
 				scales[ s ][ d ] = 1.0;
 			}
 		}
-
-		return OmeNgffV05Metadata.buildForWriting(n, name, axes, scalePaths, scales, translations);
+		return OmeNgffMetadata.buildForWriting(n, name, version, axes, scalePaths, scales, translations);
 	}
 
 	public static double[] getResolutionS0( final double[] cal, final double anisoF, final double downsamplingF )
@@ -252,7 +170,7 @@ public class OMEZarrAttributes
 
 	public static void loadOMEZarr( final N5Reader n5, final String dataset )
 	{
-		//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
+		//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata
 		// for this to work you need to register an adapter in the N5Factory class
 		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
 

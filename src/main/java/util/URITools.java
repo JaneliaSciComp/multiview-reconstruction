@@ -34,17 +34,12 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
-import java.lang.reflect.Type;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.file.FileSystems;
 import java.util.Date;
 import java.util.regex.Pattern;
 
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonSerializationContext;
-import org.apache.commons.lang.StringUtils;
 import org.janelia.saalfeldlab.googlecloud.GoogleCloudUtils;
 import org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess;
 import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
@@ -56,16 +51,13 @@ import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Reader;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
-import org.janelia.saalfeldlab.n5.s3.AmazonS3Utils;
-import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.AxisAdapter;
-import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
+import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformationAdapter;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformationAdapter;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
 import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueReader;
@@ -77,6 +69,8 @@ import org.jdom2.output.Format;
 import org.jdom2.output.XMLOutputter;
 
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSerializer;
 
 import bdv.ViewerImgLoader;
 import bdv.img.n5.N5ImageLoader;
@@ -275,20 +269,22 @@ public class URITools
 	{
 		final GsonBuilder builder = new GsonBuilder()
 				.registerTypeAdapter(
-					CoordinateTransformation.class, new CoordinateTransformationAdapter() )
+						CoordinateTransformation.class,
+						new CoordinateTransformationAdapter() )
 				.registerTypeAdapter(
-						Axis.class, new AxisAdapter() {
-							// do not serialize a null unit
-							@Override
-							public JsonElement serialize(Axis src, Type typeOfSrc, JsonSerializationContext context) {
-								JsonObject obj = new JsonObject();
-								obj.addProperty("type", src.getType());
-								obj.addProperty("name", src.getName());
-								if (StringUtils.isNotBlank(src.getUnit())) obj.addProperty("unit", src.getUnit());
-								return obj;
-							}
-						}
-				);
+						Axis.class,
+						(JsonSerializer<Axis>) ( src, typeOfSrc, ctx ) -> {
+							// Skip "unit" when null so OME-NGFF .zattrs doesn't contain
+							// {"unit":null} (breaks Neuroglancer / BDV). n5-zarr's writer Gson
+							// forces serializeNulls(); without this adapter Axis is reflected
+							// and the channel axis's null unit leaks through.
+							final JsonObject obj = new JsonObject();
+							obj.addProperty( "type", src.getType() );
+							obj.addProperty( "name", src.getName() );
+							if ( src.getUnit() != null )
+								obj.addProperty( "unit", src.getUnit() );
+							return obj;
+						} );
 
 		if ( URITools.isFile( uri ) )
 		{
@@ -320,11 +316,8 @@ public class URITools
 				//System.out.println( "Trying writing with credentials ..." );
 				final N5Factory factory = new N5Factory().zarrDimensionSeparator( "/" );
 				factory.gsonBuilder( builder );
-				factory.s3Configuration( b -> {
-					b.credentialsProvider( DefaultCredentialsProvider.create() );
-					if ( s3Region != null )
-						b.region( Region.of( s3Region ) );
-				} );
+				if ( s3Region != null )
+					factory.s3Configuration( b -> b.region( Region.of( s3Region ) ) );
 				n5w = factory.openWriter( format, uri );
 			}
 			catch ( Exception e )
@@ -335,8 +328,7 @@ public class URITools
 				factory.gsonBuilder( builder );
 				factory.s3Configuration( b -> {
 					b.credentialsProvider( AnonymousCredentialsProvider.create() );
-					if ( s3Region != null )
-						b.region( Region.of( s3Region ) );
+					if ( s3Region != null ) b.region( Region.of( s3Region ) );
 				} );
 				n5w = factory.openWriter( format, uri );
 			}
@@ -384,11 +376,8 @@ public class URITools
 				//System.out.println( "Trying reading with credentials ..." );
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				factory.s3Configuration( b -> {
-					b.credentialsProvider( DefaultCredentialsProvider.create() );
-					if ( s3Region != null )
-						b.region( Region.of( s3Region ) );
-				} );
+				if ( s3Region != null )
+					factory.s3Configuration( b -> b.region( Region.of( s3Region ) ) );
 				n5r = factory.openReader( format, uri );
 			}
 			catch ( Exception e )
@@ -399,8 +388,7 @@ public class URITools
 				factory.gsonBuilder( builder );
 				factory.s3Configuration( b -> {
 					b.credentialsProvider( AnonymousCredentialsProvider.create() );
-					if ( s3Region != null )
-						b.region( Region.of( s3Region ) );
+					if ( s3Region != null ) b.region( Region.of( s3Region ) );
 				} );
 				n5r = factory.openReader( format, uri );
 			}
@@ -615,7 +603,7 @@ public class URITools
 		final boolean hasScheme = scheme != null;
 		if ( !hasScheme )
 			return false;
-		if ( AmazonS3Utils.S3_SCHEME.asPredicate().test( scheme ) )
+		if ( "s3".equalsIgnoreCase( scheme ) )
 			return true;
 		return uri.getHost() != null && HTTPS_SCHEME.asPredicate().test( scheme );
 	}

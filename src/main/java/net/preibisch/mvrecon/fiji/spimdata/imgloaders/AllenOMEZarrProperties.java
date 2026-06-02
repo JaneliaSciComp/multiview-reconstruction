@@ -28,12 +28,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.OmeNgffDataset;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.ScaleCoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TranslationCoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata.OmeNgffDataset;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.ScaleCoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.TranslationCoordinateTransformation;
 
 import bdv.img.n5.N5Properties;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
@@ -115,25 +116,44 @@ public class AllenOMEZarrProperties implements N5Properties
 				return tp.getId();
 		}
 
-		throw new IllegalStateException( "All timepoints for setupId " + setupId + " are declared missing. Stopping." );
+		// All timepoints are missing for this setup
+		return -1;
 	}
 
 	private static DataType getDataType( final AllenOMEZarrProperties n5properties, final N5Reader n5, final int setupId )
 	{
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
-		String datasetPath = n5properties.getMultiscaleDatasetPathOrDefault(n5, timePointId, setupId, 0);
-		return n5.getDatasetAttributes( datasetPath ).getDataType();
+
+		// If all timepoints are missing, return a default data type
+		if ( timePointId < 0 )
+			return DataType.UINT16;
+
+		final String path = n5properties.getMultiscaleDatasetPathOrDefault(n5, timePointId, setupId, 0);
+		final DatasetAttributes attributes = n5.getDatasetAttributes( path );
+
+		if ( attributes == null )
+			throw new RuntimeException( "Could not find dataset attributes for '" + path + "'. Please check if the OME-Zarr data is valid." );
+
+		return attributes.getDataType();
 	}
 
 	private static double[][] getMipMapResolutions( final AllenOMEZarrProperties n5properties, final N5Reader n5, final int setupId )
 	{
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
 
+		// If all timepoints are missing, return default single-level resolution
+		if ( timePointId < 0 )
+			return new double[][] { { 1.0, 1.0, 1.0 } };
+
 		// multiresolution pyramid
 		final OmeNgffMultiScaleMetadata multiScaleMetadata = n5properties.getViewSetupMultiscaleMetadata(n5, timePointId, setupId);
 
 		final double[][] mipMapResolutions = new double[ multiScaleMetadata.datasets.length ][ 3 ];
 		double[] scaleS0 = null;
+		//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata
+		// for this to work you need to register an adapter in the N5Factory class
+		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
+		final String path = n5properties.getPath( setupId, timePointId );
 
 		// iterate over all resolution levels for scale
 		for ( int s = 0; s < multiScaleMetadata.datasets.length; ++s )
