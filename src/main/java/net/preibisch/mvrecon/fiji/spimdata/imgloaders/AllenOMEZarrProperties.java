@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentMap;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata.OmeNgffDataset;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformation;
@@ -42,6 +43,8 @@ import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
+import org.json.JSONArray;
+import org.json.JSONString;
 
 public class AllenOMEZarrProperties implements N5Properties
 {
@@ -285,7 +288,19 @@ public class AllenOMEZarrProperties implements N5Properties
 				return null; // no mapping will be cached
 			}
 
-			final OmeNgffMultiScaleMetadata[] multiscales = n5.getAttribute( getPath( setupId, timePointId ), "multiscales", OmeNgffMultiScaleMetadata[].class );
+			String datasetPath = getPath( setupId, timePointId );
+
+			System.out.println( "Getting multiscale metadata for " + datasetPath );
+			OmeNgffMetadata omeMetadata = n5.getAttribute(datasetPath, "ome", OmeNgffMetadata.class);
+
+			final OmeNgffMultiScaleMetadata[] multiscales;
+			if  (omeMetadata != null) {
+				System.out.println( "Found OME metadata at " + datasetPath + ": " + omeMetadata);
+				multiscales = omeMetadata.multiscales;
+			} else {
+				multiscales = n5.getAttribute( datasetPath, "multiscales", OmeNgffMultiScaleMetadata[].class );
+				System.out.println( "Retrieved OME multiscales at " + datasetPath + ": " + multiscales);
+			}
 
 			if ( multiscales == null || multiscales.length == 0 )
 				throw new IllegalStateException( "Could not parse OME-ZARR multiscales object. stopping." );

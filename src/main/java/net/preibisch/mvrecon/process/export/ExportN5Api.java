@@ -289,8 +289,8 @@ public class ExportN5Api implements ImgExport, Calibrateable
 									levelToMipmapTransform );
 							// save metadata
 							driverVolumeWriter.setAttribute( "/", "ome", meta );
-							// this is hacky until OmeNgffV05Metadata gets fixed to output version
-							driverVolumeWriter.setAttribute( "/", "ome/version", "0.5" );
+							// this is hacky until OmeNgffMetadata gets fixed to output version
+							driverVolumeWriter.setAttribute( "/", "ome/version", meta.version );
 						}
 					}
 				}
@@ -411,8 +411,10 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			// save metadata
 			if (storageType == StorageFormat.ZARR2)
 				driverVolumeWriter.setAttribute( omeZarrSubContainer, "multiscales", meta.multiscales );
-			else
+			else {
 				driverVolumeWriter.setAttribute( omeZarrSubContainer, "ome", meta );
+				driverVolumeWriter.setAttribute( omeZarrSubContainer, "ome/version", meta.version );
+			}
 
 			omeZarrEntry = new OMEZARREntry(
 					mrInfo[ 0 ].dataset.substring(0, mrInfo[ 0 ].dataset.lastIndexOf( "/" ) ),

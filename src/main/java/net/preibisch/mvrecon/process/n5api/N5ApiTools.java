@@ -47,7 +47,6 @@ import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
-import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3Compressor;
 import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 
 import bdv.export.ExportMipmapInfo;
@@ -296,8 +295,8 @@ public class N5ApiTools
 		{
 			// Use Zarr v3 sharding via ZarrV3DatasetAttributes builder
 			final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder(dimensionsS0, dataType)
-					.blockSize(blockSize) // inner chunk size within shards
-					.chunkSize(shardSize) // shard dimensions
+					.blockSize(shardSize) // shard dimensions
+					.chunkSize(blockSize) // inner chunk size within shards
 					.compression(compression)
 					.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
 					.build();
@@ -334,8 +333,8 @@ public class N5ApiTools
 			{
 				// Use Zarr v3 sharding via ZarrV3DatasetAttributes builder
 				final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder(dim, dataType)
-						.blockSize(blockSize) // inner chunk size within shards
-						.chunkSize(shardSize) // shard dimensions
+						.blockSize(shardSize) // shard dimensions
+						.chunkSize(blockSize) // inner chunk size within shards
 						.compression(compression)
 						.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
 						.build();
@@ -512,6 +511,7 @@ public class N5ApiTools
 		// for this to work you need to register an adapter in the N5Factory class
 		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
 		driverVolumeWriter.setAttribute( baseDataset, "ome", meta );
+		driverVolumeWriter.setAttribute( baseDataset, "ome/version", meta.version );
 
 		return mrInfo;
 	}

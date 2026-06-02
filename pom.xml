@@ -5,13 +5,13 @@
 	<parent>
 		<groupId>org.scijava</groupId>
 		<artifactId>pom-scijava</artifactId>
-		<version>43.0.0</version>
+		<version>44.0.0</version>
 		<relativePath />
 	</parent>
 
 	<groupId>net.preibisch</groupId>
 	<artifactId>multiview-reconstruction</artifactId>
-	<version>9.0.0-SNAPSHOT</version>
+	<version>9.0.1-SNAPSHOT</version>
 
 	<name>Multiview Reconstruction</name>
 	<description>Software for the reconstruction of multi-view microscopic acquisitions
@@ -98,6 +98,10 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 
 		<license.licenseName>gpl_v2</license.licenseName>
 		<license.copyrightOwners>Multiview Reconstruction developers.</license.copyrightOwners>
+		<scijava.jvm.version>11</scijava.jvm.version>
+		<scijava.javadoc.url.java>https://javadoc.scijava.org/Java11/</scijava.javadoc.url.java>
+		<scijava.javadoc.url.javafx>https://javadoc.scijava.org/JavaFX11/</scijava.javadoc.url.javafx>
+		<legacyMode>true</legacyMode> <!-- NB: Make javadoc less strict about Java module system. -->
 
 		<!-- NB: Deploy releases to the SciJava Maven repository. -->
 		<releaseProfiles>sign,deploy-to-scijava</releaseProfiles>
@@ -112,6 +116,7 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
 		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
 		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
+		<javafx.version>19.0.2.1</javafx.version>
 
 		<mpicbg.version>1.6.6</mpicbg.version>
 
@@ -347,6 +352,23 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<dependency>
 			<groupId>org.slf4j</groupId>
 			<artifactId>slf4j-api</artifactId>
+		</dependency>
+
+		<!-- JavaFX dependencies -->
+		<dependency>
+			<groupId>org.openjfx</groupId>
+			<artifactId>javafx-base</artifactId>
+			<classifier>${scijava.natives.classifier.javafx}</classifier>
+		</dependency>
+		<dependency>
+			<groupId>org.openjfx</groupId>
+			<artifactId>javafx-controls</artifactId>
+			<classifier>${scijava.natives.classifier.javafx}</classifier>
+		</dependency>
+		<dependency>
+			<groupId>org.openjfx</groupId>
+			<artifactId>javafx-swing</artifactId>
+			<classifier>${scijava.natives.classifier.javafx}</classifier>
 		</dependency>
 
 		<!-- Test dependencies -->
