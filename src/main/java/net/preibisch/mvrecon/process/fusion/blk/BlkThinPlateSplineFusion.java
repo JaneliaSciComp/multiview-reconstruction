@@ -45,8 +45,10 @@ import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
+import net.imglib2.util.ConstantUtils;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
+import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
@@ -209,6 +211,14 @@ public class BlkThinPlateSplineFusion
 				.filter( fusionInterval )
 				.offset( fusionInterval.minAsLongArray() );
 
+		// No view's displacement-field bounds intersect the fusionInterval. This can happen
+		// when an upstream (affine + overlapExpansion) pre-filter selects a view for a block,
+		// but the precise per-view dfield bounds filtered here drop all of them. The reducers
+		// (MaxIntensity/WeightedAverage/...) assume >=1 image and would throw on get(0), so
+		// return a constant-zero (background) block supplier instead.
+		if ( overlap.numViews() == 0 )
+			return emptyBlockSupplier( type, fusionInterval, blockSize );
+
 		final List< BlockSupplier< FloatType > > images = new ArrayList<>( overlap.numViews() );
 		final List< BlockSupplier< FloatType > > weights = new ArrayList<>( overlap.numViews() );
 		final List< BlockSupplier< UnsignedByteType > > masks = new ArrayList<>( overlap.numViews() );
@@ -288,6 +298,23 @@ public class BlkThinPlateSplineFusion
 		}
 
 		return convertToOutputType( floatBlocks, converter, type ).tile( blockSize );
+	}
+
+	/**
+	 * A {@link BlockSupplier} that returns zero (background) everywhere over the
+	 * (zero-min) {@code fusionInterval}. Used when no view's displacement-field bounds
+	 * intersect the fusion interval, so there is nothing to render.
+	 */
+	private static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > emptyBlockSupplier(
+			final T type,
+			final Interval fusionInterval,
+			final int[] blockSize )
+	{
+		final T zero = type.createVariable();
+		zero.setZero();
+		return BlockSupplier.of(
+				Views.zeroMin( ConstantUtils.constantRandomAccessibleInterval( zero, fusionInterval ) ) )
+				.tile( blockSize );
 	}
 
 	public static < D extends NativeType< D > & RealType< D > > TransformedDisplacementField< D > concatenateBoundingBoxOffset(
