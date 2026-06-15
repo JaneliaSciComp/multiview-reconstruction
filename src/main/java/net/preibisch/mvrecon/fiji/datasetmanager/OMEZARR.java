@@ -262,12 +262,17 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			IOFunctions.println( "Scale: " + Arrays.toString( scale ) + ", unit: " + unit );
 			IOFunctions.println( "Translation: " + Arrays.toString( translation ) );
 
-			IOFunctions.println( multiscales[ 0 ].getPaths().length + " resolution steps." );
+			// NOTE: do NOT use multiscales[ 0 ].getPaths() here. With n5-universe 3.0.0 (Zarr v3 / OME-NGFF 0.5)
+			// the inherited getPaths() is not populated by Gson deserialization and returns null. The 'datasets'
+			// field, however, is populated (see its use above), so read the per-level paths from there (ds.path),
+			// the same way AllenOMEZarrProperties does.
+			IOFunctions.println( multiscales[ 0 ].datasets.length + " resolution steps." );
 
 			DatasetAttributes fullScaleAttributes = null;
 
-			for ( final String path : multiscales[ 0 ].getPaths() )
+			for ( final OmeNgffDataset level : multiscales[ 0 ].datasets )
 			{
+				final String path = level.path;
 
                 DatasetAttributes attr = reader.getDatasetAttributes(dataset + "/" + path);
 
