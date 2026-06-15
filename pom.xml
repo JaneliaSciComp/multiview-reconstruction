@@ -111,7 +111,15 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<generic-archiver.version>1.1.0</generic-archiver.version>
 
 		<!-- TEMP: Until pom-scijava 44.0.0 is released. -->
-		<imglib2.version>8.0.1</imglib2.version>
+		<!--<imglib2.version>8.0.1</imglib2.version>
+		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
+		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
+		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
+		<bigdataviewer-core.version>10.6.8</bigdataviewer-core.version>-->
+
+		<!-- TEMP: Until pom-scijava 44.0.0 is updated for ZARRv3. -->
+		<bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
+		<bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
 		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
 		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
@@ -122,15 +130,15 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 
 		<!-- N5 versions with Zarr v3 shard support (graduated from alpha) -->
 		<!-- See: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/ -->
-		<n5.version>4.0.0</n5.version>
+		<n5.version>4.0.1</n5.version>
 		<n5-aws-s3.version>5.0.0</n5-aws-s3.version>
+		<n5-blosc.version>2.0.0</n5-blosc.version>
+		<n5-google-cloud.version>6.0.0</n5-google-cloud.version>
 		<n5-hdf5.version>3.0.0</n5-hdf5.version>
 		<n5-imglib2.version>8.0.0</n5-imglib2.version>
-		<n5-universe.version>3.0.0</n5-universe.version>
+		<n5-universe.version>3.0.1</n5-universe.version>
 		<n5-zarr.version>2.0.1</n5-zarr.version>
-		<n5-aws-s3.version>5.0.0</n5-aws-s3.version>
 		<n5-zstandard.version>2.0.0</n5-zstandard.version>
-		<n5-blosc.version>2.0.0</n5-blosc.version>
 	</properties>
 
 	<repositories>
@@ -158,7 +166,6 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<dependency>
 			<groupId>org.bigdataviewer</groupId>
 			<artifactId>bigdataviewer-n5</artifactId>
-			<version>${bigdataviewer-n5.version}</version>
 		</dependency>
 
 		<!-- N5 dependencies -->
@@ -181,7 +188,6 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<dependency>
 			<groupId>org.janelia.saalfeldlab</groupId>
 			<artifactId>n5-hdf5</artifactId>
-			<version>${n5-hdf5.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.janelia.saalfeldlab</groupId>
