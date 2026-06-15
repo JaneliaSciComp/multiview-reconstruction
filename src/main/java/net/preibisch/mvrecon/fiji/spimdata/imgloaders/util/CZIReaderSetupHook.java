@@ -65,8 +65,8 @@ public class CZIReaderSetupHook implements BioformatsReaderSetupHook {
 		} else if (reader instanceof ZeissQuickStartCZIReader) {
 			configureCZIReader(
 					reader,
-					ZeissCZIReader.ALLOW_AUTOSTITCHING_KEY,
-					ZeissCZIReader.RELATIVE_POSITIONS_KEY
+					ZeissQuickStartCZIReader.ALLOW_AUTOSTITCHING_KEY,
+					ZeissQuickStartCZIReader.RELATIVE_POSITIONS_KEY
 			);
 		}
 	}

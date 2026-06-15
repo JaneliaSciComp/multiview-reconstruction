@@ -214,7 +214,7 @@ public class AllenOMEZarrProperties implements N5Properties
 							continue;
 
 						final double pxTranslation = t.getTranslation()[ d ];
-                        final double logScale = Math.log( r ) / Math.log(2);
+						final double logScale = Math.log( r ) / Math.log(2);
 						final double expectedAveraging = Math.pow(2, logScale - 1) - 0.5; // 0.5, 1.5, 3.5, 7.5, ...
 						final boolean matchesAveraging = Math.abs( pxTranslation - expectedAveraging ) < 0.1;
 						final boolean matchesNonAveraging = Math.abs( pxTranslation ) < 0.01;
