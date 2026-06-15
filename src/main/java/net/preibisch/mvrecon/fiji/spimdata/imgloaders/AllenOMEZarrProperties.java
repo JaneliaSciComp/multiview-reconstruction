@@ -63,8 +63,16 @@ public class AllenOMEZarrProperties implements N5Properties
 	}
 
 	@Override
-	public String getDatasetPath( final int setupId, final int timepointId, final int level )
+	public String getDatasetPath( final N5Reader n5, final int setupId, final int timepointId, final int level )
 	{
+		// TODO: use the N5Reader @goinac @schweinfurthl, Claude wanted to add:
+		/*
+		// Ensure the level-path cache is populated from the multiscales metadata,
+		// otherwise we would fall back to numeric levels which are wrong for v0.5 nested paths
+		if ( levelPathCache.get( setupId ) == null )
+			getMipMapResolutions( this, n5, setupId );  
+		*/
+
 		// Check if we have cached the actual paths from multiscales metadata
 		final String[] cachedPaths = levelPathCache.get( setupId );
 		if ( cachedPaths != null && level < cachedPaths.length )
@@ -90,7 +98,7 @@ public class AllenOMEZarrProperties implements N5Properties
 	@Override
 	public long[] getDimensions( final N5Reader n5, final int setupId, final int timepointId, final int level )
 	{
-		final String path = getDatasetPath( setupId, timepointId, level );
+		final String path = getDatasetPath( n5, setupId, timepointId, level );
 		final long[] dimensions = n5.getDatasetAttributes( path ).getDimensions();
 		// dataset dimensions is 5D, remove the channel and time dimensions
 		return Arrays.copyOf( dimensions, 3 );
@@ -128,7 +136,7 @@ public class AllenOMEZarrProperties implements N5Properties
 		if ( timePointId < 0 )
 			return DataType.UINT16;
 
-		final String path = n5properties.getDatasetPath( setupId, timePointId, 0 );
+		final String path = n5properties.getDatasetPath( n5, setupId, timePointId, 0 );
 		final DatasetAttributes attributes = n5.getDatasetAttributes( path );
 
 		if ( attributes == null )
