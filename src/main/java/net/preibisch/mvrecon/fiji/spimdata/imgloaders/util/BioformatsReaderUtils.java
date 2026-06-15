@@ -24,7 +24,6 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.util;
 
 import java.util.HashMap;
 
-import ch.epfl.biop.formats.in.ZeissQuickStartCZIReader;
 import loci.formats.FormatTools;
 import loci.formats.IFormatReader;
 import loci.formats.ImageReader;
@@ -35,7 +34,6 @@ public class BioformatsReaderUtils {
 	static HashMap<Class<? extends IFormatReader>, BioformatsReaderSetupHook> setupHooks = new HashMap<>();
 	static {
 		setupHooks.put(ZeissCZIReader.class, CZIReaderSetupHook.getInstance());
-		setupHooks.put(ZeissQuickStartCZIReader.class, CZIReaderSetupHook.getInstance());
 	}
 
 	public static ImageReader createImageReaderWithSetupHooks()

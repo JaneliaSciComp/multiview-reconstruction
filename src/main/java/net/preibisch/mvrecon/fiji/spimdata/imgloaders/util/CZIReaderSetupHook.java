@@ -22,7 +22,6 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.util;
 
-import ch.epfl.biop.formats.in.ZeissQuickStartCZIReader;
 import loci.formats.IFormatReader;
 import loci.formats.in.DynamicMetadataOptions;
 import loci.formats.in.MetadataOptions;
@@ -56,29 +55,13 @@ public class CZIReaderSetupHook implements BioformatsReaderSetupHook {
 
 	@Override
 	public void runSetup(IFormatReader reader) {
-
-		if (reader instanceof ZeissCZIReader) {
-			setupZeissCZIReader(reader);
-		} else if (reader instanceof ZeissQuickStartCZIReader) {
-			setupQuickCZIReader(reader);
+		if (!(reader instanceof ZeissCZIReader)) {
+			return;
 		}
-	}
-
-	private void setupZeissCZIReader(final IFormatReader reader)
-	{
 		configureCZIReader(
 				reader,
 				ZeissCZIReader.ALLOW_AUTOSTITCHING_KEY,
 				ZeissCZIReader.RELATIVE_POSITIONS_KEY
-		);
-	}
-
-	private void setupQuickCZIReader(final IFormatReader reader)
-	{
-		configureCZIReader(
-				reader,
-				ZeissQuickStartCZIReader.ALLOW_AUTOSTITCHING_KEY,
-				ZeissQuickStartCZIReader.RELATIVE_POSITIONS_KEY
 		);
 	}
 
