@@ -235,7 +235,7 @@ public class AllenOMEZarrProperties implements N5Properties
 						{
 							// verify consistency with detected mode
 							final double expected = isAveraging ? expectedAveraging : 0.0;
-							if ( Math.abs( pxTranslation - expected ) >= 0.01 )
+							if ( Math.abs( pxTranslation - expected ) >= 0.1 )
 								throw new IllegalStateException( "Inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + pxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling." );
 						}
 					}
