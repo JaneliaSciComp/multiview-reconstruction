@@ -98,7 +98,7 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 
 		<license.licenseName>gpl_v2</license.licenseName>
 		<license.copyrightOwners>Multiview Reconstruction developers.</license.copyrightOwners>
-		<scijava.jvm.version>21</scijava.jvm.version>
+		<scijava.jvm.version>11</scijava.jvm.version>
 		<scijava.javadoc.url.java>https://javadoc.scijava.org/Java11/</scijava.javadoc.url.java>
 		<scijava.javadoc.url.javafx>https://javadoc.scijava.org/JavaFX11/</scijava.javadoc.url.javafx>
 		<legacyMode>true</legacyMode> <!-- NB: Make javadoc less strict about Java module system. -->
@@ -109,13 +109,6 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<pyramidio.version>1.1.0</pyramidio.version>
 		<ijp-kheops.version>0.6.2</ijp-kheops.version>
 		<generic-archiver.version>1.1.0</generic-archiver.version>
-
-		<!-- TEMP: Until pom-scijava 44.0.0 is released. -->
-		<!--<imglib2.version>8.0.1</imglib2.version>
-		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
-		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
-		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
-		<bigdataviewer-core.version>10.6.8</bigdataviewer-core.version>-->
 
 		<!-- TEMP: Until pom-scijava 44.0.0 is updated for ZARRv3. -->
 		<bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
