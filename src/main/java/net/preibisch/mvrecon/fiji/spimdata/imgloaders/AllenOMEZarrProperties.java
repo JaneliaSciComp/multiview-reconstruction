@@ -213,12 +213,11 @@ public class AllenOMEZarrProperties implements N5Properties
 						if ( Math.abs( r - 1.0 ) < 0.01 )
 							continue;
 
-						// relative pixel translation: (translation_s - translationS0) / scaleS0
-						final double relPxTranslation = ( t.getTranslation()[ d ] - translationS0[ d ] ) / scaleS0[ d ];
-						final double expectedAveraging = ( r - 1.0 ) / 2.0; // 0.5, 1.5, 3.5, 7.5, ...
-
-						final boolean matchesAveraging = Math.abs( relPxTranslation - expectedAveraging ) < 0.01;
-						final boolean matchesNonAveraging = Math.abs( relPxTranslation ) < 0.01;
+						final double pxTranslation = t.getTranslation()[ d ];
+                        final double logScale = Math.log( r ) / Math.log(2);
+						final double expectedAveraging = Math.pow(2, logScale - 1) - 0.5; // 0.5, 1.5, 3.5, 7.5, ...
+						final boolean matchesAveraging = Math.abs( pxTranslation - expectedAveraging ) < 0.01;
+						final boolean matchesNonAveraging = Math.abs( pxTranslation ) < 0.01;
 
 						//System.out.println( "s=" + s + ", d=" + d + ", relPxTranslation=" + relPxTranslation + " @ scale=" + r );
 
@@ -230,14 +229,14 @@ public class AllenOMEZarrProperties implements N5Properties
 							else if ( matchesNonAveraging )
 								throw new IllegalStateException( "Non-averaging downsampling detected (translation=0 for level " + s + " dim " + d + "), which is currently not supported." );
 							else
-								throw new IllegalStateException( "Unsupported translation for level " + s + " dim " + d + ": relative pixel translation=" + relPxTranslation + " (expected " + expectedAveraging + " for averaging or 0.0 for non-averaging)." );
+								throw new IllegalStateException( "Unsupported translation for level " + s + " dim " + d + ": pixel translation=" + pxTranslation + " (expected " + expectedAveraging + " for averaging or 0.0 for non-averaging)." );
 						}
 						else
 						{
 							// verify consistency with detected mode
 							final double expected = isAveraging ? expectedAveraging : 0.0;
-							if ( Math.abs( relPxTranslation - expected ) >= 0.01 )
-								throw new IllegalStateException( "Inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + relPxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling." );
+							if ( Math.abs( pxTranslation - expected ) >= 0.01 )
+								throw new IllegalStateException( "Inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + pxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling." );
 						}
 					}
 				}
