@@ -172,8 +172,8 @@ public class AllenOMEZarrProperties implements N5Properties
 
 		// iterate over all resolution levels for translation (to make sure scaleS0 is assigned if it existed)
 		// OME-Zarr 0.4: physical = pixel * scale + translation
-		// For averaging downsampling by factor r: expected relative shift = (r-1)/2 in s0 pixels
-		// For non-averaging (strided) downsampling: expected relative shift = 0
+		// For averaging downsampling by factor r: calculates translation for r in pixels
+		// For non-averaging (strided) downsampling: expected translation = 0
 		double[] translationS0 = null;
 		Boolean isAveraging = null; // determined from first downsampled level with r>1, then verified for subsequent levels
 
@@ -216,7 +216,7 @@ public class AllenOMEZarrProperties implements N5Properties
 						final double pxTranslation = t.getTranslation()[ d ];
                         final double logScale = Math.log( r ) / Math.log(2);
 						final double expectedAveraging = Math.pow(2, logScale - 1) - 0.5; // 0.5, 1.5, 3.5, 7.5, ...
-						final boolean matchesAveraging = Math.abs( pxTranslation - expectedAveraging ) < 0.01;
+						final boolean matchesAveraging = Math.abs( pxTranslation - expectedAveraging ) < 0.1;
 						final boolean matchesNonAveraging = Math.abs( pxTranslation ) < 0.01;
 
 						//System.out.println( "s=" + s + ", d=" + d + ", relPxTranslation=" + relPxTranslation + " @ scale=" + r );
