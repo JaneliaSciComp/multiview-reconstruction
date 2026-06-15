@@ -24,8 +24,6 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders;
 
 import java.util.Arrays;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
@@ -43,8 +41,6 @@ import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
-import org.json.JSONArray;
-import org.json.JSONString;
 
 public class AllenOMEZarrProperties implements N5Properties
 {
@@ -52,12 +48,6 @@ public class AllenOMEZarrProperties implements N5Properties
 
 	// mapping of viewIDs to corresponding OME-ZARRs
 	private final Map< ViewId, OMEZARREntry > viewIdToOmeZarrPath;
-
-	// N5Properties.getDatasetPath should require an N5Reader so that the dataset path could always be retrieved correctly (e.g., "s0", "s1", "s2" or "0", "1", "2")
-	// To work around this problem for now, first time we retrieve the view setup we cache it so that next time
-	// the dataset path is needed - we use the cached value.
-	// TODO: Remove this and the method that populates it, once the signature for N5Properties.getDatasetPath was updated to use the N5 Reader
-	private final ConcurrentMap< ViewId, OmeNgffMultiScaleMetadata > viewIdToOmeMetadata = new ConcurrentHashMap<>();
 
 	// only warn once per opened XML if TranslationCoordinateTransformation is missing
 	private boolean warnedMissingTranslation = false;
@@ -76,10 +66,9 @@ public class AllenOMEZarrProperties implements N5Properties
 	}
 
 	@Override
-	public String getDatasetPath( final int setupId, final int timepointId, final int level )
+	public String getDatasetPath( final N5Reader n5, final int setupId, final int timepointId, final int level )
 	{
-		// Note: if the OME metadata has not been cached yet this method will return the default path, because the reader is not available
-		return getMultiscaleDatasetPathOrDefault(null, timepointId, setupId, level);
+		return getMultiscaleDatasetPathOrDefault( n5, timepointId, setupId, level );
 	}
 
 	@Override
@@ -268,11 +257,6 @@ public class AllenOMEZarrProperties implements N5Properties
 	{
 		OmeNgffMultiScaleMetadata omeNgffMultiScaleMetadata = getViewSetupMultiscaleMetadata(n5, timepointId, setupId);
 
-		if (omeNgffMultiScaleMetadata == null) {
-			throw new IllegalStateException("OME multiscale metadata could not be cached for (tp, setup) = (" +
-					timepointId + "," + setupId + ") - current N5Reader is " + n5);
-		}
-
 		String viewSetupPath = getPath( setupId, timepointId );
 		// get the first scale path from the metadata
 		String datasetPath = omeNgffMultiScaleMetadata.datasets[level].path;
@@ -281,34 +265,26 @@ public class AllenOMEZarrProperties implements N5Properties
 
 	// retrieve and cache the multiscale metadata
 	private OmeNgffMultiScaleMetadata getViewSetupMultiscaleMetadata(N5Reader n5, int timePointId, int setupId) {
-		ViewId viewId = new ViewId(timePointId, setupId);
+		String datasetPath = getPath( setupId, timePointId );
 
-		return viewIdToOmeMetadata.computeIfAbsent(viewId, k -> {
-			if (n5 == null) {
-				return null; // no mapping will be cached
-			}
+		System.out.println( "Getting multiscale metadata for " + datasetPath );
+		OmeNgffMetadata omeMetadata = n5.getAttribute(datasetPath, "ome", OmeNgffMetadata.class);
 
-			String datasetPath = getPath( setupId, timePointId );
+		final OmeNgffMultiScaleMetadata[] multiscales;
+		if  (omeMetadata != null) {
+			System.out.println( "Found OME metadata at " + datasetPath + ": " + omeMetadata);
+			multiscales = omeMetadata.multiscales;
+		} else {
+			multiscales = n5.getAttribute( datasetPath, "multiscales", OmeNgffMultiScaleMetadata[].class );
+			System.out.println( "Retrieved OME multiscales at " + datasetPath + ": " + multiscales);
+		}
 
-			System.out.println( "Getting multiscale metadata for " + datasetPath );
-			OmeNgffMetadata omeMetadata = n5.getAttribute(datasetPath, "ome", OmeNgffMetadata.class);
+		if ( multiscales == null || multiscales.length == 0 )
+			throw new IllegalStateException( "Could not parse OME-ZARR multiscales object. stopping." );
 
-			final OmeNgffMultiScaleMetadata[] multiscales;
-			if  (omeMetadata != null) {
-				System.out.println( "Found OME metadata at " + datasetPath + ": " + omeMetadata);
-				multiscales = omeMetadata.multiscales;
-			} else {
-				multiscales = n5.getAttribute( datasetPath, "multiscales", OmeNgffMultiScaleMetadata[].class );
-				System.out.println( "Retrieved OME multiscales at " + datasetPath + ": " + multiscales);
-			}
+		if ( multiscales.length > 1 )
+			System.out.println( "This dataset has " + multiscales.length + " objects, we expected 1. Picking the first one." );
 
-			if ( multiscales == null || multiscales.length == 0 )
-				throw new IllegalStateException( "Could not parse OME-ZARR multiscales object. stopping." );
-
-			if ( multiscales.length > 1 )
-				System.out.println( "This dataset has " + multiscales.length + " objects, we expected 1. Picking the first one." );
-
-			return multiscales[0];
-		});
+		return multiscales[0];
 	}
 }

@@ -98,7 +98,7 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 
 		<license.licenseName>gpl_v2</license.licenseName>
 		<license.copyrightOwners>Multiview Reconstruction developers.</license.copyrightOwners>
-		<scijava.jvm.version>11</scijava.jvm.version>
+		<scijava.jvm.version>17</scijava.jvm.version>
 		<scijava.javadoc.url.java>https://javadoc.scijava.org/Java11/</scijava.javadoc.url.java>
 		<scijava.javadoc.url.javafx>https://javadoc.scijava.org/JavaFX11/</scijava.javadoc.url.javafx>
 		<legacyMode>true</legacyMode> <!-- NB: Make javadoc less strict about Java module system. -->
@@ -115,7 +115,7 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
 		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
 		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
-		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
+		<bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
 		<javafx.version>19.0.2.1</javafx.version>
 
 		<mpicbg.version>1.6.6</mpicbg.version>
