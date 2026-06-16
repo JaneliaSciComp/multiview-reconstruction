@@ -227,13 +227,32 @@ public class AllenOMEZarrProperties implements N5Properties
 
 						if ( isAveraging == null )
 						{
-							// determine mode from first downsampled dimension
+							// determine mode from first downsampled dimension.
 							if ( matchesAveraging )
+							{
 								isAveraging = true;
+							}
 							else if ( matchesNonAveraging )
-								throw new IllegalStateException( "Non-averaging downsampling detected (translation=0 for level " + s + " dim " + d + "), which is currently not supported." );
+							{
+								// translation=0 indicates strided/non-averaging downsampling.
+								isAveraging = false;
+								if ( !n5properties.warnedInconsistentTranslation )
+								{
+									IOFunctions.println( "WARNING: non-averaging (strided) downsampling detected (translation=0 for level " + s + " dim " + d + "). Proceeding; downsampling factors are taken from the scales." );
+									n5properties.warnedInconsistentTranslation = true;
+								}
+							}
 							else
-								throw new IllegalStateException( "Unsupported translation for level " + s + " dim " + d + ": pixel translation=" + pxTranslation + " (expected " + expectedAveraging + " for averaging or 0.0 for non-averaging)." );
+							{
+								// matches neither mode (e.g. a producer that did not apply the
+								// anisotropy factor). Default to averaging.
+								isAveraging = true;
+								if ( !n5properties.warnedInconsistentTranslation )
+								{
+									IOFunctions.println( "WARNING: unsupported translation for level " + s + " dim " + d + ": relative pixel translation=" + pxTranslation + ", expected " + expectedAveraging + " for averaging or 0.0 for non-averaging (producer likely did not apply the anisotropy factor). Assuming averaging; downsampling factors are taken from the scales." );
+									n5properties.warnedInconsistentTranslation = true;
+								}
+							}
 						}
 						else
 						{
@@ -241,12 +260,6 @@ public class AllenOMEZarrProperties implements N5Properties
 							final double expected = isAveraging ? expectedAveraging : 0.0;
 							if ( Math.abs( pxTranslation - expected ) >= 0.05 )
 							{
-								// Don't abort: some producers (e.g. BigStitcher-Spark) write the
-								// half-pixel shift without multiplying by the anisotropy/calibration
-								// factor, so an anisotropic dimension's translation looks off by that
-								// factor (e.g. z: 0.5 stored instead of 0.5 * scaleS0[z]). The translation
-								// is only validated here, not used to build mipMapResolutions (those come
-								// from the scales), so the sub-voxel discrepancy is harmless. Warn once.
 								if ( !n5properties.warnedInconsistentTranslation )
 								{
 									IOFunctions.println( "WARNING: inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + pxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling (producer likely did not apply the anisotropy factor). Ignoring; downsampling factors are taken from the scales." );
