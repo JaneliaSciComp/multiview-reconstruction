@@ -19,8 +19,8 @@ jobs:
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
-          java-package: 'jdk+fx'
+          java-version: '21'
+          java-package: 'jdk'
           distribution: 'zulu'
           cache: 'maven'
       - name: Set up CI environment
