@@ -186,7 +186,7 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 		long start = System.currentTimeMillis();
 		List<BasicViewDescription< ? > > ungroupedElements =
 				SpimDataTools.getFilteredViewDescriptions( panel.getSpimData().getSequenceDescription(), filters, false);
-		IOFunctions.println( "PERF: [elements()] getFilteredViewDescriptions took " + (System.currentTimeMillis() - start) + " ms, got " + ungroupedElements.size() + " views" );
+		// IOFunctions.println( "PERF: [elements()] getFilteredViewDescriptions took " + (System.currentTimeMillis() - start) + " ms, got " + ungroupedElements.size() + " views" );
 
 		// Filter out missing views if requested
 		if ( hideMissingViews )
@@ -197,13 +197,13 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 				if ( vd.isPresent() )
 					presentViews.add( vd );
 			ungroupedElements = presentViews;
-			IOFunctions.println( "PERF: [elements()] hideMissingViews filter took " + (System.currentTimeMillis() - start) + " ms, remaining " + ungroupedElements.size() + " views" );
+			// IOFunctions.println( "PERF: [elements()] hideMissingViews filter took " + (System.currentTimeMillis() - start) + " ms, remaining " + ungroupedElements.size() + " views" );
 		}
 
 		start = System.currentTimeMillis();
 		final List< Group< BasicViewDescription< ? > > > elementsNew =
 				Group.combineBy(ungroupedElements, groupingFactors);
-		IOFunctions.println( "PERF: [elements()] Group.combineBy took " + (System.currentTimeMillis() - start) + " ms, got " + elementsNew.size() + " groups" );
+		// IOFunctions.println( "PERF: [elements()] Group.combineBy took " + (System.currentTimeMillis() - start) + " ms, got " + elementsNew.size() + " groups" );
 
 		start = System.currentTimeMillis();
 		final List< List< BasicViewDescription< ? > > > elementsOut = new ArrayList<>();
@@ -219,11 +219,11 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 		// sort the groups of VDS
 		for (Class<? extends Entity> cl : sortingFactors)
 			Collections.sort(elementsOut, SpimDataTools.getVDListComparator(cl));
-		IOFunctions.println( "PERF: [elements()] sorting took " + (System.currentTimeMillis() - start) + " ms" );
+		// IOFunctions.println( "PERF: [elements()] sorting took " + (System.currentTimeMillis() - start) + " ms" );
 
 		this.elements = elementsOut;
 
-		IOFunctions.println( "PERF: [elements()] TOTAL took " + (System.currentTimeMillis() - startTotal) + " ms" );
+		// IOFunctions.println( "PERF: [elements()] TOTAL took " + (System.currentTimeMillis() - startTotal) + " ms" );
 
 		return elements;
 	}
@@ -302,8 +302,8 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 		// Performance tracking
 		getValueAtTotalTime += (System.nanoTime() - start);
 		getValueAtCallCount++;
-		if (getValueAtCallCount % 1000 == 0)
-			IOFunctions.println( "PERF: [getValueAt] " + getValueAtCallCount + " calls, total time " + (getValueAtTotalTime / 1_000_000) + " ms, avg " + (getValueAtTotalTime / getValueAtCallCount / 1000) + " µs/call" );
+		// if (getValueAtCallCount % 1000 == 0)
+		//	IOFunctions.println( "PERF: [getValueAt] " + getValueAtCallCount + " calls, total time " + (getValueAtTotalTime / 1_000_000) + " ms, avg " + (getValueAtTotalTime / getValueAtCallCount / 1000) + " µs/call" );
 
 		return String.join(", ", entryNames);
 	}

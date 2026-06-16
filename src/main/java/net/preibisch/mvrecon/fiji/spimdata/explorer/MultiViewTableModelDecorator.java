@@ -219,8 +219,8 @@ public class MultiViewTableModelDecorator < AS extends SpimData2 > implements IS
 		// Performance tracking
 		getValueAtTotalTime += (System.nanoTime() - start);
 		getValueAtCallCount++;
-		if (getValueAtCallCount % 1000 == 0)
-			net.preibisch.legacy.io.IOFunctions.println( "PERF: [MultiViewDecorator.getValueAt] " + getValueAtCallCount + " calls, total time " + (getValueAtTotalTime / 1_000_000) + " ms, interestPoints column: " + interestPointsColumnCalls + " calls, " + (interestPointsColumnTime / 1_000_000) + " ms" );
+		// if (getValueAtCallCount % 1000 == 0)
+		//	net.preibisch.legacy.io.IOFunctions.println( "PERF: [MultiViewDecorator.getValueAt] " + getValueAtCallCount + " calls, total time " + (getValueAtTotalTime / 1_000_000) + " ms, interestPoints column: " + interestPointsColumnCalls + " calls, " + (interestPointsColumnTime / 1_000_000) + " ms" );
 
 		return result;
 	}

@@ -52,6 +52,12 @@ public class AllenOMEZarrProperties implements N5Properties
 	// only warn once per opened XML if TranslationCoordinateTransformation is missing
 	private boolean warnedMissingTranslation = false;
 
+	// only warn once per opened XML if a level's translation is inconsistent with the
+	// detected downsampling mode (e.g. a producer that wrote the half-pixel shift without
+	// applying the anisotropy/calibration factor). The translation is only validated here,
+	// not used to build the returned downsampling factors, so we warn instead of aborting.
+	private boolean warnedInconsistentTranslation = false;
+
 	public AllenOMEZarrProperties(
 			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
 			final Map< ViewId, OMEZARREntry > viewIdToOmeZarrPath)
@@ -234,7 +240,19 @@ public class AllenOMEZarrProperties implements N5Properties
 							// verify consistency with detected mode
 							final double expected = isAveraging ? expectedAveraging : 0.0;
 							if ( Math.abs( pxTranslation - expected ) >= 0.05 )
-								throw new IllegalStateException( "Inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + pxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling." );
+							{
+								// Don't abort: some producers (e.g. BigStitcher-Spark) write the
+								// half-pixel shift without multiplying by the anisotropy/calibration
+								// factor, so an anisotropic dimension's translation looks off by that
+								// factor (e.g. z: 0.5 stored instead of 0.5 * scaleS0[z]). The translation
+								// is only validated here, not used to build mipMapResolutions (those come
+								// from the scales), so the sub-voxel discrepancy is harmless. Warn once.
+								if ( !n5properties.warnedInconsistentTranslation )
+								{
+									IOFunctions.println( "WARNING: inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + pxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling (producer likely did not apply the anisotropy factor). Ignoring; downsampling factors are taken from the scales." );
+									n5properties.warnedInconsistentTranslation = true;
+								}
+							}
 						}
 					}
 				}

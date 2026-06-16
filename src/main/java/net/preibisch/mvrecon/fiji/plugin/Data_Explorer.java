@@ -93,7 +93,7 @@ public class Data_Explorer implements PlugIn
 		final SpimData2 data = result.getData();
 		final URI xml = result.getXMLURI();
 		final XmlIoSpimData2 io = result.getIO();
-		net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] getData/XML/IO took " + (System.currentTimeMillis() - start) + " ms" );
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] getData/XML/IO took " + (System.currentTimeMillis() - start) + " ms" );
 
 		// Warn before unconditionally opening BDV on very large datasets — it's slow and often
 		// not what the user wants. Below the threshold, behavior is unchanged (BDV opens).
@@ -121,7 +121,7 @@ public class Data_Explorer implements PlugIn
 
 		start = System.currentTimeMillis();
 		final ViewSetupExplorer< SpimData2 > explorer = new ViewSetupExplorer<>( data, xml, io, openBDV );
-		net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] ViewSetupExplorer creation took " + (System.currentTimeMillis() - start) + " ms" );
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] ViewSetupExplorer creation took " + (System.currentTimeMillis() - start) + " ms" );
 
 		explorer.getFrame().toFront();
 	}

@@ -118,7 +118,7 @@ public class BDVTools
 		state.setSourcesActive( inactive, false );
 		state.setSourcesActive( active, true );
 
-		IOFunctions.println( "PERF: [setVisibleSourcesBatch] deactivated " + inactive.size() + ", activated " + active.size() + " sources" );
+		// IOFunctions.println( "PERF: [setVisibleSourcesBatch] deactivated " + inactive.size() + ", activated " + active.size() + " sources" );
 	}
 
 	// ==================== Source Coloring ====================
@@ -148,7 +148,7 @@ public class BDVTools
 				}
 			}
 		}
-		IOFunctions.println( "PERF: [whiteSourcesBatch] set " + count + " sources to white in " + (System.currentTimeMillis() - start) + " ms" );
+		// IOFunctions.println( "PERF: [whiteSourcesBatch] set " + count + " sources to white in " + (System.currentTimeMillis() - start) + " ms" );
 	}
 
 	/**
@@ -176,7 +176,7 @@ public class BDVTools
 				}
 			}
 		}
-		IOFunctions.println( "PERF: [colorSourcesBatch] colored " + count + " sources in " + (System.currentTimeMillis() - start) + " ms" );
+		// IOFunctions.println( "PERF: [colorSourcesBatch] colored " + count + " sources in " + (System.currentTimeMillis() - start) + " ms" );
 	}
 
 	/**
@@ -253,7 +253,7 @@ public class BDVTools
 			}
 		}
 
-		IOFunctions.println( "PERF: [colorByFactors] colored " + colorCount + " sources in " + groups.size() + " groups in " + (System.currentTimeMillis() - start) + " ms" );
+		// IOFunctions.println( "PERF: [colorByFactors] colored " + colorCount + " sources in " + groups.size() + " groups in " + (System.currentTimeMillis() - start) + " ms" );
 	}
 
 	/**

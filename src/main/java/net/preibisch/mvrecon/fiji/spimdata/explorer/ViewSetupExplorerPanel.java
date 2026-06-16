@@ -157,11 +157,11 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 
 		long start = System.currentTimeMillis();
 		popups = initPopups();
-		IOFunctions.println( "PERF: [ViewSetupExplorerPanel] initPopups() took " + (System.currentTimeMillis() - start) + " ms" );
+		// IOFunctions.println( "PERF: [ViewSetupExplorerPanel] initPopups() took " + (System.currentTimeMillis() - start) + " ms" );
 
 		start = System.currentTimeMillis();
 		initComponent();
-		IOFunctions.println( "PERF: [ViewSetupExplorerPanel] initComponent() took " + (System.currentTimeMillis() - start) + " ms" );
+		// IOFunctions.println( "PERF: [ViewSetupExplorerPanel] initComponent() took " + (System.currentTimeMillis() - start) + " ms" );
 
 		if ( requestStartBDV &&
 				(ViewerImgLoader.class.isInstance( data.getSequenceDescription().getImgLoader() )
@@ -178,7 +178,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 			{
 				start = System.currentTimeMillis();
 				( ( LazyBDVPopup ) p ).openBDV( this );
-				IOFunctions.println( "PERF: [ViewSetupExplorerPanel] LazyBDVPopup.openBDV() took " + (System.currentTimeMillis() - start) + " ms" );
+				// IOFunctions.println( "PERF: [ViewSetupExplorerPanel] LazyBDVPopup.openBDV() took " + (System.currentTimeMillis() - start) + " ms" );
 				// Lazy mode wires its own selection listener; nothing more to do here.
 			}
 			else if ( p instanceof BDVPopup )
@@ -189,19 +189,19 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 				{
 					start = System.currentTimeMillis();
 					bdvpopup.bdv = BDVPopup.createBDV( getSpimData(), xml() );
-					IOFunctions.println( "PERF: [ViewSetupExplorerPanel] BDVPopup.createBDV() took " + (System.currentTimeMillis() - start) + " ms" );
+					// IOFunctions.println( "PERF: [ViewSetupExplorerPanel] BDVPopup.createBDV() took " + (System.currentTimeMillis() - start) + " ms" );
 				}
 
 				start = System.currentTimeMillis();
 				BDVTools.setFusedModeSimple( bdvpopup.bdv, data );
-				IOFunctions.println( "PERF: [ViewSetupExplorerPanel] setFusedModeSimple() took " + (System.currentTimeMillis() - start) + " ms" );
+				// IOFunctions.println( "PERF: [ViewSetupExplorerPanel] setFusedModeSimple() took " + (System.currentTimeMillis() - start) + " ms" );
 
 				// Update BDV to show all grouped tiles based on initial table selection
 				if ( !selectedRows.isEmpty() )
 				{
 					start = System.currentTimeMillis();
 					updateBDV( bdvpopup.bdv, colorMode, data, firstSelectedVD, selectedRows );
-					IOFunctions.println( "PERF: [ViewSetupExplorerPanel] updateBDV() took " + (System.currentTimeMillis() - start) + " ms" );
+					// IOFunctions.println( "PERF: [ViewSetupExplorerPanel] updateBDV() took " + (System.currentTimeMillis() - start) + " ms" );
 				}
 			}
 		}

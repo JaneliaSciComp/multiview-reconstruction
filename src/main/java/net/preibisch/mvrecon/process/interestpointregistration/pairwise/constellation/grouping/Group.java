@@ -225,7 +225,7 @@ public class Group< V > implements Iterable< V >, Serializable
 		// pre-sort vd List
 		long start = System.currentTimeMillis();
 		Collections.sort( vds );
-		IOFunctions.println( "PERF: [combineOrSplitBy] sort " + vds.size() + " vds took " + (System.currentTimeMillis() - start) + " ms" );
+		// IOFunctions.println( "PERF: [combineOrSplitBy] sort " + vds.size() + " vds took " + (System.currentTimeMillis() - start) + " ms" );
 
 		start = System.currentTimeMillis();
 		for (V vd : vds) {
@@ -245,9 +245,9 @@ public class Group< V > implements Iterable< V >, Serializable
 
 			res.get(key).getViews().add(vd);
 		}
-		IOFunctions.println( "PERF: [combineOrSplitBy] grouping loop took " + (System.currentTimeMillis() - start) + " ms, created " + res.size() + " groups" );
+		// IOFunctions.println( "PERF: [combineOrSplitBy] grouping loop took " + (System.currentTimeMillis() - start) + " ms, created " + res.size() + " groups" );
 
-		IOFunctions.println( "PERF: [combineOrSplitBy] TOTAL took " + (System.currentTimeMillis() - startTotal) + " ms" );
+		// IOFunctions.println( "PERF: [combineOrSplitBy] TOTAL took " + (System.currentTimeMillis() - startTotal) + " ms" );
 
 		return new ArrayList<>(res.values());
 	}

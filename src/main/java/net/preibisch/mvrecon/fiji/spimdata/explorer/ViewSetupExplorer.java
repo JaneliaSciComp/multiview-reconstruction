@@ -52,7 +52,7 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 
 		long start = System.currentTimeMillis();
 		panel = new ViewSetupExplorerPanel< AS >( this, data, xml, io, openBDV );
-		net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] ViewSetupExplorerPanel creation took " + (System.currentTimeMillis() - start) + " ms" );
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] ViewSetupExplorerPanel creation took " + (System.currentTimeMillis() - start) + " ms" );
 
 		start = System.currentTimeMillis();
 		frame.add( panel, BorderLayout.CENTER );
@@ -67,15 +67,15 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 						quit();
 					}
 				});
-		net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame setup took " + (System.currentTimeMillis() - start) + " ms" );
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame setup took " + (System.currentTimeMillis() - start) + " ms" );
 
 		start = System.currentTimeMillis();
 		frame.pack();
-		net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame.pack() took " + (System.currentTimeMillis() - start) + " ms" );
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame.pack() took " + (System.currentTimeMillis() - start) + " ms" );
 
 		start = System.currentTimeMillis();
 		frame.setVisible( true );
-		net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame.setVisible() took " + (System.currentTimeMillis() - start) + " ms" );
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame.setVisible() took " + (System.currentTimeMillis() - start) + " ms" );
 
 		// move explorer window and log to initial positions
 		MultiWindowLayoutHelper.moveToScreenFraction( frame, xPos, yPos );
