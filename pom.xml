@@ -106,7 +106,7 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<releaseProfiles>sign,deploy-to-scijava</releaseProfiles>
 
 		<pyramidio.version>1.1.0</pyramidio.version>
-		<ijp-kheops.version>0.6.2</ijp-kheops.version>
+		<ijp-kheops.version>0.20.0</ijp-kheops.version>
 		<generic-archiver.version>1.1.0</generic-archiver.version>
 
 		<!-- TEMP: Until pom-scijava 44.0.0 is updated for ZARRv3. -->
