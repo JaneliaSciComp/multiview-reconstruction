@@ -174,7 +174,15 @@ public class AllenOMEZarrProperties implements N5Properties
 		// OME-Zarr 0.4: physical = pixel * scale + translation
 		// For averaging downsampling by factor r: calculates translation for r in pixels
 		// For non-averaging (strided) downsampling: expected translation = 0
-		double[] translationS0 = null;
+		// capture s0's translation explicitly. OME-Zarr allows s0 to omit the
+		// translation transform entirely, in which case its origin is implicitly
+		// zero. We must NOT lazily grab the first translation we encounter, since
+		// that would be a downsampled level (e.g. s1) and corrupt the s0 reference.
+		double[] translationS0 = new double[ mipMapResolutions[ 0 ].length ]; // zeros
+		for ( final CoordinateTransformation< ? > c : multiScaleMetadata.datasets[ 0 ].coordinateTransformations )
+			if ( c instanceof TranslationCoordinateTransformation )
+				translationS0 = ( ( TranslationCoordinateTransformation ) c ).getTranslation().clone();
+
 		Boolean isAveraging = null; // determined from first downsampled level with r>1, then verified for subsequent levels
 
 		//System.out.println( "\nsetup " + setupId );
@@ -197,14 +205,6 @@ public class AllenOMEZarrProperties implements N5Properties
 
 					//System.out.println( "s=" + s + ", translation: " + Arrays.toString( t.getTranslation() ));
 
-					// capture s0's translation
-					if ( translationS0 == null )
-					{
-						translationS0 = t.getTranslation().clone();
-						// s0: no validation needed, just capture
-						break;
-					}
-
 					for ( int d = 0; d < mipMapResolutions[ s ].length; ++d )
 					{
 						final double r = mipMapResolutions[ s ][ d ];
@@ -213,13 +213,11 @@ public class AllenOMEZarrProperties implements N5Properties
 						if ( Math.abs( r - 1.0 ) < 0.01 )
 							continue;
 
-						final double pxTranslation = t.getTranslation()[ d ];
-						final double logScale = Math.log( r ) / Math.log(2);
+						final double pxTranslation = (t.getTranslation()[d] - translationS0[d]) / scaleS0[d];
+                        final double logScale = Math.log( r ) / Math.log(2);
 						final double expectedAveraging = Math.pow(2, logScale - 1) - 0.5; // 0.5, 1.5, 3.5, 7.5, ...
-						final boolean matchesAveraging = Math.abs( pxTranslation - expectedAveraging ) < 0.1;
+						final boolean matchesAveraging = Math.abs( pxTranslation - expectedAveraging ) < 0.05;
 						final boolean matchesNonAveraging = Math.abs( pxTranslation ) < 0.01;
-
-						//System.out.println( "s=" + s + ", d=" + d + ", relPxTranslation=" + relPxTranslation + " @ scale=" + r );
 
 						if ( isAveraging == null )
 						{
@@ -235,7 +233,7 @@ public class AllenOMEZarrProperties implements N5Properties
 						{
 							// verify consistency with detected mode
 							final double expected = isAveraging ? expectedAveraging : 0.0;
-							if ( Math.abs( pxTranslation - expected ) >= 0.1 )
+							if ( Math.abs( pxTranslation - expected ) >= 0.05 )
 								throw new IllegalStateException( "Inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + pxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling." );
 						}
 					}
