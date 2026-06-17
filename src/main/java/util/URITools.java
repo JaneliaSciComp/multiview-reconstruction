@@ -34,8 +34,10 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.Date;
 import java.util.regex.Pattern;
 
@@ -324,11 +326,13 @@ public class URITools
 			{
 				System.out.println( "With credentials failed; trying anonymous ..." );
 
+				final String region = ( s3Region != null ) ? s3Region : detectS3Region( uri );
+
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
 				factory.s3Configuration( b -> {
 					b.credentialsProvider( AnonymousCredentialsProvider.create() );
-					if ( s3Region != null ) b.region( Region.of( s3Region ) );
+					if ( region != null ) b.region( Region.of( region ) );
 				} );
 				n5w = factory.openWriter( format, uri );
 			}
@@ -384,17 +388,70 @@ public class URITools
 			{
 				System.out.println( "With credentials failed; trying anonymous with gson builder ..." );
 
+				final String region = ( s3Region != null ) ? s3Region : detectS3Region( uri );
+
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
 				factory.s3Configuration( b -> {
 					b.credentialsProvider( AnonymousCredentialsProvider.create() );
-					if ( s3Region != null ) b.region( Region.of( s3Region ) );
+					if ( region != null ) b.region( Region.of( region ) );
 				} );
 				n5r = factory.openReader( format, uri );
 			}
 
 			return n5r;
 		}
+	}
+
+	/**
+	 * Attempts to detect the AWS region of an S3 bucket without any credentials.
+	 *
+	 * Issues an unauthenticated HTTP HEAD request (path-style) against the global
+	 * S3 endpoint and reads the {@code x-amz-bucket-region} response header, which
+	 * S3 returns even for 301/403 responses. Path-style against {@code s3.amazonaws.com}
+	 * is used so that bucket names containing dots are handled and TLS still validates.
+	 *
+	 * @param uri an {@code s3://} URI; the bucket is taken from the host component
+	 * @return the region string (e.g. "us-west-2"), or null if it could not be determined
+	 */
+	public static String detectS3Region( final URI uri )
+	{
+		final String bucket = ( uri == null ) ? null : uri.getHost();
+
+		if ( bucket == null || bucket.isEmpty() )
+			return null;
+
+		HttpURLConnection conn = null;
+
+		try
+		{
+			final URL url = new URL( "https://s3.amazonaws.com/" + bucket );
+			conn = (HttpURLConnection)url.openConnection();
+			conn.setRequestMethod( "HEAD" );
+			conn.setInstanceFollowRedirects( false );
+			conn.setConnectTimeout( 10000 );
+			conn.setReadTimeout( 10000 );
+			conn.getResponseCode(); // trigger the request
+
+			final String region = conn.getHeaderField( "x-amz-bucket-region" );
+
+			if ( region != null && !region.isEmpty() )
+			{
+				IOFunctions.println( "Auto-detected S3 region '" + region + "' for bucket '" + bucket + "'." );
+				return region;
+			}
+		}
+		catch ( final Exception e )
+		{
+			IOFunctions.println( "Could not auto-detect S3 region for bucket '" + bucket + "': " + e );
+		}
+		finally
+		{
+			if ( conn != null )
+				conn.disconnect();
+		}
+
+		return null;
 	}
 
 	public static SpimData2 loadSpimData( final URI xmlURI, final XmlIoSpimData2 io ) throws SpimDataException
