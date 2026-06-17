@@ -44,7 +44,6 @@ import java.util.regex.Pattern;
 import com.google.gson.JsonObject;
 import org.janelia.saalfeldlab.googlecloud.GoogleCloudUtils;
 import org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess;
-import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
 import org.janelia.saalfeldlab.n5.LockedChannel;
 import org.janelia.saalfeldlab.n5.N5FSReader;
@@ -148,16 +147,38 @@ public class URITools
 	{
 		if ( URITools.isS3( uri ) || URITools.isGC( uri ) )
 		{
+			// Note: N5Factory.getKeyValueAccess() returns a (bucket-scoped) KeyValueAccess
+			// without requiring an N5/Zarr container to exist at the location - unlike
+			// openReader(), which validates container existence and would throw
+			// "No container exists" when pointed at a bucket root / bare file. We only
+			// need a handle to read the XML bytes here, not an actual container.
+			// The boolean is 'createBucket' (false: never create, read-only access).
+			final GsonBuilder builder = new GsonBuilder().registerTypeAdapter(
+					CoordinateTransformation.class,
+					new CoordinateTransformationAdapter() );
+
 			try
 			{
-				final URI bucket = new URI( uri.getScheme(), uri.getHost() + "/.", null, null );
-				final N5Reader n5 = instantiateN5Reader( StorageFormat.N5, bucket );
-				return ((GsonKeyValueN5Reader)n5).getKeyValueAccess();
+				//System.out.println( "Trying KeyValueAccess with credentials ..." );
+				final N5Factory factory = new N5Factory();
+				factory.gsonBuilder( builder );
+				if ( s3Region != null )
+					factory.s3Configuration( b -> b.region( Region.of( s3Region ) ) );
+				return factory.getKeyValueAccess( uri, false );
 			}
-			catch (URISyntaxException e)
+			catch ( Exception e )
 			{
-				e.printStackTrace();
-				throw new RuntimeException( "An unexpected URI syntax error occured for '" + uri + "': " + e );
+				System.out.println( "With credentials failed (" + e + "); trying anonymous ..." );
+
+				final String region = ( s3Region != null ) ? s3Region : detectS3Region( uri );
+
+				final N5Factory factory = new N5Factory();
+				factory.gsonBuilder( builder );
+				factory.s3Configuration( b -> {
+					b.credentialsProvider( AnonymousCredentialsProvider.create() );
+					if ( region != null ) b.region( Region.of( region ) );
+				} );
+				return factory.getKeyValueAccess( uri, false );
 			}
 		}
 		else if ( URITools.isFile( uri ) )
@@ -324,7 +345,7 @@ public class URITools
 			}
 			catch ( Exception e )
 			{
-				System.out.println( "With credentials failed; trying anonymous ..." );
+				System.out.println( "With credentials failed (" + e + "); trying anonymous ..." );
 
 				final String region = ( s3Region != null ) ? s3Region : detectS3Region( uri );
 
@@ -386,7 +407,7 @@ public class URITools
 			}
 			catch ( Exception e )
 			{
-				System.out.println( "With credentials failed; trying anonymous with gson builder ..." );
+				System.out.println( "With credentials failed (" + e + "); trying anonymous with gson builder ..." );
 
 				final String region = ( s3Region != null ) ? s3Region : detectS3Region( uri );
 

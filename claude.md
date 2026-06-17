@@ -41,7 +41,7 @@ Multi-view reconstruction combines multiple images of the same specimen taken fr
 - **SPIM Data** — XML-based multi-view dataset format
 - **N5 / Zarr** — chunked, compressed n-D array storage
 - **Fiji/ImageJ** — plugin host
-- Java 8, Maven (`mvn compile`)
+- Java 21, Maven (`mvn compile`)
 
 ### Package Layout
 - `net.preibisch.mvrecon.fiji.spimdata.interestpoints` — core IP data structures
@@ -431,4 +431,4 @@ Detected via `isSplitDataset()` checking for `SplitViewerImgLoader` / `SplitMult
 
 - **Never commit without explicit user consent.**
 - Branch state: read `git status` / `git log` — don't rely on stale notes here.
-- Build: `mvn compile`. Java 8.
+- Build: `mvn compile`. Java 21 (`maven-enforcer-plugin` requires JDK 21+).
