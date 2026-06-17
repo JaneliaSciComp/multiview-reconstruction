@@ -92,6 +92,10 @@ public class URITools
 	public static int cloudThreads = 256;
 	public static String s3Region = null;
 
+	// caches auto-detected S3 regions per bucket so detectS3Region() probes the
+	// network only once per bucket (multiple S3 handles are opened per dataset load)
+	private static final java.util.Map< String, String > s3RegionCache = new java.util.concurrent.ConcurrentHashMap<>();
+
 	public static boolean useS3CredentialsWrite = true;
 	public static boolean useS3CredentialsRead = true;
 
@@ -442,6 +446,10 @@ public class URITools
 		if ( bucket == null || bucket.isEmpty() )
 			return null;
 
+		final String cached = s3RegionCache.get( bucket );
+		if ( cached != null )
+			return cached;
+
 		HttpURLConnection conn = null;
 
 		try
@@ -459,6 +467,7 @@ public class URITools
 			if ( region != null && !region.isEmpty() )
 			{
 				IOFunctions.println( "Auto-detected S3 region '" + region + "' for bucket '" + bucket + "'." );
+				s3RegionCache.put( bucket, region );
 				return region;
 			}
 		}
