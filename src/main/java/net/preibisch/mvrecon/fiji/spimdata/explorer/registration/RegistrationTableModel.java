@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -31,6 +31,7 @@ import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.registration.ViewTransform;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 
 public class RegistrationTableModel extends AbstractTableModel
 {
@@ -114,7 +115,9 @@ public class RegistrationTableModel extends AbstractTableModel
 		viewRegistrations.getViewRegistration( currentVD ).updateModel();
 		
 		// do something ...
-		panel.explorer.viewSetupExplorer.getPanel().bdvPopup().updateBDV();
+		final BasicBDVPopup p = panel.explorer.viewSetupExplorer.getPanel().runningBdvPopup();
+		if ( p != null )
+			p.updateBDV();
 		fireTableCellUpdated( row, column );
 	}
 	

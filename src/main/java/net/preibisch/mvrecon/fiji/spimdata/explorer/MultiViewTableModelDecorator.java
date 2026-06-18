@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -40,11 +40,17 @@ public class MultiViewTableModelDecorator < AS extends SpimData2 > implements IS
 {
 	private ISpimDataTableModel<AS> decorated;
 	final ArrayList< String > columnNames;
-	
+
 	final int registrationColumn, interestPointsColumn, psfColumn;
 	final ViewRegistrations viewRegistrations;
 	final ViewInterestPoints viewInterestPoints;
 	final PointSpreadFunctions pointSpradFunctions;
+
+	// Performance instrumentation
+	private static long getValueAtCallCount = 0;
+	private static long getValueAtTotalTime = 0;
+	private static long interestPointsColumnTime = 0;
+	private static long interestPointsColumnCalls = 0;
 	
 	public MultiViewTableModelDecorator(ISpimDataTableModel<AS> decorated) {
 		this.decorated = decorated;
@@ -101,12 +107,16 @@ public class MultiViewTableModelDecorator < AS extends SpimData2 > implements IS
 
 	@Override
 	public Object getValueAt(int rowIndex, int columnIndex) {
-		
+
+		final long start = System.nanoTime();
+
 		// pass on to decorated
 		if (columnIndex < decorated.getColumnCount())
 			return decorated.getValueAt(rowIndex, columnIndex);
 
 		final List< BasicViewDescription< ? > > vds = getElements().get( rowIndex );
+
+		Object result = null;
 
 		if ( vds.size() == 1 )
 		{
@@ -115,17 +125,25 @@ public class MultiViewTableModelDecorator < AS extends SpimData2 > implements IS
 			if ( vd.isPresent() )
 			{
 				if ( columnIndex == registrationColumn )
-					return this.viewRegistrations.getViewRegistration( vd ).getTransformList().size();
+					result = this.viewRegistrations.getViewRegistration( vd ).getTransformList().size();
 				else if ( columnIndex == interestPointsColumn && viewInterestPoints != null )
-					return viewInterestPoints.getViewInterestPointLists( vd ).getHashMap().keySet().size();
+				{
+					final long ipStart = System.nanoTime();
+					result = viewInterestPoints.getViewInterestPointLists( vd ).getHashMap().keySet().size();
+					interestPointsColumnTime += (System.nanoTime() - ipStart);
+					interestPointsColumnCalls++;
+				}
 				else if ( columnIndex == psfColumn )
-					return pointSpradFunctions.getPointSpreadFunctions().containsKey( vd );
+					result = pointSpradFunctions.getPointSpreadFunctions().containsKey( vd );
 			}
 
-			if ( columnIndex == psfColumn )
-				return false;
-			else
-				return "missing";
+			if ( result == null )
+			{
+				if ( columnIndex == psfColumn )
+					result = false;
+				else
+					result = "missing";
+			}
 		}
 		else
 		{
@@ -149,6 +167,7 @@ public class MultiViewTableModelDecorator < AS extends SpimData2 > implements IS
 					}
 					else if ( columnIndex == interestPointsColumn )
 					{
+						final long ipStart = System.nanoTime();
 						if ( viewInterestPoints != null )
 						{
 							final int numIP = viewInterestPoints.getViewInterestPointLists( vd ).getHashMap().keySet().size();
@@ -159,6 +178,8 @@ public class MultiViewTableModelDecorator < AS extends SpimData2 > implements IS
 						{
 							minIP = maxIP = 0;
 						}
+						interestPointsColumnTime += (System.nanoTime() - ipStart);
+						interestPointsColumnCalls++;
 					}
 					else if ( columnIndex == psfColumn )
 						hasPSF &= pointSpradFunctions.getPointSpreadFunctions().containsKey( vd );
@@ -172,28 +193,36 @@ public class MultiViewTableModelDecorator < AS extends SpimData2 > implements IS
 			if ( columnIndex == registrationColumn )
 			{
 				if ( minReg == maxReg )
-					return minReg;
+					result = minReg;
 				else if( minReg == Integer.MAX_VALUE )
-					return "missing";
+					result = "missing";
 				else
-					return minReg + "-" + maxReg;
+					result = minReg + "-" + maxReg;
 			}
 			else if ( columnIndex == interestPointsColumn )
 			{
 				if ( minIP == maxIP )
-					return minIP;
+					result = minIP;
 				else if( minIP == Integer.MAX_VALUE )
-					return "missing";
+					result = "missing";
 				else
-					return minIP + "-" + maxIP;
+					result = minIP + "-" + maxIP;
 			}
 			else if ( columnIndex == psfColumn )
 			{
-				return hasPSF;
+				result = hasPSF;
 			}
 			else
-				return "missing";
+				result = "missing";
 		}
+
+		// Performance tracking
+		getValueAtTotalTime += (System.nanoTime() - start);
+		getValueAtCallCount++;
+		// if (getValueAtCallCount % 1000 == 0)
+		//	net.preibisch.legacy.io.IOFunctions.println( "PERF: [MultiViewDecorator.getValueAt] " + getValueAtCallCount + " calls, total time " + (getValueAtTotalTime / 1_000_000) + " ms, interestPoints column: " + interestPointsColumnCalls + " calls, " + (interestPointsColumnTime / 1_000_000) + " ms" );
+
+		return result;
 	}
 
 	@Override

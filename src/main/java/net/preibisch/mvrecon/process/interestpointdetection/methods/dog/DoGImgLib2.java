@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -184,11 +184,12 @@ public class DoGImgLib2
 			minInitialPeakValue = (float)threshold/3.0f;
 
 		final float min, max;
+		final boolean autoDetected;
 
 		if ( Double.isNaN( minIntensity ) || Double.isNaN( maxIntensity ) || Double.isInfinite( minIntensity ) || Double.isInfinite( maxIntensity ) || minIntensity == maxIntensity )
 		{
 			final float[] minmax;
-			
+
 			if ( mask == null )
 				minmax = FusionTools.minMax( Views.interval( input, interval ), service );
 			else
@@ -196,15 +197,17 @@ public class DoGImgLib2
 
 			min = minmax[ 0 ];
 			max = minmax[ 1 ];
+			autoDetected = true;
 		}
 		else
 		{
 			min = (float)minIntensity;
 			max = (float)maxIntensity;
+			autoDetected = false;
 		}
 
 		if ( !silent )
-			IOFunctions.println( "(" + new Date(System.currentTimeMillis()) + "): min intensity = " + min + ", max intensity = " + max );
+			IOFunctions.println( "(" + new Date(System.currentTimeMillis()) + "): min intensity = " + min + ", max intensity = " + max + (autoDetected ? " [auto-detected]" : " [provided]") );
 
 		// normalize image
 		final RandomAccessible< FloatType > inputFloat = ImgLib2Tools.normalizeVirtual( input, min, max );

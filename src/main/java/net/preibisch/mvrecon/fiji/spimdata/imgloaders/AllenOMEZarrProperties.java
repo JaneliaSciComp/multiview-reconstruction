@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -24,16 +24,16 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders;
 
 import java.util.Arrays;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.OmeNgffDataset;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.ScaleCoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TranslationCoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata.OmeNgffDataset;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.ScaleCoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.TranslationCoordinateTransformation;
 
 import bdv.img.n5.N5Properties;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
@@ -49,14 +49,14 @@ public class AllenOMEZarrProperties implements N5Properties
 	// mapping of viewIDs to corresponding OME-ZARRs
 	private final Map< ViewId, OMEZARREntry > viewIdToOmeZarrPath;
 
-	// N5Properties.getDatasetPath should require an N5Reader so that the dataset path could always be retrieved correctly (e.g., "s0", "s1", "s2" or "0", "1", "2")
-	// To work around this problem for now, first time we retrieve the view setup we cache it so that next time
-	// the dataset path is needed - we use the cached value.
-	// TODO: Remove this and the method that populates it, once the signature for N5Properties.getDatasetPath was updated to use the N5 Reader
-	private final ConcurrentMap< ViewId, OmeNgffMultiScaleMetadata > viewIdToOmeMetadata = new ConcurrentHashMap<>();
-
 	// only warn once per opened XML if TranslationCoordinateTransformation is missing
 	private boolean warnedMissingTranslation = false;
+
+	// only warn once per opened XML if a level's translation is inconsistent with the
+	// detected downsampling mode (e.g. a producer that wrote the half-pixel shift without
+	// applying the anisotropy/calibration factor). The translation is only validated here,
+	// not used to build the returned downsampling factors, so we warn instead of aborting.
+	private boolean warnedInconsistentTranslation = false;
 
 	public AllenOMEZarrProperties(
 			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
@@ -72,10 +72,9 @@ public class AllenOMEZarrProperties implements N5Properties
 	}
 
 	@Override
-	public String getDatasetPath( final int setupId, final int timepointId, final int level )
+	public String getDatasetPath( final N5Reader n5, final int setupId, final int timepointId, final int level )
 	{
-		// Note: if the OME metadata has not been cached yet this method will return the default path, because the reader is not available
-		return getMultiscaleDatasetPathOrDefault(null, timepointId, setupId, level);
+		return getMultiscaleDatasetPathOrDefault( n5, timepointId, setupId, level );
 	}
 
 	@Override
@@ -103,6 +102,10 @@ public class AllenOMEZarrProperties implements N5Properties
 	// static methods
 	//
 
+	/**
+	 * Get the first available (non-missing) timepoint for a setup.
+	 * @return timepoint ID, or -1 if all timepoints are missing for this setup
+	 */
 	private static int getFirstAvailableTimepointId( final AbstractSequenceDescription< ?, ?, ? > seq, final int setupId )
 	{
 		for ( final TimePoint tp : seq.getTimePoints().getTimePointsOrdered() )
@@ -111,25 +114,44 @@ public class AllenOMEZarrProperties implements N5Properties
 				return tp.getId();
 		}
 
-		throw new IllegalStateException( "All timepoints for setupId " + setupId + " are declared missing. Stopping." );
+		// All timepoints are missing for this setup
+		return -1;
 	}
 
 	private static DataType getDataType( final AllenOMEZarrProperties n5properties, final N5Reader n5, final int setupId )
 	{
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
-		String datasetPath = n5properties.getMultiscaleDatasetPathOrDefault(n5, timePointId, setupId, 0);
-		return n5.getDatasetAttributes( datasetPath ).getDataType();
+
+		// If all timepoints are missing, return a default data type
+		if ( timePointId < 0 )
+			return DataType.UINT16;
+
+		final String path = n5properties.getMultiscaleDatasetPathOrDefault(n5, timePointId, setupId, 0);
+		final DatasetAttributes attributes = n5.getDatasetAttributes( path );
+
+		if ( attributes == null )
+			throw new RuntimeException( "Could not find dataset attributes for '" + path + "'. Please check if the OME-Zarr data is valid." );
+
+		return attributes.getDataType();
 	}
 
 	private static double[][] getMipMapResolutions( final AllenOMEZarrProperties n5properties, final N5Reader n5, final int setupId )
 	{
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
 
+		// If all timepoints are missing, return default single-level resolution
+		if ( timePointId < 0 )
+			return new double[][] { { 1.0, 1.0, 1.0 } };
+
 		// multiresolution pyramid
 		final OmeNgffMultiScaleMetadata multiScaleMetadata = n5properties.getViewSetupMultiscaleMetadata(n5, timePointId, setupId);
 
 		final double[][] mipMapResolutions = new double[ multiScaleMetadata.datasets.length ][ 3 ];
 		double[] scaleS0 = null;
+		//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata
+		// for this to work you need to register an adapter in the N5Factory class
+		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
+		final String path = n5properties.getPath( setupId, timePointId );
 
 		// iterate over all resolution levels for scale
 		for ( int s = 0; s < multiScaleMetadata.datasets.length; ++s )
@@ -156,9 +178,17 @@ public class AllenOMEZarrProperties implements N5Properties
 
 		// iterate over all resolution levels for translation (to make sure scaleS0 is assigned if it existed)
 		// OME-Zarr 0.4: physical = pixel * scale + translation
-		// For averaging downsampling by factor r: expected relative shift = (r-1)/2 in s0 pixels
-		// For non-averaging (strided) downsampling: expected relative shift = 0
-		double[] translationS0 = null;
+		// For averaging downsampling by factor r: calculates translation for r in pixels
+		// For non-averaging (strided) downsampling: expected translation = 0
+		// capture s0's translation explicitly. OME-Zarr allows s0 to omit the
+		// translation transform entirely, in which case its origin is implicitly
+		// zero. We must NOT lazily grab the first translation we encounter, since
+		// that would be a downsampled level (e.g. s1) and corrupt the s0 reference.
+		double[] translationS0 = new double[ mipMapResolutions[ 0 ].length ]; // zeros
+		for ( final CoordinateTransformation< ? > c : multiScaleMetadata.datasets[ 0 ].coordinateTransformations )
+			if ( c instanceof TranslationCoordinateTransformation )
+				translationS0 = ( ( TranslationCoordinateTransformation ) c ).getTranslation().clone();
+
 		Boolean isAveraging = null; // determined from first downsampled level with r>1, then verified for subsequent levels
 
 		//System.out.println( "\nsetup " + setupId );
@@ -181,14 +211,6 @@ public class AllenOMEZarrProperties implements N5Properties
 
 					//System.out.println( "s=" + s + ", translation: " + Arrays.toString( t.getTranslation() ));
 
-					// capture s0's translation
-					if ( translationS0 == null )
-					{
-						translationS0 = t.getTranslation().clone();
-						// s0: no validation needed, just capture
-						break;
-					}
-
 					for ( int d = 0; d < mipMapResolutions[ s ].length; ++d )
 					{
 						final double r = mipMapResolutions[ s ][ d ];
@@ -197,31 +219,53 @@ public class AllenOMEZarrProperties implements N5Properties
 						if ( Math.abs( r - 1.0 ) < 0.01 )
 							continue;
 
-						// relative pixel translation: (translation_s - translationS0) / scaleS0
-						final double relPxTranslation = ( t.getTranslation()[ d ] - translationS0[ d ] ) / scaleS0[ d ];
-						final double expectedAveraging = ( r - 1.0 ) / 2.0; // 0.5, 1.5, 3.5, 7.5, ...
-
-						final boolean matchesAveraging = Math.abs( relPxTranslation - expectedAveraging ) < 0.01;
-						final boolean matchesNonAveraging = Math.abs( relPxTranslation ) < 0.01;
-
-						//System.out.println( "s=" + s + ", d=" + d + ", relPxTranslation=" + relPxTranslation + " @ scale=" + r );
+						final double pxTranslation = (t.getTranslation()[d] - translationS0[d]) / scaleS0[d];
+                        final double logScale = Math.log( r ) / Math.log(2);
+						final double expectedAveraging = Math.pow(2, logScale - 1) - 0.5; // 0.5, 1.5, 3.5, 7.5, ...
+						final boolean matchesAveraging = Math.abs( pxTranslation - expectedAveraging ) < 0.05;
+						final boolean matchesNonAveraging = Math.abs( pxTranslation ) < 0.01;
 
 						if ( isAveraging == null )
 						{
-							// determine mode from first downsampled dimension
+							// determine mode from first downsampled dimension.
 							if ( matchesAveraging )
+							{
 								isAveraging = true;
+							}
 							else if ( matchesNonAveraging )
-								throw new IllegalStateException( "Non-averaging downsampling detected (translation=0 for level " + s + " dim " + d + "), which is currently not supported." );
+							{
+								// translation=0 indicates strided/non-averaging downsampling.
+								isAveraging = false;
+								if ( !n5properties.warnedInconsistentTranslation )
+								{
+									IOFunctions.println( "WARNING: non-averaging (strided) downsampling detected (translation=0 for level " + s + " dim " + d + "). Proceeding; downsampling factors are taken from the scales." );
+									n5properties.warnedInconsistentTranslation = true;
+								}
+							}
 							else
-								throw new IllegalStateException( "Unsupported translation for level " + s + " dim " + d + ": relative pixel translation=" + relPxTranslation + " (expected " + expectedAveraging + " for averaging or 0.0 for non-averaging)." );
+							{
+								// matches neither mode (e.g. a producer that did not apply the
+								// anisotropy factor). Default to averaging.
+								isAveraging = true;
+								if ( !n5properties.warnedInconsistentTranslation )
+								{
+									IOFunctions.println( "WARNING: unsupported translation for level " + s + " dim " + d + ": relative pixel translation=" + pxTranslation + ", expected " + expectedAveraging + " for averaging or 0.0 for non-averaging (producer likely did not apply the anisotropy factor). Assuming averaging; downsampling factors are taken from the scales." );
+									n5properties.warnedInconsistentTranslation = true;
+								}
+							}
 						}
 						else
 						{
 							// verify consistency with detected mode
 							final double expected = isAveraging ? expectedAveraging : 0.0;
-							if ( Math.abs( relPxTranslation - expected ) >= 0.01 )
-								throw new IllegalStateException( "Inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + relPxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling." );
+							if ( Math.abs( pxTranslation - expected ) >= 0.05 )
+							{
+								if ( !n5properties.warnedInconsistentTranslation )
+								{
+									IOFunctions.println( "WARNING: inconsistent translation for level " + s + " dim " + d + ": relative pixel translation=" + pxTranslation + ", expected " + expected + " based on detected " + ( isAveraging ? "averaging" : "non-averaging" ) + " downsampling (producer likely did not apply the anisotropy factor). Ignoring; downsampling factors are taken from the scales." );
+									n5properties.warnedInconsistentTranslation = true;
+								}
+							}
 						}
 					}
 				}
@@ -241,11 +285,6 @@ public class AllenOMEZarrProperties implements N5Properties
 	{
 		OmeNgffMultiScaleMetadata omeNgffMultiScaleMetadata = getViewSetupMultiscaleMetadata(n5, timepointId, setupId);
 
-		if (omeNgffMultiScaleMetadata == null) {
-			throw new IllegalStateException("OME multiscale metadata could not be cached for (tp, setup) = (" +
-					timepointId + "," + setupId + ") - current N5Reader is " + n5);
-		}
-
 		String viewSetupPath = getPath( setupId, timepointId );
 		// get the first scale path from the metadata
 		String datasetPath = omeNgffMultiScaleMetadata.datasets[level].path;
@@ -254,22 +293,26 @@ public class AllenOMEZarrProperties implements N5Properties
 
 	// retrieve and cache the multiscale metadata
 	private OmeNgffMultiScaleMetadata getViewSetupMultiscaleMetadata(N5Reader n5, int timePointId, int setupId) {
-		ViewId viewId = new ViewId(timePointId, setupId);
+		String datasetPath = getPath( setupId, timePointId );
 
-		return viewIdToOmeMetadata.computeIfAbsent(viewId, k -> {
-			if (n5 == null) {
-				return null; // no mapping will be cached
-			}
+		System.out.println( "Getting multiscale metadata for " + datasetPath );
+		OmeNgffMetadata omeMetadata = n5.getAttribute(datasetPath, "ome", OmeNgffMetadata.class);
 
-			final OmeNgffMultiScaleMetadata[] multiscales = n5.getAttribute( getPath( setupId, timePointId ), "multiscales", OmeNgffMultiScaleMetadata[].class );
+		final OmeNgffMultiScaleMetadata[] multiscales;
+		if  (omeMetadata != null) {
+			System.out.println( "Found OME metadata at " + datasetPath + ": " + omeMetadata);
+			multiscales = omeMetadata.multiscales;
+		} else {
+			multiscales = n5.getAttribute( datasetPath, "multiscales", OmeNgffMultiScaleMetadata[].class );
+			System.out.println( "Retrieved OME multiscales at " + datasetPath + ": " + multiscales);
+		}
 
-			if ( multiscales == null || multiscales.length == 0 )
-				throw new IllegalStateException( "Could not parse OME-ZARR multiscales object. stopping." );
+		if ( multiscales == null || multiscales.length == 0 )
+			throw new IllegalStateException( "Could not parse OME-ZARR multiscales object. stopping." );
 
-			if ( multiscales.length > 1 )
-				System.out.println( "This dataset has " + multiscales.length + " objects, we expected 1. Picking the first one." );
+		if ( multiscales.length > 1 )
+			System.out.println( "This dataset has " + multiscales.length + " objects, we expected 1. Picking the first one." );
 
-			return multiscales[0];
-		});
+		return multiscales[0];
 	}
 }

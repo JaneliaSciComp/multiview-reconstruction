@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -42,6 +42,7 @@ import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
+import net.preibisch.legacy.io.IOFunctions;
 
 public class Group< V > implements Iterable< V >, Serializable
 {
@@ -217,12 +218,16 @@ public class Group< V > implements Iterable< V >, Serializable
 	public static < V extends BasicViewDescription< ? > > List<Group<V>> combineOrSplitBy(List<V> vds,
 			Set<Class<? extends Entity>> groupingFactors, boolean combine)
 	{
+		final long startTotal = System.currentTimeMillis();
+
 		Map<List<Entity>, Group<V>> res = new HashMap<>();
 
 		// pre-sort vd List
+		long start = System.currentTimeMillis();
 		Collections.sort( vds );
-		
-		
+		// IOFunctions.println( "PERF: [combineOrSplitBy] sort " + vds.size() + " vds took " + (System.currentTimeMillis() - start) + " ms" );
+
+		start = System.currentTimeMillis();
 		for (V vd : vds) {
 			List<Entity> key = new ArrayList<>();
 
@@ -240,6 +245,9 @@ public class Group< V > implements Iterable< V >, Serializable
 
 			res.get(key).getViews().add(vd);
 		}
+		// IOFunctions.println( "PERF: [combineOrSplitBy] grouping loop took " + (System.currentTimeMillis() - start) + " ms, created " + res.size() + " groups" );
+
+		// IOFunctions.println( "PERF: [combineOrSplitBy] TOTAL took " + (System.currentTimeMillis() - startTotal) + " ms" );
 
 		return new ArrayList<>(res.values());
 	}

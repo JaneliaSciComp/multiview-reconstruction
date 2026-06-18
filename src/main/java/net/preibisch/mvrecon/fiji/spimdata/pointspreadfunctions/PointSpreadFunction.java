@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -81,10 +81,10 @@ public class PointSpreadFunction
 		this.img = img;
 	}
 
-	public URI getBaseDir() { return xmlBasePath; }
-	public void setBaseDir( final URI baseDir )
+	public URI getBasePath() { return xmlBasePath; }
+	public void setBasePath( final URI basePath )
 	{
-		this.xmlBasePath = baseDir;
+		this.xmlBasePath = basePath;
 		this.modified = true;
 	}
 

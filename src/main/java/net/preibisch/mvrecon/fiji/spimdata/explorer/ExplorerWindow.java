@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -45,6 +45,14 @@ public interface ExplorerWindow< AS extends SpimData2 >
 
 	// BDV-specific
 	public BasicBDVPopup bdvPopup();
+
+	/**
+	 * Returns whichever BDV popup currently has a running BDV (eager or lazy).
+	 * Falls back to {@link #bdvPopup()} when no BDV is open. Implementations may
+	 * override this to dispatch between multiple registered BDV popups.
+	 */
+	default BasicBDVPopup runningBdvPopup() { return bdvPopup(); }
+
 	public boolean colorMode();
 	public BasicViewDescription< ? > firstSelectedVD();
 }

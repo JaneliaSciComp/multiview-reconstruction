@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -65,9 +65,14 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 	FilteredAndGroupedExplorerPanel< ? > panel;
 
 	protected static String[] types = new String[]{
-			"As TIFF (in place) ...", "As compressed TIFF (in place) ...", "As HDF5 (in place) ...",
-			"As compressed HDF5 (in place) ...", "As N5 (in place ) ...", "As N5 (local, cloud) ...",
-			"As OME-ZARR (in place ) ...", "As OME-ZARR (local, cloud) ..."};
+			"As TIFF (in place) ...",
+			"As compressed TIFF (in place) ...",
+			"As HDF5 (in place) ...",
+			"As compressed HDF5 (in place) ...",
+			"As N5 (in place ) ...",
+			"As N5 (local, cloud) ...",
+			"As OME-ZARR v3 (in place ) ...",
+			"As OME-ZARR v3 (local, cloud) ..."};
 
 	public ResavePopup()
 	{
@@ -282,20 +287,23 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 						final URI n5DatasetURI = (index <= 5) ? 
 								ParametersResaveN5Api.createN5URIfromXMLURI( panel.xml() ) : ParametersResaveN5Api.createOMEZARRURIfromXMLURI( panel.xml() ) ;
 
+						StorageFormat format;
+
+						// if you want ZARR v2, you need to go through the full options dialog
+						if (index <= 5)
+							format = StorageFormat.N5;
+						else
+							format = StorageFormat.ZARR;
+
 						final ParametersResaveN5Api n5params = ParametersResaveN5Api.getParamtersIJ(
 								panel.xml(),
 								n5DatasetURI,
 								viewIds.stream().map( vid -> data.getSequenceDescription().getViewSetups().get( vid.getViewSetupId() ) ).collect( Collectors.toSet() ),
-								false, // do not ask for format (for now)
+								format, // do not ask for format (for now)
 								index == 5 || index == 7 );
 
 						if ( n5params == null )
 							return;
-
-						if (index <= 5)
-							n5params.format = StorageFormat.N5;
-						else
-							n5params.format = StorageFormat.ZARR;
 
 						final URI basePathURI;
 
@@ -321,7 +329,7 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 									{
 										ipl.getInterestPointsCopy();
 										ipl.getCorrespondingInterestPointsCopy();
-										ipl.setBaseDir( basePathURI ); // also sets 'isModified' flags
+										ipl.setBasePath( basePathURI ); // also sets 'isModified' flags
 									}
 									catch ( Exception e )
 									{
@@ -344,8 +352,9 @@ public class ResavePopup extends JMenu implements ExplorerWindowSetable
 					}
 
 					// re-open BDV if active
-					if ( panel.bdvPopup().bdvRunning() )
-						panel.bdvPopup().reStartBDV();
+					final BDVPopup bdvPop = ( panel.bdvPopup() instanceof BDVPopup ) ? (BDVPopup) panel.bdvPopup() : null;
+					if ( bdvPop != null && bdvPop.bdvRunning() )
+						bdvPop.reStartBDV();
 				}
 			} ).start();
 		}

@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -26,13 +26,20 @@ import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
+
+import net.preibisch.mvrecon.Threads;
 
 import bdv.BigDataViewer;
 import mpicbg.models.AbstractAffineModel3D;
@@ -76,6 +83,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
 import net.preibisch.mvrecon.vecmath.Matrix4d;
 import net.preibisch.mvrecon.vecmath.Matrix4f;
 import net.preibisch.mvrecon.vecmath.Quat4f;
@@ -86,6 +94,12 @@ import net.preibisch.mvrecon.vecmath.Vector3f;
 public class TransformationTools
 {
 	public static NumberFormat f = new DecimalFormat("#.####");
+
+	/**
+	 * When true, prints individual warnings for each view missing interest points.
+	 * When false (default), prints a consolidated summary per label.
+	 */
+	public static boolean debugMissingInterestPoints = false;
 
 	public static void reCenterViews(final BigDataViewer viewer, final Collection<BasicViewDescription< ? >> selectedViews, final ViewRegistrations viewRegistrations)
 	{
@@ -618,57 +632,187 @@ public class TransformationTools
 			final Map< ViewId, ViewRegistration > registrations,
 			final Map< ViewId, ViewDescription > viewDescriptions )
 	{
-		for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
+		filterForOverlappingInterestPoints(interestpoints, groups, registrations, viewDescriptions, Threads.numThreads() );
+	}
+
+	public static void filterForOverlappingInterestPoints(
+			final Map< ViewId, HashMap< String, Collection< InterestPoint > > > interestpoints,
+			final Collection< ? extends Group< ViewId > > groups,
+			final Map< ViewId, ViewRegistration > registrations,
+			final Map< ViewId, ViewDescription > viewDescriptions,
+			final int numThreads )
+	{
+		final long startTotal = System.currentTimeMillis();
+
+		// Pre-compute which view pairs share a group for O(1) lookup
+		final Set< Pair< ViewId, ViewId > > sameGroupPairs = new HashSet<>();
+		for ( final Group< ViewId > group : groups )
 		{
-			final ViewId viewId = element.getKey();
-
-			for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
-			{
-				final List< InterestPoint > points = new ArrayList<>( subElement.getValue() );
-				final List< InterestPoint > overlappingPoints = new ArrayList<>();
-
-				// for each pair (if it's not part of a group), test
-				// if there are any points that currently overlap with another view
-	A:			for ( final ViewId otherViewId : interestpoints.keySet() )
-				{
-					// if it's the same view continue
-					if ( otherViewId.equals( viewId ) )
-						continue;
-
-					// if they are part of the same group, continue
-					for ( final Group< ViewId > group : groups )
-						if ( group.contains( viewId ) && group.contains( otherViewId ) )
-							continue A;
-
-					// use the inverse affine transform of the other view
-					final AffineTransform3D tinv = TransformationTools.getTransform( otherViewId, registrations ).inverse();
-
-					// to map all interestpoints into the bounding box
-					final ViewDescription otherVD = viewDescriptions.get( otherViewId );
-					final Dimensions dim = otherVD.getViewSetup().getSize();
-					final Interval interval = new FinalInterval( dim );
-
-					final int n = tinv.numDimensions();
-					final RealPoint p = new RealPoint( n );
-
-					// and check if they do intersect
-					for ( int i = points.size() - 1; i >= 0; --i )
-					{
-						final InterestPoint ip = points.get( i );
-						ip.localize( p );
-						tinv.apply(p, p);
-						if ( Intervals.contains( interval , p ) )
-						{
-							overlappingPoints.add( ip );
-							points.remove( i );
-						}
-					}
-				}
-
-				// replace the list
-				subElement.setValue( overlappingPoints );
-			}
+			final List< ViewId > members = new ArrayList<>( group.getViews() );
+			for ( int i = 0; i < members.size(); i++ )
+				for ( int j = i + 1; j < members.size(); j++ )
+					sameGroupPairs.add( new ValuePair<>( members.get( i ), members.get( j ) ) );
 		}
+
+		// Pre-compute all inverse transforms and intervals (avoids repeated computation per view pair)
+		final long startPrecompute = System.currentTimeMillis();
+		final Map< ViewId, AffineTransform3D > inverseTransforms = new ConcurrentHashMap<>();
+		final Map< ViewId, Interval > viewIntervals = new ConcurrentHashMap<>();
+		final Map< ViewId, BoundingBox > viewBoundingBoxes = new ConcurrentHashMap<>();
+
+		final ExecutorService precomputePool = new ForkJoinPool( numThreads );
+		try
+		{
+			precomputePool.submit( () ->
+				interestpoints.keySet().parallelStream().forEach( viewId -> {
+					final AffineTransform3D transform = getTransform( viewId, registrations );
+					inverseTransforms.put( viewId, transform.inverse() );
+
+					final ViewDescription vd = viewDescriptions.get( viewId );
+					if ( vd != null && vd.getViewSetup().hasSize() )
+					{
+						final Dimensions dim = vd.getViewSetup().getSize();
+						viewIntervals.put( viewId, new FinalInterval( dim ) );
+
+						// Pre-compute world-space bounding box for overlap testing
+						viewBoundingBoxes.put( viewId, SimpleBoundingBoxOverlap.getBoundingBox( dim, transform ) );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to precompute transforms", e );
+		}
+		finally
+		{
+			precomputePool.shutdown();
+		}
+		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints precompute: " + (System.currentTimeMillis() - startPrecompute) + " ms" );
+
+		// Build list of views for indexed access
+		final List< ViewId > viewList = new ArrayList<>( interestpoints.keySet() );
+
+		// Pre-compute which view pairs actually overlap (using bounding boxes)
+		final long startOverlapCheck = System.currentTimeMillis();
+		final Map< ViewId, Set< ViewId > > overlappingViews = new ConcurrentHashMap<>();
+
+		final ForkJoinPool overlapPool = new ForkJoinPool( Threads.numThreads() );
+		try
+		{
+			overlapPool.submit( () ->
+				viewList.parallelStream().forEach( viewId -> {
+					final BoundingBox bb1 = viewBoundingBoxes.get( viewId );
+					if ( bb1 == null ) return;
+
+					final Set< ViewId > overlapping = new HashSet<>();
+					for ( final ViewId otherViewId : viewList )
+					{
+						if ( otherViewId.equals( viewId ) ) continue;
+
+						// Skip if same group
+						if ( sameGroupPairs.contains( new ValuePair<>( viewId, otherViewId ) ) ||
+							 sameGroupPairs.contains( new ValuePair<>( otherViewId, viewId ) ) )
+							continue;
+
+						final BoundingBox bb2 = viewBoundingBoxes.get( otherViewId );
+						if ( bb2 != null && SimpleBoundingBoxOverlap.overlaps( bb1, bb2 ) )
+							overlapping.add( otherViewId );
+					}
+					overlappingViews.put( viewId, overlapping );
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to compute overlapping views", e );
+		}
+		finally
+		{
+			overlapPool.shutdown();
+		}
+
+		// Count total overlapping pairs for statistics
+		long totalOverlappingPairs = 0;
+		for ( final Set< ViewId > set : overlappingViews.values() )
+			totalOverlappingPairs += set.size();
+		totalOverlappingPairs /= 2; // Each pair counted twice
+
+		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints overlap detection: " + (System.currentTimeMillis() - startOverlapCheck) +
+				" ms (" + totalOverlappingPairs + " overlapping view pairs out of " + (((long)viewList.size() * (viewList.size() - 1)) / 2) + " total)" );
+
+		// Process each view in parallel - only check actually overlapping views
+		final long startFiltering = System.currentTimeMillis();
+		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+
+		try
+		{
+			pool.submit( () ->
+				interestpoints.entrySet().parallelStream().forEach( element -> {
+					final ViewId viewId = element.getKey();
+					final Set< ViewId > myOverlappingViews = overlappingViews.get( viewId );
+
+					// If no overlapping views, all points are removed
+					if ( myOverlappingViews == null || myOverlappingViews.isEmpty() )
+					{
+						for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
+							subElement.setValue( new ArrayList<>() );
+						return;
+					}
+
+					for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
+					{
+						final List< InterestPoint > points = new ArrayList<>( subElement.getValue() );
+						final List< InterestPoint > overlappingPoints = new ArrayList<>();
+
+						// Only check views that actually overlap (pre-computed)
+						for ( final ViewId otherViewId : myOverlappingViews )
+						{
+							if ( points.isEmpty() ) break;
+
+							final AffineTransform3D tinv = inverseTransforms.get( otherViewId );
+							final Interval interval = viewIntervals.get( otherViewId );
+
+							if ( tinv == null || interval == null ) continue;
+
+							final RealPoint p = new RealPoint( 3 );
+
+							// Check if points intersect with this view
+							for ( int i = points.size() - 1; i >= 0; --i )
+							{
+								final InterestPoint ip = points.get( i );
+								ip.localize( p );
+								tinv.apply( p, p );
+								if ( Intervals.contains( interval, p ) )
+								{
+									overlappingPoints.add( ip );
+									points.remove( i );
+								}
+							}
+						}
+
+						// replace the list
+						subElement.setValue( overlappingPoints );
+					}
+				})
+			).get();
+		}
+		catch ( final InterruptedException e )
+		{
+			Thread.currentThread().interrupt();
+			throw new RuntimeException( "Overlap filtering was interrupted", e );
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to filter overlapping interest points", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
+
+		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints point filtering: " + (System.currentTimeMillis() - startFiltering) + " ms" );
+		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints total: " + (System.currentTimeMillis() - startTotal) + " ms" );
 	}
 
 	/* call this method to load interestpoints and apply current transformation */
@@ -689,12 +833,111 @@ public class TransformationTools
 			final Map< V, HashMap< String, Double > > labelMap,
 			final boolean transform )
 	{
-		final HashMap< V, HashMap< String, Collection< InterestPoint > > > transformedInterestpoints = new HashMap<>();
+		return getAllInterestPoints(viewIds, registrations, interestpoints, labelMap, transform, Threads.numThreads() );
+	}
 
-		for ( final V viewId : viewIds )
-			transformedInterestpoints.put( viewId, getInterestPoints( viewId, registrations, interestpoints, labelMap, transform ) );
+	/* call this method to load interestpoints and apply current transformation */
+	@SuppressWarnings("unchecked")
+	public static <V> Map< V, HashMap< String, Collection< InterestPoint > > > getAllInterestPoints(
+			final Collection< ? extends V > viewIds,
+			final Map< V, ViewRegistration > registrations,
+			final Map< V, ViewInterestPointLists > interestpoints,
+			final Map< V, HashMap< String, Double > > labelMap,
+			final boolean transform,
+			final int numThreads )
+	{
+		// Thread-safe collection for missing interest points: label -> list of viewIds
+		final ConcurrentHashMap< String, ConcurrentLinkedQueue< V > > missingInterestPoints = new ConcurrentHashMap<>();
 
-		return transformedInterestpoints;
+		// Load interest points in parallel (I/O bound operation)
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+
+		try
+		{
+			final Map< V, HashMap< String, Collection< InterestPoint > > > result =
+				(Map< V, HashMap< String, Collection< InterestPoint > > >) pool.submit( () ->
+					viewIds.parallelStream()
+						.collect( Collectors.toConcurrentMap(
+							viewId -> viewId,
+							viewId -> getInterestPoints( (V) viewId, registrations, interestpoints, labelMap, transform, missingInterestPoints )
+						))
+				).get();
+
+			// Print summary of missing interest points
+			printMissingInterestPointsSummary( missingInterestPoints );
+
+			return result;
+		}
+		catch ( final InterruptedException e )
+		{
+			Thread.currentThread().interrupt();
+			throw new RuntimeException( "Interest point loading was interrupted", e );
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to load interest points", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
+	}
+
+	/**
+	 * Print summary of missing interest points, grouped by label.
+	 */
+	private static <V> void printMissingInterestPointsSummary( final ConcurrentHashMap< String, ConcurrentLinkedQueue< V > > missingInterestPoints )
+	{
+		if ( missingInterestPoints.isEmpty() )
+			return;
+
+		for ( final Entry< String, ConcurrentLinkedQueue< V > > entry : missingInterestPoints.entrySet() )
+		{
+			final String label = entry.getKey();
+			final ConcurrentLinkedQueue< V > views = entry.getValue();
+
+			if ( views.isEmpty() )
+				continue;
+
+			final List< V > viewList = new ArrayList<>( views );
+			final int total = viewList.size();
+
+			if ( debugMissingInterestPoints )
+			{
+				// Verbose mode: print each view individually
+				for ( final V viewId : viewList )
+				{
+					if ( ViewId.class.isInstance( viewId ) )
+						IOFunctions.println( "WARNING: no interestpoints available for " + Group.pvid( (ViewId)viewId ) + ", label '" + label + "'" );
+					else
+						IOFunctions.println( "WARNING: no interestpoints available for " + viewId + ", label '" + label + "'" );
+				}
+			}
+			else
+			{
+				// Consolidated mode: print summary with first 10 setupIds
+				final StringBuilder sb = new StringBuilder();
+				sb.append( "WARNING: no interestpoints for label '" ).append( label ).append( "': " );
+				sb.append( total ).append( " views (setupIds: " );
+
+				final int showCount = Math.min( 10, total );
+				for ( int i = 0; i < showCount; i++ )
+				{
+					if ( i > 0 ) sb.append( ", " );
+					final V viewId = viewList.get( i );
+					if ( ViewId.class.isInstance( viewId ) )
+						sb.append( ((ViewId)viewId).getViewSetupId() );
+					else
+						sb.append( viewId );
+				}
+
+				if ( total > 10 )
+					sb.append( ", ... and " ).append( total - 10 ).append( " more" );
+
+				sb.append( ")" );
+				IOFunctions.println( sb.toString() );
+			}
+		}
 	}
 
 	/* call this method to load interestpoints and apply current transformation if necessary */
@@ -704,6 +947,19 @@ public class TransformationTools
 			final Map< V, ViewInterestPointLists > interestpoints,
 			final Map< V, HashMap< String, Double > > labelMap,
 			final boolean transform )
+	{
+		// Backward compatibility: call with null for missingInterestPoints (will print warnings directly)
+		return getInterestPoints( viewId, registrations, interestpoints, labelMap, transform, null );
+	}
+
+	/* call this method to load interestpoints and apply current transformation if necessary */
+	public static <V> HashMap< String, Collection< InterestPoint > > getInterestPoints(
+			final V viewId,
+			final Map< V, ViewRegistration > registrations,
+			final Map< V, ViewInterestPointLists > interestpoints,
+			final Map< V, HashMap< String, Double > > labelMap,
+			final boolean transform,
+			final ConcurrentHashMap< String, ConcurrentLinkedQueue< V > > missingInterestPoints )
 	{
 		final HashMap< String, Collection< InterestPoint > > collections = new HashMap<>();
 
@@ -715,10 +971,19 @@ public class TransformationTools
 
 			if ( mapLocal.size() == 0 )
 			{
-				if ( ViewId.class.isInstance( viewId ))
-					IOFunctions.println( "WARNING: no interestpoints available for " + Group.pvid( (ViewId)viewId ) + ", label '" + label + "'" );
+				if ( missingInterestPoints != null )
+				{
+					// Collect for later summary
+					missingInterestPoints.computeIfAbsent( label, k -> new ConcurrentLinkedQueue<>() ).add( viewId );
+				}
 				else
-					IOFunctions.println( "WARNING: no interestpoints available for " + viewId + ", label '" + label + "'" );
+				{
+					// Backward compatibility: print warning directly
+					if ( ViewId.class.isInstance( viewId ))
+						IOFunctions.println( "WARNING: no interestpoints available for " + Group.pvid( (ViewId)viewId ) + ", label '" + label + "'" );
+					else
+						IOFunctions.println( "WARNING: no interestpoints available for " + viewId + ", label '" + label + "'" );
+				}
 			}
 		});
 
@@ -853,6 +1118,93 @@ public class TransformationTools
 		return t;
 	}
 
+	/**
+	 * Maximum number of per-view 'Transformation Models:' lines to print from
+	 * {@link #printAndSummarizeTransformations} per call before output is suppressed.
+	 * Set to {@link Integer#MAX_VALUE} to print everything (legacy behavior).
+	 * The identity-vs-non-identity summary is always emitted regardless of this threshold.
+	 *
+	 * The cap is per-call (per "Transformation Models:" block), so in TWO_ROUND global opt
+	 * round 1 and round 2 each get their own budget.
+	 */
+	public static int maxPerViewTransformLog = 100;
+
+	/** Tolerance used by {@link #isApproximatelyIdentity}. */
+	private static final double IDENTITY_EPSILON = 1e-6;
+
+	/**
+	 * Print per-view transformation models (capped at {@link #maxPerViewTransformLog})
+	 * followed by a one-line summary of identity vs non-identity counts. Replaces the
+	 * inlined print loop that {@code GlobalOpt} and {@code GlobalOptIterative} used to have.
+	 *
+	 * @param views ordered iterable of ViewIds (the print order)
+	 * @param map mapping from ViewId to its solved Tile (raw Tile accepted to support both
+	 *        {@code HashMap<ViewId, Tile<M>>} and the raw-typed {@code HashMap<ViewId, Tile>}
+	 *        callers that exist in BBS)
+	 */
+	@SuppressWarnings({ "rawtypes" })
+	public static void printAndSummarizeTransformations(
+			final Iterable< ? extends ViewId > views,
+			final Map< ? extends ViewId, ? extends Tile > map )
+	{
+		net.preibisch.legacy.io.IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Transformation Models:" );
+
+		int printed = 0;
+		boolean noticeEmitted = false;
+		long totalIdentity = 0;
+		long totalNonIdentity = 0;
+
+		for ( final ViewId viewId : views )
+		{
+			final Tile< ? > tile = map.get( viewId );
+			final Object model = tile.getModel();
+
+			// always tally identity vs non-identity
+			if ( model instanceof Affine3D< ? > && isApproximatelyIdentity( ( Affine3D< ? > ) model, IDENTITY_EPSILON ) )
+				totalIdentity++;
+			else
+				totalNonIdentity++;
+
+			if ( printed < maxPerViewTransformLog )
+			{
+				final String output = Group.pvid( viewId ) + ": " + printAffine3D( ( Affine3D< ? > ) model );
+				if ( model instanceof RigidModel3D )
+					net.preibisch.legacy.io.IOFunctions.println( output + ", " + getRotationAxis( ( RigidModel3D ) model ) );
+				else
+					net.preibisch.legacy.io.IOFunctions.println( output + ", " + getScaling( ( Affine3D< ? > ) model ) );
+				printed++;
+			}
+			else if ( !noticeEmitted )
+			{
+				noticeEmitted = true;
+				net.preibisch.legacy.io.IOFunctions.println( "(further per-view transformation lines suppressed; --maxPerViewTransformLog=" + maxPerViewTransformLog + ". Summary follows.)" );
+			}
+		}
+
+		final long total = totalIdentity + totalNonIdentity;
+		net.preibisch.legacy.io.IOFunctions.println(
+				"Transformation Models summary: " + total + " view(s); " +
+				totalIdentity + " identity, " + totalNonIdentity + " non-identity (ε=" + IDENTITY_EPSILON + ")" );
+	}
+
+	/**
+	 * @return true iff every element of the affine 3x4 matrix is within {@code eps} of the
+	 *         3D identity matrix (diag(1,1,1) with zero translation).
+	 */
+	public static boolean isApproximatelyIdentity( final Affine3D< ? > model, final double eps )
+	{
+		final double[][] m = new double[ 3 ][ 4 ];
+		model.toMatrix( m );
+		for ( int r = 0; r < 3; r++ )
+			for ( int c = 0; c < 4; c++ )
+			{
+				final double expected = ( r == c ) ? 1.0 : 0.0;
+				if ( Math.abs( m[ r ][ c ] - expected ) > eps )
+					return false;
+			}
+		return true;
+	}
+
 	public static boolean affineTransformsEqual( final AffineTransform3D tA, final AffineTransform3D tB )
 	{
 		if ( tA == tB )
@@ -872,8 +1224,11 @@ public class TransformationTools
 
 	public static double getAverageAnisotropyFactor( final SpimData spimData, final Collection< ? extends ViewId > views )
 	{
-		final SequenceDescription seq = spimData.getSequenceDescription();
+		return getAverageAnisotropyFactor( spimData.getSequenceDescription(), views );
+	}
 
+	public static double getAverageAnisotropyFactor( final SequenceDescription seq, final Collection< ? extends ViewId > views )
+	{
 		double avgFactor = 0;
 		int count = 0;
 

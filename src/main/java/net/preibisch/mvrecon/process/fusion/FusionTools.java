@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -166,6 +166,7 @@ public class FusionTools
 		return numpixels;
 	}
 
+	// TODO: remove / mark as deprecated
 	/**
 	 * Virtually fuses views using a maximal bounding box around all views
 	 *
@@ -856,8 +857,20 @@ public class FusionTools
 		final ReadOnlyCachedCellImgFactory factory = new ReadOnlyCachedCellImgFactory( options );
 
 		final long[] dim = input.dimensionsAsLongArray();
+		final int[] cellDimExpanded;
+		if ( cellDim.length == dim.length )
+		{
+			cellDimExpanded = cellDim;
+		}
+		else
+		{
+			// broadcast scalar (or shorter array) across all dimensions; CellGrid requires cellDim.length == dim.length
+			cellDimExpanded = new int[ dim.length ];
+			for ( int d = 0; d < dim.length; ++d )
+				cellDimExpanded[ d ] = cellDim[ Math.min( d, cellDim.length - 1 ) ];
+		}
 		final CacheLoader< Long, Cell< A > > loader = RandomAccessibleCacheLoader.get(
-				new CellGrid( dim, cellDim ),
+				new CellGrid( dim, cellDimExpanded ),
 				input.view().zeroMin(),
 				AccessFlags.setOf( AccessFlags.VOLATILE ) );
 		final RandomAccessibleInterval<T> copy = factory.createWithCacheLoader( dim, type, loader );

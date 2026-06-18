@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -51,6 +51,7 @@ public class RANSAC
 	public static < I extends InterestPoint > Pair< String, Double > computeRANSAC(
 			final ArrayList< PointMatchGeneric < I > > correspondenceCandidates,
 			final ArrayList< PointMatchGeneric < I > > inlierList,
+			final ArrayList< Integer > setIdList,
 			final Model<?> model,
 			final double maxEpsilon,
 			final double minInlierRatio,
@@ -154,6 +155,7 @@ public class RANSAC
 					final I detectionB = pm.getPoint2().getLinkedObject();
 
 					inlierList.add( new PointMatchGeneric< I >( detectionA, detectionB ) );
+					setIdList.add( -1 );  // Single-consensus mode always uses -1
 				}
 
 				String inconsistent = "";
@@ -249,6 +251,7 @@ public class RANSAC
 						final I detectionB = pm.getPoint2().getLinkedObject();
 
 						inlierList.add( new PointMatchGeneric< I >( detectionA, detectionB ) );
+						setIdList.add( i );  // Track which consensus set this inlier belongs to
 					}
 				}
 

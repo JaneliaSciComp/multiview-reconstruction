@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -45,8 +45,6 @@ import javax.swing.event.ListSelectionListener;
 
 import bdv.BigDataViewer;
 import bdv.tools.HelpDialog;
-import bdv.tools.brightness.ConverterSetup;
-import bdv.viewer.DisplayMode;
 import bdv.viewer.SourceAndConverter;
 import bdv.viewer.ViewerState;
 import mpicbg.spim.data.generic.AbstractSpimData;
@@ -54,11 +52,8 @@ import mpicbg.spim.data.generic.base.Entity;
 import mpicbg.spim.data.generic.base.NamedEntity;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
-import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.type.numeric.ARGBType;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.XMLSaveAs;
 import net.preibisch.mvrecon.fiji.spimdata.GroupedViews;
@@ -68,8 +63,10 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVFlyThrough;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVUtils;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ExplorerWindowSetable;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import util.BDVTools;
 import util.URITools;
 
 public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
@@ -84,7 +81,6 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	private static final List<List<BasicViewDescription<?>>> selectionHistory = new ArrayList<>();
 	private static int historyIndex = -1;
 	private static boolean navigatingHistory = false;
-	private static boolean bulkSelecting = false;
 
 	static
 	{
@@ -144,6 +140,35 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 				return ( BDVPopup ) s;
 
 		return null;
+	}
+
+	/**
+	 * Returns the first registered popup that implements {@link BasicBDVPopup},
+	 * regardless of whether a BDV is currently open. Use this when you need the
+	 * popup instance itself (e.g. to set its {@code bdv} field) rather than just
+	 * accessing a running BDV.
+	 */
+	public BasicBDVPopup getAnyBDVPopup()
+	{
+		for ( final ExplorerWindowSetable s : popups )
+			if ( s instanceof BasicBDVPopup )
+				return ( BasicBDVPopup ) s;
+		return null;
+	}
+
+	/**
+	 * Returns whichever BDV popup currently has a running BDV (eager
+	 * {@link BDVPopup} or lazy variant — both implement {@link BasicBDVPopup}).
+	 * Falls back to the eager {@link BDVPopup} (which may have a null bdv) so
+	 * call sites that early-return on {@code bdv == null} keep their existing
+	 * behaviour when no BDV is open.
+	 */
+	public BasicBDVPopup runningBdvPopup()
+	{
+		for ( final ExplorerWindowSetable s : popups )
+			if ( s instanceof BasicBDVPopup && ( ( BasicBDVPopup ) s ).bdvRunning() )
+				return ( BasicBDVPopup ) s;
+		return bdvPopup();
 	}
 
 	@Override
@@ -292,11 +317,6 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			@Override
 			public void valueChanged(final ListSelectionEvent arg0)
 			{
-				// Skip intermediate selection changes while user is still adjusting
-				// (e.g., shift-clicking multiple rows). Only process when finalized.
-				if ( arg0.getValueIsAdjusting() )
-					return;
-
 				BDVPopup b = bdvPopup();
 
 				selectedRows.clear();
@@ -378,25 +398,6 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 		};
 	}
 
-	public static void resetBDVManualTransformations( BigDataViewer bdv )
-	{
-		if ( bdv == null )
-			return;
-
-		// reset manual transform for all views
-		final AffineTransform3D identity = new AffineTransform3D();
-		final ViewerState state = bdv.getViewer().state();
-		synchronized ( state )
-		{
-			BDVUtils.forEachTransformedSource(
-					state.getSources(),
-					( soc, source ) -> {
-						source.setFixedTransform( identity );
-						source.setIncrementalTransform( identity );
-					} );
-		}
-	}
-
 	public static void updateBDV(
 			final BigDataViewer bdv,
 			final boolean colorMode,
@@ -410,9 +411,9 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			return;
 
 		// we always set the fused mode
-		setFusedModeSimple( bdv, data );
+		BDVTools.setFusedModeSimple( bdv, data );
 
-		resetBDVManualTransformations( bdv );
+		BDVTools.resetBDVManualTransformations( bdv );
 
 		if ( selectedRows == null || selectedRows.size() == 0 )
 			return;
@@ -424,7 +425,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 		// always use the first timepoint
 		final TimePoint firstTP = firstVD.getTimePoint();
-		state.setCurrentTimepoint( getBDVTimePointIndex( firstTP, data ) );
+		state.setCurrentTimepoint( BDVTools.getBDVTimePointIndex( firstTP, data ) );
 
 		final Set< Integer > selectedViewSetupIds = selectedRows.stream()
 				.flatMap( Collection::stream )
@@ -442,7 +443,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 							active.add( soc );
 					} );
 		}
-		setVisibleSources( state, active );
+		BDVTools.setVisibleSources( state, active );
 
 //		if ( selectedRows.size() > 1 && colorMode )
 //			colorSources( bdv.getSetupAssignments().getConverterSetups(), data, channelColors);
@@ -450,62 +451,6 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 //			whiteSources( bdv.getSetupAssignments().getConverterSetups() );
 
 		bdv.getViewer().requestRepaint();
-	}
-
-	public static void setFusedModeSimple( final BigDataViewer bdv, final AbstractSpimData< ? > data )
-	{
-		if ( bdv == null )
-			return;
-
-		final ViewerState state = bdv.getViewer().state();
-		if ( state.getDisplayMode() != DisplayMode.FUSED )
-		{
-			setVisibleSources( state, state.getSources().subList( 0, 0 ) );
-			state.setDisplayMode( DisplayMode.FUSED );
-		}
-	}
-
-	// TODO (TP) This has duplicates in StitchingExplorerPanel and ViewSetupExplorerPanel
-	//           Move to common utility class?
-	public static void whiteSources( final List< ConverterSetup > cs )
-	{
-		sameColorSources( cs, 255, 255, 255, 255 );
-	}
-
-	public static void sameColorSources( final List< ConverterSetup > cs, final int r, final int g, final int b, final int a )
-	{
-		final ARGBType color = new ARGBType( ARGBType.rgba( r, g, b, a ) );
-		cs.forEach( c -> c.setColor( color ) );
-	}
-
-	public static void setVisibleSources( final ViewerState state, final Collection< ? extends SourceAndConverter< ? > > active )
-	{
-		final List< SourceAndConverter< ? > > inactive = new ArrayList<>( state.getSources() );
-		inactive.removeAll( active );
-		state.setSourcesActive( inactive, false );
-		state.setSourcesActive( active, true );
-	}
-
-	public static int getBDVTimePointIndex( final TimePoint t, final AbstractSpimData< ? > data )
-	{
-		final List< TimePoint > list = data.getSequenceDescription().getTimePoints().getTimePointsOrdered();
-
-		for ( int i = 0; i < list.size(); ++i )
-			if ( list.get( i ).getId() == t.getId() )
-				return i;
-
-		return 0;
-	}
-
-	public static int getBDVSourceIndex( final BasicViewSetup vs, final AbstractSpimData< ? > data )
-	{
-		final List< ? extends BasicViewSetup > list = data.getSequenceDescription().getViewSetupsOrdered();
-
-		for ( int i = 0; i < list.size(); ++i )
-			if ( list.get( i ).getId() == vs.getId() )
-				return i;
-
-		return 0;
 	}
 
 	public Set< List< BasicViewDescription< ? > > > getSelectedRows()
@@ -574,9 +519,9 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 					System.out.println( "colormode" );
 
-					final BDVPopup p = bdvPopup();
-					if ( p != null && p.bdv != null && p.bdv.getViewerFrame().isVisible() )
-						updateBDV( p.bdv, colorMode, data, null, selectedRows );
+					final BasicBDVPopup p = runningBdvPopup();
+					if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
+						updateBDV( p.getBDV(), colorMode, data, null, selectedRows );
 				}
 			}
 		} );
@@ -591,10 +536,10 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			{
 				if ( arg0.getKeyChar() == 'v' || arg0.getKeyChar() == 'V' )
 				{
-					final BDVPopup p = bdvPopup();
-					if ( p != null && p.bdv != null && p.bdv.getViewerFrame().isVisible() )
+					final BasicBDVPopup p = runningBdvPopup();
+					if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
 					{
-						toggleViewSetupIdOverlay( p.bdv );
+						toggleViewSetupIdOverlay( p.getBDV() );
 					}
 				}
 			}
@@ -632,12 +577,12 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	{
 		if ( viewSetupIdOverlay != null )
 		{
-			final BDVPopup p = bdvPopup();
-			if ( p != null && p.bdv != null )
+			final BasicBDVPopup p = runningBdvPopup();
+			if ( p != null && p.getBDV() != null )
 			{
-				p.bdv.getViewer().renderTransformListeners().remove( viewSetupIdOverlay );
-				p.bdv.getViewer().getDisplay().overlays().remove( viewSetupIdOverlay );
-				p.bdv.getViewer().repaint();
+				p.getBDV().getViewer().renderTransformListeners().remove( viewSetupIdOverlay );
+				p.getBDV().getViewer().getDisplay().overlays().remove( viewSetupIdOverlay );
+				p.getBDV().getViewer().repaint();
 			}
 			viewSetupIdOverlay = null;
 		}
@@ -652,10 +597,10 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			{
 				if ( arg0.getKeyChar() == 'r' || arg0.getKeyChar() == 'R' )
 				{
-					final BDVPopup p = bdvPopup();
-					if ( p != null && p.bdv != null && p.bdv.getViewerFrame().isVisible() )
+					final BasicBDVPopup p = runningBdvPopup();
+					if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
 					{
-						TransformationTools.reCenterViews( p.bdv,
+						TransformationTools.reCenterViews( p.getBDV(),
 								selectedRows.stream().collect(
 										HashSet< BasicViewDescription< ? > >::new,
 										( a, b ) -> a.addAll( b ), ( a, b ) -> a.addAll( b ) ),
@@ -665,6 +610,62 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			}
 		} );
 	}
+
+	/** 'n'/'N' opens the {@link net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow}
+	 *  on first press (and applies); subsequent presses re-apply with the window's current params. */
+	protected void addNeighboursShortcut()
+	{
+		table.addKeyListener( new KeyAdapter()
+		{
+			@Override
+			public void keyPressed( final KeyEvent arg0 )
+			{
+				if ( arg0.getKeyChar() != 'n' && arg0.getKeyChar() != 'N' )
+					return;
+				if ( !( FilteredAndGroupedExplorerPanel.this instanceof net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel ) )
+					return; // window expects a ViewSetupExplorerPanel
+				final net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > vsPanel =
+						( net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > ) FilteredAndGroupedExplorerPanel.this;
+				if ( viewNeighboursWindow == null || !viewNeighboursWindow.isDisplayable() )
+					viewNeighboursWindow = new net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow( vsPanel );
+				// If the Overlap window is currently expanded, collapse it first so 'n'
+				// expands from the original anchor (not from 'o''s expanded set).
+				if ( viewOverlapWindow != null && viewOverlapWindow.isDisplayable() && viewOverlapWindow.isExpanded() )
+					viewOverlapWindow.collapse();
+				viewNeighboursWindow.toggle();
+			}
+		} );
+	}
+
+	private net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow viewNeighboursWindow = null;
+
+	/** 'o'/'O' opens the {@link net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow}
+	 *  on first press (and applies); subsequent presses toggle expand ↔ collapse. */
+	protected void addOverlapShortcut()
+	{
+		table.addKeyListener( new KeyAdapter()
+		{
+			@Override
+			public void keyPressed( final KeyEvent arg0 )
+			{
+				if ( arg0.getKeyChar() != 'o' && arg0.getKeyChar() != 'O' )
+					return;
+				if ( !( FilteredAndGroupedExplorerPanel.this instanceof net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel ) )
+					return;
+				final net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > vsPanel =
+						( net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > ) FilteredAndGroupedExplorerPanel.this;
+				if ( viewOverlapWindow == null || !viewOverlapWindow.isDisplayable() )
+					viewOverlapWindow = new net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow( vsPanel );
+				// If the Neighbours window is currently expanded, collapse it first so 'o'
+				// expands from the original anchor (not from 'n''s expanded set).
+				if ( viewNeighboursWindow != null && viewNeighboursWindow.isDisplayable() && viewNeighboursWindow.isExpanded() )
+					viewNeighboursWindow.collapse();
+				viewOverlapWindow.toggle();
+			}
+		} );
+	}
+
+	private net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow viewOverlapWindow = null;
 
 	protected void addSelectionDialog()
 	{
@@ -701,14 +702,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			final List<BasicViewDescription<?>> selectedViews = dialog.getSelectedViews();
 			if ( selectedViews != null && !selectedViews.isEmpty() )
 			{
-				// Select the views in the table (disable history saving during bulk selection)
-				bulkSelecting = true;
+				// Select the views in the table
 				selectViews( selectedViews );
-				bulkSelecting = false;
-
-				// Save the final selection to history once
-				saveSelectionToHistory();
-
 				IOFunctions.println( "Selected " + selectedViews.size() + " views based on criteria." );
 			}
 		}
@@ -720,6 +715,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 		table.clearSelection();
 
 		// Find and select matching rows
+		int firstMatch = -1;
 		for ( int row = 0; row < tableModel.getRowCount(); row++ )
 		{
 			final List<BasicViewDescription<?>> rowViews = tableModel.getElements().get( row );
@@ -728,15 +724,23 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 				if ( views.contains( vd ) )
 				{
 					table.addRowSelectionInterval( row, row );
+					if ( firstMatch < 0 )
+						firstMatch = row;
 					break;
 				}
 			}
 		}
+
+		// Scroll the table so the first matched row is visible — useful when
+		// the dataset has tens of thousands of rows and the selection is
+		// otherwise off-screen.
+		if ( firstMatch >= 0 )
+			table.scrollRectToVisible( table.getCellRect( firstMatch, 0, true ) );
 	}
 
 	protected void saveSelectionToHistory()
 	{
-		if ( navigatingHistory || bulkSelecting )
+		if ( navigatingHistory )
 			return;
 
 		// Get current selection
@@ -914,7 +918,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 				if ( enableFlyThrough )
 				{
-					final boolean bdvRunning = bdvPopup().bdvRunning() && !(bdvPopup().bdv == null);
+					final BasicBDVPopup p = runningBdvPopup();
+					final boolean bdvRunning = p != null && p.bdvRunning() && p.getBDV() != null;
 
 					if ( arg0.getKeyChar() == 'r' )
 						if (bdvRunning)
@@ -922,14 +927,14 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 							{
 								@Override
 								public void run()
-								{ BDVFlyThrough.record( bdvPopup().bdv.getViewer() ); }
+								{ BDVFlyThrough.record( p.getBDV().getViewer() ); }
 							} ).start();
 						else
 							IOFunctions.println("Please open BigDataViewer to record a fly-through or add keypoints.");
 
 					if ( arg0.getKeyChar() == 'a' )
 						if (bdvRunning)
-							BDVFlyThrough.addCurrentViewerTransform( bdvPopup().bdv.getViewer() );
+							BDVFlyThrough.addCurrentViewerTransform( p.getBDV().getViewer() );
 						else
 							IOFunctions.println("Please open BigDataViewer to record a fly-through or add keypoints.");
 
@@ -940,7 +945,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 						BDVFlyThrough.deleteLastViewerTransform();
 
 					if ( arg0.getKeyChar() == 'j' )
-						BDVFlyThrough.jumpToLastViewerTransform( bdvPopup().bdv.getViewer() );
+						if ( bdvRunning )
+							BDVFlyThrough.jumpToLastViewerTransform( p.getBDV().getViewer() );
 
 					if ( arg0.getKeyChar() == 's' )
 						try { BDVFlyThrough.saveViewerTransforms(); } catch ( Exception e ) { IOFunctions.println( "couldn't save json: " + e ); }
@@ -950,7 +956,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 					if ( arg0.getKeyChar() == 'R' )
 						if ( bdvRunning )
-							new Thread( () -> BDVFlyThrough.renderScreenshot( bdvPopup().bdv.getViewer() ) ).start();
+							new Thread( () -> BDVFlyThrough.renderScreenshot( p.getBDV().getViewer() ) ).start();
 						else
 							IOFunctions.println( "Please open BigDataViewer to make a screenshot." );
 				}

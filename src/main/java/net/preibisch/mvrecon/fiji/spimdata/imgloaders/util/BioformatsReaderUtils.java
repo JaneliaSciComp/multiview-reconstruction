@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.util;
 
 import java.util.HashMap;
 
+import loci.formats.FormatTools;
 import loci.formats.IFormatReader;
 import loci.formats.ImageReader;
 import loci.formats.in.ZeissCZIReader;
@@ -45,5 +46,31 @@ public class BioformatsReaderUtils {
 				setupHooks.get(formatReader.getClass()).runSetup(formatReader);
 
 		return reader;
+	}
+
+	public static int getBytesPerPixel(final IFormatReader reader)
+	{
+		final int bytesPerPixel = FormatTools.getBytesPerPixel(reader.getPixelType());
+
+		if (bytesPerPixel <= 0)
+		{
+			final int bitsPerPixel = reader.getBitsPerPixel();
+
+			if (bitsPerPixel > 0 && bitsPerPixel % 8 == 0)
+				return bitsPerPixel / 8;
+
+			throw new IllegalArgumentException(
+					"Could not determine bytes per pixel for pixelType=" + reader.getPixelType() +
+					", bitsPerPixel=" + bitsPerPixel);
+		}
+
+		return bytesPerPixel;
+	}
+
+	public static int getPlaneSizeInBytes(final IFormatReader reader)
+	{
+		return Math.multiplyExact(
+				Math.multiplyExact(getBytesPerPixel(reader), reader.getSizeX()),
+				reader.getSizeY());
 	}
 }

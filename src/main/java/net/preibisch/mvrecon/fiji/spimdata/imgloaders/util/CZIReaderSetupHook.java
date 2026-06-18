@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -55,23 +55,32 @@ public class CZIReaderSetupHook implements BioformatsReaderSetupHook {
 
 	@Override
 	public void runSetup(IFormatReader reader) {
-
 		if (!(reader instanceof ZeissCZIReader)) {
 			return;
 		}
+		configureCZIReader(
+				reader,
+				ZeissCZIReader.ALLOW_AUTOSTITCHING_KEY,
+				ZeissCZIReader.RELATIVE_POSITIONS_KEY
+		);
+	}
 
+	private void configureCZIReader(
+			final IFormatReader reader,
+			final String autoStitchKey,
+			final String relativePositionsKey)
+	{
 		// disable auto stitching, following solutions by @CellKai and @NicoKiaru in
 		// https://forum.image.sc/t/change-in-czi-tile-info-metadata-after-upgrade-to-zeiss-lightsheet-7/49414/15
-		MetadataOptions options = reader.getMetadataOptions();
+		final MetadataOptions options = reader.getMetadataOptions();
 		if (options instanceof DynamicMetadataOptions) {
-			((DynamicMetadataOptions) options).setBoolean(
-					ZeissCZIReader.ALLOW_AUTOSTITCHING_KEY, allowAutostitch);
-			((DynamicMetadataOptions) options).setBoolean(
-					ZeissCZIReader.RELATIVE_POSITIONS_KEY, relativePositions);
+			final DynamicMetadataOptions dynamicOptions = (DynamicMetadataOptions) options;
+			dynamicOptions.setBoolean(autoStitchKey, allowAutostitch);
+			dynamicOptions.setBoolean(relativePositionsKey, relativePositions);
+			reader.setMetadataOptions(dynamicOptions);
 		} else {
-			System.err.println("WARNING: could not set CZI autostitching option.");
+			System.err.println("WARNING: could not set CZI metadata options for " + reader.getClass().getSimpleName() + ".");
 		}
-		reader.setMetadataOptions(options);
 	}
 
 }

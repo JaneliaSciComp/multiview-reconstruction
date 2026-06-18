@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -137,7 +137,9 @@ public class ApplyTransformationPopup extends JMenuItem implements ExplorerWindo
 		
 					// update registration panel if available
 					panel.updateContent();
-					panel.bdvPopup().updateBDV();
+					final BasicBDVPopup p = panel.runningBdvPopup();
+					if ( p != null )
+						p.updateBDV();
 				}
 			} ).start();
 		}

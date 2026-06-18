@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -78,7 +78,7 @@ public class XMLSaveAs implements PlugIn
 			return null;
 
 		final String uriString = gd.getNextString();
-		final URI newXMLPath, newBaseDir;
+		final URI newXMLPath, newBasePath;
 
 		newXMLPath = URITools.toURI( uriString );
 
@@ -88,12 +88,12 @@ public class XMLSaveAs implements PlugIn
 			return null;
 		}
 
-		newBaseDir = URITools.getParentURINoEx( newXMLPath );
+		newBasePath = URITools.getParentURINoEx( newXMLPath );
 
 		IOFunctions.println( "New XML: " + newXMLPath );
-		IOFunctions.println( "New base path: " + newBaseDir );
+		IOFunctions.println( "New base path: " + newBasePath );
 
-		data.setBasePathURI( newBaseDir );
+		data.setBasePathURI( newBasePath );
 
 		// make sure interestpoints are saved to the new location as well
 		for ( final ViewInterestPointLists vipl : data.getViewInterestPoints().getViewInterestPoints().values() )
@@ -104,7 +104,7 @@ public class XMLSaveAs implements PlugIn
 				ipl.getCorrespondingInterestPointsCopy();
 
 				// then set base dir (otherwise loading fails)
-				ipl.setBaseDir( newBaseDir ); // also sets 'isModified' flags
+				ipl.setBasePath( newBasePath ); // also sets 'isModified' flags
 			});
 
 		// make sure PSF's are saved to the new location as well
@@ -114,7 +114,7 @@ public class XMLSaveAs implements PlugIn
 			psf.load();
 
 			// then set base dir (otherwise loading fails)
-			psf.setBaseDir( newBaseDir );
+			psf.setBasePath( newBasePath );
 		});
 
 		LoadParseQueryXML.defaultXMLURI = newXMLPath.toString();

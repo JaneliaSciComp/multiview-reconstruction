@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -45,7 +45,6 @@ import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import util.URITools;
 
 public class AllenOMEZarrLoader extends N5ImageLoader
@@ -54,16 +53,20 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 
 	private final Map< ViewId, OMEZARREntry > viewIdToPath;
 
+	/**
+	 * either StorageFormat.ZARR (v3) or StorageFormat.ZARR2 (v2)
+	 */
+	private final StorageFormat format;
+
 	public AllenOMEZarrLoader(
 			final URI n5URI,
-			//final String bucket,
-			//final String folder,
+			final StorageFormat format,
 			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
 			final Map< ViewId, OMEZARREntry > viewIdToPath )
 	{
-		super( URITools.instantiateN5Reader( StorageFormat.ZARR, n5URI ), n5URI, sequenceDescription );
+		super( URITools.instantiateN5Reader( format, n5URI ), n5URI, sequenceDescription );
 		this.sequenceDescription = sequenceDescription;
-
+		this.format = format;
 		this.viewIdToPath = viewIdToPath;
 	}
 
@@ -77,6 +80,8 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 	{
 		return new AllenOMEZarrProperties( sequenceDescription, viewIdToPath );
 	}
+
+	public StorageFormat getFormat() { return format; }
 
 	public static class OMEZARREntry implements Serializable
 	{
@@ -110,13 +115,15 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 
 			if ( higherDimensionIndicies == null || higherDimensionIndicies.length == 0 )
 			{
-				if ( omeZarrVolume.numDimensions() == 4 && omeZarrVolume.dimension( 3 ) == 1 ) // 4d volume with size 1, return 3d volume
-					return Views.hyperSlice( omeZarrVolume, 4, 0 );
-				else if ( omeZarrVolume.numDimensions() == 5 && omeZarrVolume.dimension( 4 ) == 1 && omeZarrVolume.dimension( 3 ) == 1 )  // 5d volume with size 1 in c and t, return 3d volume
+				// Smart fallback for data with size 1 in higher dimensions
+			if ( omeZarrVolume.numDimensions() == 4 && omeZarrVolume.dimension( 3 ) == 1 ) // 4d volume (xyzc) with size 1 in c, return 3d volume
+					return Views.hyperSlice( omeZarrVolume, 3, 0 );
+				else if ( omeZarrVolume.numDimensions() == 5 && omeZarrVolume.dimension( 4 ) == 1 && omeZarrVolume.dimension( 3 ) == 1 )  // 5d volume (xyzct) with size 1 in both c and t, return 3d volume
 					return Views.hyperSlice( Views.hyperSlice( omeZarrVolume, 4, 0 ), 3, 0 );
 				else
 				{
-					throw new RuntimeException( "Cannot handle OME-ZARR with dimensionality " + omeZarrVolume.numDimensions() + " without specifying which hyperslice to extract." );
+					throw new RuntimeException( "Cannot handle OME-ZARR with dimensionality " + omeZarrVolume.numDimensions() +
+					" without specifying which hyperslice to extract. Use higherDimensionIndicies parameter." );
 				}
 			}
 			else
@@ -126,7 +133,7 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 				for ( int d = 3 + higherDimensionIndicies.length - 1; d >= 3; --d )
 					out = Views.hyperSlice( out, d, higherDimensionIndicies[ d - 3 ] );
 
-				return out; //Views.hyperSlice( Views.hyperSlice( omeZarrVolume, 4, 0 ), 3, 0 );
+				return out;
 			}
 		}
 

@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -41,6 +41,7 @@ import mpicbg.spim.data.sequence.Illumination;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewSetup;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.SpimDataTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -51,6 +52,10 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 
 	private static final long serialVersionUID = -6526338840427674269L;
 
+	// Performance instrumentation
+	private static long getValueAtCallCount = 0;
+	private static long getValueAtTotalTime = 0;
+
 	protected List< List< BasicViewDescription< ? > >> elements = null;
 
 	final ExplorerWindow< AS > panel;
@@ -58,6 +63,7 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 	Map<Class<? extends Entity>, List<? extends Entity>> filters;
 	List<Class<? extends Entity>> columnClasses;
 	List<Class<? extends Entity>> sortingFactors;
+	boolean hideMissingViews = false;
 
 	/* (non-Javadoc)
 	 * @see gui.ISpimDataTableModel#getPanel()
@@ -175,11 +181,31 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 		if (!forceUpdate && elements != null)
 			return elements;
 
-		final List<BasicViewDescription< ? > > ungroupedElements =
-				SpimDataTools.getFilteredViewDescriptions( panel.getSpimData().getSequenceDescription(), filters, false);
-		final List< Group< BasicViewDescription< ? > > > elementsNew = 
-				Group.combineBy(ungroupedElements, groupingFactors);
+		final long startTotal = System.currentTimeMillis();
 
+		long start = System.currentTimeMillis();
+		List<BasicViewDescription< ? > > ungroupedElements =
+				SpimDataTools.getFilteredViewDescriptions( panel.getSpimData().getSequenceDescription(), filters, false);
+		// IOFunctions.println( "PERF: [elements()] getFilteredViewDescriptions took " + (System.currentTimeMillis() - start) + " ms, got " + ungroupedElements.size() + " views" );
+
+		// Filter out missing views if requested
+		if ( hideMissingViews )
+		{
+			start = System.currentTimeMillis();
+			final List<BasicViewDescription< ? > > presentViews = new ArrayList<>();
+			for ( final BasicViewDescription< ? > vd : ungroupedElements )
+				if ( vd.isPresent() )
+					presentViews.add( vd );
+			ungroupedElements = presentViews;
+			// IOFunctions.println( "PERF: [elements()] hideMissingViews filter took " + (System.currentTimeMillis() - start) + " ms, remaining " + ungroupedElements.size() + " views" );
+		}
+
+		start = System.currentTimeMillis();
+		final List< Group< BasicViewDescription< ? > > > elementsNew =
+				Group.combineBy(ungroupedElements, groupingFactors);
+		// IOFunctions.println( "PERF: [elements()] Group.combineBy took " + (System.currentTimeMillis() - start) + " ms, got " + elementsNew.size() + " groups" );
+
+		start = System.currentTimeMillis();
 		final List< List< BasicViewDescription< ? > > > elementsOut = new ArrayList<>();
 
 		// sort the grouped VDs and make a List copy
@@ -193,8 +219,11 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 		// sort the groups of VDS
 		for (Class<? extends Entity> cl : sortingFactors)
 			Collections.sort(elementsOut, SpimDataTools.getVDListComparator(cl));
+		// IOFunctions.println( "PERF: [elements()] sorting took " + (System.currentTimeMillis() - start) + " ms" );
 
 		this.elements = elementsOut;
+
+		// IOFunctions.println( "PERF: [elements()] TOTAL took " + (System.currentTimeMillis() - startTotal) + " ms" );
 
 		return elements;
 	}
@@ -230,6 +259,8 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 	@Override
 	public Object getValueAt( final int row, final int column )
 	{
+		final long start = System.nanoTime();
+
 		final List<BasicViewDescription< ? >> vds = elements().get( row );
 
 		Class <? extends Entity> c = columnClasses.get(column);
@@ -254,7 +285,7 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 		Entity.sortById(sorted);
 
 		final ArrayList<String> entryNames = new ArrayList<>();
-		
+
 		if (entries.size() < 1)
 			return "";
 		else
@@ -267,6 +298,13 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 					entryNames.add(Integer.toString(e.getId()));
 			}
 		}
+
+		// Performance tracking
+		getValueAtTotalTime += (System.nanoTime() - start);
+		getValueAtCallCount++;
+		// if (getValueAtCallCount % 1000 == 0)
+		//	IOFunctions.println( "PERF: [getValueAt] " + getValueAtCallCount + " calls, total time " + (getValueAtTotalTime / 1_000_000) + " ms, avg " + (getValueAtTotalTime / getValueAtCallCount / 1000) + " µs/call" );
+
 		return String.join(", ", entryNames);
 	}
 
@@ -303,9 +341,25 @@ public class FilteredAndGroupedTableModel < AS extends SpimData2 > extends Abstr
 		return filters;
 	}
 
+	public boolean isHideMissingViews()
+	{
+		return hideMissingViews;
+	}
+
+	public void setHideMissingViews( final boolean hideMissingViews )
+	{
+		if ( this.hideMissingViews != hideMissingViews )
+		{
+			this.hideMissingViews = hideMissingViews;
+			elements = null;
+			fireTableDataChanged();
+		}
+	}
+
 	@Override
 	public void updateElements()
 	{
 		elements(true);
+		fireTableDataChanged();
 	}
 }

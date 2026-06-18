@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -39,9 +39,11 @@ public class LoadCorrespondencesGUI extends PairwiseGUI
 	public static int defaultModel = 2;
 	public static boolean defaultRegularize = true;
 	public static int defaultMinNumMatches = 12;
+	public static double defaultGlobalOptError = 5.0;
 
 	protected TransformationModelGUI model = null;
 	protected int minNumMatches = defaultMinNumMatches;
+	protected double globalOptMaxError = defaultGlobalOptError;
 
 	final SpimData2 spimData;
 
@@ -56,6 +58,7 @@ public class LoadCorrespondencesGUI extends PairwiseGUI
 		gd.addChoice( "Transformation model", TransformationModelGUI.modelChoice, TransformationModelGUI.modelChoice[ defaultModel ] );
 		gd.addCheckbox( "Regularize_model", defaultRegularize );
 		gd.addSlider( "Minmal_number_of_inliers", 4, 100, defaultMinNumMatches );
+		gd.addSlider( "Max_error_for_global_optimization (px)", 0.0, 20.0, defaultGlobalOptError );
 		gd.addMessage( "Note: Corresponding points will be loaded according to the selected interest point label and pre-selection of interest points.", GUIHelper.smallStatusFont );
 		gd.addMessage( "");
 	}
@@ -72,6 +75,7 @@ public class LoadCorrespondencesGUI extends PairwiseGUI
 		}
 
 		minNumMatches = defaultMinNumMatches = (int)Math.round( gd.getNextNumber() );
+		globalOptMaxError = defaultGlobalOptError = gd.getNextNumber();
 
 		return true;
 	}
@@ -96,8 +100,8 @@ public class LoadCorrespondencesGUI extends PairwiseGUI
 	public TransformationModelGUI getMatchingModel() { return model; }
 
 	@Override
-	public double getMaxError() { return 0.0; }
+	public double getMaxError() { return globalOptMaxError; }
 
 	@Override
-	public double globalOptError() { return 0.0; }
+	public double globalOptError() { return globalOptMaxError; }
 }

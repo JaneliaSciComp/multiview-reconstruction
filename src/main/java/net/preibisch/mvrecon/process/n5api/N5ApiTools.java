@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -43,9 +43,11 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.RawCompression;
+import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 
 import bdv.export.ExportMipmapInfo;
 import bdv.util.MipmapTransforms;
@@ -57,7 +59,6 @@ import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
-import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
@@ -75,7 +76,7 @@ import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import util.Grid;
 
@@ -155,13 +156,13 @@ public class N5ApiTools
 		{
 			path = "t" + String.format("%05d", viewId.getTimePointId()) + "/" + "s" + String.format("%02d", viewId.getViewSetupId()) + "/" + level + "/cells";
 		}
-		else if ( StorageFormat.ZARR.equals( storageType ) )
+		else if ( StorageFormat.ZARR.equals( storageType ) || StorageFormat.ZARR2.equals( storageType ) )
 		{
 			path = "s" + viewId.getViewSetupId() + "-t" + viewId.getTimePointId() + ".zarr/" + level;
 		}
 		else
 		{
-			new RuntimeException( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
+			throw new RuntimeException( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
 		}
 
 		return path;
@@ -188,6 +189,7 @@ public class N5ApiTools
 		private static final long serialVersionUID = 5392269335394869108L;
 
 		final public int[] relativeDownsampling, absoluteDownsampling, blockSize;
+		final public int[] shardSize; // null if sharding not used
 		final public long[] dimensions;
 		final public String dataset;
 		final public DataType dataType;
@@ -198,7 +200,8 @@ public class N5ApiTools
 				final DataType dataType,
 				final int[] relativeDownsampling,
 				final int[] absoluteDownsampling,
-				final int[] blockSize )
+				final int[] blockSize,
+				final int[] shardSize )
 		{
 			this.dataset = dataset;
 			this.dimensions = dimensions;
@@ -206,6 +209,7 @@ public class N5ApiTools
 			this.relativeDownsampling = relativeDownsampling;
 			this.absoluteDownsampling = absoluteDownsampling;
 			this.blockSize = blockSize;
+			this.shardSize = shardSize;
 		}
 
 		public double[] absoluteDownsamplingDouble()
@@ -236,7 +240,33 @@ public class N5ApiTools
 				dimensionsS0,
 				compression,
 				blockSize,
-				downsamplings);
+				downsamplings,
+				false,  // useSharding
+				null ); // shardSize
+	}
+
+	public static MultiResolutionLevelInfo[] setupMultiResolutionPyramid(
+			final N5Writer driverVolumeWriter,
+			final Function<Integer, String> levelToDataset,
+			final DataType dataType,
+			final long[] dimensionsS0,
+			final Compression compression,
+			final int[] blockSize,
+			final int[][] downsamplings,
+			final boolean useSharding,
+			final int[] shardSize )
+	{
+		return setupMultiResolutionPyramid(
+				driverVolumeWriter,
+				null,
+				(viewId, level) -> levelToDataset.apply( level ),
+				dataType,
+				dimensionsS0,
+				compression,
+				blockSize,
+				downsamplings,
+				useSharding,
+				shardSize );
 	}
 
 	public static MultiResolutionLevelInfo[] setupMultiResolutionPyramid(
@@ -247,7 +277,9 @@ public class N5ApiTools
 			final long[] dimensionsS0, // 3d by default, can be up to 5d for ome-zarr
 			final Compression compression,
 			final int[] blockSize, // 3d by default, can be up to 5d for ome-zarr
-			final int[][] downsamplings ) // TODO:  3d by default, can be up to 5d for ome-zarr
+			final int[][] downsamplings, // TODO:  3d by default, can be up to 5d for ome-zarr
+			final boolean useSharding,
+			final int[] shardSize )
 	{
 		final MultiResolutionLevelInfo[] mrInfo = new MultiResolutionLevelInfo[ downsamplings.length];
 
@@ -256,14 +288,29 @@ public class N5ApiTools
 		Arrays.setAll( relativeDownsampling, i -> 1 );
 
 		mrInfo[ 0 ] = new MultiResolutionLevelInfo(
-				viewIdToDataset.apply( viewId, 0 ), dimensionsS0.clone(), dataType, relativeDownsampling, downsamplings[ 0 ], blockSize );
+				viewIdToDataset.apply( viewId, 0 ), dimensionsS0.clone(), dataType, relativeDownsampling, downsamplings[ 0 ], blockSize,
+				useSharding ? shardSize : null );
 
-		driverVolumeWriter.createDataset(
-				viewIdToDataset.apply( viewId, 0 ),
-				dimensionsS0,
-				blockSize,
-				dataType,
-				compression );
+		if ( useSharding )
+		{
+			// Use Zarr v3 sharding via ZarrV3DatasetAttributes builder
+			final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder(dimensionsS0, dataType)
+					.blockSize(shardSize) // shard dimensions
+					.chunkSize(blockSize) // inner chunk size within shards
+					.compression(compression)
+					.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
+					.build();
+			driverVolumeWriter.createDataset( viewIdToDataset.apply( viewId, 0 ), attributes );
+		}
+		else
+		{
+			driverVolumeWriter.createDataset(
+					viewIdToDataset.apply( viewId, 0 ),
+					dimensionsS0,
+					blockSize,
+					dataType,
+					compression );
+		}
 
 		long[] previousDim = dimensionsS0.clone();
 
@@ -279,14 +326,29 @@ public class N5ApiTools
 				dim[ d ] = previousDim[ d ] / relativeDownsampling[ d ];
 
 			mrInfo[ level ] = new MultiResolutionLevelInfo(
-					datasetLevel, dim.clone(), dataType, relativeDownsampling, downsamplings[ level ], blockSize );
+					datasetLevel, dim.clone(), dataType, relativeDownsampling, downsamplings[ level ], blockSize,
+					useSharding ? shardSize : null );
 
-			driverVolumeWriter.createDataset(
-					datasetLevel,
-					dim,
-					blockSize,
-					dataType,
-					compression );
+			if ( useSharding )
+			{
+				// Use Zarr v3 sharding via ZarrV3DatasetAttributes builder
+				final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder(dim, dataType)
+						.blockSize(shardSize) // shard dimensions
+						.chunkSize(blockSize) // inner chunk size within shards
+						.compression(compression)
+						.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
+						.build();
+				driverVolumeWriter.createDataset( datasetLevel, attributes );
+			}
+			else
+			{
+				driverVolumeWriter.createDataset(
+						datasetLevel,
+						dim,
+						blockSize,
+						dataType,
+						compression );
+			}
 
 			driverVolumeWriter.setAttribute( datasetLevel, "downsamplingFactors", downsamplings[ level ] );
 
@@ -298,8 +360,16 @@ public class N5ApiTools
 
 	public static String[] exportOptions()
 	{
-		return Arrays.asList(StorageFormat.values()).stream().map(s -> s.name().equals("ZARR") ? "OME-ZARR" : s.name())
-				.toArray(String[]::new);
+		return Arrays.asList(StorageFormat.values()).stream().map(s -> {
+			if (s.name().equals("ZARR"))
+				return "OME-ZARR v3";
+			else if (s.name().equals("ZARR2"))
+				return "OME-ZARR v2 (deprecated)";
+			else if (s.name().equals("HDF5"))
+				return "HDF5 (currently not supported)";
+			else
+				return s.name();
+		}).toArray(String[]::new);
 	}
 
 	public static MultiResolutionLevelInfo[] setupBdvDatasetsHDF5(
@@ -319,7 +389,9 @@ public class N5ApiTools
 				dimensions,
 				compression,
 				blockSize,
-				downsamplings);
+				downsamplings,
+				false,  // useSharding (not applicable for HDF5)
+				null ); // shardSize
 
 		final String subdivisionsDatasets = "s" + String.format("%02d", viewId.getViewSetupId()) + "/subdivisions";
 		final String resolutionsDatasets = "s" + String.format("%02d", viewId.getViewSetupId()) + "/resolutions";
@@ -375,7 +447,7 @@ public class N5ApiTools
 		return mrInfo;
 	}
 
-	public static MultiResolutionLevelInfo[] setupBdvDatasetsOMEZARR(
+	public static MultiResolutionLevelInfo[] setupBdvDatasetsOMEZARR_ResaveRaw(
 			final N5Writer driverVolumeWriter,
 			final ViewId viewId,
 			final DataType dataType,
@@ -384,7 +456,9 @@ public class N5ApiTools
 			final String resolutionUnit,
 			final Compression compression,
 			final int[] blockSize,
-			int[][] downsamplings )
+			int[][] downsamplings,
+			final boolean useSharding,
+			final int[] shardSize )
 	{
 		final String s0Dataset = viewIdToDatasetBdv( StorageFormat.ZARR ).apply( viewId, 0 );
 		final String baseDataset = s0Dataset.substring(0, s0Dataset.lastIndexOf( "/" ) + 1);
@@ -397,6 +471,11 @@ public class N5ApiTools
 		for ( int d = 0; d < ds5d.length; ++d )
 			ds5d[ d ] = new int[] { downsamplings[ d ][ 0 ], downsamplings[ d ][ 1 ], downsamplings[ d ][ 2 ], 1, 1 };
 
+		// Convert shardSize to 5D if sharding is enabled
+		final int[] shardSize5d = useSharding && shardSize != null
+			? new int[] { shardSize[ 0 ], shardSize[ 1 ], shardSize[ 2 ], 1, 1 }
+			: null;
+
 		final Function<Integer, String> levelToName = (level) -> "/" + level;
 
 		// all is 5d now
@@ -408,15 +487,18 @@ public class N5ApiTools
 				dim5d, //5d
 				compression,
 				blockSize5d, //5d
-				ds5d ); // 5d
+				ds5d, // 5d
+				useSharding,
+				shardSize5d ); // 5d
 
 		final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 				(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
 		// create metadata
-		final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
+		final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 				5, // int n
 				"/", // String name, I also saw "/"
+				"0.5",
 				resolutionS0, // double[] resolutionS0,
 				resolutionUnit, //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 				mrInfo.length, // int numResolutionLevels,
@@ -424,7 +506,12 @@ public class N5ApiTools
 				levelToMipmapTransform );
 
 		// save metadata
-		driverVolumeWriter.setAttribute( baseDataset, "multiscales", meta );
+
+		//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata
+		// for this to work you need to register an adapter in the N5Factory class
+		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
+		driverVolumeWriter.setAttribute( baseDataset, "ome", meta );
+		driverVolumeWriter.setAttribute( baseDataset, "ome/version", meta.version );
 
 		return mrInfo;
 	}
@@ -446,7 +533,9 @@ public class N5ApiTools
 				dimensions,
 				compression,
 				blockSize,
-				downsamplings);
+				downsamplings,
+				false,  // useSharding (not applicable for N5/HDF5)
+				null ); // shardSize
 
 		final String s0Dataset = createBDVPath( viewId, 0, StorageFormat.N5 );
 		final String setupDataset = s0Dataset.substring(0, s0Dataset.indexOf( "/timepoint" ));
@@ -516,14 +605,18 @@ public class N5ApiTools
 		}
 
 		final RandomAccessibleInterval<T> previousScale = N5Utils.open(n5, datasetPreviousScale);
-		final T type = previousScale.getType().createVariable();
-
 		final BlockSupplier< T > blocks = BlockSupplier.of( previousScale ).andThen( Downsample.downsample( mrInfo.relativeDownsampling ) );
-		final long[] dimensions = n5.getAttribute( dataset, DatasetAttributes.DIMENSIONS_KEY, long[].class );
+		// Get dimensions from DatasetAttributes directly (works for both N5 and Zarr v2/v3)
+		final DatasetAttributes attrs = n5.getDatasetAttributes(dataset);
+		final long[] dimensions = attrs.getDimensions();
 		final RandomAccessibleInterval< T > downsampled = BlockAlgoUtils.cellImg( blocks, dimensions, new int[] { 64 } );
-
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
-		N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], type);
+
+		// For sharded datasets, we must write complete shards including empty blocks
+		// because sparse shard reading is not fully supported yet
+		// using saveNonEmptyBlock again - need to test if this is supported with sharding
+		N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], previousScale.getType().createVariable() );
+//		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridBlock[2]);
 	}
 
 	public static < T extends NativeType< T > & RealType< T > > void writeDownsampledBlock5dOMEZARR(
@@ -555,21 +648,26 @@ public class N5ApiTools
 		// cut out the relevant 3D block
 		final RandomAccessibleInterval<T> previousScaleRaw = N5Utils.open(n5, datasetPreviousScale);
 		final RandomAccessibleInterval<T> previousScale = Views.hyperSlice( Views.hyperSlice( previousScaleRaw, 4, currentTPIndex ), 3, currentChannelIndex );
-		final T type = previousScale.getType().createVariable();
 
 		final BlockSupplier< T > blocks = BlockSupplier.of( previousScale ).andThen( Downsample.downsample( mrInfo.relativeDownsampling ) );
 
-		// make dimensions 3d
-		final long[] dimensionsRaw = n5.getAttribute( dataset, DatasetAttributes.DIMENSIONS_KEY, long[].class );
+		// Get dimensions from DatasetAttributes directly (works for both N5 and Zarr v2/v3)
+		// Extract first 3 dimensions from 5D array [x, y, z, c, t]
+		final DatasetAttributes attrs = n5.getDatasetAttributes(dataset);
+		final long[] dimensionsRaw = attrs.getDimensions();
 		final long[] dimensions = new long[] { dimensionsRaw[ 0 ], dimensionsRaw[ 1 ], dimensionsRaw[ 2 ] };
 
-		final RandomAccessibleInterval< T > downsampled3d = BlockAlgoUtils.cellImg( blocks, dimensions, new int[] { 64 } );
+		final int[] cellSize = new int[] { mrInfo.blockSize[0], mrInfo.blockSize[1], mrInfo.blockSize[2] };
+		final RandomAccessibleInterval<T> downsampled3d = BlockAlgoUtils.cellImg( blocks, dimensions, cellSize );
 
 		// the same information is returned no matter which index is queried in C and T
 		final RandomAccessible< T > downsampled5d = Views.addDimension( Views.addDimension( downsampled3d ) );
 
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled5d, blockOffset, blockSize);
-		N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridOffset, type);
+
+		// using saveNonEmptyBlock again - need to test if this is supported with sharding
+		N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, downsampled5d.getType().createVariable() );
+//		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridOffset );
 	}
 
 	public static List<long[][]> assembleJobs( final MultiResolutionLevelInfo mrInfo )
@@ -586,7 +684,8 @@ public class N5ApiTools
 			final ViewId viewId,
 			final MultiResolutionLevelInfo mrInfo )
 	{
-		return assembleJobs( viewId, mrInfo.dimensions, mrInfo.blockSize, mrInfo.blockSize );
+		return assembleJobs( viewId, mrInfo.dimensions, mrInfo.blockSize,
+				mrInfo.shardSize != null ? mrInfo.shardSize : mrInfo.blockSize );
 	}
 
 	public static List<long[][]> assembleJobs(
@@ -688,7 +787,7 @@ public class N5ApiTools
 		final RandomAccessible< T >image;
 
 		// 5D OME-ZARR CONTAINER
-		if ( storageType == StorageFormat.ZARR )
+		if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 		{
 			// gridBlock is 3d, make it 5d
 			blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], 0, 0 };
@@ -709,7 +808,9 @@ public class N5ApiTools
 		}
 
 		final RandomAccessibleInterval< T > sourceGridBlock = Views.offsetInterval( image, blockOffset, blockSize );
+		// using saveNonEmptyBlock again - need to test if this is supported with sharding
 		N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, image.getType().createVariable() );
+//		N5Utils.saveBlock( sourceGridBlock, n5, dataset, gridOffset );
 
 		System.out.println( "ViewId " + Group.pvid( viewId ) + ", written block: offset=" + Util.printCoordinates( blockOffset ) + ", dimension=" + Util.printCoordinates( blockSize ) );
 	}

@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -243,7 +243,7 @@ public class SpimData2Tools
 				sequence.setImgLoader( new N5CloudImageLoader( null, n5PathURI, sequence) );
 			else if ( StorageFormat.HDF5.equals(storageType) )
 				sequence.setImgLoader( new Hdf5ImageLoader( new File( URITools.fromURI( n5PathURI ) ), null, sequence) );
-			else if ( StorageFormat.ZARR.equals(storageType ) )// OME-ZARR
+			else if ( StorageFormat.ZARR.equals(storageType ) || StorageFormat.ZARR2.equals( storageType ) )// OME-ZARR
 			{
 				final AllenOMEZarrLoader oldLoader =
 						(AllenOMEZarrLoader)existingSpimData.getSequenceDescription().getImgLoader();
@@ -251,7 +251,7 @@ public class SpimData2Tools
 				final Map<ViewId, OMEZARREntry> viewIdToPath = new HashMap<>( oldLoader.getViewIdToPath() );
 				viewIdToPath.put( viewId, omeZarrEntry );
 
-				sequence.setImgLoader( new AllenOMEZarrLoader( n5PathURI, sequence, viewIdToPath) );
+				sequence.setImgLoader( new AllenOMEZarrLoader( n5PathURI, storageType, sequence, viewIdToPath) );
 			}
 			else
 				throw new RuntimeException( storageType + " not supported." );
@@ -284,7 +284,7 @@ public class SpimData2Tools
 
 			final Map< ViewId, OMEZARREntry > viewIdToPath = new HashMap<>();
 
-			if ( StorageFormat.ZARR.equals( storageType ))
+			if ( StorageFormat.ZARR.equals( storageType ) || StorageFormat.ZARR2.equals( storageType ))
 				viewIdToPath.put( viewId, omeZarrEntry );
 
 			final SpimData2 spimData =
@@ -324,8 +324,8 @@ public class SpimData2Tools
 			sequence.setImgLoader( new N5CloudImageLoader( null, n5PathURI, sequence) );
 		else if ( StorageFormat.HDF5.equals(storageType) )
 			sequence.setImgLoader( new Hdf5ImageLoader( new File( URITools.fromURI( n5PathURI ) ), null, sequence) );
-		else if ( StorageFormat.ZARR.equals(storageType ) )// OME-ZARR
-			sequence.setImgLoader( new AllenOMEZarrLoader( n5PathURI, sequence, viewIdToPath) );
+		else if ( StorageFormat.ZARR.equals(storageType ) || StorageFormat.ZARR2.equals( storageType ) )// OME-ZARR
+			sequence.setImgLoader( new AllenOMEZarrLoader( n5PathURI, storageType, sequence, viewIdToPath) );
 		else
 			throw new RuntimeException( storageType + " not supported." );
 

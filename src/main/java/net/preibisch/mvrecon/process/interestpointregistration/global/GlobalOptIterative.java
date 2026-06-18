@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -34,9 +34,11 @@ import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
 import mpicbg.models.TileConfiguration;
+import mpicbg.models.TileUtil;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.IterativeConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.linkremoval.LinkRemovalStrategy;
@@ -120,10 +122,16 @@ public class GlobalOptIterative
 
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): starting solve ..." );
 
-				tc.optimizeSilently(new ErrorStatistic( ics.getMaxPlateauWidth() + 1 ), ics.getMaxError(), ics.getMaxIterations(), ics.getMaxPlateauWidth() );
-				/*TileUtil.optimizeConcurrently(
-						new ErrorStatistic( ics.getMaxPlateauWidth() + 1 ),  ics.getMaxError(), ics.getMaxIterations(), ics.getMaxPlateauWidth(), 1.0f,
-						tc, tc.getTiles(), tc.getFixedTiles(), Runtime.getRuntime().availableProcessors());*/
+				//tc.optimizeSilently(new ErrorStatistic( ics.getMaxPlateauWidth() + 1 ), ics.getMaxError(), ics.getMaxIterations(), ics.getMaxPlateauWidth() );
+				TileUtil.optimizeConcurrently(
+						new ErrorStatistic( ics.getMaxPlateauWidth() + 1 ),
+						ics.getMaxError(),
+						ics.getMaxIterations(),
+						ics.getMaxPlateauWidth(),
+						1.0, // damp
+						tc, tc.getTiles(), tc.getFixedTiles(),
+						Threads.numThreads(),
+						true ); //verbose
 
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Global optimization of " + tc.getTiles().size());
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Avg Error: " + tc.getError() + "px" );
@@ -157,20 +165,8 @@ public class GlobalOptIterative
 			}
 		}
 
-		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Transformation Models:" );
-
 		// TODO: We assume it is Affine3D here
-		for ( final ViewId viewId : views )
-		{
-			final Tile< M > tile = map.get( viewId );
-
-			String output = Group.pvid( viewId ) + ": " + TransformationTools.printAffine3D( (Affine3D<?>)tile.getModel() );
-
-			if ( tile.getModel() instanceof RigidModel3D )
-				IOFunctions.println( output + ", " + TransformationTools.getRotationAxis( (RigidModel3D)tile.getModel() ) );
-			else
-				IOFunctions.println( output + ", " + TransformationTools.getScaling( (Affine3D<?>)tile.getModel() ) );
-		}
+		TransformationTools.printAndSummarizeTransformations( views, map );
 
 		return map;
 	}

@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -28,34 +28,41 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.file.FileSystems;
+import java.net.URL;
 import java.util.Date;
 import java.util.regex.Pattern;
 
+import com.google.gson.JsonObject;
 import org.janelia.saalfeldlab.googlecloud.GoogleCloudUtils;
 import org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess;
-import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
+import org.janelia.saalfeldlab.n5.LockedChannel;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Reader;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
-import org.janelia.saalfeldlab.n5.s3.AmazonS3Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
+import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformationAdapter;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformationAdapter;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueReader;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueWriter;
 import org.jdom2.Document;
 import org.jdom2.Element;
 import org.jdom2.input.SAXBuilder;
@@ -63,6 +70,8 @@ import org.jdom2.output.Format;
 import org.jdom2.output.XMLOutputter;
 
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSerializer;
 
 import bdv.ViewerImgLoader;
 import bdv.img.n5.N5ImageLoader;
@@ -82,6 +91,10 @@ public class URITools
 
 	public static int cloudThreads = 256;
 	public static String s3Region = null;
+
+	// caches auto-detected S3 regions per bucket so detectS3Region() probes the
+	// network only once per bucket (multiple S3 handles are opened per dataset load)
+	private static final java.util.Map< String, String > s3RegionCache = new java.util.concurrent.ConcurrentHashMap<>();
 
 	public static boolean useS3CredentialsWrite = true;
 	public static boolean useS3CredentialsRead = true;
@@ -138,21 +151,43 @@ public class URITools
 	{
 		if ( URITools.isS3( uri ) || URITools.isGC( uri ) )
 		{
+			// Note: N5Factory.getKeyValueAccess() returns a (bucket-scoped) KeyValueAccess
+			// without requiring an N5/Zarr container to exist at the location - unlike
+			// openReader(), which validates container existence and would throw
+			// "No container exists" when pointed at a bucket root / bare file. We only
+			// need a handle to read the XML bytes here, not an actual container.
+			// The boolean is 'createBucket' (false: never create, read-only access).
+			final GsonBuilder builder = new GsonBuilder().registerTypeAdapter(
+					CoordinateTransformation.class,
+					new CoordinateTransformationAdapter() );
+
 			try
 			{
-				final URI bucket = new URI( uri.getScheme(), uri.getHost() + "/.", null, null );
-				final N5Reader n5 = instantiateN5Reader( StorageFormat.N5, bucket );
-				return ((GsonKeyValueN5Reader)n5).getKeyValueAccess();
+				//System.out.println( "Trying KeyValueAccess with credentials ..." );
+				final N5Factory factory = new N5Factory();
+				factory.gsonBuilder( builder );
+				if ( s3Region != null )
+					factory.s3Configuration( b -> b.region( Region.of( s3Region ) ) );
+				return factory.getKeyValueAccess( uri, false );
 			}
-			catch (URISyntaxException e)
+			catch ( Exception e )
 			{
-				e.printStackTrace();
-				throw new RuntimeException( "An unexpected URI syntax error occured for '" + uri + "': " + e );
+				System.out.println( "With credentials failed (" + e + "); trying anonymous ..." );
+
+				final String region = ( s3Region != null ) ? s3Region : detectS3Region( uri );
+
+				final N5Factory factory = new N5Factory();
+				factory.gsonBuilder( builder );
+				factory.s3Configuration( b -> {
+					b.credentialsProvider( AnonymousCredentialsProvider.create() );
+					if ( region != null ) b.region( Region.of( region ) );
+				} );
+				return factory.getKeyValueAccess( uri, false );
 			}
 		}
 		else if ( URITools.isFile( uri ) )
 		{
-			return new FileSystemKeyValueAccess( FileSystems.getDefault() );
+			return new FileSystemKeyValueAccess();
 		}
 		else
 		{
@@ -259,15 +294,40 @@ public class URITools
 
 	public static N5Writer instantiateN5Writer( final StorageFormat format, final URI uri )
 	{
-		final GsonBuilder builder = new GsonBuilder().registerTypeAdapter(
-				CoordinateTransformation.class,
-				new CoordinateTransformationAdapter() );
+		final GsonBuilder builder = new GsonBuilder()
+				.registerTypeAdapter(
+						CoordinateTransformation.class,
+						new CoordinateTransformationAdapter() )
+				.registerTypeAdapter(
+						Axis.class,
+						(JsonSerializer<Axis>) ( src, typeOfSrc, ctx ) -> {
+							// Skip "unit" when null so OME-NGFF .zattrs doesn't contain
+							// {"unit":null} (breaks Neuroglancer / BDV). n5-zarr's writer Gson
+							// forces serializeNulls(); without this adapter Axis is reflected
+							// and the channel axis's null unit leaks through.
+							final JsonObject obj = new JsonObject();
+							obj.addProperty( "type", src.getType() );
+							obj.addProperty( "name", src.getName() );
+							if ( src.getUnit() != null )
+								obj.addProperty( "unit", src.getUnit() );
+							return obj;
+						} );
 
 		if ( URITools.isFile( uri ) )
 		{
 			if ( format.equals( StorageFormat.N5 ))
 				return new N5FSWriter( URITools.fromURI( uri ) );
 			else if ( format.equals( StorageFormat.ZARR ))
+			{
+				// Create Zarr v3 writer
+				return new ZarrV3KeyValueWriter(
+						new FileSystemKeyValueAccess(),
+						URITools.fromURI( uri ),
+						builder,
+						true   // cacheAttributes
+				);
+			}
+			else if ( format.equals( StorageFormat.ZARR2 ))
 				return new N5ZarrWriter( URITools.fromURI( uri ), builder, "/", true, true );
 			else if ( format.equals( StorageFormat.HDF5 ))
 				return new N5HDF5Writer( URITools.fromURI( uri ) );
@@ -283,19 +343,22 @@ public class URITools
 				//System.out.println( "Trying writing with credentials ..." );
 				final N5Factory factory = new N5Factory().zarrDimensionSeparator( "/" );
 				factory.gsonBuilder( builder );
-				factory.s3UseCredentials();
 				if ( s3Region != null )
-					factory.s3Region( s3Region );
+					factory.s3Configuration( b -> b.region( Region.of( s3Region ) ) );
 				n5w = factory.openWriter( format, uri );
 			}
 			catch ( Exception e )
 			{
-				System.out.println( "With credentials failed; trying anonymous ..." );
+				System.out.println( "With credentials failed (" + e + "); trying anonymous ..." );
+
+				final String region = ( s3Region != null ) ? s3Region : detectS3Region( uri );
 
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				if ( s3Region != null )
-					factory.s3Region( s3Region );
+				factory.s3Configuration( b -> {
+					b.credentialsProvider( AnonymousCredentialsProvider.create() );
+					if ( region != null ) b.region( Region.of( region ) );
+				} );
 				n5w = factory.openWriter( format, uri );
 			}
 
@@ -309,11 +372,24 @@ public class URITools
 				CoordinateTransformation.class,
 				new CoordinateTransformationAdapter() );
 
+		// TODO: maybe use
+		//StorageFormat.guessStorageFromKeys(uri, null);
+
 		if ( URITools.isFile( uri ) )
 		{
 			if ( format.equals( StorageFormat.N5 ))
 				return new N5FSReader( URITools.fromURI( uri ) );
 			else if ( format.equals( StorageFormat.ZARR ))
+			{
+				// Create Zarr v3 reader
+				return new ZarrV3KeyValueReader(
+						new FileSystemKeyValueAccess(),
+						URITools.fromURI( uri ),
+						builder,
+						true // cacheAttributes
+				);
+			}
+			else if ( format.equals( StorageFormat.ZARR2 ))
 				return new N5ZarrReader( URITools.fromURI( uri ), builder );
 			else if ( format.equals( StorageFormat.HDF5 ))
 				return new N5HDF5Reader( URITools.fromURI( uri ) );
@@ -329,19 +405,22 @@ public class URITools
 				//System.out.println( "Trying reading with credentials ..." );
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				factory.s3UseCredentials();
 				if ( s3Region != null )
-					factory.s3Region( s3Region );
+					factory.s3Configuration( b -> b.region( Region.of( s3Region ) ) );
 				n5r = factory.openReader( format, uri );
 			}
 			catch ( Exception e )
 			{
-				System.out.println( "With credentials failed; trying anonymous with gson builder ..." );
+				System.out.println( "With credentials failed (" + e + "); trying anonymous with gson builder ..." );
+
+				final String region = ( s3Region != null ) ? s3Region : detectS3Region( uri );
 
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				if ( s3Region != null )
-					factory.s3Region( s3Region );
+				factory.s3Configuration( b -> {
+					b.credentialsProvider( AnonymousCredentialsProvider.create() );
+					if ( region != null ) b.region( Region.of( region ) );
+				} );
 				n5r = factory.openReader( format, uri );
 			}
 
@@ -349,11 +428,94 @@ public class URITools
 		}
 	}
 
+	/**
+	 * Attempts to detect the AWS region of an S3 bucket without any credentials.
+	 *
+	 * Issues an unauthenticated HTTP HEAD request (path-style) against the global
+	 * S3 endpoint and reads the {@code x-amz-bucket-region} response header, which
+	 * S3 returns even for 301/403 responses. Path-style against {@code s3.amazonaws.com}
+	 * is used so that bucket names containing dots are handled and TLS still validates.
+	 *
+	 * @param uri an {@code s3://} URI; the bucket is taken from the host component
+	 * @return the region string (e.g. "us-west-2"), or null if it could not be determined
+	 */
+	public static String detectS3Region( final URI uri )
+	{
+		final String bucket = ( uri == null ) ? null : uri.getHost();
+
+		if ( bucket == null || bucket.isEmpty() )
+			return null;
+
+		final String cached = s3RegionCache.get( bucket );
+		if ( cached != null )
+			return cached;
+
+		HttpURLConnection conn = null;
+
+		try
+		{
+			final URL url = new URL( "https://s3.amazonaws.com/" + bucket );
+			conn = (HttpURLConnection)url.openConnection();
+			conn.setRequestMethod( "HEAD" );
+			conn.setInstanceFollowRedirects( false );
+			conn.setConnectTimeout( 10000 );
+			conn.setReadTimeout( 10000 );
+			conn.getResponseCode(); // trigger the request
+
+			final String region = conn.getHeaderField( "x-amz-bucket-region" );
+
+			if ( region != null && !region.isEmpty() )
+			{
+				IOFunctions.println( "Auto-detected S3 region '" + region + "' for bucket '" + bucket + "'." );
+				s3RegionCache.put( bucket, region );
+				return region;
+			}
+		}
+		catch ( final Exception e )
+		{
+			IOFunctions.println( "Could not auto-detect S3 region for bucket '" + bucket + "': " + e );
+		}
+		finally
+		{
+			if ( conn != null )
+				conn.disconnect();
+		}
+
+		return null;
+	}
+
 	public static SpimData2 loadSpimData( final URI xmlURI, final XmlIoSpimData2 io ) throws SpimDataException
 	{
 		if ( URITools.isFile( xmlURI ) )
 		{
 			return io.load( URITools.fromURI( xmlURI ) ); // method from XmlIoAbstractSpimData
+		}
+		else if ( HTTPS_SCHEME.asPredicate().test( xmlURI.getScheme() ) )
+		{
+			// Plain HTTP/HTTPS web server - fetch XML directly via URL
+			// Note: this also handles public S3/GC data served over https://
+			final SAXBuilder sax = new SAXBuilder();
+			Document doc;
+
+			try
+			{
+				final InputStream is = xmlURI.toURL().openStream();
+				doc = sax.build( is );
+				is.close();
+			}
+			catch ( final Exception e )
+			{
+				throw new SpimDataIOException( e );
+			}
+
+			final Element docRoot = doc.getRootElement();
+
+			if ( docRoot.getName() != SPIMDATA_TAG )
+				throw new RuntimeException( "expected <" + SPIMDATA_TAG + "> root element. wrong file?" );
+
+			final SpimData2 data = io.fromXml( docRoot, xmlURI );
+
+			return data;
 		}
 		else if ( URITools.isS3( xmlURI ) || URITools.isGC( xmlURI ) )
 		{
@@ -464,7 +626,22 @@ public class URITools
 
 	public static OutputStream openFileWriteCloudStream( final KeyValueAccess kva, final URI uri ) throws IOException
 	{
-		return kva.lockForWriting( toNormalPath( kva, uri ) ).newOutputStream();
+		final LockedChannel channel = kva.lockForWriting( toNormalPath( kva, uri ) );
+		final OutputStream inner = channel.newOutputStream();
+		// In n5 alpha-10+, lockForWriting returns a BufferedKvaLockedChannel whose
+		// newOutputStream() returns an in-memory ByteArrayOutputStream. The actual
+		// disk write only happens in channel.close(). Wrap the stream so that
+		// closing it also closes the channel (flushing to disk).
+		return new FilterOutputStream(inner) {
+			@Override
+			public void close() throws IOException {
+				try {
+					super.close();
+				} finally {
+					channel.close();
+				}
+			}
+		};
 	}
 
 	/*
@@ -492,7 +669,8 @@ public class URITools
 	// TODO: does not work for Windows
 	public static boolean isKnownScheme( URI uri )
 	{
-		return isFile( uri ) || isS3( uri ) || isGC( uri );
+		return isFile( uri ) || isS3( uri ) || isGC( uri )
+				|| ( uri.getScheme() != null && HTTPS_SCHEME.asPredicate().test( uri.getScheme() ) );
 	}
 
 	public static boolean isGC( URI uri )
@@ -512,7 +690,7 @@ public class URITools
 		final boolean hasScheme = scheme != null;
 		if ( !hasScheme )
 			return false;
-		if ( AmazonS3Utils.S3_SCHEME.asPredicate().test( scheme ) )
+		if ( "s3".equalsIgnoreCase( scheme ) )
 			return true;
 		return uri.getHost() != null && HTTPS_SCHEME.asPredicate().test( scheme );
 	}

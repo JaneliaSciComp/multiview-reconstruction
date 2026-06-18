@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -111,7 +111,6 @@ import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.plugin.util.PluginHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.util.ColorStream;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.FileMapImgLoaderLOCI;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.LegacyFileMapImgLoaderLOCI;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapEntry;
@@ -122,13 +121,18 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import util.ColorStream;
 import util.URITools;
 
 public class FileListDatasetDefinition implements MultiViewDatasetDefinition
 {
 	public static final String[] GLOB_SPECIAL_CHARS = new String[] {"{", "}", "[", "]", "*", "?"};
-	//public static final String[] loadChoices = new String[] { "Re-save as multiresolution HDF5", "Re-save as multiresolution N5", "Load raw data virtually (with caching)", "Load raw data"};
-	public static final String[] loadChoicesNew = new String[] { "Re-save as multiresolution OME-ZARR", "Re-save as multiresolution HDF5", "Re-save as multiresolution N5", "Load raw data directly (no resaving)"};
+	public static final String[] loadChoices = new String[] {
+			"Re-save as multiresolution OME-Zarr v3",
+			"Re-save as multiresolution OME-Zarr v2",
+			"Re-save as multiresolution HDF5",
+			"Re-save as multiresolution N5",
+			"Load raw data directly (no resaving)"};
 	public static final String Z_VARIABLE_CHOICE = "Z-Planes (experimental)";
 
 	public static boolean windowsHack = true;
@@ -1088,7 +1092,7 @@ public class FileListDatasetDefinition implements MultiViewDatasetDefinition
 		GenericDialogPlus gdSave = new GenericDialogPlus( "Rs-save dataset definition" );
 
 		addMessageAsJLabel("<html> <h1> Input image	 storage options </h1> <br /> </html>", gdSave);
-		gdSave.addChoice( "how_to_store_input_images", loadChoicesNew, loadChoicesNew[defaultLoadChoice] );
+		gdSave.addChoice( "how_to_store_input_images", loadChoices, loadChoices[defaultLoadChoice] );
 		gdSave.addMessage( "Note: use the load raw data directly option when planning to use BigStitcher-Spark for resaving, this only produces an XML.", GUIHelper.mediumstatusfont, null);	
 		gdSave.addCheckbox( "load_raw_data_virtually (supports large stacks; required to work with BigSticher-Spark and efficient re-saving to OME-ZARR/HDF5/N5)", defaultVirtual );
 
@@ -1104,11 +1108,13 @@ public class FileListDatasetDefinition implements MultiViewDatasetDefinition
 		final File prefixPath;
 		if (filenames.size() > 1)
 			prefixPath = getLongestPathPrefix( filenames );
-		else
+		else if (filenames.size() == 1)
 		{
 			String fi = filenames.iterator().next();
 			prefixPath = new File((String)fi.subSequence( 0, fi.lastIndexOf( File.separator )));
 		}
+		else
+			prefixPath = new File( System.getProperty( "user.home" ) );
 
 		gdSave.addDirectoryField( "metadata_save_path (XML)", prefixPath.getAbsolutePath(), 65 );
 		gdSave.addDirectoryField( "image_data_save_path", prefixPath.getAbsolutePath(), 65 );
@@ -1148,7 +1154,7 @@ public class FileListDatasetDefinition implements MultiViewDatasetDefinition
 		final String chosenPathXML = gdSave.getNextString(); // where the XML and interest points live
 		final String chosenPathData;
 
-		if ( loadChoice == 3 )
+		if ( loadChoice == 4 ) // Load raw data directly (no resaving)
 		{
 			gdSave.getNextString(); // << goes to void
 			chosenPathData = prefixPath.getAbsolutePath(); // the data is where it is if not resaved
@@ -1159,9 +1165,10 @@ public class FileListDatasetDefinition implements MultiViewDatasetDefinition
 			chosenPathData = gdSave.getNextString(); // will be stored in the img loader (if identical to chosenPathXML then relative, otherwise absolute)
 		}
 
-		final boolean resaveAsOMEZARR = (loadChoice == 0);
-		final boolean resaveAsHDF5 = (loadChoice == 1);
-		final boolean resaveAsN5 = (loadChoice == 2);
+		final boolean resaveAsOMEZARRv3 = (loadChoice == 0);
+		final boolean resaveAsOMEZARRv2 = (loadChoice == 1);
+		final boolean resaveAsHDF5 = (loadChoice == 2);
+		final boolean resaveAsN5 = (loadChoice == 3);
 
 		URI chosenPathXMLURI, chosenPathDataURI;
 
@@ -1292,7 +1299,7 @@ public class FileListDatasetDefinition implements MultiViewDatasetDefinition
 			// ensure progressbar is gone
 			progressWriter.setProgress( 1.0 );
 		}
-		else if (resaveAsN5 || resaveAsOMEZARR )
+		else if (resaveAsN5 || resaveAsOMEZARRv3 || resaveAsOMEZARRv2 )
 		{
 			final ArrayList< ViewDescription > viewIds = new ArrayList<>( data.getSequenceDescription().getViewDescriptions().values() );
 			Collections.sort( viewIds );
@@ -1302,26 +1309,40 @@ public class FileListDatasetDefinition implements MultiViewDatasetDefinition
 			final URI xmlURI = URITools.toURI( URITools.appendName(chosenPathXMLURI, xmlFileName ) );
 			final URI n5DatasetURI = URITools.toURI( URITools.appendName(chosenPathDataURI, xmlFileName.subSequence( 0, xmlFileName.length() - 4 ) + (resaveAsN5 ? ".n5" : ".ome.zarr" ) ) );
 
-			IOFunctions.println( (resaveAsN5 ? "N5" : "OME-ZARR" ) + " path: " + n5DatasetURI );
+			final StorageFormat format;
+			final String formatString;
+
+			if ( resaveAsN5 )
+			{
+				format = StorageFormat.N5;
+				formatString = "N5";
+			}
+			else if ( resaveAsOMEZARRv2 )
+			{
+				format = StorageFormat.ZARR2;
+				formatString = "OME-Zarr v2";
+			}
+			else
+			{
+				format = StorageFormat.ZARR;
+				formatString = "OME-Zarr v3";
+			}
+
+			IOFunctions.println( formatString + " path: " + n5DatasetURI );
 
 			final ParametersResaveN5Api n5params = ParametersResaveN5Api.getParamtersIJ(
 					xmlURI,
 					n5DatasetURI,
 					viewIds.stream().map( vid -> sd.getViewSetups().get( vid.getViewSetupId() ) ).collect( Collectors.toSet() ),
-					false, // do not ask for format (for now)
+					format, // do not ask for format
 					false ); // do not ask for paths again
 
 			if ( n5params == null )
 				return null;
 
-			if ( resaveAsN5 )
-				n5params.format = StorageFormat.N5;
-			else
-				n5params.format = StorageFormat.ZARR;
-
 			data = Resave_N5Api.resaveN5( data, viewIds, n5params, false );
 
-			IOFunctions.println( "(" + new Date(  System.currentTimeMillis() ) + "): " + (resaveAsN5 ? "N5" : "OME-ZARR" ) +" resave finished." );
+			IOFunctions.println( "(" + new Date(  System.currentTimeMillis() ) + "): " + formatString +" resave finished." );
 		}
 
 		if (gridMoveType == 1)

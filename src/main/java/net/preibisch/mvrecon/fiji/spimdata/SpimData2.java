@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -35,6 +35,7 @@ import java.util.List;
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.base.Entity;
+import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.generic.sequence.BasicViewSetup;
 import mpicbg.spim.data.registration.ViewRegistrations;
@@ -534,12 +535,25 @@ public class SpimData2 extends SpimData
 	 */
 	public static < V extends ViewId > List< V > filterMissingViews( final AbstractSpimData< ? > data, final Collection< V > viewIds )
 	{
+		return filterMissingViews( data.getSequenceDescription(), viewIds );
+	}
+
+	/**
+	 * Removes all missing views from the list, be careful, it modifies the collection!
+	 *
+	 * @param seq - the sequence description
+	 * @param viewIds - the views
+	 * @param <V> - something extending ViewId
+	 * @return those who were removed
+	 */
+	public static < V extends ViewId > List< V > filterMissingViews( final AbstractSequenceDescription<?, ?, ?> seq, final Collection< V > viewIds )
+	{
 		final ArrayList< V > removed = new ArrayList<>();
 		final ArrayList< V > present = new ArrayList<>();
 
 		for ( final V viewId : viewIds )
 		{
-			final BasicViewDescription< ? > vd = data.getSequenceDescription().getViewDescriptions().get( viewId );
+			final BasicViewDescription< ? > vd = seq.getViewDescriptions().get( viewId );
 			
 			if ( vd.isPresent() )
 				present.add( viewId );

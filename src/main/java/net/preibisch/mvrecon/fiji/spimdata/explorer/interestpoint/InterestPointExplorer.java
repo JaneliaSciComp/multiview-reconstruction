@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -127,9 +127,9 @@ public class InterestPointExplorer< AS extends SpimData2 >
 	@Override
 	public void quit()
 	{
-		final BasicBDVPopup bdvPopup = viewSetupExplorer.getPanel().bdvPopup();
+		final BasicBDVPopup bdvPopup = viewSetupExplorer.getPanel().runningBdvPopup();
 
-		if ( bdvPopup.bdvRunning() && panel.tableModel.interestPointOverlay != null )
+		if ( bdvPopup != null && bdvPopup.bdvRunning() && panel.tableModel.interestPointOverlay != null )
 		{
 			final BigDataViewer bdv = bdvPopup.getBDV();
 			bdv.getViewer().removeTransformListener( panel.tableModel.interestPointOverlay );

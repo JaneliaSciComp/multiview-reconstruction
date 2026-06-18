@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -31,10 +31,12 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
 
 public abstract class PairwiseSetup< V extends Comparable< V > >
 {
@@ -77,6 +79,14 @@ public abstract class PairwiseSetup< V extends Comparable< V > >
 	public ArrayList< Subset< V > > getSubsets() { return subsets; }
 
 	/**
+	 * Directly set the pairs list (used for optimized pair generation that bypasses definePairs()).
+	 * After calling this, you should call detectSubsets() to build the subset structure.
+	 *
+	 * @param pairs - the list of pairs to set
+	 */
+	public void setPairs( final List< Pair< V, V > > pairs ) { this.pairs = pairs; }
+
+	/**
 	 * Given a list of views and their grouping, identify all pairs that need to be compared
 	 * 
 	 * @return - redundant pairs that were removed
@@ -100,15 +110,28 @@ public abstract class PairwiseSetup< V extends Comparable< V > >
 	protected abstract List< Pair< V, V > > definePairsAbstract();
 
 	/**
-	 * Remove pairs that are not overlapping
-	 * 
+	 * Remove pairs that are not overlapping.
+	 * Uses optimized parallel implementation for SimpleBoundingBoxOverlap with ViewId.
+	 *
 	 * @param ovlp - implementation of {@link OverlapDetection}
 	 * @return a list of pairs that were removed (not stored in this object)
 	 */
+	@SuppressWarnings("unchecked")
 	public ArrayList< Pair< V, V > > removeNonOverlappingPairs( final OverlapDetection< V > ovlp )
 	{
-		final ArrayList< Pair< V, V > > removed = removeNonOverlappingPairs( pairs, ovlp );
+		// Use optimized parallel implementation for SimpleBoundingBoxOverlap with ViewId
+		if (ovlp instanceof SimpleBoundingBoxOverlap && !views.isEmpty() && views.get(0) instanceof ViewId)
+		{
+			final SimpleBoundingBoxOverlap<ViewId> sbbo = (SimpleBoundingBoxOverlap<ViewId>) ovlp;
+			final List<Pair<ViewId, ViewId>> viewIdPairs = (List<Pair<ViewId, ViewId>>) (List<?>) pairs;
+			final Collection<ViewId> viewIdViews = (Collection<ViewId>) (Collection<?>) views;
 
+			final ArrayList<Pair<ViewId, ViewId>> removed = sbbo.removeNonOverlappingPairsOptimized(viewIdPairs, viewIdViews);
+			return (ArrayList<Pair<V, V>>) (ArrayList<?>) removed;
+		}
+
+		// Fallback to sequential implementation for other OverlapDetection types
+		final ArrayList< Pair< V, V > > removed = removeNonOverlappingPairs( pairs, ovlp );
 		return removed;
 	}
 

@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -82,11 +82,13 @@ public class GeometricHashingPairwise< I extends InterestPoint > implements Matc
 
 		// compute ransac and remove inconsistent candidates
 		final ArrayList< PointMatchGeneric< I > > inliers = new ArrayList<>();
+		final ArrayList< Integer > setIds = new ArrayList<>();
 
 		final Pair< String, Double > ransacResult =
 				RANSAC.computeRANSAC(
 						candidates,
 						inliers,
+						setIds,
 						gp.getModel(),
 						rp.getMaxEpsilon(),
 						rp.getMinInlierRatio(),
@@ -94,7 +96,7 @@ public class GeometricHashingPairwise< I extends InterestPoint > implements Matc
 						rp.getNumIterations(),
 						rp.multiConsensus() );
 
-		result.setInliers( inliers, ransacResult.getB() );
+		result.setInliers( inliers, ransacResult.getB(), setIds );
 
 		result.setResult( System.currentTimeMillis(), ransacResult.getA() );
 

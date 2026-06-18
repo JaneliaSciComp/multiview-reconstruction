@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -43,9 +43,18 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 
 	public ViewSetupExplorer( final AS data, final URI xml, final XmlIoSpimData2 io )
 	{
-		frame = new JFrame( "ViewSetup Explorer (Press F1 for help)" );
-		panel = new ViewSetupExplorerPanel< AS >( this, data, xml, io, true );
+		this( data, xml, io, true );
+	}
 
+	public ViewSetupExplorer( final AS data, final URI xml, final XmlIoSpimData2 io, final boolean openBDV )
+	{
+		frame = new JFrame( "ViewSetup Explorer (Press F1 for help)" );
+
+		long start = System.currentTimeMillis();
+		panel = new ViewSetupExplorerPanel< AS >( this, data, xml, io, openBDV );
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] ViewSetupExplorerPanel creation took " + (System.currentTimeMillis() - start) + " ms" );
+
+		start = System.currentTimeMillis();
 		frame.add( panel, BorderLayout.CENTER );
 		frame.setSize( panel.getPreferredSize() );
 
@@ -58,9 +67,15 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 						quit();
 					}
 				});
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame setup took " + (System.currentTimeMillis() - start) + " ms" );
 
+		start = System.currentTimeMillis();
 		frame.pack();
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame.pack() took " + (System.currentTimeMillis() - start) + " ms" );
+
+		start = System.currentTimeMillis();
 		frame.setVisible( true );
+		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [ViewSetupExplorer] frame.setVisible() took " + (System.currentTimeMillis() - start) + " ms" );
 
 		// move explorer window and log to initial positions
 		MultiWindowLayoutHelper.moveToScreenFraction( frame, xPos, yPos );
@@ -80,9 +95,9 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 		frame.setVisible( false );
 		frame.dispose();
 
-		BasicBDVPopup bdvPopup = panel.bdvPopup();
-		
-		if ( bdvPopup.bdvRunning() )
+		final BasicBDVPopup bdvPopup = panel.runningBdvPopup();
+
+		if ( bdvPopup != null && bdvPopup.bdvRunning() )
 			bdvPopup.closeBDV();
 
 		ViewSetupExplorerPanel.currentInstance = null;

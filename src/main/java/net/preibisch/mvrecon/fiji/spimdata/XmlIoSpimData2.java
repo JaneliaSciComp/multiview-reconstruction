@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -25,33 +25,38 @@ package net.preibisch.mvrecon.fiji.spimdata;
 import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Date;
-import java.util.stream.Collectors;
+import java.util.List;
+import java.util.Map.Entry;
+import java.util.concurrent.ForkJoinPool;
 
 import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.jdom2.Element;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.XmlIoAbstractSpimData;
 import mpicbg.spim.data.registration.XmlIoViewRegistrations;
 import mpicbg.spim.data.sequence.SequenceDescription;
+import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.XmlIoSequenceDescription;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.XmlIoBoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlIoIntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5.InterestPointData;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlIoViewInterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunction;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.XmlIoPointSpreadFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.XmlIoStitchingResults;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import util.URITools;
 
 public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, SpimData2 >
@@ -136,7 +141,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		}
 		catch ( Exception e )
 		{
-			throw new SpimDataException( "Could not interest points for '" + lastURI() + "' in paralell: " + e );
+			throw new SpimDataException( "Could not save interest points for '" + lastURI() + "': " + e );
 		}
 
 		try
@@ -279,41 +284,134 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 
 	public static void savePSFsInParallel( final SpimData2 spimData )
 	{
-		IOFunctions.println( "Saving PSFs multi-threaded ... " );
+		final int numThreads = Threads.numThreads();
+		IOFunctions.println( "Saving PSFs multi-threaded (" + numThreads + " threads) ... " );
 
-		spimData.getPointSpreadFunctions().getPointSpreadFunctions().values().parallelStream().forEach( psf ->
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+		try
 		{
-			if ( psf.isModified() )
-			{
-				if ( !psf.save() )
-					IOFunctions.println( "ERROR: Could not save PSF '" + psf.getFile() + "'" );
-				else
-					IOFunctions.println( "Saved PSF '" + psf.getFile() + "'" );
-			}
-		});
+			pool.submit( () ->
+				spimData.getPointSpreadFunctions().getPointSpreadFunctions().values().parallelStream().forEach( psf ->
+				{
+					if ( psf.isModified() )
+					{
+						if ( !psf.save() )
+							IOFunctions.println( "ERROR: Could not save PSF '" + psf.getFile() + "'" );
+						else
+							IOFunctions.println( "Saved PSF '" + psf.getFile() + "'" );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to save PSFs in parallel", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
 	}
 
+	/**
+	 * Save all interest points using a single shared N5Writer with parallel writes.
+	 * Opens the N5Writer once and reuses it across all views, avoiding per-view
+	 * open/close overhead while preserving parallel write performance.
+	 * Each view writes to an independent dataset path so concurrent writes are safe.
+	 * Modified flags are cleared on each InterestPoints instance after a successful save,
+	 * so subsequent XML serialization does not trigger a redundant second save.
+	 *
+	 * @param spimData the SpimData2 object whose interest points should be saved
+	 */
 	public static void saveInterestPointsInParallel( final SpimData2 spimData )
 	{
-		IOFunctions.println( "Saving interest points multi-threaded ... " );
+		final int numThreads = Threads.numThreads();
+		IOFunctions.println( "Saving interest points multi-threaded (" + numThreads + " threads) ... " );
+
+		final URI baseDir = spimData.getBasePathURI();
 
 		// collect first to avoid nested parallel streams
 		final ArrayList< InterestPoints > allIPs = new ArrayList<>();
-
 		spimData.getViewInterestPoints().getViewInterestPoints().values().forEach( vipl ->
 			allIPs.addAll( vipl.getHashMap().values() ) );
 
-		allIPs.parallelStream().forEach( ipl ->
+		if ( allIPs.isEmpty() )
+			return;
+
+		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) )
 		{
-			try
+			pool.submit( () ->
+				allIPs.parallelStream().forEach( ipl ->
+				{
+					try
+					{
+						if ( ipl instanceof InterestPointsN5 )
+						{
+							final InterestPointsN5 ipsN5 = (InterestPointsN5) ipl;
+							ipsN5.saveInterestPoints( false, n5Writer );
+							ipsN5.saveCorrespondingInterestPoints( false, n5Writer );
+						}
+						else
+						{
+							ipl.saveInterestPoints( false );
+							ipl.saveCorrespondingInterestPoints( false );
+						}
+					}
+					catch ( Throwable t )
+					{
+						IOFunctions.println( "Could not save interest points for '" + ipl.getXMLRepresentation() + "': " + t );
+						t.printStackTrace();
+						throw new RuntimeException( "Failed to save interest points for " + ipl.getXMLRepresentation(), t );
+					}
+				})
+			).get();
+		}
+		catch ( final Exception e )
+		{
+			throw new RuntimeException( "Failed to save interest points in parallel", e );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
+	}
+
+	// ==================== Spark-Compatible Methods ====================
+
+	/**
+	 * Collect all modified interest points as serializable InterestPointData objects.
+	 * This method is useful for Spark-based parallel saving.
+	 *
+	 * @param spimData The SpimData2
+	 * @param modifiedOnly If true, only include interest points that have been modified
+	 * @return List of InterestPointData suitable for Spark RDD operations
+	 */
+	public static List< InterestPointData > collectInterestPointData( final SpimData2 spimData, final boolean modifiedOnly )
+	{
+		final List< InterestPointData > allData = new ArrayList<>();
+
+		for ( final Entry< ViewId, ViewInterestPointLists > entry : spimData.getViewInterestPoints().getViewInterestPoints().entrySet() )
+		{
+			final ViewId viewId = entry.getKey();
+			final ViewInterestPointLists vipl = entry.getValue();
+
+			for ( final Entry< String, InterestPoints > labelEntry : vipl.getHashMap().entrySet() )
 			{
-				ipl.saveInterestPoints( false );
-				ipl.saveCorrespondingInterestPoints( false );
+				final String label = labelEntry.getKey();
+				final InterestPoints ips = labelEntry.getValue();
+
+				// Only include if modified (or if modifiedOnly is false)
+				if ( !modifiedOnly || ips.hasModifiedInterestPoints() || ips.hasModifiedCorrespondingInterestPoints() )
+				{
+					if ( !( ips instanceof InterestPointsN5 ) )
+						throw new RuntimeException( "InterestPointData.from() requires InterestPointsN5, got: " + ips.getClass().getName() );
+
+					allData.add( InterestPointData.from( viewId, label, (InterestPointsN5) ips ) );
+				}
 			}
-			catch ( Exception e )
-			{
-				IOFunctions.println( "Could not save interest points for (trying to skip): " + ipl.getXMLRepresentation()  );
-			}
-		});
+		}
+
+		return allData;
 	}
 }

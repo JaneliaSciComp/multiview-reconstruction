@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -121,8 +121,9 @@ public class ReorientSamplePopup extends JMenuItem implements ExplorerWindowSeta
 					panel.updateContent();
 					
 					// reset current orientation of the BDV so it doesn't jump
-					final BigDataViewer bdv = panel.bdvPopup().getBDV();
-					
+					final BasicBDVPopup p = panel.runningBdvPopup();
+					final BigDataViewer bdv = p == null ? null : p.getBDV();
+
 					if ( bdv != null && bdv.getViewerFrame().isVisible() )
 					{
 						AffineTransform3D transform = new AffineTransform3D();
@@ -131,7 +132,7 @@ public class ReorientSamplePopup extends JMenuItem implements ExplorerWindowSeta
 						transform = transform.concatenate( applied );
 
 						bdv.getViewer().setCurrentViewerTransform( transform );
-						panel.bdvPopup().updateBDV();
+						p.updateBDV();
 					}
 				}
 			} ).start();

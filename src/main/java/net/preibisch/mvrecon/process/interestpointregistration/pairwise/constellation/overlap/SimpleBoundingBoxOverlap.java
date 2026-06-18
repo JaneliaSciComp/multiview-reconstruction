@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -22,7 +22,16 @@
  */
 package net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ForkJoinPool;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
@@ -35,7 +44,10 @@ import net.imglib2.Dimensions;
 import net.imglib2.FinalRealInterval;
 import net.imglib2.RealInterval;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.util.Pair;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDetection< V >
 {
@@ -197,5 +209,214 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 				dims.dimension( 2 ) - 1 };
 
 		return transform.estimateBounds( new FinalRealInterval( min, max ) );
+	}
+
+	// ==================== OPTIMIZED PARALLEL OVERLAP DETECTION ====================
+
+	/**
+	 * Pre-compute all bounding boxes for a collection of views in parallel.
+	 * This is much faster than computing bounding boxes on-demand for each pair.
+	 *
+	 * @param views - the views to compute bounding boxes for
+	 * @return a Map from ViewId to its BoundingBox
+	 */
+	public Map<V, BoundingBox> precomputeBoundingBoxes(final Collection<V> views)
+	{
+		final long start = System.currentTimeMillis();
+
+		final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
+		try
+		{
+			final Map<V, BoundingBox> result = pool.submit(() ->
+				views.parallelStream().collect(Collectors.toConcurrentMap(
+					view -> view,
+					view -> {
+						final BasicViewSetup vs = vss.get(view.getViewSetupId());
+						final ViewRegistration vr = vrs.get(view);
+						return getBoundingBox(vs, vr);
+					}
+				))
+			).get();
+
+			System.out.println("[TIMING] precomputeBoundingBoxes(): " + (System.currentTimeMillis() - start) + " ms (" + views.size() + " views)");
+			return result;
+		}
+		catch (final Exception e)
+		{
+			throw new RuntimeException("Failed to precompute bounding boxes", e);
+		}
+		finally
+		{
+			pool.shutdown();
+		}
+	}
+
+	/**
+	 * Filter overlapping pairs using pre-computed bounding boxes in parallel.
+	 * This removes non-overlapping pairs from the list and returns the removed pairs.
+	 *
+	 * @param pairs - the pairs to check (will be modified to contain only overlapping pairs)
+	 * @param boundingBoxes - pre-computed bounding boxes for all views
+	 * @return the list of removed (non-overlapping) pairs
+	 */
+	public ArrayList<Pair<V, V>> removeNonOverlappingPairsParallel(
+			final List<Pair<V, V>> pairs,
+			final Map<V, BoundingBox> boundingBoxes)
+	{
+		final long start = System.currentTimeMillis();
+		final int originalSize = pairs.size();
+
+		final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
+		try
+		{
+			// Parallel filter: identify overlapping pairs
+			final List<Pair<V, V>> overlappingPairs = pool.submit(() ->
+				pairs.parallelStream()
+					.filter(pair -> {
+						final BoundingBox bb1 = boundingBoxes.get(pair.getA());
+						final BoundingBox bb2 = boundingBoxes.get(pair.getB());
+						return bb1 != null && bb2 != null && overlaps(bb1, bb2);
+					})
+					.collect(Collectors.toList())
+			).get();
+
+			// Compute removed pairs (the non-overlapping ones)
+			final ArrayList<Pair<V, V>> removed = new ArrayList<>(originalSize - overlappingPairs.size());
+
+			// Clear and replace with overlapping pairs
+			// Use a set for O(1) lookup
+			final java.util.Set<Pair<V, V>> overlappingSet = new java.util.HashSet<>(overlappingPairs);
+			for (final Pair<V, V> pair : pairs)
+			{
+				if (!overlappingSet.contains(pair))
+					removed.add(pair);
+			}
+
+			pairs.clear();
+			pairs.addAll(overlappingPairs);
+
+			System.out.println("[TIMING] removeNonOverlappingPairsParallel(): " + (System.currentTimeMillis() - start) +
+					" ms (checked " + originalSize + " pairs, removed " + removed.size() + ", kept " + pairs.size() + ")");
+
+			return removed;
+		}
+		catch (final Exception e)
+		{
+			throw new RuntimeException("Failed to filter overlapping pairs", e);
+		}
+		finally
+		{
+			pool.shutdown();
+		}
+	}
+
+	/**
+	 * Generate overlapping pairs directly without creating all n^2 pairs first.
+	 * This is MUCH faster for large datasets where most pairs don't overlap.
+	 *
+	 * @param views - list of views to generate pairs from
+	 * @param groups - groups (views in same group are skipped)
+	 * @return list of overlapping pairs only
+	 */
+	public List<Pair<V, V>> generateOverlappingPairs(
+			final List<V> views,
+			final Collection<? extends Group<V>> groups)
+	{
+		final int n = views.size();
+		if (n < 2) return new ArrayList<>();
+
+		final long totalStart = System.currentTimeMillis();
+
+		// Step 1: Pre-compute all bounding boxes
+		final Map<V, BoundingBox> boundingBoxes = precomputeBoundingBoxes(views);
+
+		// Step 2: Pre-compute group membership for O(1) lookup
+		final Map<V, Set<Integer>> viewToGroups = new ConcurrentHashMap<>();
+		int groupIdx = 0;
+		for (final Group<V> group : groups)
+		{
+			final int idx = groupIdx++;
+			for (final V view : group.getViews())
+			{
+				viewToGroups.computeIfAbsent(view, k -> new java.util.HashSet<>()).add(idx);
+			}
+		}
+		final Set<Integer> emptySet = Collections.emptySet();
+
+		// Step 3: Generate only overlapping pairs in parallel
+		final long pairStart = System.currentTimeMillis();
+		final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
+		try
+		{
+			final List<Pair<V, V>> overlappingPairs = pool.submit(() ->
+				IntStream.range(0, n - 1).parallel()
+					.boxed()
+					.<Pair<V, V>>flatMap(a -> {
+						final V viewIdA = views.get(a);
+						final BoundingBox bbA = boundingBoxes.get(viewIdA);
+						if (bbA == null) return java.util.stream.Stream.empty();
+
+						final Set<Integer> groupsA = viewToGroups.getOrDefault(viewIdA, emptySet);
+
+						return IntStream.range(a + 1, n)
+							.<Pair<V, V>>mapToObj(b -> {
+								final V viewIdB = views.get(b);
+
+								// Check if both in same group
+								if (!groupsA.isEmpty())
+								{
+									final Set<Integer> groupsB = viewToGroups.getOrDefault(viewIdB, emptySet);
+									for (final Integer g : groupsA)
+									{
+										if (groupsB.contains(g))
+											return null;
+									}
+								}
+
+								// Check bounding box overlap
+								final BoundingBox bbB = boundingBoxes.get(viewIdB);
+								if (bbB == null || !overlaps(bbA, bbB))
+									return null;
+
+								return new net.imglib2.util.ValuePair<>(viewIdA, viewIdB);
+							})
+							.filter(p -> p != null);
+					})
+					.collect(Collectors.toList())
+			).get();
+
+			System.out.println("[TIMING] generateOverlappingPairs(): " + (System.currentTimeMillis() - totalStart) +
+					" ms total (" + n + " views, " + overlappingPairs.size() + " overlapping pairs, pair generation: " +
+					(System.currentTimeMillis() - pairStart) + " ms)");
+
+			return overlappingPairs;
+		}
+		catch (final Exception e)
+		{
+			throw new RuntimeException("Failed to generate overlapping pairs", e);
+		}
+		finally
+		{
+			pool.shutdown();
+		}
+	}
+
+	/**
+	 * Combined method: pre-compute bounding boxes and filter pairs in parallel.
+	 * This is the most efficient approach for large datasets.
+	 *
+	 * @param pairs - the pairs to check (will be modified to contain only overlapping pairs)
+	 * @param views - all views involved (used for pre-computing bounding boxes)
+	 * @return the list of removed (non-overlapping) pairs
+	 */
+	public ArrayList<Pair<V, V>> removeNonOverlappingPairsOptimized(
+			final List<Pair<V, V>> pairs,
+			final Collection<V> views)
+	{
+		// Step 1: Pre-compute all bounding boxes in parallel
+		final Map<V, BoundingBox> boundingBoxes = precomputeBoundingBoxes(views);
+
+		// Step 2: Filter pairs in parallel using pre-computed bounding boxes
+		return removeNonOverlappingPairsParallel(pairs, boundingBoxes);
 	}
 }

@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -27,20 +27,21 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+
+import net.preibisch.legacy.io.IOFunctions;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
-import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -114,6 +115,9 @@ public class MatcherPairwiseTools
 		// it doesn't matter which pair of groups it comes from: ?
 		for ( final Pair< ?, P > p : resultGroup )
 		{
+			final List< Integer > setIds = p.getB().getInlierSetIds();
+			int idx = 0;  // Track index for setIds list
+
 			for ( final PointMatchGeneric< GroupedInterestPoint< V > > pm : p.getB().getInliers() )
 			{
 				// assign correspondences
@@ -127,13 +131,18 @@ public class MatcherPairwiseTools
 				{
 					final String labelA = p.getB().getLabelA();//labelMap.get( viewIdA );
 					final String labelB = p.getB().getLabelB();//labelMap.get( viewIdB );
-	
-					final CorrespondingInterestPoints correspondingToA = new CorrespondingInterestPoints( gpA.getId(), viewIdB, labelB, gpB.getId() );
-					final CorrespondingInterestPoints correspondingToB = new CorrespondingInterestPoints( gpB.getId(), viewIdA, labelA, gpA.getId() );
-	
+
+					// Get setId from list or default to -1 if null/out of bounds
+					final int setId = (setIds != null && setIds.size() > idx) ? setIds.get(idx) : -1;
+
+					final CorrespondingInterestPoints correspondingToA = new CorrespondingInterestPoints( gpA.getId(), viewIdB, labelB, gpB.getId(), setId );
+					final CorrespondingInterestPoints correspondingToB = new CorrespondingInterestPoints( gpB.getId(), viewIdA, labelA, gpA.getId(), setId );
+
 					cMap.get( viewIdA ).get( labelA ).add( correspondingToA );
 					cMap.get( viewIdB ).get( labelB ).add( correspondingToB );
 				}
+
+				++idx;  // Increment index for next inlier
 
 				// update transformedMap
 				final Pair< V, V > pair = new ValuePair<>( viewIdA, viewIdB );
@@ -211,6 +220,7 @@ public class MatcherPairwiseTools
 	 */
 	public static < I extends InterestPoint > void addCorrespondences(
 			final List< PointMatchGeneric< I > > correspondences,
+			final List< Integer > setIds,
 			final ViewId viewIdA,
 			final ViewId viewIdB,
 			final String labelA,
@@ -218,16 +228,21 @@ public class MatcherPairwiseTools
 			final InterestPoints listA,
 			final InterestPoints listB )
 	{
+
 		final Collection< CorrespondingInterestPoints > corrListA = listA.getCorrespondingInterestPointsCopy();
 		final Collection< CorrespondingInterestPoints > corrListB = listB.getCorrespondingInterestPointsCopy();
 
-		for ( final PointMatchGeneric< I > pm : correspondences )
+		for ( int idx = 0; idx < correspondences.size(); ++idx )
 		{
+			final PointMatchGeneric< I > pm = correspondences.get( idx );
 			final I pA = pm.getPoint1();
 			final I pB = pm.getPoint2();
 
-			final CorrespondingInterestPoints correspondingToA = new CorrespondingInterestPoints( pA.getId(), viewIdB, labelB, pB.getId() );
-			final CorrespondingInterestPoints correspondingToB = new CorrespondingInterestPoints( pB.getId(), viewIdA, labelA, pA.getId() );
+			// Get setId from list or default to -1 if null/out of bounds
+			final int setId = (setIds != null && setIds.size() > idx) ? setIds.get(idx) : -1;
+
+			final CorrespondingInterestPoints correspondingToA = new CorrespondingInterestPoints( pA.getId(), viewIdB, labelB, pB.getId(), setId );
+			final CorrespondingInterestPoints correspondingToB = new CorrespondingInterestPoints( pB.getId(), viewIdA, labelA, pA.getId(), setId );
 
 			corrListA.add( correspondingToA );
 			corrListB.add( correspondingToB );
@@ -235,6 +250,19 @@ public class MatcherPairwiseTools
 
 		listA.setCorrespondingInterestPoints( corrListA );
 		listB.setCorrespondingInterestPoints( corrListB );
+	}
+
+	// Backward-compatible overload without setIds parameter
+	public static < I extends InterestPoint > void addCorrespondences(
+			final List< PointMatchGeneric< I > > correspondences,
+			final ViewId viewIdA,
+			final ViewId viewIdB,
+			final String labelA,
+			final String labelB,
+			final InterestPoints listA,
+			final InterestPoints listB )
+	{
+		addCorrespondences( correspondences, null, viewIdA, viewIdB, labelA, labelB, listA, listB );
 	}
 
 	public static void assignLoggingDescriptions(
@@ -277,18 +305,24 @@ public class MatcherPairwiseTools
 			final boolean matchAcrossLabels,
 			final ExecutorService exec )
 	{
+		final int numThreads = (exec == null) ? net.preibisch.mvrecon.Threads.numThreads() : -1;
+
 		final ExecutorService taskExecutor;
-		
+
 		if ( exec == null )
-			taskExecutor = Executors.newFixedThreadPool( Threads.numThreads() );
+			taskExecutor = Executors.newFixedThreadPool( numThreads );
 		else
 			taskExecutor = exec;
 
 		// each pair of Views that will be compared
 		final ArrayList<MatchingTask<V>> tasksList = getTasksList( pairs, interestpoints, matchAcrossLabels );
+
 		final ArrayList< Callable< Pair< Pair< V, V >, PairwiseResult< I > > > > tasks = getCallables( tasksList, interestpoints, matcher );
 
 		final List< Pair< Pair< V, V >, PairwiseResult< I > > > r = new ArrayList<>();
+
+		// reset the per-pair load-log cap counter before this batch starts
+		PairwiseResult.resetLogCounters();
 
 		try
 		{
@@ -313,6 +347,46 @@ public class MatcherPairwiseTools
 
 		if ( exec == null )
 			taskExecutor.shutdown();
+
+		// per-(labelA,labelB) summary: how many pairs loaded matches, plus min/avg/max counts
+		// (always emitted; complements the per-pair lines that may have been capped above)
+		// stats value layout: [count, loadedCount, sumMatches, minMatches, maxMatches]
+		final TreeMap< String, long[] > stats = new TreeMap<>();
+		long total = 0;
+		for ( final Pair< Pair< V, V >, PairwiseResult< I > > p : r )
+		{
+			final PairwiseResult< I > pwr = p.getB();
+			final String key = pwr.getLabelA() + " <-> " + pwr.getLabelB();
+			final long n = ( pwr.getInliers() == null ) ? 0 : pwr.getInliers().size();
+			final long[] s = stats.computeIfAbsent( key, k -> new long[]{ 0L, 0L, 0L, Long.MAX_VALUE, Long.MIN_VALUE } );
+			s[ 0 ]++;
+			if ( n > 0 )
+			{
+				s[ 1 ]++;
+				s[ 2 ] += n;
+				if ( n < s[ 3 ] ) s[ 3 ] = n;
+				if ( n > s[ 4 ] ) s[ 4 ] = n;
+			}
+			total++;
+		}
+
+		IOFunctions.println( "Pairwise correspondence-load summary: " + total + " pair(s) total" );
+		for ( final Map.Entry< String, long[] > e : stats.entrySet() )
+		{
+			final long[] s = e.getValue();
+			final long count = s[ 0 ];
+			final long loaded = s[ 1 ];
+			final long zeros = count - loaded;
+			if ( loaded == 0 )
+			{
+				IOFunctions.println( "  (" + e.getKey() + "): " + count + " pair(s), " + zeros + " with zero matches" );
+			}
+			else
+			{
+				final double avg = ( ( double ) s[ 2 ] ) / loaded;
+				IOFunctions.println( "  (" + e.getKey() + "): " + count + " pair(s), " + loaded + " with matches (" + zeros + " with zero), matches min=" + s[ 3 ] + " avg=" + String.format( Locale.ROOT, "%.1f", avg ) + " max=" + s[ 4 ] );
+			}
+		}
 
 		return r;
 	}

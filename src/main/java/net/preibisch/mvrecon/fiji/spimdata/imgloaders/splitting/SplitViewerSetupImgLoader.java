@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -48,9 +48,7 @@ public class SplitViewerSetupImgLoader< T extends NativeType< T >, V extends Vol
 	final Dimensions[] sizes;
 	final Interval[] scaledIntervals;
 
-	private boolean[] isUpdated;
-
-	public SplitViewerSetupImgLoader( final ViewerSetupImgLoader< T, V > underlyingSetupImgLoader, final Interval interval )
+	public SplitViewerSetupImgLoader( final ViewerSetupImgLoader< T, V > underlyingSetupImgLoader, final Interval interval, final long[][] levelDims )
 	{
 		this.underlyingSetupImgLoader = underlyingSetupImgLoader;
 		this.interval = interval;
@@ -67,11 +65,35 @@ public class SplitViewerSetupImgLoader< T extends NativeType< T >, V extends Vol
 		this.mipmapResolutions = underlyingSetupImgLoader.getMipmapResolutions();
 		this.mipmapTransforms = underlyingSetupImgLoader.getMipmapTransforms();//new AffineTransform3D[ levels ];
 
-		this.isUpdated = new boolean[ levels ];
-		for ( int l = 0; l < levels; ++l )
-			this.isUpdated[ l ] = false;
-
 		setUpMultiRes( levels, n, interval, mipmapResolutions, /*mipmapTransforms,*/ sizes, scaledIntervals/*, underlyingSetupImgLoader.getMipmapTransforms()*/ );
+
+		// Eagerly clamp scaledIntervals[level] against the underlying image's
+		// per-level dims (passed in from SplitViewerImgLoader's central cache).
+		// Replaces the previous lazy-DCL updateScaledIntervals() path. Trailing
+		// splits whose precomputed max would exceed the level image's last
+		// index get clipped here once; sizes[level] is updated to match.
+		for ( int level = 0; level < levels; ++level )
+		{
+			final Interval s = scaledIntervals[ level ];
+			final long[] dims = levelDims[ level ];
+			boolean clamp = false;
+			for ( int d = 0; d < n; ++d )
+				if ( s.max( d ) > dims[ d ] - 1 ) { clamp = true; break; }
+			if ( clamp )
+			{
+				final long[] minL = new long[ n ];
+				final long[] maxL = new long[ n ];
+				final long[] sizeL = new long[ n ];
+				for ( int d = 0; d < n; ++d )
+				{
+					minL[ d ] = s.min( d );
+					maxL[ d ] = Math.min( s.max( d ), dims[ d ] - 1 );
+					sizeL[ d ] = maxL[ d ] - minL[ d ] + 1;
+				}
+				scaledIntervals[ level ] = new FinalInterval( minL, maxL );
+				sizes[ level ] = new FinalDimensions( sizeL );
+			}
+		}
 	}
 
 	protected static final void setUpMultiRes(
@@ -183,63 +205,17 @@ public class SplitViewerSetupImgLoader< T extends NativeType< T >, V extends Vol
 		System.out.println( "size: " + Util.printInterval( img ) );
 		System.out.println( "interval: " + Util.printInterval( scaledIntervals[ level ] ) ); */
 
-		final RandomAccessibleInterval< T > full = underlyingSetupImgLoader.getImage( timepointId, level, hints );
-
-		updateScaledIntervals( this.scaledIntervals, level, n, full );
-
-		return Views.zeroMin( Views.interval( full, scaledIntervals[ level ] ) );
-	}
-
-	/**
-	 * Sometimes because of scaling the max is too high exceeding the actual downsampled image as provided
-	 *
-	 * @param scaledIntervals - the current scaled intervals (will be updated)
-	 * @param level - which level
-	 * @param n - num dimensions
-	 * @param fullImg - the full interval as currently loaded
-	 */
-	protected final void updateScaledIntervals( final Interval[] scaledIntervals, final int level, final int n, final Interval fullImg )
-	{
-		if ( !isUpdated[ level ] )
-		{
-			synchronized ( this )
-			{
-				if ( isUpdated[ level ] )
-					return;
-
-				isUpdated[ level ] = true;
-
-				boolean updateScaledInterval = false;
-		
-				for ( int d = 0; d < n; ++d )
-					if ( scaledIntervals[ level ].max( d ) >= fullImg.max( d ) )
-						updateScaledInterval = true;
-		
-				if ( updateScaledInterval )
-				{
-					final long[] min = new long[ n ];
-					final long[] max = new long[ n ];
-		
-					for ( int d = 0; d < n; ++d )
-					{
-						min[ d ] = scaledIntervals[ level ].min( d );
-						max[ d ] = Math.min( scaledIntervals[ level ].max( d ), fullImg.max( d ) );
-					}
-		
-					scaledIntervals[ level ] = new FinalInterval( min, max );
-				}
-			}
-		}
+		return Views.zeroMin( Views.interval(
+				underlyingSetupImgLoader.getImage( timepointId, level, hints ),
+				scaledIntervals[ level ] ) );
 	}
 
 	@Override
 	public RandomAccessibleInterval< V > getVolatileImage( final int timepointId, final int level, final ImgLoaderHint... hints )
 	{
-		final RandomAccessibleInterval< V > full = underlyingSetupImgLoader.getVolatileImage( timepointId, level, hints );
-
-		updateScaledIntervals( this.scaledIntervals, level, n, full );
-
-		return Views.zeroMin( Views.interval( underlyingSetupImgLoader.getVolatileImage( timepointId, level, hints ), scaledIntervals[ level ] ) );
+		return Views.zeroMin( Views.interval(
+				underlyingSetupImgLoader.getVolatileImage( timepointId, level, hints ),
+				scaledIntervals[ level ] ) );
 	}
 
 	@Override

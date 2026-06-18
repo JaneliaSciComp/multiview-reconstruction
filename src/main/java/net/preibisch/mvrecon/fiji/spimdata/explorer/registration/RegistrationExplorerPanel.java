@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -61,6 +61,7 @@ import mpicbg.spim.data.registration.ViewTransform;
 import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 
 public class RegistrationExplorerPanel extends JPanel
 {
@@ -358,7 +359,9 @@ public class RegistrationExplorerPanel extends JPanel
 					viewRegistrations.getViewRegistration( row.vd ).updateModel();
 				}
 
-				explorer.viewSetupExplorer.getPanel().bdvPopup().updateBDV();
+				final BasicBDVPopup p1 = explorer.viewSetupExplorer.getPanel().runningBdvPopup();
+				if ( p1 != null )
+					p1.updateBDV();
 				fireTableCellUpdated( rowIndex, columnIndex );
 			}
 			catch ( NumberFormatException e )
@@ -554,7 +557,9 @@ public class RegistrationExplorerPanel extends JPanel
 			viewRegistrations.getViewRegistration( vd ).updateModel();
 		}
 
-		explorer.viewSetupExplorer.getPanel().bdvPopup().updateBDV();
+		final BasicBDVPopup p2 = explorer.viewSetupExplorer.getPanel().runningBdvPopup();
+		if ( p2 != null )
+			p2.updateBDV();
 		tableModel.updateData( lastSelectedVDs );
 	}
 
@@ -629,7 +634,9 @@ public class RegistrationExplorerPanel extends JPanel
 			viewRegistrations.getViewRegistration( vd ).updateModel();
 		}
 
-		explorer.viewSetupExplorer.getPanel().bdvPopup().updateBDV();
+		final BasicBDVPopup p3 = explorer.viewSetupExplorer.getPanel().runningBdvPopup();
+		if ( p3 != null )
+			p3.updateBDV();
 		tableModel.updateData( lastSelectedVDs );
 	}
 

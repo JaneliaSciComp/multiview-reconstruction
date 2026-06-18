@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -44,6 +44,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.ConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.PointMatchCreator;
@@ -114,8 +115,18 @@ public class GlobalOpt
 
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): starting solve ..." );
 
-			tc.optimizeSilently(new ErrorStatistic( cs.getMaxPlateauWidth() + 1 ), cs.getMaxError(), cs.getMaxIterations(), cs.getMaxPlateauWidth() );
+			//tc.optimizeSilently(new ErrorStatistic( cs.getMaxPlateauWidth() + 1 ), cs.getMaxError(), cs.getMaxIterations(), cs.getMaxPlateauWidth() );
 			//tc.optimize( cs.getMaxError(), cs.getMaxIterations(), cs.getMaxPlateauWidth() );
+			//tc.optimizeSilentlyConcurrent(null, 0, 0, 0, 0);
+			TileUtil.optimizeConcurrently(
+					new ErrorStatistic( cs.getMaxPlateauWidth() + 1 ),
+					cs.getMaxError(),
+					cs.getMaxIterations(),
+					cs.getMaxPlateauWidth(),
+					1.0, // damp
+					tc, tc.getTiles(), tc.getFixedTiles(),
+					Threads.numThreads(),
+					true ); //verbose
 
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Global optimization of " + 
 				tc.getTiles().size() +  " view-tiles (Model=" + model.getClass().getSimpleName()  + "):" );
@@ -123,31 +134,14 @@ public class GlobalOpt
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Min Error: " + tc.getMinError() + "px" );
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Max Error: " + tc.getMaxError() + "px" );
 		}
-		catch (NotEnoughDataPointsException e)
-		{
-			IOFunctions.println( "Global optimization failed: " + e );
-			e.printStackTrace();
-		}
-		catch (IllDefinedDataPointsException e)
+		catch (Exception e)
 		{
 			IOFunctions.println( "Global optimization failed: " + e );
 			e.printStackTrace();
 		}
 		
-		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Transformation Models:" );
-
 		// TODO: We assume it is Affine3D here
-		for ( final ViewId viewId : views )
-		{
-			final Tile< M > tile = map.get( viewId );
-			
-			String output = Group.pvid( viewId ) + ": " + TransformationTools.printAffine3D( (Affine3D<?>)tile.getModel() );
-			
-			if ( tile.getModel() instanceof RigidModel3D )
-				IOFunctions.println( output + ", " + TransformationTools.getRotationAxis( (RigidModel3D)tile.getModel() ) );
-			else
-				IOFunctions.println( output + ", " + TransformationTools.getScaling( (Affine3D<?>)tile.getModel() ) );
-		}
+		TransformationTools.printAndSummarizeTransformations( views, map );
 
 		return map;
 	}

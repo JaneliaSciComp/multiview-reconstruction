@@ -98,22 +98,38 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 
 		<license.licenseName>gpl_v2</license.licenseName>
 		<license.copyrightOwners>Multiview Reconstruction developers.</license.copyrightOwners>
-		<scijava.jvm.version>11</scijava.jvm.version>
-		<scijava.javadoc.url.java>https://javadoc.scijava.org/Java11/</scijava.javadoc.url.java>
-		<scijava.javadoc.url.javafx>https://javadoc.scijava.org/JavaFX11/</scijava.javadoc.url.javafx>
+		<scijava.jvm.version>21</scijava.jvm.version>
+		<scijava.javadoc.url.java>https://javadoc.scijava.org/Java21/</scijava.javadoc.url.java>
 		<legacyMode>true</legacyMode> <!-- NB: Make javadoc less strict about Java module system. -->
 
 		<!-- NB: Deploy releases to the SciJava Maven repository. -->
 		<releaseProfiles>sign,deploy-to-scijava</releaseProfiles>
 
 		<pyramidio.version>1.1.0</pyramidio.version>
-		<ijp-kheops.version>0.6.2</ijp-kheops.version>
+		<ijp-kheops.version>0.20.0</ijp-kheops.version>
 		<generic-archiver.version>1.1.0</generic-archiver.version>
 
-		<!-- TEMP: Until pom-scijava 45.0.0 is released. -->
+		<!-- TEMP: Until pom-scijava 44.0.0 is updated for ZARRv3. -->
+		<bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
+		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
+		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
+		<bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
+		<multiview-simulation.version>0.3.1</multiview-simulation.version>
+
 		<mpicbg.version>1.6.6</mpicbg.version>
-		<javafx.version>19.0.2.1</javafx.version>
+
+		<!-- N5 versions with Zarr v3 shard support (graduated from alpha) -->
+		<!-- See: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/ -->
+		<n5.version>4.0.1</n5.version>
+		<n5-aws-s3.version>5.0.1</n5-aws-s3.version>
+		<n5-blosc.version>2.0.0</n5-blosc.version>
+		<n5-google-cloud.version>6.0.0</n5-google-cloud.version>
+		<n5-hdf5.version>3.0.0</n5-hdf5.version>
+		<n5-imglib2.version>8.0.0</n5-imglib2.version>
+		<n5-universe.version>3.0.2</n5-universe.version>
+		<n5-zarr.version>2.0.1</n5-zarr.version>
+		<n5-zstandard.version>2.0.0</n5-zstandard.version>
 	</properties>
 
 	<repositories>
@@ -141,7 +157,6 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 		<dependency>
 			<groupId>org.bigdataviewer</groupId>
 			<artifactId>bigdataviewer-n5</artifactId>
-			<version>${bigdataviewer-n5.version}</version>
 		</dependency>
 
 		<!-- N5 dependencies -->
@@ -274,6 +289,17 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 			<artifactId>ome-xml</artifactId>
 		</dependency>
 
+		<!-- Pulled transitively (compile) via bio-formats. Re-declared at runtime scope so
+		     it stays available at runtime but is off the compile/javadoc classpath: its jar
+		     has a class in the default package, which the javadoc tool cannot place on the
+		     JDK 9+ module path ("Unable to derive module descriptor") during release. -->
+		<dependency>
+			<groupId>ome</groupId>
+			<artifactId>turbojpeg</artifactId>
+			<version>${bio-formats.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+
 		<!-- Third party dependencies -->
 		<dependency>
 			<groupId>org.apache.commons</groupId>
@@ -331,32 +357,51 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 			<artifactId>slf4j-api</artifactId>
 		</dependency>
 
-		<!-- JavaFX dependencies -->
-		<dependency>
-			<groupId>org.openjfx</groupId>
-			<artifactId>javafx-base</artifactId>
-			<classifier>${scijava.natives.classifier.javafx}</classifier>
-		</dependency>
-		<dependency>
-			<groupId>org.openjfx</groupId>
-			<artifactId>javafx-controls</artifactId>
-			<classifier>${scijava.natives.classifier.javafx}</classifier>
-		</dependency>
-		<dependency>
-			<groupId>org.openjfx</groupId>
-			<artifactId>javafx-swing</artifactId>
-			<classifier>${scijava.natives.classifier.javafx}</classifier>
-		</dependency>
-
 		<!-- Test dependencies -->
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter-api</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter-engine</artifactId>
+			<scope>test</scope>
+		</dependency>
 		<dependency>
 			<groupId>ch.qos.logback</groupId>
 			<artifactId>logback-classic</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<!-- Configure Surefire with more memory for tests -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<argLine>-Xmx4g -Xms512m</argLine>
+				</configuration>
+			</plugin>
+			<!-- Build test-jar for sharing test classes with BigStitcher-Spark -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<executions>
+					<execution>
+						<goals>
+							<goal>test-jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
 	<profiles>
-	<profile>
+		<profile>
 			<id>fatjar</id>
 			<build>
 				<plugins>
@@ -403,6 +448,28 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 						</executions>
 					</plugin>
 					<!-- Maven shade end -->
+				</plugins>
+			</build>
+		</profile>
+		<profile>
+			<id>with-deps</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-dependency-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>copy-dependencies</id>
+								<phase>package</phase>
+								<goals><goal>copy-dependencies</goal></goals>
+								<configuration>
+									<outputDirectory>${project.build.directory}/deps</outputDirectory>
+									<includeScope>runtime</includeScope>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
 				</plugins>
 			</build>
 		</profile>

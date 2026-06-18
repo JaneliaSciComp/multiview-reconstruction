@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -126,6 +126,11 @@ public abstract class GenericLoadParseQueryXML<
 	// add a button on demand
 	protected ArrayList< String > buttonText = null;
 	protected ArrayList< ActionListener > listener = null;
+
+	// add a checkbox on demand
+	protected String checkBoxText = null;
+	protected boolean checkBoxResult = false;
+
 	protected GenericDialog gd = null;
 
 	public Button defineNewDataset = null;
@@ -256,6 +261,22 @@ public abstract class GenericLoadParseQueryXML<
 		this.listener.add( listener );
 	}
 
+	/**
+	 * Add a checkbox to the XML-loading dialog. Read the user's choice via
+	 * {@link #isCheckBoxSelected()} after {@link #queryXML} returns.
+	 */
+	public void addCheckbox( final String checkBoxText )
+	{
+		this.checkBoxText = checkBoxText;
+		this.checkBoxResult = false;
+	}
+
+	/** Result of the checkbox added via {@link #addCheckbox(String)}; {@code false} if none was added. */
+	public boolean isCheckBoxSelected()
+	{
+		return checkBoxResult;
+	}
+
 	public GenericDialog getGenericDialog() { return gd; }
 
 	/*
@@ -352,6 +373,9 @@ public abstract class GenericLoadParseQueryXML<
 			}
 		}
 
+		if ( checkBoxText != null )
+			gd.addCheckbox( checkBoxText, false );
+
 		gd.addMessage( "" );
 		GUIHelper.addCredits( gd );
 
@@ -361,6 +385,9 @@ public abstract class GenericLoadParseQueryXML<
 			return false;
 
 		String xmlURI = gd.getNextString();
+
+		if ( checkBoxText != null )
+			checkBoxResult = gd.getNextBoolean();
 
 		// only remember XML's > easter eggs create issues down the line as they are a relative URI
 		if ( xmlURI.endsWith( ".xml" ) )
@@ -614,19 +641,24 @@ public abstract class GenericLoadParseQueryXML<
 		}
 		else
 		{
-			String selected = "";
-			
-			for ( int e = 0; e < entitiesToProcess.size(); ++e )
+			final int total = entitiesToProcess.size();
+			final int max = Math.min( 10, total );
+			final StringBuilder selected = new StringBuilder();
+
+			for ( int e = 0; e < max; ++e )
 			{
 				if ( entitiesToProcess.get( e ) instanceof NamedEntity )
-					selected += ((NamedEntity) entitiesToProcess.get( e )).getName();
+					selected.append( ((NamedEntity) entitiesToProcess.get( e )).getName() );
 				else
-					selected += entitiesToProcess.get( e ).getId();
-				
-				if ( e != entitiesToProcess.size() - 1 )
-					selected += ", ";
+					selected.append( entitiesToProcess.get( e ).getId() );
+
+				if ( e != max - 1 )
+					selected.append( ", " );
 			}
-			
+
+			if ( total > max )
+				selected.append( ", ... (" ).append( total ).append( " in total)" );
+
 			IOFunctions.println( attribute + "s selected: " + selected );
 		}
 		

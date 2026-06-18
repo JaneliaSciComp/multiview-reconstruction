@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -105,6 +105,11 @@ class MaxIntensity
 			final long[] srcMax = new long[ srcPos.length ];
 			Arrays.setAll( srcMax, d -> srcPos[ d ] + size[ d ] - 1 );
 			final int[] overlapping = overlap.getOverlappingViewIndices( srcPos, srcMax );
+			if ( overlapping.length == 0 )
+			{
+				Arrays.fill( fdest, 0, len, 0 );
+				return;
+			}
 			boolean first = true;
 			for ( int i : overlapping )
 			{

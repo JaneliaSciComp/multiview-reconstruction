@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -527,7 +527,7 @@ public class Switch_Attributes implements PlugIn
 			}
 
 			final SequenceDescription sdNew = new SequenceDescription( new TimePoints( tpsNew ), setupsNew );
-			final AllenOMEZarrLoader imgLoaderNew = new AllenOMEZarrLoader( imgloader.getN5URI(), sdNew, viewIdToPathNew );
+			final AllenOMEZarrLoader imgLoaderNew = new AllenOMEZarrLoader( imgloader.getN5URI(), imgloader.getFormat(), sdNew, viewIdToPathNew );
 			sdNew.setImgLoader( imgLoaderNew );
 
 			// we do not want to return the objects from data, since all ViewId's are changed

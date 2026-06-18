@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -97,6 +97,34 @@ public class BoundingBoxTools
 		out += ")";
 
 		return out;
+	}
+
+	/**
+	 * Finds a bounding box by title in the SpimData2 bounding box collection.
+	 *
+	 * @param spimData the SpimData2 containing bounding boxes
+	 * @param bbTitle the title of the bounding box to find
+	 * @return the BoundingBox with the specified title, or null if not found
+	 */
+	public static BoundingBox getBoundingBox( final SpimData2 spimData, final String bbTitle )
+	{
+		BoundingBox boundingBox = null;
+
+		for ( final BoundingBox bb : spimData.getBoundingBoxes().getBoundingBoxes() )
+		{
+			System.out.println( "Bounding box: " + bb.getTitle() );
+
+			if ( bb.getTitle().equals( bbTitle ) )
+				boundingBox = bb;
+		}
+
+		if ( boundingBox == null )
+		{
+			System.out.println( "Bounding box '" + bbTitle + "' not found." );
+			return null;
+		}
+
+		return boundingBox;
 	}
 
 }

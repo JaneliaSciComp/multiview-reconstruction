@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -113,7 +113,7 @@ public class RelativeThinOut
 
 			// Nearest neighbor for each point, populate the new list
 			final NearestNeighborSearchOnKDTree< RealPoint > nn = new NearestNeighborSearchOnKDTree< RealPoint >( tree );
-			final InterestPoints newIpl = InterestPoints.newInstance( oldIpl.getBaseDir(), viewId, rtop.getNewLabel() );
+			final InterestPoints newIpl = InterestPoints.newInstance( oldIpl.getBasePath(), viewId, rtop.getNewLabel() );
 			/*final InterestPointList newIpl = new InterestPointList(
 					oldIpl.getBaseDir(),
 					new File(

@@ -3,18 +3,18 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -31,7 +31,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
 
 import mpicbg.models.AffineModel1D;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
@@ -43,24 +42,14 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.ClampType;
 import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.algorithm.blocks.transform.Transform;
 import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
-import net.imglib2.cache.img.CachedCellImg;
-import net.imglib2.cache.img.ReadOnlyCachedCellImgFactory;
-import net.imglib2.cache.img.ReadOnlyCachedCellImgOptions;
-import net.imglib2.cache.img.optional.CacheOptions.CacheType;
 import net.imglib2.converter.Converter;
 import net.imglib2.converter.RealUnsignedByteConverter;
 import net.imglib2.converter.RealUnsignedShortConverter;
-import net.imglib2.img.array.ArrayImg;
-import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.img.basictypeaccess.array.ArrayDataAccess;
-import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
@@ -72,7 +61,6 @@ import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
-import net.preibisch.mvrecon.process.deconvolution.DeconViews;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
@@ -83,6 +71,40 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 
 public class BlkAffineFusion
 {
+	/**
+	 * TODO javadoc
+	 *
+	 *
+	 *
+	 * @param converter
+	 * 		converts from FloatType to the output type. Maybe null,
+	 * 		in which case a default converter (clamp to output type range) is used.
+	 * @param imgloader
+	 * 		the imgloader to fetch raw data
+	 * @param viewIds
+	 * 		which viewids to fuse
+	 * @param viewRegistrations
+	 * 		the registrations (must include anisotropy and downsampling if desired)
+	 * @param viewDescriptions
+	 * 		TODO
+	 * @param fusionType
+	 * 		how to combine pixels
+	 * @param anisotropyFactor
+	 * @param interpolationMethod
+	 * 		1==linear, 0==nearest neighbor
+	 * @param intensityAdjustments
+	 * 		intensity adjustments, can be null
+	 * @param fusionInterval
+	 * 		TODO
+	 * @param type
+	 * 		instance of the output type
+	 * @param blockSize
+	 * 		TODO
+	 * @param <T>
+	 * 		output type
+	 *
+	 * @return
+	 */
 	public static < T extends RealType< T > & NativeType< T > > BlockSupplier< T > init(
 			final Converter< FloatType, T > converter,
 			final BasicImgLoader imgloader,
@@ -130,6 +152,7 @@ public class BlkAffineFusion
 			final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions,
 			final FusionType fusionType,
 			final double anisotropyFactor, // can be Double.NAN, only for content-based fusion
+			// TODO: replace with Comparator<Integer>
 			final Map< Integer, Integer > fusionMap, // old setupId > new setupId for fusion order, only makes sense with FusionType.FIRST_LOW or FusionType.FIRST_HIGH
 			final int interpolationMethod,
 			final Map< ViewId, AffineModel1D > intensityAdjustmentModels,
@@ -139,13 +162,9 @@ public class BlkAffineFusion
 			final int[] blockSize )
 	{
 		// go through the views and check if they are all 2-dimensional
-		final boolean is2d = viewIds.stream()
-				.map( viewDescriptions::get )
-				.map( BasicViewDescription::getViewSetup )
-				.filter( BasicViewSetup::hasSize )
-				.allMatch( vs -> vs.getSize().dimension( 2 ) == 1 );
+		final boolean is2d = is2d( viewIds, viewDescriptions );
 
-		if ( !supports( is2d, fusionType, intensityAdjustmentModels ) )
+		if ( !supports( is2d, intensityAdjustmentModels ) )
 		{
 			if ( intensityAdjustmentCoefficients != null )
 				// TODO: support intensity adjustmen with Coefficients in LazyAffineFusion
@@ -153,7 +172,7 @@ public class BlkAffineFusion
 
 			//throw new UnsupportedOperationException( "BlkAffineFusion: Fusion method not supported (yet)." );
 			IOFunctions.println( "BlkAffineFusion: Fusion method not supported (yet). Falling back to LazyAffineFusion." );
-			return BlockSupplier.of( 
+			return BlockSupplier.of(
 					Views.zeroMin( LazyAffineFusion.init( converter, imgloader, viewIds, viewRegistrations, viewDescriptions, fusionType, interpolationMethod, intensityAdjustmentModels, fusionInterval, type, blockSize ) ) );
 		}
 
@@ -295,12 +314,12 @@ public class BlkAffineFusion
 				.tile( 32 );
 
 		System.out.println( Util.printInterval( new FinalInterval( fusionInterval.dimensionsAsLongArray() ) ) );
-		
+
 		return blocks;
 		//return BlockAlgoUtils.cellImg( blocks, fusionInterval.dimensionsAsLongArray(), blockSize );
 	}
 
-	private static < T extends NativeType< T > > BlockSupplier< T > convertToOutputType(
+	protected static < T extends NativeType< T > > BlockSupplier< T > convertToOutputType(
 			final BlockSupplier< FloatType > floatBlocks,
 			final Converter< FloatType, T > converter,
 			final T type )
@@ -350,7 +369,7 @@ public class BlkAffineFusion
 		return blocks.andThen( Transform.affine( transform, interpolation ) );
 	}
 
-	private static < T extends NativeType< T > > RandomAccessible< T > extendInput(
+	protected static < T extends NativeType< T > > RandomAccessible< T > extendInput(
 			final RandomAccessible< T > input )
 	{
 		if ( input instanceof IntervalView )
@@ -386,10 +405,17 @@ public class BlkAffineFusion
 		return t;
 	}
 
+	public static boolean is2d( final Collection< ? extends ViewId > viewIds, final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions )
+	{
+		return viewIds.stream()
+		.map( viewDescriptions::get )
+		.map( BasicViewDescription::getViewSetup )
+		.filter( BasicViewSetup::hasSize )
+		.allMatch( vs -> vs.getSize().dimension( 2 ) == 1 );
+	}
 
 	private static boolean supports(
 			final boolean is2d,
-			final FusionType fusionType,
 			final Map< ViewId, AffineModel1D > intensityAdjustments )
 	{
 		if ( is2d )
