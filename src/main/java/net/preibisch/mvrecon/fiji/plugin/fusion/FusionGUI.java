@@ -135,8 +135,17 @@ public class FusionGUI implements FusionExportInterface
 		staticImgExportAlgorithms.add( new DisplayImage() );
 		staticImgExportAlgorithms.add( new ExportN5Api() );
 		staticImgExportAlgorithms.add( new Save3dTIFF( null ) );
-		staticImgExportAlgorithms.add( new OpenSeaDragon() );
-		staticImgExportAlgorithms.add( new ExportLarge2DTIFF() );
+
+		// Optional exporters whose libraries ship only via the BigStitcher update site
+		// (OpenSeaDragon -> gov.nist.isg generic-archiver/pyramidio; ExportLarge2DTIFF ->
+		// ch.epfl.biop ijp-kheops). Instantiating them links those classes, so on a core
+		// Fiji without those jars this static initializer would fail with NoClassDefFoundError
+		// and the whole Fusion dialog couldn't open. Add each only if it can be loaded.
+		try { staticImgExportAlgorithms.add( new OpenSeaDragon() ); }
+		catch ( final Throwable t ) { IOFunctions.println( "OpenSeaDragon export unavailable (optional libraries not installed): " + t ); }
+
+		try { staticImgExportAlgorithms.add( new ExportLarge2DTIFF() ); }
+		catch ( final Throwable t ) { IOFunctions.println( "Large-2D-TIFF export unavailable (optional libraries not installed): " + t ); }
 
 		//staticImgExportAlgorithms.add( new ExportSpimData2TIFF() );
 		//staticImgExportAlgorithms.add( new ExportSpimData2HDF5() );
