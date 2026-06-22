@@ -113,7 +113,8 @@ public class HelperFunctions {
 			// determine Z distance from peak center and adjust scale radius
 			final float x = peak.getFloatPosition(0);
 			final float y = peak.getFloatPosition(1);
-			final float zDistance = Math.abs(peak.getFloatPosition(2) - currentSlice) + 1;
+			// 2d peaks have no z coordinate, so treat them as being on the current slice
+			final float zDistance = ( peak.numDimensions() > 2 ? Math.abs(peak.getFloatPosition(2) - currentSlice) : 0 ) + 1;
 			double drawRadius = 1.5 * radius / Math.sqrt( zDistance );
 
 			// only draw nearby peaks
