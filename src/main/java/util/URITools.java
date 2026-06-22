@@ -53,8 +53,6 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Reader;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
-import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformation;
@@ -167,7 +165,7 @@ public class URITools
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
 				if ( s3Region != null )
-					factory.s3Configuration( b -> b.region( Region.of( s3Region ) ) );
+					S3Tools.configureRegion( factory, s3Region );
 				return factory.getKeyValueAccess( uri, false );
 			}
 			catch ( Exception e )
@@ -178,10 +176,7 @@ public class URITools
 
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				factory.s3Configuration( b -> {
-					b.credentialsProvider( AnonymousCredentialsProvider.create() );
-					if ( region != null ) b.region( Region.of( region ) );
-				} );
+				S3Tools.configureAnonymous( factory, region );
 				return factory.getKeyValueAccess( uri, false );
 			}
 		}
@@ -344,7 +339,7 @@ public class URITools
 				final N5Factory factory = new N5Factory().zarrDimensionSeparator( "/" );
 				factory.gsonBuilder( builder );
 				if ( s3Region != null )
-					factory.s3Configuration( b -> b.region( Region.of( s3Region ) ) );
+					S3Tools.configureRegion( factory, s3Region );
 				n5w = factory.openWriter( format, uri );
 			}
 			catch ( Exception e )
@@ -355,10 +350,7 @@ public class URITools
 
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				factory.s3Configuration( b -> {
-					b.credentialsProvider( AnonymousCredentialsProvider.create() );
-					if ( region != null ) b.region( Region.of( region ) );
-				} );
+				S3Tools.configureAnonymous( factory, region );
 				n5w = factory.openWriter( format, uri );
 			}
 
@@ -406,7 +398,7 @@ public class URITools
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
 				if ( s3Region != null )
-					factory.s3Configuration( b -> b.region( Region.of( s3Region ) ) );
+					S3Tools.configureRegion( factory, s3Region );
 				n5r = factory.openReader( format, uri );
 			}
 			catch ( Exception e )
@@ -417,10 +409,7 @@ public class URITools
 
 				final N5Factory factory = new N5Factory();
 				factory.gsonBuilder( builder );
-				factory.s3Configuration( b -> {
-					b.credentialsProvider( AnonymousCredentialsProvider.create() );
-					if ( region != null ) b.region( Region.of( region ) );
-				} );
+				S3Tools.configureAnonymous( factory, region );
 				n5r = factory.openReader( format, uri );
 			}
 
