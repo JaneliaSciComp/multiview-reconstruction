@@ -57,14 +57,14 @@ import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.type.numeric.ARGBType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVColors;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.ViewNeighbors;
 
 /**
- * Companion window of {@link ViewSetupExplorerPanel} that highlights views in BDV which
+ * Companion window of {@link FilteredAndGroupedExplorerPanel} that highlights views in BDV which
  * geometrically overlap the explorer's current selection.
  *
  * Triggered from the explorer by pressing {@code o}/{@code O}. Mirrors
@@ -89,7 +89,7 @@ public class ViewOverlapWindow extends JFrame
 	public static ResetPolicy defaultResetPolicy = ResetPolicy.NEVER;
 
 	private final SpimData2 data;
-	private final ViewSetupExplorerPanel< ? > panel;
+	private final FilteredAndGroupedExplorerPanel< ? > panel;
 
 	private final JCheckBox cbTile;
 	private final JCheckBox cbChannel;
@@ -103,7 +103,7 @@ public class ViewOverlapWindow extends JFrame
 	private Set< ViewId > lastApplied = Collections.emptySet();
 	private Set< ViewId > lastActual = null;
 
-	public ViewOverlapWindow( final ViewSetupExplorerPanel< ? > panel )
+	public ViewOverlapWindow( final FilteredAndGroupedExplorerPanel< ? > panel )
 	{
 		super( "Overlap" );
 		this.panel = panel;

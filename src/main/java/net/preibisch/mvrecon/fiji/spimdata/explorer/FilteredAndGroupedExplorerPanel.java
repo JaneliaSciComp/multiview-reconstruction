@@ -622,12 +622,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			{
 				if ( arg0.getKeyChar() != 'n' && arg0.getKeyChar() != 'N' )
 					return;
-				if ( !( FilteredAndGroupedExplorerPanel.this instanceof net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel ) )
-					return; // window expects a ViewSetupExplorerPanel
-				final net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > vsPanel =
-						( net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > ) FilteredAndGroupedExplorerPanel.this;
 				if ( viewNeighboursWindow == null || !viewNeighboursWindow.isDisplayable() )
-					viewNeighboursWindow = new net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow( vsPanel );
+					viewNeighboursWindow = new net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow( FilteredAndGroupedExplorerPanel.this );
 				// If the Overlap window is currently expanded, collapse it first so 'n'
 				// expands from the original anchor (not from 'o''s expanded set).
 				if ( viewOverlapWindow != null && viewOverlapWindow.isDisplayable() && viewOverlapWindow.isExpanded() )
@@ -650,12 +646,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 			{
 				if ( arg0.getKeyChar() != 'o' && arg0.getKeyChar() != 'O' )
 					return;
-				if ( !( FilteredAndGroupedExplorerPanel.this instanceof net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel ) )
-					return;
-				final net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > vsPanel =
-						( net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel< ? > ) FilteredAndGroupedExplorerPanel.this;
 				if ( viewOverlapWindow == null || !viewOverlapWindow.isDisplayable() )
-					viewOverlapWindow = new net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow( vsPanel );
+					viewOverlapWindow = new net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow( FilteredAndGroupedExplorerPanel.this );
 				// If the Neighbours window is currently expanded, collapse it first so 'o'
 				// expands from the original anchor (not from 'n''s expanded set).
 				if ( viewNeighboursWindow != null && viewNeighboursWindow.isDisplayable() && viewNeighboursWindow.isExpanded() )

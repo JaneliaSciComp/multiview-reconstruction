@@ -23,8 +23,11 @@
 package net.preibisch.mvrecon.fiji.spimdata.explorer;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
@@ -330,8 +333,15 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		this.groupTilesCheckbox = new JCheckBox("Group Tiles", isSplit);
 		this.groupIllumsCheckbox = new JCheckBox("Group Illuminations", !isSplit);
 		this.hideMissingViewsCheckbox = new JCheckBox("Hide Missing Views", false);
+		// "Hide Missing Views" + a small shortcut hint, centered together
+		final JPanel footerCenter = new JPanel( new FlowLayout( FlowLayout.LEFT, 8, 0 ) );
+		footerCenter.add( hideMissingViewsCheckbox );
+		final JLabel shortcutHint = new JLabel( "n/o: toggle connected/overlapping views" );
+		shortcutHint.setForeground( Color.GRAY );
+		shortcutHint.setFont( shortcutHint.getFont().deriveFont( Font.ITALIC, shortcutHint.getFont().getSize2D() - 1f ) );
+		footerCenter.add( shortcutHint );
 		footer.add(groupTilesCheckbox, BorderLayout.EAST);
-		footer.add(hideMissingViewsCheckbox, BorderLayout.CENTER);
+		footer.add(footerCenter, BorderLayout.CENTER);
 		footer.add(groupIllumsCheckbox, BorderLayout.WEST);
 		this.add(footer, BorderLayout.SOUTH);
 

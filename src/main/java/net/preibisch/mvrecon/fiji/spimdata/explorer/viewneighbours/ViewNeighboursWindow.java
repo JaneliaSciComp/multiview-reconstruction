@@ -50,7 +50,7 @@ import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.type.numeric.ARGBType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVColors;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
@@ -58,7 +58,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
 import net.preibisch.mvrecon.process.interestpointregistration.ViewNeighbors;
 
 /**
- * Companion window of {@link ViewSetupExplorerPanel} that highlights views in BDV which
+ * Companion window of {@link FilteredAndGroupedExplorerPanel} that highlights views in BDV which
  * are correspondence-connected to the explorer's current selection.
  *
  * Triggered from the explorer by pressing {@code n}/{@code N}. First press opens this
@@ -80,7 +80,7 @@ public class ViewNeighboursWindow extends JFrame
 	public static ResetPolicy defaultResetPolicy = ResetPolicy.NEVER;
 
 	private final SpimData2 data;
-	private final ViewSetupExplorerPanel< ? > panel;
+	private final FilteredAndGroupedExplorerPanel< ? > panel;
 
 	private final javax.swing.JList< String > labelList;
 	private final JComboBox< String > resetCombo;
@@ -98,7 +98,7 @@ public class ViewNeighboursWindow extends JFrame
 	// expanded selection as the new actual).
 	private Set< ViewId > lastActual = null;
 
-	public ViewNeighboursWindow( final ViewSetupExplorerPanel< ? > panel )
+	public ViewNeighboursWindow( final FilteredAndGroupedExplorerPanel< ? > panel )
 	{
 		super( "Neighbors" );
 		this.panel = panel;
