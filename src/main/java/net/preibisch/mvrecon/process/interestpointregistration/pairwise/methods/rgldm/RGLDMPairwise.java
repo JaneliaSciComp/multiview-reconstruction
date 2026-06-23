@@ -102,7 +102,9 @@ public class RGLDMPairwise< I extends InterestPoint > implements MatcherPairwise
 						rp.getMinInlierRatio(),
 						rp.getMinNumMatches(),
 						rp.getNumIterations(),
-						rp.multiConsensus() );
+						rp.multiConsensus(),
+						rp.getMaxTrust(),
+						rp.getFilterRansac() );
 
 		result.setInliers( inliers, ransacResult.getB(), setIds );
 	

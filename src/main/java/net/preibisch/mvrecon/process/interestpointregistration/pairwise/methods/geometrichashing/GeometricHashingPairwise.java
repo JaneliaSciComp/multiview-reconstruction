@@ -94,7 +94,9 @@ public class GeometricHashingPairwise< I extends InterestPoint > implements Matc
 						rp.getMinInlierRatio(),
 						rp.getMinNumMatches(),
 						rp.getNumIterations(),
-						rp.multiConsensus() );
+						rp.multiConsensus(),
+						rp.getMaxTrust(),
+						rp.getFilterRansac() );
 
 		result.setInliers( inliers, ransacResult.getB(), setIds );
 

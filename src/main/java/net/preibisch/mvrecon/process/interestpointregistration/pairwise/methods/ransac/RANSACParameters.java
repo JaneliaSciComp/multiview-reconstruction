@@ -33,31 +33,37 @@ public class RANSACParameters
 	public static final int[] ransacChoicesIterations = new int[]{ 1000, 10000, 100_000, 1_000_000, 10_000_000 };
 
 	public static double max_epsilon = 5;
-	public static double min_inlier_ratio = 0.1f;
+	public static double min_inlier_ratio = 0.05;
 	public static int num_iterations = 10000;
 	public static int min_num_matches = 12;
 	public static boolean multi_consensus = false;
+	// advanced RANSAC parameters; defaults reproduce the previous behaviour (mpicbg's 5-arg filterRansac uses maxTrust 3.0)
+	public static double max_trust = 3.0;
+	public static boolean filter_ransac = true;
 
-	protected double maxEpsilon, minInlierRatio;
+	protected double maxEpsilon, minInlierRatio, maxTrust;
 	protected int minNumMatches, numIterations;
-	protected boolean multiConsensus;
+	protected boolean multiConsensus, filterRansac;
 
-	public RANSACParameters( final double maxEpsilon, final double minInlierRatio, final int minNumMatches, final int numIterations, final boolean multiConsensus )
+	public RANSACParameters( final double maxEpsilon, final double minInlierRatio, final int minNumMatches, final int numIterations, final boolean multiConsensus, final double maxTrust, final boolean filterRansac )
 	{
 		this.maxEpsilon = maxEpsilon;
 		this.minInlierRatio = minInlierRatio;
 		this.minNumMatches = minNumMatches;
 		this.numIterations = numIterations;
 		this.multiConsensus = multiConsensus;
+		this.maxTrust = maxTrust;
+		this.filterRansac = filterRansac;
+	}
+
+	public RANSACParameters( final double maxEpsilon, final double minInlierRatio, final int minNumMatches, final int numIterations, final boolean multiConsensus )
+	{
+		this( maxEpsilon, minInlierRatio, minNumMatches, numIterations, multiConsensus, max_trust, filter_ransac );
 	}
 
 	public RANSACParameters()
 	{
-		this.maxEpsilon = max_epsilon;
-		this.numIterations = num_iterations;
-		this.minInlierRatio = min_inlier_ratio;
-		this.minNumMatches = min_num_matches;
-		this.multiConsensus = multi_consensus;
+		this( max_epsilon, min_inlier_ratio, min_num_matches, num_iterations, multi_consensus, max_trust, filter_ransac );
 	}
 
 	public double getMaxEpsilon() { return maxEpsilon; }
@@ -65,4 +71,6 @@ public class RANSACParameters
 	public int getMinNumMatches() { return minNumMatches; }
 	public int getNumIterations() { return numIterations; }
 	public boolean multiConsensus() { return multiConsensus; }
+	public double getMaxTrust() { return maxTrust; }
+	public boolean getFilterRansac() { return filterRansac; }
 }

@@ -29,12 +29,44 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.ransac.RANSACParameters;
 
 import mpicbg.spim.data.sequence.ViewId;
 
 public abstract class PairwiseGUI
 {
 	//protected TransformationModelGUI presetModel = null;
+
+	public static boolean defaultAdvancedRANSAC = false;
+
+	/**
+	 * If the user enabled "Advanced_RANSAC_options", query maxTrust / minimal inlier ratio / filter-RANSAC
+	 * in a follow-up dialog, updating the {@link RANSACParameters} statics that the GUI uses to build its
+	 * {@link RANSACParameters}. Returns false if the user cancels the follow-up dialog.
+	 *
+	 * @param advanced - whether the user ticked the advanced-options checkbox
+	 * @return false if the follow-up dialog was canceled, true otherwise
+	 */
+	protected static boolean queryAdvancedRANSAC( final boolean advanced )
+	{
+		if ( !advanced )
+			return true;
+
+		final GenericDialog gd = new GenericDialog( "Advanced RANSAC options" );
+		gd.addNumericField( "Maximal_trust (factor of median residual)", RANSACParameters.max_trust, 2 );
+		gd.addSlider( "Minimal_inlier_ratio", 0.0, 1.0, RANSACParameters.min_inlier_ratio );
+		gd.addCheckbox( "Filter_RANSAC", RANSACParameters.filter_ransac );
+		gd.showDialog();
+
+		if ( gd.wasCanceled() )
+			return false;
+
+		RANSACParameters.max_trust = gd.getNextNumber();
+		RANSACParameters.min_inlier_ratio = gd.getNextNumber();
+		RANSACParameters.filter_ransac = gd.getNextBoolean();
+
+		return true;
+	}
 
 	/*
 	 * adds the questions this registration wants to ask

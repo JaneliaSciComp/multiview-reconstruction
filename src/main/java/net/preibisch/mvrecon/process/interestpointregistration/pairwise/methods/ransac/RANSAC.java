@@ -57,7 +57,9 @@ public class RANSAC
 			final double minInlierRatio,
 			final int minNumMatches,
 			final int numIterations,
-			final boolean multiConsensus )
+			final boolean multiConsensus,
+			final double maxTrust,
+			final boolean filterRansac )
 	{
 		final int numCorrespondences = correspondenceCandidates.size();
 		final int minNumCorrespondences = Math.max( model.getMinNumMatches(), minNumMatches );
@@ -101,11 +103,7 @@ public class RANSAC
 		{
 			try
 			{
-				modelFound = model.filterRansac(
-						candidates,
-						inliers,
-						numIterations,
-						maxEpsilon, minInlierRatio ); 
+				modelFound = runRANSAC( model, candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust, filterRansac );
 			}
 			catch ( NotEnoughDataPointsException e )
 			{
@@ -130,12 +128,7 @@ public class RANSAC
 
 					try
 					{
-						modelFound = model.filterRansac(
-								candidates,
-								inliers,
-								numIterations,
-								maxEpsilon,
-								minInlierRatio );
+						modelFound = runRANSAC( model, candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust, filterRansac );
 					}
 					catch ( NotEnoughDataPointsException e )
 					{
@@ -192,11 +185,7 @@ public class RANSAC
 				try
 				{
 					// TODO: the inlier-ratio requests a smaller and smaller set of inliers as the candidate set size decreases
-					modelFound = model.filterRansac(
-							candidates,
-							inliers,
-							numIterations,
-							maxEpsilon, minInlierRatio );
+					modelFound = runRANSAC( model, candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust, filterRansac );
 
 					if ( modelFound && inliers.size() >= minNumCorrespondences )
 					{
@@ -270,6 +259,21 @@ public class RANSAC
 			}
 		}
 
+	}
+
+	private static boolean runRANSAC(
+			final Model<?> model,
+			final List< PointMatch > candidates,
+			final List< PointMatch > inliers,
+			final int numIterations,
+			final double maxEpsilon,
+			final double minInlierRatio,
+			final double maxTrust,
+			final boolean filterRansac ) throws NotEnoughDataPointsException
+	{
+		return filterRansac
+				? model.filterRansac( candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust )
+				: model.ransac( candidates, inliers, numIterations, maxEpsilon, minInlierRatio );
 	}
 
 	public static < P extends PointMatch > List< P > removeInliers( final List< P > candidates, final List< P > matches )

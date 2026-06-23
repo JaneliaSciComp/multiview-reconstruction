@@ -93,7 +93,9 @@ public class FRGLDMPairwise< I extends InterestPoint > implements MatcherPairwis
 						rp.getMinInlierRatio(),
 						rp.getMinNumMatches(),
 						rp.getNumIterations(),
-						rp.multiConsensus() );
+						rp.multiConsensus(),
+						rp.getMaxTrust(),
+						rp.getFilterRansac() );
 
 		result.setInliers( inliers, ransacResult.getB(), setIds );
 

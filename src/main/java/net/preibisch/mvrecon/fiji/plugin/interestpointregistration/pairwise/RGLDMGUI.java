@@ -49,7 +49,6 @@ public class RGLDMGUI extends PairwiseGUI
 	public static boolean defaultRegularize = true;
 	public static int defaultRANSACIterationChoice = 1;
 	public static int defaultMinNumMatches = 12;
-	public static double defaultMinInlierRatio = 0.1;
 	public static boolean defaultMultiConsensus = false;
 
 	protected TransformationModelGUI model = null;
@@ -93,9 +92,9 @@ public class RGLDMGUI extends PairwiseGUI
 
 		gd.addSlider( "Allowed_error_for_RANSAC (px)", 0.5, 100.0, RANSACParameters.max_epsilon );
 		gd.addSlider( "Minmal_number_of_inliers", 4, 100, defaultMinNumMatches );
-		gd.addSlider( "Minmal_inlier_ratio", 0.0, 1.0, defaultMinInlierRatio );
 		gd.addChoice( "RANSAC_iterations", RANSACParameters.ransacChoices, RANSACParameters.ransacChoices[ defaultRANSACIterationChoice ] );
 		gd.addCheckbox( "Multi_consensus_RANSAC", defaultMultiConsensus );
+		gd.addCheckbox( "Advanced_RANSAC_options", defaultAdvancedRANSAC );
 	}
 
 	@Override
@@ -116,9 +115,12 @@ public class RGLDMGUI extends PairwiseGUI
 		final double searchRadius = RGLDMParameters.defaultSearchRadius = gd.getNextNumber();
 		final double maxEpsilon = RANSACParameters.max_epsilon = gd.getNextNumber();
 		final int minNumMatches = defaultMinNumMatches = (int)Math.round( gd.getNextNumber() );
-		final double minInlierRatio = defaultMinInlierRatio = gd.getNextNumber();
 		final int ransacIterations = RANSACParameters.ransacChoicesIterations[ defaultRANSACIterationChoice = gd.getNextChoiceIndex() ];
 		final boolean multiConsensus = defaultMultiConsensus = gd.getNextBoolean();
+
+		final boolean advancedRANSAC = defaultAdvancedRANSAC = gd.getNextBoolean();
+		if ( !queryAdvancedRANSAC( advancedRANSAC ) )
+			return false;
 
 		this.parameters = new RGLDMParameters(
 				model.getModel(),
@@ -128,7 +130,7 @@ public class RGLDMGUI extends PairwiseGUI
 				searchRadius,
 				numNeighbors,
 				redundancy );
-		this.ransacParams = new RANSACParameters( maxEpsilon, minInlierRatio, minNumMatches, ransacIterations, multiConsensus );
+		this.ransacParams = new RANSACParameters( maxEpsilon, RANSACParameters.min_inlier_ratio, minNumMatches, ransacIterations, multiConsensus, RANSACParameters.max_trust, RANSACParameters.filter_ransac );
 
 		IOFunctions.println( "Selected Paramters:" );
 		IOFunctions.println( "model: " + defaultModel );
@@ -139,7 +141,9 @@ public class RGLDMGUI extends PairwiseGUI
 		IOFunctions.println( "minNumMatches: " + minNumMatches );
 		IOFunctions.println( "ransacIterations: " + ransacIterations );
 		IOFunctions.println( "ransacMultiConsensus: " + multiConsensus );
-		IOFunctions.println( "minInlierRatio: " + minInlierRatio );
+		IOFunctions.println( "minInlierRatio: " + RANSACParameters.min_inlier_ratio );
+		IOFunctions.println( "maxTrust: " + RANSACParameters.max_trust );
+		IOFunctions.println( "filterRansac: " + RANSACParameters.filter_ransac );
 
 		return true;
 	}
