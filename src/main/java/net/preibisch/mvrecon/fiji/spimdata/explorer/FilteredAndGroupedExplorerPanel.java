@@ -65,6 +65,9 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVUtils;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ExplorerWindowSetable;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.selection.SelectionDialog;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import util.BDVTools;
 import util.URITools;
@@ -623,7 +626,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 				if ( arg0.getKeyChar() != 'n' && arg0.getKeyChar() != 'N' )
 					return;
 				if ( viewNeighboursWindow == null || !viewNeighboursWindow.isDisplayable() )
-					viewNeighboursWindow = new net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow( FilteredAndGroupedExplorerPanel.this );
+					viewNeighboursWindow = new ViewNeighboursWindow( FilteredAndGroupedExplorerPanel.this );
 				// If the Overlap window is currently expanded, collapse it first so 'n'
 				// expands from the original anchor (not from 'o''s expanded set).
 				if ( viewOverlapWindow != null && viewOverlapWindow.isDisplayable() && viewOverlapWindow.isExpanded() )
@@ -633,9 +636,9 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 		} );
 	}
 
-	private net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow viewNeighboursWindow = null;
+	private ViewNeighboursWindow viewNeighboursWindow = null;
 
-	/** 'o'/'O' opens the {@link net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow}
+	/** 'o'/'O' opens the {@link ViewOverlapWindow}
 	 *  on first press (and applies); subsequent presses toggle expand ↔ collapse. */
 	protected void addOverlapShortcut()
 	{
@@ -647,7 +650,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 				if ( arg0.getKeyChar() != 'o' && arg0.getKeyChar() != 'O' )
 					return;
 				if ( viewOverlapWindow == null || !viewOverlapWindow.isDisplayable() )
-					viewOverlapWindow = new net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow( FilteredAndGroupedExplorerPanel.this );
+					viewOverlapWindow = new ViewOverlapWindow( FilteredAndGroupedExplorerPanel.this );
 				// If the Neighbours window is currently expanded, collapse it first so 'o'
 				// expands from the original anchor (not from 'n''s expanded set).
 				if ( viewNeighboursWindow != null && viewNeighboursWindow.isDisplayable() && viewNeighboursWindow.isExpanded() )
@@ -657,7 +660,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 		} );
 	}
 
-	private net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow viewOverlapWindow = null;
+	private ViewOverlapWindow viewOverlapWindow = null;
 
 	/**
 	 * Adjust the max-intensity (white point) of BDV sources by ±10% per press:
@@ -713,8 +716,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 	protected void openSelectionDialog()
 	{
-		final net.preibisch.mvrecon.fiji.spimdata.explorer.selection.SelectionDialog dialog =
-			new net.preibisch.mvrecon.fiji.spimdata.explorer.selection.SelectionDialog(
+		final SelectionDialog dialog =
+			new SelectionDialog(
 				explorer().getFrame(), data );
 		dialog.setVisible( true );
 

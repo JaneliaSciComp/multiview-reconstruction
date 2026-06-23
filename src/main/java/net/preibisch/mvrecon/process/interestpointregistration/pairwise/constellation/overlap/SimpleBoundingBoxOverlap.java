@@ -45,6 +45,7 @@ import net.imglib2.FinalRealInterval;
 import net.imglib2.RealInterval;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -378,7 +379,7 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 								if (bbB == null || !overlaps(bbA, bbB))
 									return null;
 
-								return new net.imglib2.util.ValuePair<>(viewIdA, viewIdB);
+								return new ValuePair<>(viewIdA, viewIdB);
 							})
 							.filter(p -> p != null);
 					})
