@@ -304,7 +304,7 @@ public class AllenOMEZarrProperties implements N5Properties
 			multiscales = omeMetadata.multiscales;
 		} else {
 			multiscales = n5.getAttribute( datasetPath, "multiscales", OmeNgffMultiScaleMetadata[].class );
-			System.out.println( "Retrieved OME multiscales at " + datasetPath + ": " + multiscales);
+			System.out.println( "Retrieved OME multiscales at " + datasetPath + ": " + summarize( multiscales ) );
 		}
 
 		if ( multiscales == null || multiscales.length == 0 )
@@ -314,5 +314,51 @@ public class AllenOMEZarrProperties implements N5Properties
 			System.out.println( "This dataset has " + multiscales.length + " objects, we expected 1. Picking the first one." );
 
 		return multiscales[0];
+	}
+
+	// short, human-readable summary of the multiscales metadata for logging (the default array toString() is useless)
+	private static String summarize( final OmeNgffMultiScaleMetadata[] multiscales )
+	{
+		if ( multiscales == null )
+			return "null";
+
+		final StringBuilder sb = new StringBuilder();
+		sb.append( multiscales.length ).append( " multiscale(s)" );
+
+		for ( final OmeNgffMultiScaleMetadata ms : multiscales )
+		{
+			if ( ms == null )
+			{
+				sb.append( " {null}" );
+				continue;
+			}
+
+			sb.append( " {" );
+			if ( ms.name != null )
+				sb.append( "name='" ).append( ms.name ).append( "', " );
+			if ( ms.type != null )
+				sb.append( "type='" ).append( ms.type ).append( "', " );
+
+			if ( ms.axes != null )
+			{
+				sb.append( "axes=[" );
+				for ( int i = 0; i < ms.axes.length; ++i )
+					sb.append( i == 0 ? "" : "," ).append( ms.axes[ i ].getName() );
+				sb.append( "], " );
+			}
+
+			final int levels = ms.datasets == null ? 0 : ms.datasets.length;
+			sb.append( levels ).append( " level(s)" );
+			if ( ms.datasets != null )
+			{
+				sb.append( " paths=[" );
+				for ( int i = 0; i < ms.datasets.length; ++i )
+					sb.append( i == 0 ? "" : "," ).append( ms.datasets[ i ].path );
+				sb.append( "]" );
+			}
+			sb.append( "}" );
+		}
+
+		return sb.toString();
 	}
 }
