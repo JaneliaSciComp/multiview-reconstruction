@@ -275,6 +275,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		addViewSetupIdShortcut(); // 'v' or 'V'
 		addNeighboursShortcut(); // 'n' or 'N' to highlight correspondence-connected views
 		addOverlapShortcut();    // 'o' or 'O' to highlight geometrically-overlapping views
+		addMaxIntensityShortcut(); // '[' ']' adjust max intensity of visible sources; '{' '}' all sources
 		addSelectionDialog(); // '+' to open selection dialog
 		addHistoryNavigation(); // '<' and '>' to navigate selection history
 

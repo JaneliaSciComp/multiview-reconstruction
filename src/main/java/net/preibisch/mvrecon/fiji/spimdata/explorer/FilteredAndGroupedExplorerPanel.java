@@ -667,6 +667,35 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 	private net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow viewOverlapWindow = null;
 
+	/**
+	 * Adjust the max-intensity (white point) of BDV sources by ±10% per press:
+	 * <ul>
+	 *   <li>{@code [} / {@code ]} &ndash; lower / raise the max of the currently <em>visible</em> sources</li>
+	 *   <li>{@code &#123;} / {@code &#125;} &ndash; lower / raise the max of <em>all</em> sources (including inactive ones)</li>
+	 * </ul>
+	 * Lowering the max brightens the image; raising it darkens it.
+	 */
+	protected void addMaxIntensityShortcut()
+	{
+		table.addKeyListener( new KeyAdapter()
+		{
+			@Override
+			public void keyPressed( final KeyEvent arg0 )
+			{
+				final char c = arg0.getKeyChar();
+				if ( c != '[' && c != ']' && c != '{' && c != '}' )
+					return;
+				final BasicBDVPopup p = runningBdvPopup();
+				if ( p == null || p.getBDV() == null || !p.getBDV().getViewerFrame().isVisible() )
+					return;
+				final boolean visibleOnly = ( c == '[' || c == ']' );
+				final double factor = ( c == '[' || c == '{' ) ? 0.9 : 1.1;
+				net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVUtils.scaleDisplayRangeMax(
+						p.getBDV(), factor, visibleOnly );
+			}
+		} );
+	}
+
 	protected void addSelectionDialog()
 	{
 		table.addKeyListener( new KeyAdapter()
