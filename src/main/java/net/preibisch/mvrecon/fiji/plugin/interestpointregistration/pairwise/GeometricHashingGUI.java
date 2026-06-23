@@ -41,9 +41,6 @@ public class GeometricHashingGUI extends PairwiseGUI
 {
 	public static int defaultModel = 2;
 	public static boolean defaultRegularize = true;
-	public static int defaultRANSACIterationChoice = 1;
-	public static int defaultMinNumMatches = 12;
-	public static boolean defaultMultiConsensus = false;
 
 	protected TransformationModelGUI model = null;
 
@@ -81,11 +78,7 @@ public class GeometricHashingGUI extends PairwiseGUI
 		gd.addMessage( "Parameters for robust model-based outlier removal (RANSAC)", new Font( Font.SANS_SERIF, Font.BOLD, 12 ) );
 		gd.addMessage( "" );
 
-		gd.addSlider( "Allowed_error_for_RANSAC (px)", 0.5, 100.0, RANSACParameters.max_epsilon );
-		gd.addSlider( "Minmal_number_of_inliers", 4, 100, defaultMinNumMatches );
-		gd.addChoice( "Number_of_RANSAC_iterations", RANSACParameters.ransacChoices, RANSACParameters.ransacChoices[ defaultRANSACIterationChoice ] );
-		gd.addCheckbox( "Multi_consensus_RANSAC", defaultMultiConsensus );
-		gd.addCheckbox( "Advanced_RANSAC_options", defaultAdvancedRANSAC );
+		addRansacQuery( gd );
 	}
 
 	@Override
@@ -101,29 +94,18 @@ public class GeometricHashingGUI extends PairwiseGUI
 
 		final int redundancy = GeometricHashingParameters.redundancy = (int)Math.round( gd.getNextNumber() );
 		final double ratioOfDistance = GeometricHashingParameters.ratioOfDistance = gd.getNextNumber();
-		final double maxEpsilon = RANSACParameters.max_epsilon = gd.getNextNumber();
-		final int minNumMatches = defaultMinNumMatches = (int)Math.round( gd.getNextNumber() );
-		final int ransacIterations = RANSACParameters.ransacChoicesIterations[ defaultRANSACIterationChoice = gd.getNextChoiceIndex() ];
-		final boolean multiConsensus = defaultMultiConsensus = gd.getNextBoolean();
 
-		final boolean advancedRANSAC = defaultAdvancedRANSAC = gd.getNextBoolean();
-		if ( !queryAdvancedRANSAC( advancedRANSAC ) )
+		final RANSACParameters rp = parseRansacQuery( gd );
+		if ( rp == null )
 			return false;
 
 		this.ghParams = new GeometricHashingParameters( model.getModel(), GeometricHashingParameters.differenceThreshold, ratioOfDistance, redundancy );
-		this.ransacParams = new RANSACParameters( maxEpsilon, RANSACParameters.min_inlier_ratio, minNumMatches, ransacIterations, multiConsensus, RANSACParameters.max_trust, RANSACParameters.filter_ransac );
+		this.ransacParams = rp;
 
 		IOFunctions.println( "Selected Paramters:" );
 		IOFunctions.println( "model: " + defaultModel );
 		IOFunctions.println( "redundancy: " + redundancy );
 		IOFunctions.println( "ratioOfDistance: " + ratioOfDistance );
-		IOFunctions.println( "maxEpsilon: " + maxEpsilon );
-		IOFunctions.println( "minNumMatches: " + minNumMatches );
-		IOFunctions.println( "ransacIterations: " + ransacIterations );
-		IOFunctions.println( "ransacMultiConsensus: " + multiConsensus );
-		IOFunctions.println( "minInlierRatio: " + RANSACParameters.min_inlier_ratio );
-		IOFunctions.println( "maxTrust: " + RANSACParameters.max_trust );
-		IOFunctions.println( "filterRansac: " + RANSACParameters.filter_ransac );
 
 		return true;
 	}

@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
 import ij.gui.GenericDialog;
 
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.TransformationModelGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -38,6 +39,53 @@ public abstract class PairwiseGUI
 	//protected TransformationModelGUI presetModel = null;
 
 	public static boolean defaultAdvancedRANSAC = false;
+
+	// shared defaults for the RANSAC dialog block (see addRansacQuery/parseRansacQuery)
+	public static int defaultMinNumMatches = 12;
+	public static int defaultRANSACIterationChoice = 1;
+	public static boolean defaultMultiConsensus = false;
+
+	/**
+	 * Adds the standard RANSAC parameters to a dialog: allowed error, minimal number of inliers, number of
+	 * iterations, multi-consensus, and an "Advanced_RANSAC_options" checkbox (maxTrust / inlier ratio /
+	 * filter-RANSAC). Reusable by any plugin so the RANSAC GUI is defined in exactly one place.
+	 */
+	public static void addRansacQuery( final GenericDialog gd )
+	{
+		gd.addSlider( "Allowed_error_for_RANSAC (px)", 0.5, 100.0, RANSACParameters.max_epsilon );
+		gd.addSlider( "Minmal_number_of_inliers", 4, 100, defaultMinNumMatches );
+		gd.addChoice( "RANSAC_iterations", RANSACParameters.ransacChoices, RANSACParameters.ransacChoices[ defaultRANSACIterationChoice ] );
+		gd.addCheckbox( "Multi_consensus_RANSAC", defaultMultiConsensus );
+		gd.addCheckbox( "Advanced_RANSAC_options", defaultAdvancedRANSAC );
+	}
+
+	/**
+	 * Reads the fields added by {@link #addRansacQuery(GenericDialog)} (in the same order) and returns the
+	 * resulting {@link RANSACParameters}, or {@code null} if the user cancels the advanced sub-dialog.
+	 */
+	public static RANSACParameters parseRansacQuery( final GenericDialog gd )
+	{
+		final double maxEpsilon = RANSACParameters.max_epsilon = gd.getNextNumber();
+		final int minNumMatches = defaultMinNumMatches = (int)Math.round( gd.getNextNumber() );
+		final int ransacIterations = RANSACParameters.ransacChoicesIterations[ defaultRANSACIterationChoice = gd.getNextChoiceIndex() ];
+		final boolean multiConsensus = defaultMultiConsensus = gd.getNextBoolean();
+
+		final boolean advancedRANSAC = defaultAdvancedRANSAC = gd.getNextBoolean();
+		if ( !queryAdvancedRANSAC( advancedRANSAC ) )
+			return null;
+
+		final RANSACParameters rp = new RANSACParameters( maxEpsilon, RANSACParameters.min_inlier_ratio, minNumMatches, ransacIterations, multiConsensus, RANSACParameters.max_trust, RANSACParameters.filter_ransac );
+
+		IOFunctions.println( "maxEpsilon: " + maxEpsilon );
+		IOFunctions.println( "minNumMatches: " + minNumMatches );
+		IOFunctions.println( "ransacIterations: " + ransacIterations );
+		IOFunctions.println( "ransacMultiConsensus: " + multiConsensus );
+		IOFunctions.println( "minInlierRatio: " + RANSACParameters.min_inlier_ratio );
+		IOFunctions.println( "maxTrust: " + RANSACParameters.max_trust );
+		IOFunctions.println( "filterRansac: " + RANSACParameters.filter_ransac );
+
+		return rp;
+	}
 
 	/**
 	 * If the user enabled "Advanced_RANSAC_options", query maxTrust / minimal inlier ratio / filter-RANSAC
