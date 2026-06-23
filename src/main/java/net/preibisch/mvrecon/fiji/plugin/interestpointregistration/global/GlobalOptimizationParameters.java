@@ -38,6 +38,11 @@ public class GlobalOptimizationParameters
 
 	public static boolean defaultExpertGrouping = false;
 
+	// convergence parameters for mpicbg's TileConfiguration optimization (only shown in the full-options dialog)
+	public static int defaultMaxIterations = 10000;
+	public static int defaultMaxPlateauWidth = 200;
+	public static double defaultMaxError = 5.0;
+
 	public enum GlobalOptType
 	{
 		ONE_ROUND_SIMPLE,
@@ -79,6 +84,11 @@ public class GlobalOptimizationParameters
 	public double absoluteThreshold;
 	public boolean showExpertGrouping;
 
+	// convergence parameters passed into the ConvergenceStrategy; maxError == NaN means "derive from pairwiseMatching.globalOptError()"
+	public double maxError;
+	public int maxIterations;
+	public int maxPlateauWidth;
+
 	public GlobalOptimizationParameters()
 	{
 		this( defaultRelativeError, defaultAbsoluteError, GlobalOptType.TWO_ROUND_ITERATIVE, true, false );
@@ -91,6 +101,12 @@ public class GlobalOptimizationParameters
 		this.method = method;
 		this.preAlign = preAlign;
 		this.showExpertGrouping = showExpertGrouping;
+
+		// standard convergence defaults; the simple presets keep these, the full-options dialog overrides them.
+		// maxError NaN means: derive from pairwiseMatching.globalOptError() (one-round-simple).
+		this.maxError = Double.NaN;
+		this.maxIterations = 10000;
+		this.maxPlateauWidth = 200;
 	}
 
 	public static void addSimpleParametersToDialog( final GenericDialog gd )
@@ -152,6 +168,9 @@ public class GlobalOptimizationParameters
 			gd.addCheckbox( "Pre-align images (otherwise use current transforms as initialization)", defaultPrealign );
 		gd.addNumericField( "relative error threshold (for handling wrong links)", 2.5, 3 );
 		gd.addNumericField( "absolute error threshold (for handling wrong links)", 3.5, 3 );
+		gd.addNumericField( "Maximal_number_of_iterations", defaultMaxIterations, 0 );
+		gd.addNumericField( "Maximal_allowed_error (px)", defaultMaxError, 3 );
+		gd.addNumericField( "Maximal_plateau_width", defaultMaxPlateauWidth, 0 );
 		if (askForGrouping )
 			gd.addCheckbox( "show_expert_grouping_options", defaultExpertGrouping );
 		gd.showDialog();
@@ -161,6 +180,9 @@ public class GlobalOptimizationParameters
 
 		double relTh = gd.getNextNumber();
 		double absTh = gd.getNextNumber();
+		final int maxIterations = defaultMaxIterations = (int)Math.round( gd.getNextNumber() );
+		final double maxError = defaultMaxError = gd.getNextNumber();
+		final int maxPlateauWidth = defaultMaxPlateauWidth = (int)Math.round( gd.getNextNumber() );
 		final int methodIdx = defaultGlobalOpt = gd.getNextChoiceIndex();
 		final boolean preAlignValue;
 		if ( preAlign == PreAlign.ASK )
@@ -180,11 +202,15 @@ public class GlobalOptimizationParameters
 			method = GlobalOptType.TWO_ROUND_SIMPLE;
 			relTh = absTh = Double.MAX_VALUE;
 		}
-		else if (methodIdx == 2)
+		else if (methodIdx == 3)
 			method = GlobalOptType.TWO_ROUND_ITERATIVE;
 		else
 			method = GlobalOptType.NO_OPTIMIZATION;
 
-		return new GlobalOptimizationParameters(relTh, absTh, method, preAlignValue, expertGrouping);
+		final GlobalOptimizationParameters gop = new GlobalOptimizationParameters(relTh, absTh, method, preAlignValue, expertGrouping);
+		gop.maxIterations = maxIterations;
+		gop.maxError = maxError;
+		gop.maxPlateauWidth = maxPlateauWidth;
+		return gop;
 	}
 }

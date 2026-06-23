@@ -410,7 +410,7 @@ public class Interest_Point_Registration implements PlugIn
 
 				if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
 				{
-					final ConvergenceStrategy cs = new ConvergenceStrategy( pairwiseMatching.globalOptError() );
+					final ConvergenceStrategy cs = new ConvergenceStrategy( Double.isNaN( globalOptParameters.maxError ) ? pairwiseMatching.globalOptError() : globalOptParameters.maxError, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth );
 
 					models = GlobalOpt.computeTiles(
 									model,
@@ -426,7 +426,7 @@ public class Interest_Point_Registration implements PlugIn
 									model,
 									globalOptParameters.preAlign,
 									pmc,
-									new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ),
+									new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ),
 									new MaxErrorLinkRemoval(),
 									removedInconsistentPairs,
 									fixedViews,
@@ -438,13 +438,13 @@ public class Interest_Point_Registration implements PlugIn
 							model,
 							globalOptParameters.preAlign,
 							pmc,
-							new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ), // if it's simple, both will be Double.MAX
+							new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ), // if it's simple, both will be Double.MAX
 							new MaxErrorLinkRemoval(),
 							removedInconsistentPairs,
 							new MetaDataWeakLinkFactory(
 									registrations,
 									new SimpleBoundingBoxOverlap<>( viewSetups, registrations ) ),
-							new ConvergenceStrategy( Double.MAX_VALUE ),
+							new ConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth ),
 							fixedViews,
 							subset.getGroups() );
 				}
@@ -521,7 +521,7 @@ public class Interest_Point_Registration implements PlugIn
 
 				if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
 				{
-					final ConvergenceStrategy cs = new ConvergenceStrategy( pairwiseMatching.globalOptError() );
+					final ConvergenceStrategy cs = new ConvergenceStrategy( Double.isNaN( globalOptParameters.maxError ) ? pairwiseMatching.globalOptError() : globalOptParameters.maxError, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth );
 
 					models = GlobalOpt.computeTiles(
 									model,
@@ -537,7 +537,7 @@ public class Interest_Point_Registration implements PlugIn
 									model,
 									globalOptParameters.preAlign,
 									pmc,
-									new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ),
+									new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ),
 									new MaxErrorLinkRemoval(),
 									removedInconsistentPairs,
 									fixedViews,
@@ -550,13 +550,13 @@ public class Interest_Point_Registration implements PlugIn
 							model,
 							globalOptParameters.preAlign,
 							pmc,
-							new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ), // if it's simple, both will be Double.MAX
+							new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ), // if it's simple, both will be Double.MAX
 							new MaxErrorLinkRemoval(),
 							removedInconsistentPairs,
 							new MetaDataWeakLinkFactory(
 									registrations,
 									new SimpleBoundingBoxOverlap<>( viewSetups, registrations ) ),
-							new ConvergenceStrategy( Double.MAX_VALUE ),
+							new ConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth ),
 							fixedViews,
 							groups );
 				}
@@ -832,6 +832,10 @@ public class Interest_Point_Registration implements PlugIn
 			return null;
 
 		arp.globalOptParams = GlobalOptimizationParameters.parseSimpleParametersFromDialog( gd );
+
+		// honor a cancel of the "Show full options dialog" (parse returns null on cancel)
+		if ( arp.globalOptParams == null )
+			return null;
 
 		if ( timepointToProcess.size() > 1 )
 			defaultShowStatistics = arp.showStatistics = gd.getNextBoolean();
