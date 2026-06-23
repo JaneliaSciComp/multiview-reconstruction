@@ -127,7 +127,9 @@ public class CenterOfMassPairwise< I extends InterestPoint > implements MatcherP
 			final double[] l = i.getL();
 
 			for ( int d = 0; d < n; ++d )
-				values[ d ][ j++ ] = l[ d ];
+				values[ d ][ j ] = l[ d ];
+
+			++j;
 		}
 
 		final double[] center = new double[ n ];
