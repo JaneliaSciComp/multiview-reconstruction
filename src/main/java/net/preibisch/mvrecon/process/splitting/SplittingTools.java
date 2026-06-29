@@ -780,9 +780,14 @@ public class SplittingTools
 				final ViewInterestPointLists newVipl = new ViewInterestPointLists( newViewId.getTimePointId(), newViewId.getViewSetupId() );
 				final ViewInterestPointLists oldVipl = spimData.getViewInterestPoints().getViewInterestPointLists( oldViewId );
 
-				// only update interest points for present views
-				// oldVipl may be null for missing views
-				if ( spimData.getSequenceDescription().getMissingViews() != null && !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( oldViewId ) )
+				// only update interest points for present views.
+				// A null MissingViews (or null inner set) means NO views are missing, i.e. all are present -
+				// e.g. datasets whose XML has no <MissingViews> element (such as this OME-ZARR dataset) load
+				// it as null. The old guard ( getMissingViews() != null && !contains(..) ) short-circuited to
+				// false in that case and silently skipped ALL interest-point splitting, producing an empty
+				// <ViewInterestPoints/>. Treat null as "present".
+				final MissingViews mvSetup = spimData.getSequenceDescription().getMissingViews();
+				if ( mvSetup == null || mvSetup.getMissingViews() == null || !mvSetup.getMissingViews().contains( oldViewId ) )
 				{
 					for ( final String label : oldVipl.getHashMap().keySet() )
 					{
@@ -1096,9 +1101,13 @@ public class SplittingTools
 		final ViewInterestPointLists oldVipl = spimData.getViewInterestPoints().getViewInterestPointLists( oldViewId );
 		final ViewInterestPointLists newVipl = newInterestpoints.get( newViewId );
 
-		// only update interest points for present views
-		// oldVipl may be null for missing views
-		if ( spimData.getSequenceDescription().getMissingViews() != null && !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( oldViewId ) )
+		// only update interest points for present views.
+		// A null MissingViews (or null inner set) means NO views are missing, i.e. all are present
+		// (e.g. datasets whose XML has no <MissingViews> element load it as null). Treat null as "present",
+		// otherwise correspondences would be silently skipped for the whole dataset (mirrors the guard in
+		// processSetupStatic).
+		final MissingViews mvCorr = spimData.getSequenceDescription().getMissingViews();
+		if ( mvCorr == null || mvCorr.getMissingViews() == null || !mvCorr.getMissingViews().contains( oldViewId ) )
 		{
 			// Lazy cache for interest point maps, either caller-supplied (amortized across calls) or fresh per call.
 			// Key: "timepointId_setupId_label" -> Map of detection IDs
