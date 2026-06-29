@@ -92,11 +92,16 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 	protected RandomAccessibleInterval< FloatType > getOrCreateBrightImgDownsampled(ViewId vId,
 			int[] downsamplingFactors)
 	{
+		// no flat-field configured for this view (or no bright image) -> no correction
+		final Pair< File, File > files = fileMap.get( vId );
+		if ( files == null || files.getA() == null )
+			return null;
+
 		ArrayList< Integer > dsFactorList = new ArrayList< Integer >();
 		for ( int i : downsamplingFactors )
 			dsFactorList.add( i );
 
-		final ValuePair< File, List< Integer > > key = new ValuePair<>( fileMap.get( vId ).getA(), dsFactorList );
+		final ValuePair< File, List< Integer > > key = new ValuePair<>( files.getA(), dsFactorList );
 
 		if ( !dsRaiMap.containsKey( key ) )
 		{
@@ -117,11 +122,16 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 
 	protected RandomAccessibleInterval< FloatType > getOrCreateDarkImgDownsampled(ViewId vId, int[] downsamplingFactors)
 	{
+		// no flat-field configured for this view (or no dark image) -> no correction
+		final Pair< File, File > files = fileMap.get( vId );
+		if ( files == null || files.getB() == null )
+			return null;
+
 		ArrayList< Integer > dsFactorList = new ArrayList< Integer >();
 		for ( int i : downsamplingFactors )
 			dsFactorList.add( i );
 
-		final ValuePair< File, List< Integer > > key = new ValuePair<>( fileMap.get( vId ).getB(), dsFactorList );
+		final ValuePair< File, List< Integer > > key = new ValuePair<>( files.getB(), dsFactorList );
 
 		if ( !dsRaiMap.containsKey( key ) )
 		{
