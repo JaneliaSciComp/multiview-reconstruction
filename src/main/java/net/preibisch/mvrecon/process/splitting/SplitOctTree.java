@@ -843,6 +843,18 @@ public class SplitOctTree implements SplitView
 	 */
 	public static boolean setupGUI( final GenericDialog gd, final SpimData2 data, final long[] minStepSize )
 	{
+		return setupGUI( gd, data, minStepSize, null );
+	}
+
+	/**
+	 * Setup GUI components for oct-tree splitting parameters.
+	 *
+	 * @param driveByChannelIds if non-null, interest-point label statistics (e.g. the
+	 *        "available for X/Y Views" counts) are restricted to views of these channels,
+	 *        which are the only ones whose own correspondences drive the split.
+	 */
+	public static boolean setupGUI( final GenericDialog gd, final SpimData2 data, final long[] minStepSize, final Set< Integer > driveByChannelIds )
+	{
 		final GenericDialog gdCriterion = new GenericDialog( "Oct-Tree Split Criterion" );
 		gdCriterion.addChoice( "Split_criterion", CRITERION_NAMES, CRITERION_NAMES[ defaultCriterionChoice ] );
 		gdCriterion.showDialog();
@@ -858,9 +870,9 @@ public class SplitOctTree implements SplitView
 
 		boolean success = false;
 		if ( selectedCriterion.equals( CrossViewCorrespondenceCriterion.CRITERION_NAME ) )
-			success = CrossViewCorrespondenceCriterion.setupGUI( gd, data );
+			success = CrossViewCorrespondenceCriterion.setupGUI( gd, data, driveByChannelIds );
 		else if ( selectedCriterion.equals( ConsensusSetCriterion.CRITERION_NAME ) )
-			success = ConsensusSetCriterion.setupGUI( gd, data );
+			success = ConsensusSetCriterion.setupGUI( gd, data, driveByChannelIds );
 
 		if ( !success )
 			return false;
@@ -915,14 +927,25 @@ public class SplitOctTree implements SplitView
 	 */
 	public static SplitOctTree queryGUI( final GenericDialog gd, final SpimData2 data, final long[] minStepSize )
 	{
+		return queryGUI( gd, data, minStepSize, null );
+	}
+
+	/**
+	 * Query GUI components and create SplitOctTree instance.
+	 *
+	 * @param driveByChannelIds must match the value passed to {@link #setupGUI} so the label
+	 *        choices are parsed against the same (channel-restricted) view set.
+	 */
+	public static SplitOctTree queryGUI( final GenericDialog gd, final SpimData2 data, final long[] minStepSize, final Set< Integer > driveByChannelIds )
+	{
 		final String criterionName = CRITERION_NAMES[ defaultCriterionChoice ];
 
 		OctTreeSplitCriterion criterion = null;
 
 		if ( criterionName.equals( CrossViewCorrespondenceCriterion.CRITERION_NAME ) )
-			criterion = CrossViewCorrespondenceCriterion.queryGUI( gd, data );
+			criterion = CrossViewCorrespondenceCriterion.queryGUI( gd, data, driveByChannelIds );
 		else if ( criterionName.equals( ConsensusSetCriterion.CRITERION_NAME ) )
-			criterion = ConsensusSetCriterion.queryGUI( gd, data );
+			criterion = ConsensusSetCriterion.queryGUI( gd, data, driveByChannelIds );
 
 		if ( criterion == null )
 			return null;

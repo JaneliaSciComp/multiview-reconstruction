@@ -124,11 +124,20 @@ public class CrossViewCorrespondenceCriterion implements OctTreeSplitCriterion
 	 */
 	public static boolean setupGUI( final GenericDialog gd, final SpimData2 data )
 	{
-		// Get available interest point labels
-		final List< ViewId > allViewIds = new ArrayList<>();
-		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
-			if ( vd.isPresent() )
-				allViewIds.add( vd );
+		return setupGUI( gd, data, null );
+	}
+
+	/**
+	 * Setup GUI components for cross-view correspondence criterion.
+	 *
+	 * @param driveByChannelIds if non-null, label availability counts are computed only over
+	 *        views of these driving channels (so labels that exist in every driving view are
+	 *        not flagged as "only available for X/Y Views" because of mirrored channels).
+	 */
+	public static boolean setupGUI( final GenericDialog gd, final SpimData2 data, final Set< Integer > driveByChannelIds )
+	{
+		// Get available interest point labels (restricted to the driving channels if requested)
+		final List< ViewId > allViewIds = collectViewIds( data, driveByChannelIds );
 
 		final String[] labels = InterestPointTools.getAllInterestPointLabels( data, allViewIds );
 
@@ -166,11 +175,19 @@ public class CrossViewCorrespondenceCriterion implements OctTreeSplitCriterion
 	 */
 	public static CrossViewCorrespondenceCriterion queryGUI( final GenericDialog gd, final SpimData2 data )
 	{
-		// Get labels again for parsing
-		final List< ViewId > allViewIds = new ArrayList<>();
-		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
-			if ( vd.isPresent() )
-				allViewIds.add( vd );
+		return queryGUI( gd, data, null );
+	}
+
+	/**
+	 * Query GUI components and create CrossViewCorrespondenceCriterion instance.
+	 *
+	 * @param driveByChannelIds must match the value passed to {@link #setupGUI} so the label
+	 *        choices are parsed against the same (channel-restricted) view set.
+	 */
+	public static CrossViewCorrespondenceCriterion queryGUI( final GenericDialog gd, final SpimData2 data, final Set< Integer > driveByChannelIds )
+	{
+		// Get labels again for parsing (must use the same view set as setupGUI)
+		final List< ViewId > allViewIds = collectViewIds( data, driveByChannelIds );
 
 		final String[] labelsRaw = InterestPointTools.getAllInterestPointLabels( data, allViewIds );
 
@@ -204,5 +221,19 @@ public class CrossViewCorrespondenceCriterion implements OctTreeSplitCriterion
 		final int maxCorrespondences = defaultMaxCorrespondences = (int) Math.round( gd.getNextNumber() );
 
 		return new CrossViewCorrespondenceCriterion( data, selectedLabels, maxCorrespondences );
+	}
+
+	/**
+	 * Collect all present view ids, optionally restricted to the given driving channels.
+	 *
+	 * @param driveByChannelIds if non-null, only views whose channel id is contained are returned
+	 */
+	private static List< ViewId > collectViewIds( final SpimData2 data, final Set< Integer > driveByChannelIds )
+	{
+		final List< ViewId > viewIds = new ArrayList<>();
+		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
+			if ( vd.isPresent() && ( driveByChannelIds == null || driveByChannelIds.contains( vd.getViewSetup().getChannel().getId() ) ) )
+				viewIds.add( vd );
+		return viewIds;
 	}
 }

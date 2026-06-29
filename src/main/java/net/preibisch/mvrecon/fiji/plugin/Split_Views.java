@@ -22,14 +22,20 @@
  */
 package net.preibisch.mvrecon.fiji.plugin;
 
+import java.awt.Color;
 import java.net.URI;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
 
 import fiji.util.gui.GenericDialogPlus;
 import ij.ImageJ;
 import ij.gui.GenericDialog;
 import ij.plugin.PlugIn;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.sequence.Channel;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.GenericLoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -64,6 +70,8 @@ public class Split_Views implements PlugIn
 
 	public static int defaultMethodChoice = 1;
 	private static final String[] methodChoices = new String[] { "Uniform splitting", "Oct-tree based adaptive splitting" };
+
+	public static int defaultChannelChoice = 0;
 
 	@Override
 	public void run(String arg)
@@ -110,7 +118,27 @@ public class Split_Views implements PlugIn
 			final SplittingTools.InterestPointSaver saver,
 			final SplittingTools.CorrespondenceSaver corrSaver )
 	{
-		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, fakeLabel, saver, corrSaver );
+		return split( data, saveAs, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, display, fakeLabel, saver, corrSaver, null );
+	}
+
+	public static boolean split(
+			final SpimData2 data,
+			final URI saveAs,
+			final SplitView splitting,
+			final boolean assingIlluminationsFromTileIds,
+			final InterestPointAdding ipAdding,
+			final double pointDensity,
+			final int minPoints,
+			final int maxPoints,
+			final double error,
+			final double excludeRadius,
+			final boolean display,
+			final String fakeLabel,
+			final SplittingTools.InterestPointSaver saver,
+			final SplittingTools.CorrespondenceSaver corrSaver,
+			final Set< Integer > driveByChannelIds )
+	{
+		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, fakeLabel, saver, corrSaver, driveByChannelIds );
 
 		if ( display )
 		{
@@ -127,12 +155,45 @@ public class Split_Views implements PlugIn
 
 	public static boolean split( final SpimData2 data, final URI filePath )
 	{
+		// Only datasets with more than one channel can drive the split from a single channel.
+		final List< Channel > channels = data.getSequenceDescription().getAllChannelsOrdered();
+		final boolean multipleChannels = channels.size() > 1;
+
+		final String[] channelChoices = new String[ channels.size() + 1 ];
+		channelChoices[ 0 ] = "All channels (split each independently)";
+		for ( int i = 0; i < channels.size(); ++i )
+			channelChoices[ i + 1 ] = "Channel " + channels.get( i ).getName();
+
+		if ( defaultChannelChoice >= channelChoices.length )
+			defaultChannelChoice = 0;
+
 		final GenericDialog gdInit = new GenericDialogPlus( "Dataset splitting/subdividing method" );
 		gdInit.addChoice("splitting_method", methodChoices, methodChoices[ defaultMethodChoice ] );
+		if ( multipleChannels )
+		{
+			gdInit.addChoice( "Drive_split_by_channel", channelChoices, channelChoices[ defaultChannelChoice ] );
+			gdInit.addMessage(
+					"The selected channel will be split according to its own interest points.\n" +
+					"All other channels will be virtually split to match the tiling of the selected channel\n",
+					GUIHelper.smallStatusFont, Color.DARK_GRAY );
+		}
 		gdInit.showDialog();
 		if ( gdInit.wasCanceled() )
 			return false;
 		final int method = defaultMethodChoice = gdInit.getNextChoiceIndex();
+
+		// channel that drives the split geometry; all other channels mirror it
+		// (null = split every setup independently, the original behaviour)
+		final Set< Integer > driveByChannelIds;
+		if ( multipleChannels )
+		{
+			final int channelChoice = defaultChannelChoice = gdInit.getNextChoiceIndex();
+			driveByChannelIds = ( channelChoice == 0 ) ? null : Collections.singleton( channels.get( channelChoice - 1 ).getId() );
+		}
+		else
+		{
+			driveByChannelIds = null;
+		}
 
 		final long[] minStepSize = SplittingTools.findMinStepSize( data );
 
@@ -142,7 +203,7 @@ public class Split_Views implements PlugIn
 			SplitDistributeEvenly.setupGUI( gd, data, minStepSize );
 		else if ( method == 1 )
 		{
-			if ( !SplitOctTree.setupGUI( gd, data, minStepSize ) )
+			if ( !SplitOctTree.setupGUI( gd, data, minStepSize, driveByChannelIds ) )
 				return false;
 		}
 		else
@@ -179,7 +240,7 @@ public class Split_Views implements PlugIn
 		if ( method == 0 )
 			splittingMethod = SplitDistributeEvenly.queryGUI( gd, data, minStepSize );
 		else if ( method == 1 )
-			splittingMethod = SplitOctTree.queryGUI( gd, data, minStepSize );
+			splittingMethod = SplitOctTree.queryGUI( gd, data, minStepSize, driveByChannelIds );
 		else
 			throw new RuntimeException( "Unknown splitting method: " + method );
 
@@ -253,7 +314,7 @@ public class Split_Views implements PlugIn
 				ips.saveCorrespondingInterestPoints( false );
 		} : null;
 
-		return split( data, URITools.toURI( saveAs ), splittingMethod, assignIllum, ipAdding, density, minPoints, maxPoints, error, exclusionRadius, choice == 0, fakeLabel, saver, corrSaver );
+		return split( data, URITools.toURI( saveAs ), splittingMethod, assignIllum, ipAdding, density, minPoints, maxPoints, error, exclusionRadius, choice == 0, fakeLabel, saver, corrSaver, driveByChannelIds );
 	}
 
 	public static void main( String[] args ) throws SpimDataException
