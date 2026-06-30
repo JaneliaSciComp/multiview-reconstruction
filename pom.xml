@@ -313,6 +313,7 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 			<groupId>ch.epfl.biop</groupId>
 			<artifactId>ijp-kheops</artifactId>
 			<version>${ijp-kheops.version}</version>
+			<optional>true</optional>
 		</dependency>
 		<dependency>
 			<groupId>com.google.code.gson</groupId>
@@ -326,11 +327,13 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 			<groupId>gov.nist.isg</groupId>
 			<artifactId>generic-archiver</artifactId>
 			<version>${generic-archiver.version}</version>
+			<optional>true</optional>
 		</dependency>
 		<dependency>
 			<groupId>gov.nist.isg</groupId>
 			<artifactId>pyramidio</artifactId>
 			<version>${pyramidio.version}</version>
+			<optional>true</optional>
 		</dependency>
 		<dependency>
 			<groupId>gov.nist.math</groupId>
