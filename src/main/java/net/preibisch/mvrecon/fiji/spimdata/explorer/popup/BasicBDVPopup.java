@@ -30,4 +30,13 @@ public interface BasicBDVPopup
 	public BigDataViewer getBDV();
 	public boolean bdvRunning();
 	public void closeBDV();
+
+	/**
+	 * Adopt an already-running BigDataViewer instance (e.g. when an explorer
+	 * transfers a live BDV across a panel rebuild, such as the BigStitcher
+	 * Stitching &lt;-&gt; Multiview mode switch). Implementations that manage their
+	 * own dynamic source list (lazy popups) must re-wire their selection
+	 * listener to the current panel and re-sync the current selection.
+	 */
+	public void setBDV( BigDataViewer bdv );
 }

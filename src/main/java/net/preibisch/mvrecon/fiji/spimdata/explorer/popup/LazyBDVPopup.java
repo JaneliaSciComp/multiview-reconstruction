@@ -32,6 +32,7 @@ import java.util.Map;
 
 import javax.swing.JMenuItem;
 
+import bdv.AbstractSpimSource;
 import bdv.BigDataViewer;
 import bdv.SpimSource;
 import bdv.ViewerImgLoader;
@@ -40,6 +41,9 @@ import bdv.VolatileSpimSource;
 import bdv.cache.CacheControl;
 import bdv.tools.brightness.ConverterSetup;
 import bdv.tools.brightness.MinMaxGroup;
+import bdv.tools.transformation.TransformedSource;
+import bdv.viewer.ConverterSetups;
+import bdv.viewer.Source;
 import bdv.viewer.SourceAndConverter;
 import bdv.viewer.ViewerOptions;
 import mpicbg.spim.data.generic.AbstractSpimData;
@@ -229,10 +233,73 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 		IOFunctions.println( "[LazyBDV-open] empty BDV opened: "
 				+ ( System.currentTimeMillis() - tStart ) + "ms" );
 
-		// Wire selection listener — fires on every explorer-row selection change.
-		// Raw types here intentional: SelectedViewDescriptionListener<AS> generics don't
-		// match cleanly through ExplorerWindow<?>. The panel's addListener accepts the
-		// raw form via the unchecked path.
+		registerSelectionListener( panel );
+
+		// Trigger an initial sync with whatever's already selected so the user sees
+		// their current selection in the new BDV without an extra click.
+		syncToCurrentSelection( panel );
+
+		IOFunctions.println( "[LazyBDV-open] TOTAL: "
+				+ ( System.currentTimeMillis() - tStart ) + "ms" );
+
+		return newBdv;
+	}
+
+	/**
+	 * Adopt an already-running (lazy) BDV when the explorer transfers it across a
+	 * panel rebuild (e.g. the BigStitcher Stitching &lt;-&gt; Multiview mode switch).
+	 * Re-attaches the selection listener to {@code this.panel} and re-syncs to the
+	 * current selection. The transferred BDV already carries the sources that were
+	 * added under the previous panel; {@link #activeBySetupId} is rebuilt from those
+	 * so the diff in {@link #syncSources} stays correct.
+	 */
+	@Override
+	@SuppressWarnings( { "rawtypes", "unchecked" } )
+	public void setBDV( final BigDataViewer existingBdv )
+	{
+		this.bdv = existingBdv;
+		if ( bdv == null || panel == null )
+			return;
+
+		// Rebuild the active-source bookkeeping from the sources the transferred BDV
+		// already holds, so syncSources' add/remove diff is computed against reality.
+		resetState();
+		final ConverterSetups converterSetups = bdv.getViewerFrame().getConverterSetups();
+		synchronized ( bdv.getViewer().state() )
+		{
+			for ( final SourceAndConverter< ? > soc : bdv.getViewer().state().getSources() )
+			{
+				Source< ? > src = soc.getSpimSource();
+				if ( src instanceof TransformedSource )
+					src = ( ( TransformedSource< ? > ) src ).getWrappedSource();
+				if ( !( src instanceof AbstractSpimSource ) )
+					continue;
+				final int setupId = ( ( AbstractSpimSource< ? > ) src ).getSetupId();
+				activeBySetupId.put( setupId, soc );
+				setupBySetupId.put( setupId, converterSetups.getConverterSetup( soc ) );
+			}
+		}
+		firstTransformDone = !activeBySetupId.isEmpty();
+
+		BDVTools.setFusedModeSimple( bdv, panel.getSpimData() );
+
+		registerSelectionListener( panel );
+		syncToCurrentSelection( panel );
+
+		bdv.getViewer().requestRepaint();
+	}
+
+	/**
+	 * Wire the selection listener that drives {@link #syncSources} on every
+	 * explorer-row selection change. Raw types here intentional:
+	 * {@code SelectedViewDescriptionListener<AS>} generics don't match cleanly
+	 * through {@code ExplorerWindow<?>}; the panel's addListener accepts the raw
+	 * form via the unchecked path.
+	 */
+	@SuppressWarnings( { "rawtypes", "unchecked" } )
+	private void registerSelectionListener( final ExplorerWindow< ? > panel )
+	{
+		final AbstractSpimData< ? > spimData = panel.getSpimData();
 		final ViewSetupExplorerPanel rawPanel = ( ViewSetupExplorerPanel ) panel;
 		final SelectedViewDescriptionListener listener = new SelectedViewDescriptionListener()
 		{
@@ -243,7 +310,6 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 					return;
 				try
 				{
-					@SuppressWarnings( "unchecked" )
 					final List< List< BasicViewDescription< ? > > > vds =
 							( List< List< BasicViewDescription< ? > > > ) viewDescriptions;
 					syncSources( spimData, vds );
@@ -261,19 +327,16 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 		};
 		rawPanel.addListener( listener );
 		registeredListener = listener;
+	}
 
-		// Trigger an initial sync with whatever's already selected so the user sees
-		// their current selection in the new BDV without an extra click.
+	private void syncToCurrentSelection( final ExplorerWindow< ? > panel )
+	{
+		final AbstractSpimData< ? > spimData = panel.getSpimData();
 		final List< List< BasicViewDescription< ? > > > current = new ArrayList<>();
 		for ( final List< BasicViewDescription< ? > > row : ( ( ViewSetupExplorerPanel< ? > ) panel ).selectedRows )
 			current.add( row );
 		try { syncSources( spimData, current ); }
 		catch ( final Exception ex ) { ex.printStackTrace(); }
-
-		IOFunctions.println( "[LazyBDV-open] TOTAL: "
-				+ ( System.currentTimeMillis() - tStart ) + "ms" );
-
-		return newBdv;
 	}
 
 	private void syncSources( final AbstractSpimData< ? > spimData,
