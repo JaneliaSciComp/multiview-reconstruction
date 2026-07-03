@@ -67,6 +67,7 @@ import mpicbg.spim.data.sequence.ViewSetup;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalDimensions;
+import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.KDTree;
 import net.imglib2.neighborsearch.RadiusNeighborSearch;
@@ -201,6 +202,16 @@ public class SplittingTools
 		return "splitPoints_" + ( System.currentTimeMillis() % 10000 );
 	}
 
+	/**
+	 * Group key identifying "the same view across channels": setups sharing angle, illumination and
+	 * tile differ only in channel and thus describe the same physical region, so they must be tiled
+	 * identically.
+	 */
+	private static String attributeGroupKey( final ViewSetup s )
+	{
+		return s.getAngle().getId() + "_" + s.getIllumination().getId() + "_" + s.getTile().getId();
+	}
+
 	public static ViewId findFirstPresentViewId( final SpimData2 spimData, final int setupId )
 	{
 		final TimePoints timepoints = spimData.getSequenceDescription().getTimePoints();
@@ -229,6 +240,36 @@ public class SplittingTools
 			final String fakeLabel,
 			final InterestPointSaver saver,
 			final CorrespondenceSaver corrSaver )
+	{
+		return splitImages( spimData, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, fakeLabel, saver, corrSaver, null );
+	}
+
+	/**
+	 * Split all ViewSetups of the dataset, optionally <i>driving</i> the split geometry from a
+	 * single channel.
+	 *
+	 * @param driveByChannelIds if non-null, only ViewSetups whose channel id is contained in this
+	 *        set are split based on their own correspondences/criterion. Every other ViewSetup
+	 *        reuses ("mirrors") the intervals of the matching (same angle/illumination/tile and
+	 *        equal dimensions) driving setup, so all channels are tiled identically - required for
+	 *        downstream fusion. {@code null} splits every setup independently (original behaviour).
+	 *        Typical use: only one channel was registered (e.g. multi-consensus RANSAC), so only
+	 *        that channel can drive the split, but all channels must be subdivided consistently.
+	 */
+	public static SpimData2 splitImages(
+			final SpimData2 spimData,
+			final SplitView splitting,
+			final boolean assingIlluminationsFromTileIds,
+			final InterestPointAdding ipAdding,
+			final double pointDensity,
+			final int minPoints,
+			final int maxPoints,
+			final double error,
+			final double excludeRadius,
+			final String fakeLabel,
+			final InterestPointSaver saver,
+			final CorrespondenceSaver corrSaver,
+			final Set< Integer > driveByChannelIds )
 	{
 		final TimePoints timepoints = spimData.getSequenceDescription().getTimePoints();
 
@@ -272,17 +313,33 @@ public class SplittingTools
 		final Map< ViewSetup, ArrayList< Interval > > splitResults = new HashMap<>();
 
 		final int nThreads = Threads.numThreads();
-		IOFunctions.println( "Parallel splitting with " + nThreads + " threads for " + oldSetups.size() + " setups..." );
 
-		// Build ViewIds for each setup (find first present timepoint)
-		final List< ViewId > viewIds = new ArrayList<>();
+		// When a driving channel is selected, only that channel's setups are split based on their
+		// own correspondences; every other channel mirrors the intervals of the matching
+		// (same angle/illumination/tile) driving setup, so all channels are tiled identically
+		// (required for downstream fusion). Otherwise every setup is split independently.
+		final boolean driveByChannel = driveByChannelIds != null;
+
+		final List< ViewSetup > setupsToSplit = new ArrayList<>();
 		for ( final ViewSetup oldSetup : oldSetups )
-			viewIds.add( findFirstPresentViewId( spimData, oldSetup.getId() ) );
+			if ( !driveByChannel || driveByChannelIds.contains( oldSetup.getChannel().getId() ) )
+				setupsToSplit.add( oldSetup );
 
-		// Create parallel tasks
+		if ( setupsToSplit.isEmpty() )
+			throw new IllegalArgumentException( "No ViewSetups match the selected driving channel(s) " + driveByChannelIds + " - nothing to split." );
+
+		IOFunctions.println( "Parallel splitting with " + nThreads + " threads for " + setupsToSplit.size() +
+				( driveByChannel
+					? " driving setup(s) of channel " + driveByChannelIds + "; the remaining " + ( oldSetups.size() - setupsToSplit.size() ) + " setup(s) will mirror them."
+					: " setups..." ) );
+
+		// Create parallel tasks (only for the setups we split directly)
 		final List< Callable< SplitResult > > tasks = new ArrayList<>();
-		for ( final ViewId viewId : viewIds )
+		for ( final ViewSetup setup : setupsToSplit )
+		{
+			final ViewId viewId = findFirstPresentViewId( spimData, setup.getId() );
 			tasks.add( () -> splitting.split( viewId ) );
+		}
 
 		// Execute
 		final List< SplitResult > allResults = new ArrayList<>();
@@ -293,7 +350,7 @@ public class SplittingTools
 
 			for ( int i = 0; i < futures.size(); i++ )
 			{
-				final ViewSetup setup = oldSetups.get( i );
+				final ViewSetup setup = setupsToSplit.get( i );
 				final SplitResult result = futures.get( i ).get();
 
 				if ( result == null )
@@ -321,6 +378,41 @@ public class SplittingTools
 		finally
 		{
 			taskExecutor.shutdown();
+		}
+
+		// Mirror the driving channel's split geometry onto all remaining setups so every channel
+		// is tiled identically (the intervals are in image-local [0..size-1] coordinates, so they
+		// transfer directly to a setup of equal dimensions).
+		if ( driveByChannel )
+		{
+			// group key (angle, illumination, tile) -> a driving setup that was split
+			final Map< String, ViewSetup > drivingByGroup = new HashMap<>();
+			for ( final ViewSetup s : setupsToSplit )
+				drivingByGroup.putIfAbsent( attributeGroupKey( s ), s );
+
+			for ( final ViewSetup s : oldSetups )
+			{
+				if ( splitResults.containsKey( s ) )
+					continue; // a driving setup, already split
+
+				final ViewSetup driver = drivingByGroup.get( attributeGroupKey( s ) );
+
+				if ( driver != null && Intervals.equalDimensions( driver.getSize(), s.getSize() ) )
+				{
+					splitResults.put( s, new ArrayList<>( splitResults.get( driver ) ) );
+					IOFunctions.println( "ViewSetup " + s.getId() + " mirrors split of driving ViewSetup " +
+							driver.getId() + " (" + splitResults.get( s ).size() + " tiles)" );
+				}
+				else
+				{
+					// no matching driving setup (or differing dimensions): keep as a single un-split tile
+					IOFunctions.printErr( "WARNING: ViewSetup " + s.getId() + " has no matching driving setup" +
+							( driver != null ? " of equal dimensions" : "" ) + "; keeping it as a single (un-split) tile." );
+					final ArrayList< Interval > single = new ArrayList<>();
+					single.add( new FinalInterval( s.getSize() ) );
+					splitResults.put( s, single );
+				}
+			}
 		}
 
 		// ==================== Process Split Results in Parallel ====================
@@ -688,9 +780,14 @@ public class SplittingTools
 				final ViewInterestPointLists newVipl = new ViewInterestPointLists( newViewId.getTimePointId(), newViewId.getViewSetupId() );
 				final ViewInterestPointLists oldVipl = spimData.getViewInterestPoints().getViewInterestPointLists( oldViewId );
 
-				// only update interest points for present views
-				// oldVipl may be null for missing views
-				if ( spimData.getSequenceDescription().getMissingViews() != null && !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( oldViewId ) )
+				// only update interest points for present views.
+				// A null MissingViews (or null inner set) means NO views are missing, i.e. all are present -
+				// e.g. datasets whose XML has no <MissingViews> element (such as this OME-ZARR dataset) load
+				// it as null. The old guard ( getMissingViews() != null && !contains(..) ) short-circuited to
+				// false in that case and silently skipped ALL interest-point splitting, producing an empty
+				// <ViewInterestPoints/>. Treat null as "present".
+				final MissingViews mvSetup = spimData.getSequenceDescription().getMissingViews();
+				if ( mvSetup == null || mvSetup.getMissingViews() == null || !mvSetup.getMissingViews().contains( oldViewId ) )
 				{
 					for ( final String label : oldVipl.getHashMap().keySet() )
 					{
@@ -1004,9 +1101,13 @@ public class SplittingTools
 		final ViewInterestPointLists oldVipl = spimData.getViewInterestPoints().getViewInterestPointLists( oldViewId );
 		final ViewInterestPointLists newVipl = newInterestpoints.get( newViewId );
 
-		// only update interest points for present views
-		// oldVipl may be null for missing views
-		if ( spimData.getSequenceDescription().getMissingViews() != null && !spimData.getSequenceDescription().getMissingViews().getMissingViews().contains( oldViewId ) )
+		// only update interest points for present views.
+		// A null MissingViews (or null inner set) means NO views are missing, i.e. all are present
+		// (e.g. datasets whose XML has no <MissingViews> element load it as null). Treat null as "present",
+		// otherwise correspondences would be silently skipped for the whole dataset (mirrors the guard in
+		// processSetupStatic).
+		final MissingViews mvCorr = spimData.getSequenceDescription().getMissingViews();
+		if ( mvCorr == null || mvCorr.getMissingViews() == null || !mvCorr.getMissingViews().contains( oldViewId ) )
 		{
 			// Lazy cache for interest point maps, either caller-supplied (amortized across calls) or fresh per call.
 			// Key: "timepointId_setupId_label" -> Map of detection IDs
