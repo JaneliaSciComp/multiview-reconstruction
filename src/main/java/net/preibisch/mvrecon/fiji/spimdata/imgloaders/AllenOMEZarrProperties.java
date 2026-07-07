@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders;
 
 import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
@@ -48,6 +49,17 @@ public class AllenOMEZarrProperties implements N5Properties
 
 	// mapping of viewIDs to corresponding OME-ZARRs
 	private final Map< ViewId, OMEZARREntry > viewIdToOmeZarrPath;
+
+	// cache of multiscale metadata keyed by the zarr dataset path. The metadata for a
+	// given zarr array is invariant across the (setupId, timepointId) combinations that
+	// resolve to the same path, so we read it from N5 at most once per distinct path.
+	// This matters most for split datasets: ~N split setups delegate to the same
+	// underlying zarr, and every getMipmapResolutions/getDataType/getDimensions/
+	// getDatasetPath call would otherwise trigger a fresh N5 attribute read. This
+	// AllenOMEZarrProperties instance is a per-loader singleton (created once by
+	// N5ImageLoader.createN5PropertiesInstance()), so the cache is shared across all
+	// setups and all split tiles.
+	private final ConcurrentHashMap< String, OmeNgffMultiScaleMetadata > multiscaleCache = new ConcurrentHashMap<>();
 
 	// only warn once per opened XML if TranslationCoordinateTransformation is missing
 	private boolean warnedMissingTranslation = false;
@@ -291,10 +303,15 @@ public class AllenOMEZarrProperties implements N5Properties
 		return String.format( "%s/%s", viewSetupPath, datasetPath);
 	}
 
-	// retrieve and cache the multiscale metadata
+	// retrieve and cache the multiscale metadata (keyed by zarr dataset path, so it is
+	// read from N5 at most once per distinct path regardless of how many setups /
+	// split tiles resolve to it)
 	private OmeNgffMultiScaleMetadata getViewSetupMultiscaleMetadata(N5Reader n5, int timePointId, int setupId) {
-		String datasetPath = getPath( setupId, timePointId );
+		final String datasetPath = getPath( setupId, timePointId );
+		return multiscaleCache.computeIfAbsent( datasetPath, path -> loadMultiscaleMetadata( n5, path ) );
+	}
 
+	private OmeNgffMultiScaleMetadata loadMultiscaleMetadata(N5Reader n5, String datasetPath) {
 		System.out.println( "Getting multiscale metadata for " + datasetPath );
 		OmeNgffMetadata omeMetadata = n5.getAttribute(datasetPath, "ome", OmeNgffMetadata.class);
 
