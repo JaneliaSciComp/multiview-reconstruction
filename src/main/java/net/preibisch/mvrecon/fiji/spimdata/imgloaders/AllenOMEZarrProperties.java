@@ -29,6 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata.OmeNgffDataset;
@@ -106,8 +107,50 @@ public class AllenOMEZarrProperties implements N5Properties
 	{
 		final String path = getMultiscaleDatasetPathOrDefault(n5, timepointId, setupId, level);
 		final long[] dimensions = n5.getDatasetAttributes( path ).getDimensions();
-		// dataset dimensions is 5D, remove the channel and time dimensions
-		return Arrays.copyOf( dimensions, 3 );
+
+		final int[] xyz = getRawSpatialAxesIndices( n5, setupId, timepointId );
+		if ( xyz == null )
+			return Arrays.copyOf( dimensions, 3 ); // axes metadata missing/incomplete: assume standard TCZYX/XYZCT order
+
+		return new long[] { dimensions[ xyz[ 0 ] ], dimensions[ xyz[ 1 ] ], dimensions[ xyz[ 2 ] ] };
+	}
+
+	/**
+	 * Index of the x, y, and z axes (in that order) within the RAW dimension order used
+	 * by the underlying N5/n5-zarr {@code CellGrid} / {@code RandomAccessibleInterval},
+	 * which is the reverse of the declared OME-NGFF {@code axes} metadata order (e.g.
+	 * metadata axes=[t,c,z,y,x] is reported as data dimensions=[x,y,z,c,t]) - and the
+	 * same reversal applies to the per-axis {@code scale}/{@code translation} arrays in
+	 * the coordinateTransformations metadata (see {@link #getMipMapResolutions}).
+	 * Producers that declare a different (but equally NGFF-valid) axes order - e.g.
+	 * axes=[x,y,z] instead of [z,y,x] - would otherwise have X and Z silently swapped by
+	 * callers that assume the standard TCZYX/XYZCT position (0,1,2), which shows up as a
+	 * rotated/transposed volume, or (for scale/translation) a squished/stretched one.
+	 * Look up the x/y/z entries by name instead.
+	 *
+	 * @return {xIndex, yIndex, zIndex} into the raw (reversed) per-axis array, or
+	 *         {@code null} if the axes metadata is missing or does not name all three
+	 *         spatial axes (callers should then assume the standard {0,1,2} order).
+	 */
+	public int[] getRawSpatialAxesIndices( final N5Reader n5, final int setupId, final int timepointId )
+	{
+		return xyzAxesIndices( getViewSetupMultiscaleMetadata( n5, timepointId, setupId ).axes );
+	}
+
+	private static int[] xyzAxesIndices( final Axis[] axes )
+	{
+		if ( axes == null )
+			return null;
+
+		final String[] xyz = { "x", "y", "z" };
+		final int[] idx = { -1, -1, -1 };
+
+		for ( int i = 0; i < axes.length; ++i )
+			for ( int d = 0; d < 3; ++d )
+				if ( xyz[ d ].equalsIgnoreCase( axes[ i ].getName() ) )
+					idx[ d ] = axes.length - 1 - i; // dimensions[]/scale[]/translation[] are axes[] reversed
+
+		return ( idx[ 0 ] < 0 || idx[ 1 ] < 0 || idx[ 2 ] < 0 ) ? null : idx;
 	}
 
 	//
@@ -165,6 +208,12 @@ public class AllenOMEZarrProperties implements N5Properties
 		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
 		final String path = n5properties.getPath( setupId, timePointId );
 
+		// index of x/y/z within the raw (reversed) scale/translation arrays - see
+		// getRawSpatialAxesIndices(); falls back to the standard TCZYX/XYZCT position
+		// (0,1,2) if the axes metadata is missing or incomplete
+		final int[] xyzIdx = xyzAxesIndices( multiScaleMetadata.axes );
+		final int[] raw = xyzIdx != null ? xyzIdx : new int[] { 0, 1, 2 };
+
 		// iterate over all resolution levels for scale
 		for ( int s = 0; s < multiScaleMetadata.datasets.length; ++s )
 		{
@@ -181,7 +230,7 @@ public class AllenOMEZarrProperties implements N5Properties
 
 					for ( int d = 0; d < mipMapResolutions[ s ].length; ++d )
 					{
-						mipMapResolutions[ s ][ d ] = scale.getScale()[ d ] / scaleS0[ d ];
+						mipMapResolutions[ s ][ d ] = scale.getScale()[ raw[ d ] ] / scaleS0[ raw[ d ] ];
 						mipMapResolutions[ s ][ d ] = Math.round(mipMapResolutions[ s ][ d ]*10000)/10000d; // round to the 5th digit
 					}
 				}
@@ -231,7 +280,7 @@ public class AllenOMEZarrProperties implements N5Properties
 						if ( Math.abs( r - 1.0 ) < 0.01 )
 							continue;
 
-						final double pxTranslation = (t.getTranslation()[d] - translationS0[d]) / scaleS0[d];
+						final double pxTranslation = (t.getTranslation()[ raw[ d ] ] - translationS0[ raw[ d ] ]) / scaleS0[ raw[ d ] ];
                         final double logScale = Math.log( r ) / Math.log(2);
 						final double expectedAveraging = Math.pow(2, logScale - 1) - 0.5; // 0.5, 1.5, 3.5, 7.5, ...
 						final boolean matchesAveraging = Math.abs( pxTranslation - expectedAveraging ) < 0.05;
