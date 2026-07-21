@@ -101,44 +101,72 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 	}
 
 	/**
-	 * The volume built by {@code N5ImageLoader.prepareCachedImage()} (superclass) is
-	 * constructed directly from the raw, n5-zarr-reported dimension order, which is
-	 * only correct if the producer declared the standard TCZYX (metadata) / XYZCT
-	 * (data) axes convention. Some producers may
-	 * declare a different, equally NGFF-valid axes order (e.g. axes=[x,y,z] instead
-	 * of [z,y,x]), in which case the raw volume has its spatial axes out of order
-	 * (e.g. X and Z swapped) - which looks like a rotated/transposed image. Use the
-	 * declared axes metadata to permute the spatial axes (0,1,2) back into true
-	 * X,Y,Z order before any higher-dimension (channel/timepoint) hyperslicing.
+	 * Permute the raw, n5-zarr-reported volume into canonical X,Y,Z,(C),(T) data order using the
+	 * declared axes metadata (spatial axes by name, channel/time by type; see
+	 * {@link AllenOMEZarrProperties#getRawAxisIndices}). OME-NGFF does not require the canonical
+	 * order, so a producer may declare e.g. axes=[x,y,z] instead of [z,y,x] (looks transposed) or
+	 * put channel/time off their usual positions (would swap c/t in the positional hyperslicing of
+	 * {@link OMEZARREntry#extract3DVolume}); reordering here makes that downstream slicing correct
+	 * by construction.
 	 */
-	private < T > RandomAccessibleInterval< T > correctSpatialAxesOrder( final RandomAccessibleInterval< T > vol, final int setupId, final int timepointId )
+	private < T > RandomAccessibleInterval< T > reorderToCanonicalAxes( final RandomAccessibleInterval< T > vol, final int setupId, final int timepointId )
 	{
 		if ( allenProperties == null || n5Reader == null )
 			return vol;
 
-		final int[] rawXYZ = allenProperties.getRawSpatialAxesIndices( n5Reader, setupId, timepointId );
-		if ( rawXYZ == null )
-			return vol; // axes metadata missing/incomplete: assume the volume is already in X,Y,Z order
+		final int[] raw = allenProperties.getRawAxisIndices( n5Reader, setupId, timepointId ); // { xRaw, yRaw, zRaw, cRaw, tRaw }
+		if ( raw == null )
+			return vol; // axes metadata missing/incomplete: assume the volume is already canonical
 
-		// bring true X to position 0 and true Y to position 1 via at most two pairwise
-		// axis swaps (any permutation of 3 elements decomposes into <= 2 transpositions);
-		// Z then ends up correctly at position 2 automatically. 'cur[k]' is the raw-dim
-		// index currently sitting at position k of 'out'.
+		// desired[p] = raw dim that belongs at output position p, in canonical order X,Y,Z,(C),(T),
+		// keeping only declared axes (raw[i] >= 0). Bail unless it maps every dim distinctly (i.e.
+		// the metadata agrees with the data), rather than applying a bogus permutation.
+		final int n = vol.numDimensions();
+		final int[] desired = new int[ n ];
+		int m = 0;
+		for ( final int r : raw )
+			if ( r >= 0 && m < n )
+				desired[ m++ ] = r;
+
+		if ( m != n || !isPermutation( desired ) )
+			return vol;
+
+		// realize the permutation via pairwise swaps: after step q, position q holds its target;
+		// cur[k] is the raw dim currently at position k. desired[q] still sits in cur[q+1..n-1].
 		RandomAccessibleInterval< T > out = vol;
-		final int[] cur = { 0, 1, 2 };
-		for ( int t = 0; t < 2; ++t )
+		final int[] cur = new int[ n ];
+		for ( int k = 0; k < n; ++k )
+			cur[ k ] = k;
+
+		for ( int q = 0; q < n; ++q )
 		{
-			if ( cur[ t ] == rawXYZ[ t ] )
+			if ( cur[ q ] == desired[ q ] )
 				continue;
 
-			final int at = ( t == 0 && cur[ 1 ] == rawXYZ[ 0 ] ) ? 1 : 2;
-			out = Views.permute( out, t, at );
-			final int tmp = cur[ t ];
-			cur[ t ] = cur[ at ];
-			cur[ at ] = tmp;
+			int from = q + 1;
+			while ( cur[ from ] != desired[ q ] )
+				++from;
+
+			out = Views.permute( out, q, from );
+			final int tmp = cur[ q ];
+			cur[ q ] = cur[ from ];
+			cur[ from ] = tmp;
 		}
 
 		return out;
+	}
+
+	// true iff a[] is a permutation of 0..a.length-1
+	private static boolean isPermutation( final int[] a )
+	{
+		final boolean[] seen = new boolean[ a.length ];
+		for ( final int v : a )
+		{
+			if ( v < 0 || v >= a.length || seen[ v ] )
+				return false;
+			seen[ v ] = true;
+		}
+		return true;
 	}
 
 	public StorageFormat getFormat() { return format; }
@@ -211,7 +239,7 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 			final CacheHints cacheHints,
 			final T type )
 	{
-		final RandomAccessibleInterval< T > vol = correctSpatialAxesOrder(
+		final RandomAccessibleInterval< T > vol = reorderToCanonicalAxes(
 				super.prepareCachedImage( datasetPath, setupId, timepointId, level, cacheHints, type ),
 				setupId, timepointId );
 		return viewIdToPath.get( new ViewId(timepointId, setupId) ).extract3DVolume( vol );

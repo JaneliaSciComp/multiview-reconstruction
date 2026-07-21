@@ -137,7 +137,7 @@ public class AllenOMEZarrProperties implements N5Properties
 		return xyzAxesIndices( getViewSetupMultiscaleMetadata( n5, timepointId, setupId ).axes );
 	}
 
-	private static int[] xyzAxesIndices( final Axis[] axes )
+	public static int[] xyzAxesIndices( final Axis[] axes )
 	{
 		if ( axes == null )
 			return null;
@@ -151,6 +151,38 @@ public class AllenOMEZarrProperties implements N5Properties
 					idx[ d ] = axes.length - 1 - i; // dimensions[]/scale[]/translation[] are axes[] reversed
 
 		return ( idx[ 0 ] < 0 || idx[ 1 ] < 0 || idx[ 2 ] < 0 ) ? null : idx;
+	}
+
+	/**
+	 * Raw (reversed-from-metadata) dimension index of each canonical axis, as
+	 * {@code { xRaw, yRaw, zRaw, cRaw, tRaw }} (x/y/z by name, c/t by type; cRaw/tRaw are -1 when
+	 * that axis is not declared), or {@code null} if the axes metadata does not name all of x,y,z
+	 * (callers then assume the standard XYZCT order).
+	 */
+	public int[] getRawAxisIndices( final N5Reader n5, final int setupId, final int timepointId )
+	{
+		final Axis[] axes = getViewSetupMultiscaleMetadata( n5, timepointId, setupId ).axes;
+		final int[] xyz = xyzAxesIndices( axes );
+		if ( xyz == null )
+			return null;
+
+		return new int[] { xyz[ 0 ], xyz[ 1 ], xyz[ 2 ], rawAxisIndexByType( axes, Axis.CHANNEL ), rawAxisIndexByType( axes, Axis.TIME ) };
+	}
+
+	/**
+	 * Raw (reversed-from-metadata) dimension index of the axis with the given OME-NGFF
+	 * {@code type} ({@link Axis#CHANNEL}/{@link Axis#TIME}), or -1 if none. Channel and time are
+	 * matched by type since - unlike the three {@code type=space} axes told apart by x/y/z name -
+	 * their type is a more reliable discriminator than the non-standardized axis name.
+	 */
+	public static int rawAxisIndexByType( final Axis[] axes, final String type )
+	{
+		if ( axes != null )
+			for ( int i = 0; i < axes.length; ++i )
+				if ( type.equalsIgnoreCase( axes[ i ].getType() ) )
+					return axes.length - 1 - i; // dimensions[] is axes[] reversed
+
+		return -1;
 	}
 
 	//
