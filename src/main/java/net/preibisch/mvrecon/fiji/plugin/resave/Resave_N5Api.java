@@ -473,6 +473,9 @@ public class Resave_N5Api implements PlugIn
 
 		sdReduced.setBasePathURI( URITools.getParentURINoEx( n5Params.xmlURI ) );
 
+		// best-effort: recording history must never abort a resave whose actual N5 data has
+		// already been written (that would leave orphaned data with a stale/unwritten XML below)
+		try
 		{
 			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "inputXml", inputXmlURI );
@@ -509,6 +512,10 @@ public class Resave_N5Api implements PlugIn
 					params,
 					vidCopy,
 					"resave:" + n5Params.n5URI );
+		}
+		catch ( final Throwable t )
+		{
+			IOFunctions.println( "[ActionHistory] failed to record 'resave': " + t );
 		}
 
 		if ( saveXML )
