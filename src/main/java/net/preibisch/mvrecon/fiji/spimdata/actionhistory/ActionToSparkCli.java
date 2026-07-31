@@ -330,6 +330,16 @@ public class ActionToSparkCli
 		final ArrayList<String> out = new ArrayList<>( recipes.size() );
 		final Map<String,String> params = record.getParams();
 		final boolean nonRigid = nonRigid( params );
+
+		// "Around median"/"Weakest" detection limits have no Spark CLI equivalent (--maxSpots only
+		// supports brightest-N, see the "maxSpots" mapping in the detect-interestpoints recipe) and
+		// are silently omitted from the rendered command below; warn so that difference is visible
+		// here instead of only in the raw params dump.
+		final String limitMode = params.get( "limitDetectionsMode" );
+		if ( limitMode != null && !"BRIGHTEST".equals( limitMode ) )
+			out.add( "# WARNING: mvrecon limited detections to " + params.get( "maxDetections" ) + " (" + limitMode
+					+ ") — BigStitcher-Spark's --maxSpots only supports brightest-N, so this limit is NOT applied below; results will include ALL detections." );
+
 		for ( final Recipe recipe : recipes )
 		{
 			if ( recipe.requiresNonRigid != null && recipe.requiresNonRigid != nonRigid )

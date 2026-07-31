@@ -110,11 +110,23 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		if ( downsampleXYIndex >= 1 )
 			p.put( "downsampleXY", Integer.toString( downsampleXYIndex ) );
 		p.put( "downsampleZ", Integer.toString( downsampleZ ) );
-		// Spark --maxSpots keeps the brightest N per view. mvrecon's "Limit amount of detections"
-		// offers three modes (brightest / around median / weakest); only the brightest mode (index 0)
-		// matches Spark's semantics, so only then is it translatable.
-		if ( limitDetections && maxDetectionsTypeIndex == 0 )
-			p.put( "maxSpots", Integer.toString( maxDetections ) );
+		// mvrecon's "Limit amount of detections" offers three modes (brightest / around median /
+		// weakest); Spark's --maxSpots only supports "brightest N per view", so only that mode
+		// translates to a flag. Record the mode + count regardless, so a non-brightest limit that
+		// silently can't be translated is still visible in the params dump / XML rather than
+		// vanishing without a trace (see ActionToSparkCli's warning comment for the CLI-side half
+		// of this).
+		if ( limitDetections )
+		{
+			final String mode;
+			if ( maxDetectionsTypeIndex == 0 ) mode = "BRIGHTEST";
+			else if ( maxDetectionsTypeIndex == 1 ) mode = "AROUND_MEDIAN";
+			else mode = "WEAKEST";
+			p.put( "limitDetectionsMode", mode );
+			p.put( "maxDetections", Integer.toString( maxDetections ) );
+			if ( maxDetectionsTypeIndex == 0 )
+				p.put( "maxSpots", Integer.toString( maxDetections ) );
+		}
 		return p;
 	}
 
