@@ -113,6 +113,35 @@ public final class ActionHistoryRecorder
 	}
 
 	/**
+	 * Merge a sub-component's {@code describeParameters()} output into the action's param map,
+	 * skipping null values. Used by callers that pull exporter/matcher-specific params in on top of
+	 * their own (e.g. Image_Fusion + its ImgExport, Interest_Point_Registration + its PairwiseGUI).
+	 */
+	public static void merge( final Map<String,String> dest, final Map<String,String> src )
+	{
+		if ( dest == null || src == null )
+			return;
+		for ( final Map.Entry<String,String> e : src.entrySet() )
+			if ( e.getValue() != null )
+				dest.put( e.getKey(), e.getValue() );
+	}
+
+	/** "tp,vs" — the ViewId format every Spark CLI view-selection flag (-vi, -fv) expects. */
+	public static String formatViewId( final ViewId v )
+	{
+		return v.getTimePointId() + "," + v.getViewSetupId();
+	}
+
+	/** {@value #MULTI_VALUE_DELIM}-delimited "tp,vs" pairs, for repeatKeys-expanded flags (-vi, -fv). */
+	public static String joinViewIds( final Collection<? extends ViewId> views )
+	{
+		final List<String> parts = new ArrayList<>();
+		for ( final ViewId v : views )
+			parts.add( formatViewId( v ) );
+		return String.join( ActionToSparkCli.MULTI_VALUE_DELIM, parts );
+	}
+
+	/**
 	 * Describe a view selection as the most parsimonious BigStitcher-Spark view-selection flags.
 	 *
 	 * <p>BigStitcher-Spark's {@code AbstractSelectableViews} takes independent per-dimension id
@@ -219,10 +248,7 @@ public final class ActionHistoryRecorder
 		}
 		else
 		{
-			final List<String> vi = new ArrayList<>();
-			for ( final ViewId v : viewIds )
-				vi.add( v.getTimePointId() + "," + v.getViewSetupId() );
-			put( params, "viewIds", String.join( ActionToSparkCli.MULTI_VALUE_DELIM, vi ) );
+			put( params, "viewIds", joinViewIds( viewIds ) );
 		}
 	}
 
