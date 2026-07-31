@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 
 /**
@@ -70,10 +71,10 @@ public class ActionToSparkCli
 		 */
 		Boolean requiresNonRigid = null;
 		/**
-		 * Single key whose recorded value is a {@value #MULTI_VALUE_DELIM}-delimited list expanded
-		 * into repeated flag occurrences (e.g. {@code -ip beads -ip nuclei}). Used for {@code -ip}.
+		 * Keys whose recorded value is a {@value #MULTI_VALUE_DELIM}-delimited list expanded into
+		 * repeated flag occurrences (e.g. {@code -ip beads -ip nuclei}, {@code -fv '0,0' -fv '0,1'}).
 		 */
-		String repeatKey = null;
+		Set<String> repeatKeys = null;
 		/**
 		 * Whole-recipe skip condition evaluated against the recorded params; {@code null} = never
 		 * skip. Used for stages the mvrecon GUI can run without their sibling stage, e.g. "solver" is
@@ -184,6 +185,8 @@ public class ActionToSparkCli
 				new String[]{ "splitTimepoints", "--splitTimepoints" }
 		);
 		solverRecipe.skipWhen = p -> "NO_OPTIMIZATION".equals( p.get( "globalOptMethod" ) );
+		// Solver's -fv is repeatable ('0,0' '0,1' ...), one tp,vs pair per flag occurrence
+		solverRecipe.repeatKeys = Collections.singleton( "fixedViews" );
 		registration.add( solverRecipe );
 		r.put( "register-interestpoints", registration );
 
@@ -289,7 +292,7 @@ public class ActionToSparkCli
 				new String[]{ "shardSize", "--shardSize" }
 		);
 		nonRigidRun.requiresNonRigid = true;
-		nonRigidRun.repeatKey = "interestPoints";
+		nonRigidRun.repeatKeys = Collections.singleton( "interestPoints" );
 		fusion.add( nonRigidRun );
 		r.put( "fusion", fusion );
 
@@ -398,7 +401,7 @@ public class ActionToSparkCli
 				continue;
 			final String flag = mapping.getValue();
 			// multi-valued: emit `flag value` per non-empty element
-			if ( mapping.getKey().equals( recipe.repeatKey ) )
+			if ( recipe.repeatKeys != null && recipe.repeatKeys.contains( mapping.getKey() ) )
 			{
 				for ( final String part : value.split( java.util.regex.Pattern.quote( MULTI_VALUE_DELIM ) ) )
 					if ( !part.isEmpty() )
