@@ -34,6 +34,8 @@ import java.util.stream.Collectors;
 
 import com.google.common.collect.Sets;
 
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+
 import ij.ImageJ;
 import ij.plugin.PlugIn;
 import mpicbg.spim.data.sequence.SetupImgLoader;
@@ -153,6 +155,28 @@ public class Image_Fusion implements PlugIn
 		if ( !exporter.queryParameters( fusion ) )
 			return false;
 
+		// the converter/type pair used to build the fused output; invariant across all groups, so it
+		// is built once here (also feeds the action-history "pixelType" string below, keeping it in
+		// sync with the actual output type instead of a second hardcoded mapping)
+		final Converter conv;
+		final Type type;
+
+		if ( fusion.getPixelType() == 2 )
+		{
+			conv = new RealUnsignedByteConverter<>( fusion.minIntensity(), fusion.maxIntensity() );
+			type = new UnsignedByteType();
+		}
+		else if ( fusion.getPixelType() == 1 )
+		{
+			conv = new RealUnsignedShortConverter<>( fusion.minIntensity(), fusion.maxIntensity() );
+			type = new UnsignedShortType();
+		}
+		else
+		{
+			conv = null;
+			type = new FloatType();
+		}
+
 		// record action history
 		{
 			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
@@ -166,15 +190,9 @@ public class Image_Fusion implements PlugIn
 				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "preserveAnisotropy", Boolean.TRUE );
 				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "anisotropyFactor", fusion.getAnisotropyFactor() );
 			}
-			// translate mvrecon pixel-type int to BigStitcher-Spark dataType name
-			final String dataType;
-			switch ( fusion.getPixelType() )
-			{
-				case 2: dataType = "UINT8"; break;
-				case 1: dataType = "UINT16"; break;
-				default: dataType = "FLOAT32"; break;
-			}
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "pixelType", dataType );
+			// BigStitcher-Spark dataType name, derived from the actual output type above (not a
+			// separately hardcoded pixelType switch)
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "pixelType", N5Utils.dataType( (NativeType)type ).name() );
 			// min/max are the intensity range that integer output is scaled from; only meaningful when
 			// the output is UINT8/UINT16 (FLOAT32 keeps raw values, Spark ignores the flags)
 			if ( fusion.getPixelType() == 1 || fusion.getPixelType() == 2 )
@@ -254,25 +272,6 @@ public class Image_Fusion implements PlugIn
 
 			final int[] blocksize = exporter.blocksize();
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): block size used during fusion: " + Util.printCoordinates( blocksize ) );
-
-			final Converter conv;
-			final Type type;
-
-			if ( fusion.getPixelType() == 2 )
-			{
-				conv = new RealUnsignedByteConverter<>( fusion.minIntensity(), fusion.maxIntensity() );
-				type = new UnsignedByteType();
-			}
-			else if ( fusion.getPixelType() == 1 )
-			{
-				conv = new RealUnsignedShortConverter<>( fusion.minIntensity(), fusion.maxIntensity() );
-				type = new UnsignedShortType();
-			}
-			else
-			{
-				conv = null;
-				type = new FloatType();
-			}
 
 			// get, and update the transformations with anisotropy, downsampling
 			final Set< ? extends ViewId > views =
