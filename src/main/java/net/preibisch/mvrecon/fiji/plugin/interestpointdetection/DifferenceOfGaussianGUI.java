@@ -106,9 +106,28 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		if ( !Double.isNaN( maxIntensity ) )
 			p.put( "maxIntensity", Double.toString( maxIntensity ) );
 		// downsampleXYIndex holds the actual factor (1,2,4,...) for fixed choices, or 0/-1 for the
-		// view-dependent "match Z resolution" modes which have no single CLI value -> omit those
+		// "match Z resolution" auto modes, which compute a factor per view from voxel calibration
+		// (DownsampleTools.downsampleFactor) rather than a single fixed number. Resolve it here from
+		// the actual views being processed so the recorded command carries the real number instead
+		// of silently omitting -dsxy, which would leave Spark's own --downsampleXY default (2) in
+		// effect -- likely wrong. If views disagree (mixed calibration), a single whole-job flag
+		// can't represent it; record the distinct values and let the render-time warning surface it.
 		if ( downsampleXYIndex >= 1 )
 			p.put( "downsampleXY", Integer.toString( downsampleXYIndex ) );
+		else
+		{
+			final java.util.LinkedHashSet<Integer> resolved = new java.util.LinkedHashSet<>();
+			for ( final ViewId v : viewIdsToProcess )
+			{
+				final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( v.getTimePointId(), v.getViewSetupId() );
+				if ( vd.isPresent() )
+					resolved.add( DownsampleTools.downsampleFactor( downsampleXYIndex, downsampleZ, vd.getViewSetup().getVoxelSize() ) );
+			}
+			if ( resolved.size() == 1 )
+				p.put( "downsampleXY", Integer.toString( resolved.iterator().next() ) );
+			else if ( resolved.size() > 1 )
+				p.put( "downsampleXYVaries", resolved.toString() );
+		}
 		p.put( "downsampleZ", Integer.toString( downsampleZ ) );
 		// mvrecon's "Limit amount of detections" offers three modes (brightest / around median /
 		// weakest); Spark's --maxSpots only supports "brightest N per view", so only that mode

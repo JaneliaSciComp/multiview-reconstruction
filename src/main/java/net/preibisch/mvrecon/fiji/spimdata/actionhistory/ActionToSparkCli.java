@@ -340,6 +340,16 @@ public class ActionToSparkCli
 			out.add( "# WARNING: mvrecon limited detections to " + params.get( "maxDetections" ) + " (" + limitMode
 					+ ") — BigStitcher-Spark's --maxSpots only supports brightest-N, so this limit is NOT applied below; results will include ALL detections." );
 
+		// mvrecon's "match Z resolution" auto XY-downsampling resolved to different factors across
+		// the processed views (mixed voxel calibration) -- -dsxy takes one value for the whole job,
+		// so no single flag can represent it; the recipe below has no "downsampleXY" key to emit.
+		final String dsxyVaries = params.get( "downsampleXYVaries" );
+		if ( dsxyVaries != null )
+			out.add( "# WARNING: mvrecon's auto XY-downsampling ('match Z resolution') resolved to different "
+					+ "factors across the processed views " + dsxyVaries + " — BigStitcher-Spark's -dsxy takes "
+					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
+					+ "before running the command below." );
+
 		for ( final Recipe recipe : recipes )
 		{
 			if ( recipe.requiresNonRigid != null && recipe.requiresNonRigid != nonRigid )
