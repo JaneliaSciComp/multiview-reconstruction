@@ -143,31 +143,14 @@ public class RGLDMGUI extends PairwiseGUI
 	{
 		final java.util.LinkedHashMap<String,String> p = new java.util.LinkedHashMap<>();
 		p.put( "matchingMethod", "PRECISE_TRANSLATION" );
-		if ( model != null )
-		{
-			final String tm = TransformationModelGUI.modelIndexToSparkName( model.getModelIndex() );
-			if ( tm != null ) p.put( "transformationModel", tm );
-			if ( model.isRegularize() )
-			{
-				final String rm = TransformationModelGUI.regularizationIndexToSparkName( model.getRegularizedModelIndex() );
-				if ( rm != null ) p.put( "regularizationModel", rm );
-				p.put( "lambda", Double.toString( model.getLambda() ) );
-			}
-		}
+		putModelParams( p, model );
 		// descriptor params — read the statics that parseDialog() just assigned
 		p.put( "numNeighbors", Integer.toString( net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters.numNeighbors ) );
 		p.put( "redundancy", Integer.toString( net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters.redundancy ) );
 		p.put( "significance", Double.toString( net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters.ratioOfDistance ) );
 		if ( net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters.defaultLimitSearchRadius )
 			p.put( "searchRadius", Double.toString( net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters.defaultSearchRadius ) );
-		if ( ransacParams != null )
-		{
-			p.put( "ransacMaxError", Double.toString( ransacParams.getMaxEpsilon() ) );
-			p.put( "ransacMinInlierRatio", Double.toString( ransacParams.getMinInlierRatio() ) );
-			p.put( "ransacMinNumInliers", Integer.toString( ransacParams.getMinNumMatches() ) );
-			p.put( "ransacIterations", Integer.toString( ransacParams.getNumIterations() ) );
-			p.put( "ransacMultiConsensus", Boolean.toString( ransacParams.multiConsensus() ) );
-		}
+		putRansacParams( p, ransacParams );
 		return p;
 	}
 }

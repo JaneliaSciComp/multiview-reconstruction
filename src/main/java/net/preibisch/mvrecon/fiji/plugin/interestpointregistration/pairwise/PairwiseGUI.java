@@ -183,4 +183,41 @@ public abstract class PairwiseGUI
 	{
 		return java.util.Collections.emptyMap();
 	}
+
+	/**
+	 * Shared by every {@code describeParameters()} override that uses a {@link TransformationModelGUI}:
+	 * puts {@code transformationModel}, and (if regularized) {@code regularizationModel} + {@code lambda}.
+	 */
+	protected static void putModelParams( final java.util.Map<String,String> p, final TransformationModelGUI model )
+	{
+		if ( model == null )
+			return;
+
+		final String tm = TransformationModelGUI.modelIndexToSparkName( model.getModelIndex() );
+		if ( tm != null ) p.put( "transformationModel", tm );
+
+		if ( model.isRegularize() )
+		{
+			final String rm = TransformationModelGUI.regularizationIndexToSparkName( model.getRegularizedModelIndex() );
+			if ( rm != null ) p.put( "regularizationModel", rm );
+			p.put( "lambda", Double.toString( model.getLambda() ) );
+		}
+	}
+
+	/**
+	 * Shared by every {@code describeParameters()} override that uses {@link RANSACParameters}: puts
+	 * {@code ransacMaxError}, {@code ransacMinInlierRatio}, {@code ransacMinNumInliers},
+	 * {@code ransacIterations}, {@code ransacMultiConsensus}.
+	 */
+	protected static void putRansacParams( final java.util.Map<String,String> p, final RANSACParameters ransacParams )
+	{
+		if ( ransacParams == null )
+			return;
+
+		p.put( "ransacMaxError", Double.toString( ransacParams.getMaxEpsilon() ) );
+		p.put( "ransacMinInlierRatio", Double.toString( ransacParams.getMinInlierRatio() ) );
+		p.put( "ransacMinNumInliers", Integer.toString( ransacParams.getMinNumMatches() ) );
+		p.put( "ransacIterations", Integer.toString( ransacParams.getNumIterations() ) );
+		p.put( "ransacMultiConsensus", Boolean.toString( ransacParams.multiConsensus() ) );
+	}
 }
