@@ -104,7 +104,7 @@ public class ActionToSparkCli
 	{
 		final Map<String,List<Recipe>> r = new LinkedHashMap<>();
 
-		r.put( "detect-interestpoints", Collections.singletonList( new Recipe(
+		final Recipe detectRecipe = new Recipe(
 				"detect-interestpoints", true,
 				new String[]{ "label", "-l" },
 				new String[]{ "sigma", "-s" },
@@ -118,8 +118,19 @@ public class ActionToSparkCli
 				new String[]{ "overlappingOnly", "--overlappingOnly" },
 				new String[]{ "blockSize", "--blockSize" },
 				new String[]{ "medianFilter", "--medianFilter" },
-				new String[]{ "maxSpots", "--maxSpots" }
-		) ) );
+				new String[]{ "maxSpots", "--maxSpots" },
+				// parsimonious view selection (see ActionHistoryRecorder.putViewSelection); angleId/
+				// tileId/illuminationId/channelId/timepointId are single comma-separated CSV values,
+				// viewIds is the explicit "tp,vs" fallback expanded into repeated -vi occurrences
+				new String[]{ "angleId", "--angleId" },
+				new String[]{ "tileId", "--tileId" },
+				new String[]{ "illuminationId", "--illuminationId" },
+				new String[]{ "channelId", "--channelId" },
+				new String[]{ "timepointId", "--timepointId" },
+				new String[]{ "viewIds", "-vi" }
+		);
+		detectRecipe.repeatKeys = Collections.singleton( "viewIds" );
+		r.put( "detect-interestpoints", Collections.singletonList( detectRecipe ) );
 
 		// registration in the mvrecon GUI is two Spark stages: descriptor matching + global solve.
 		// Either can run without the other: LoadCorrespondencesGUI reuses existing correspondences
@@ -156,9 +167,19 @@ public class ActionToSparkCli
 				new String[]{ "groupIllums", "--groupIllums" },
 				new String[]{ "groupChannels", "--groupChannels" },
 				new String[]{ "splitTimepoints", "--splitTimepoints" },
-				new String[]{ "clearCorrespondences", "--clearCorrespondences" }
+				new String[]{ "clearCorrespondences", "--clearCorrespondences" },
+				// parsimonious view selection (see ActionHistoryRecorder.putViewSelection);
+				// SparkGeometricDescriptorMatching extends AbstractRegistration extends
+				// AbstractSelectableViews, so it accepts these same flags as detect-interestpoints
+				new String[]{ "angleId", "--angleId" },
+				new String[]{ "tileId", "--tileId" },
+				new String[]{ "illuminationId", "--illuminationId" },
+				new String[]{ "channelId", "--channelId" },
+				new String[]{ "timepointId", "--timepointId" },
+				new String[]{ "viewIds", "-vi" }
 		);
 		matchRecipe.skipWhen = p -> "true".equalsIgnoreCase( p.get( "skipMatching" ) );
+		matchRecipe.repeatKeys = Collections.singleton( "viewIds" );
 		registration.add( matchRecipe );
 		final Recipe solverRecipe = new Recipe(
 				"solver", true,
@@ -182,11 +203,19 @@ public class ActionToSparkCli
 				new String[]{ "groupTiles", "--groupTiles" },
 				new String[]{ "groupIllums", "--groupIllums" },
 				new String[]{ "groupChannels", "--groupChannels" },
-				new String[]{ "splitTimepoints", "--splitTimepoints" }
+				new String[]{ "splitTimepoints", "--splitTimepoints" },
+				// parsimonious view selection (see ActionHistoryRecorder.putViewSelection); Solver
+				// extends AbstractRegistration extends AbstractSelectableViews, same flags as above
+				new String[]{ "angleId", "--angleId" },
+				new String[]{ "tileId", "--tileId" },
+				new String[]{ "illuminationId", "--illuminationId" },
+				new String[]{ "channelId", "--channelId" },
+				new String[]{ "timepointId", "--timepointId" },
+				new String[]{ "viewIds", "-vi" }
 		);
 		solverRecipe.skipWhen = p -> "NO_OPTIMIZATION".equals( p.get( "globalOptMethod" ) );
-		// Solver's -fv is repeatable ('0,0' '0,1' ...), one tp,vs pair per flag occurrence
-		solverRecipe.repeatKeys = Collections.singleton( "fixedViews" );
+		// -fv and -vi are both repeatable ('0,0' '0,1' ...), one tp,vs pair per flag occurrence
+		solverRecipe.repeatKeys = new java.util.HashSet<>( java.util.Arrays.asList( "fixedViews", "viewIds" ) );
 		registration.add( solverRecipe );
 		r.put( "register-interestpoints", registration );
 

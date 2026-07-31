@@ -22,9 +22,15 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.actionhistory;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
+import mpicbg.spim.data.sequence.TimePoint;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 
@@ -103,6 +109,133 @@ public final class ActionHistoryRecorder
 		if ( map == null || key == null || value == null )
 			return;
 		map.put( key, value.toString() );
+	}
+
+	/**
+	 * Describe a view selection as the most parsimonious BigStitcher-Spark view-selection flags.
+	 *
+	 * <p>BigStitcher-Spark's {@code AbstractSelectableViews} takes independent per-dimension id
+	 * lists ({@code --angleId}, {@code --tileId}, {@code --illuminationId}, {@code --channelId},
+	 * {@code --timepointId}) plus an explicit {@code -vi 'tp,vs'} fallback. If the selected views
+	 * are exactly the cross-product of a handful of per-dimension ids (e.g. "illumination 0 AND
+	 * channel 1, all tiles/angles/timepoints"), that is far more readable — and far more robust to
+	 * re-running against a slightly different dataset — than spelling out every view id, so this
+	 * reconstructs and prefers that form. Only falls back to the explicit {@code viewIds} list when
+	 * the selection is a genuine cross-cutting subset (e.g. "tile 0 for channel 0, tile 1 for
+	 * channel 1") that no combination of independent per-dimension filters can reproduce exactly —
+	 * emitting the per-dimension filters in that case would silently over- or under-select views.
+	 */
+	public static void putViewSelection(
+			final LinkedHashMap<String,String> params,
+			final SpimData2 data,
+			final Collection<? extends ViewId> viewIds )
+	{
+		if ( params == null || data == null || viewIds == null || viewIds.isEmpty() )
+			return;
+
+		final List<ViewDescription> present = new ArrayList<>();
+		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
+			if ( vd.isPresent() )
+				present.add( vd );
+
+		final Set<ViewId> selected = new java.util.HashSet<>( viewIds );
+
+		// fast path: everything present was selected (the common "process all loaded views" case) --
+		// no filter is needed at all, and skips the per-dimension pass + reconstruction-verify pass
+		// below entirely. Matters on datasets with tens of thousands of tiles.
+		if ( selected.size() == present.size() )
+			return;
+
+		final Set<Integer> allAngle = new LinkedHashSet<>(), usedAngle = new LinkedHashSet<>();
+		final Set<Integer> allTile = new LinkedHashSet<>(), usedTile = new LinkedHashSet<>();
+		final Set<Integer> allIllum = new LinkedHashSet<>(), usedIllum = new LinkedHashSet<>();
+		final Set<Integer> allChannel = new LinkedHashSet<>(), usedChannel = new LinkedHashSet<>();
+		final Set<Integer> allTP = new LinkedHashSet<>(), usedTP = new LinkedHashSet<>();
+
+		for ( final ViewDescription vd : present )
+		{
+			final int angle = vd.getViewSetup().getAngle().getId();
+			final int tile = vd.getViewSetup().getTile().getId();
+			final int illum = vd.getViewSetup().getIllumination().getId();
+			final int channel = vd.getViewSetup().getChannel().getId();
+			final int tp = vd.getTimePointId();
+
+			allAngle.add( angle );
+			allTile.add( tile );
+			allIllum.add( illum );
+			allChannel.add( channel );
+			allTP.add( tp );
+
+			if ( selected.contains( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) ) )
+			{
+				usedAngle.add( angle );
+				usedTile.add( tile );
+				usedIllum.add( illum );
+				usedChannel.add( channel );
+				usedTP.add( tp );
+			}
+		}
+
+		// a dimension only needs a filter if it's actually restricted; "all values used" == default
+		final Set<Integer> fAngle = usedAngle.equals( allAngle ) ? null : usedAngle;
+		final Set<Integer> fTile = usedTile.equals( allTile ) ? null : usedTile;
+		final Set<Integer> fIllum = usedIllum.equals( allIllum ) ? null : usedIllum;
+		final Set<Integer> fChannel = usedChannel.equals( allChannel ) ? null : usedChannel;
+		final Set<Integer> fTP = usedTP.equals( allTP ) ? null : usedTP;
+
+		// verify: does the cross-product of these per-dimension filters reconstruct the selection
+		// exactly? (required -- independent per-dimension filters can't express a cross-cutting
+		// subset, and silently emitting them anyway would select the wrong views)
+		int reconstructedCount = 0;
+		boolean exact = true;
+		for ( final ViewDescription vd : present )
+		{
+			final boolean matches =
+					( fAngle == null || fAngle.contains( vd.getViewSetup().getAngle().getId() ) )
+					&& ( fTile == null || fTile.contains( vd.getViewSetup().getTile().getId() ) )
+					&& ( fIllum == null || fIllum.contains( vd.getViewSetup().getIllumination().getId() ) )
+					&& ( fChannel == null || fChannel.contains( vd.getViewSetup().getChannel().getId() ) )
+					&& ( fTP == null || fTP.contains( vd.getTimePointId() ) );
+			final boolean isSelected = selected.contains( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) );
+			if ( matches != isSelected )
+			{
+				exact = false;
+				break;
+			}
+			if ( matches )
+				++reconstructedCount;
+		}
+		if ( exact && reconstructedCount != selected.size() )
+			exact = false; // e.g. a selected ViewId that isn't present in the dataset at all
+
+		if ( exact )
+		{
+			if ( fAngle != null ) put( params, "angleId", joinIds( fAngle ) );
+			if ( fTile != null ) put( params, "tileId", joinIds( fTile ) );
+			if ( fIllum != null ) put( params, "illuminationId", joinIds( fIllum ) );
+			if ( fChannel != null ) put( params, "channelId", joinIds( fChannel ) );
+			if ( fTP != null ) put( params, "timepointId", joinIds( fTP ) );
+		}
+		else
+		{
+			final List<String> vi = new ArrayList<>();
+			for ( final ViewId v : viewIds )
+				vi.add( v.getTimePointId() + "," + v.getViewSetupId() );
+			put( params, "viewIds", String.join( ActionToSparkCli.MULTI_VALUE_DELIM, vi ) );
+		}
+	}
+
+	private static String joinIds( final Collection<Integer> ids )
+	{
+		final StringBuilder sb = new StringBuilder();
+		boolean first = true;
+		for ( final int id : ids )
+		{
+			if ( !first ) sb.append( ',' );
+			sb.append( id );
+			first = false;
+		}
+		return sb.toString();
 	}
 
 	/**

@@ -202,6 +202,9 @@ public class Interest_Point_Detection implements PlugIn
 			ActionHistoryRecorder.put( params, "label", label );
 			ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
 			ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
+			// which views this ran on -- prefers parsimonious --angleId/--tileId/--illuminationId/
+			// --channelId/--timepointId filters over spelling out every view id (see putViewSelection)
+			ActionHistoryRecorder.putViewSelection( params, data, viewIds );
 			// individual detection params (sigma, threshold, type, localization, intensities,
 			// downsampling) so the BigStitcher-Spark translator can emit them as CLI flags
 			for ( final java.util.Map.Entry<String,String> e : ipd.describeParameters().entrySet() )
