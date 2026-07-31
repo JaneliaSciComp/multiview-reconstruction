@@ -30,6 +30,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -79,8 +80,10 @@ import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionExportInterface;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.plugin.util.PluginHelper;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
+import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
@@ -183,14 +186,14 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	public String getDescription() { return "OME-ZARR/N5/HDF5 export using N5-API"; }
 
 	@Override
-	public java.util.Map<String,String> describeParameters()
+	public Map<String,String> describeParameters()
 	{
-		final java.util.LinkedHashMap<String,String> p = new java.util.LinkedHashMap<>();
+		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
 		if ( path != null ) p.put( "n5Path", path.toString() );
 		if ( storageType != null ) p.put( "storage", storageType.toString() );
 		p.put( "blockSize", bsX + "," + bsY + "," + bsZ );
 		p.put( "blockScale", bsFactorX + "," + bsFactorY + "," + bsFactorZ );
-		if ( compression != null ) p.put( "compression", net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.sparkCompression( compression ) );
+		if ( compression != null ) p.put( "compression", ActionHistoryRecorder.sparkCompression( compression ) );
 		p.put( "useSharding", Boolean.toString( useSharding ) );
 		// absolute shard size in voxels, as SparkNonRigidFusion's --shardSize expects it; the
 		// affine create-fusion-container path instead takes a factor (blockScale IS that factor,
@@ -1141,7 +1144,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		{
 			final Group< ViewDescription > firstGroup =
 					Group.getGroupsSorted( fusion.getFusionGroups() ).iterator().next();
-			final String title = net.preibisch.mvrecon.process.fusion.FusionTools.getFusionGroupTitle( splittingType, firstGroup );
+			final String title = FusionTools.getFusionGroupTitle( splittingType, firstGroup );
 
 			if ( storageType == StorageFormat.N5 || storageType == StorageFormat.HDF5 )
 				firstAssignedDatasetPath = title + "/s0";

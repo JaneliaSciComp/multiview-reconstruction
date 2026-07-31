@@ -24,12 +24,13 @@ package net.preibisch.mvrecon.fiji.spimdata.actionhistory;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
-import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -60,7 +61,7 @@ public final class ActionHistoryRecorder
 			final SpimData2 data,
 			final String actionId,
 			final String mvreconClass,
-			final java.util.Map<String,String> params,
+			final Map<String,String> params,
 			final List<? extends ViewId> affectedViews,
 			final String resultRef )
 	{
@@ -138,7 +139,7 @@ public final class ActionHistoryRecorder
 			if ( vd.isPresent() )
 				present.add( vd );
 
-		final Set<ViewId> selected = new java.util.HashSet<>( viewIds );
+		final Set<ViewId> selected = new HashSet<>( viewIds );
 
 		// fast path: everything present was selected (the common "process all loaded views" case) --
 		// no filter is needed at all, and skips the per-dimension pass + reconstruction-verify pass

@@ -61,6 +61,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 import net.preibisch.mvrecon.process.export.RetryTracker;
@@ -477,18 +478,18 @@ public class Resave_N5Api implements PlugIn
 		// already been written (that would leave orphaned data with a stale/unwritten XML below)
 		try
 		{
-			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "inputXml", inputXmlURI );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "n5Path", n5Params.n5URI );
+			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+			ActionHistoryRecorder.put( params, "inputXml", inputXmlURI );
+			ActionHistoryRecorder.put( params, "n5Path", n5Params.n5URI );
 			// Zarr v3 embeds the SpimData JSON into the -o container's zarr.json and writes no separate
 			// xml (see XmlIoSpimData2.save), so -xo is meaningless there; only record it for formats
 			// that actually produce a standalone output xml (N5, HDF5, Zarr v2).
 			if ( n5Params.format != StorageFormat.ZARR )
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "xmlOut", n5Params.xmlURI );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "storage", n5Params.format );
+				ActionHistoryRecorder.put( params, "xmlOut", n5Params.xmlURI );
+			ActionHistoryRecorder.put( params, "storage", n5Params.format );
 			// Spark expects bare "x,y,z" — Arrays.toString would yield "[x,y,z]" which picocli rejects
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "blockSize", net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.csv( n5Params.subdivisions[ 0 ] ) );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "blockScale", net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.csv( n5Params.blockSizeFactor ) );
+			ActionHistoryRecorder.put( params, "blockSize", ActionHistoryRecorder.csv( n5Params.subdivisions[ 0 ] ) );
+			ActionHistoryRecorder.put( params, "blockScale", ActionHistoryRecorder.csv( n5Params.blockSizeFactor ) );
 			// downsampling pyramid as Spark's -ds expects it: "1,1,1;2,2,1;4,4,2;..."
 			if ( n5Params.resolutions != null )
 			{
@@ -496,16 +497,14 @@ public class Resave_N5Api implements PlugIn
 				for ( int d = 0; d < n5Params.resolutions.length; ++d )
 				{
 					if ( d > 0 ) ds.append( ';' );
-					ds.append( net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.csv( n5Params.resolutions[ d ] ) );
+					ds.append( ActionHistoryRecorder.csv( n5Params.resolutions[ d ] ) );
 				}
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "downsampling", ds.toString() );
+				ActionHistoryRecorder.put( params, "downsampling", ds.toString() );
 			}
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "compression", net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.sparkCompression( n5Params.compression ) );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "useSharding", n5Params.useSharding );
-			final java.util.ArrayList<mpicbg.spim.data.sequence.ViewId> vidCopy = new java.util.ArrayList<>();
-			for ( final mpicbg.spim.data.sequence.ViewId v : vidsToResave )
-				vidCopy.add( v );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.record(
+			ActionHistoryRecorder.put( params, "compression", ActionHistoryRecorder.sparkCompression( n5Params.compression ) );
+			ActionHistoryRecorder.put( params, "useSharding", n5Params.useSharding );
+			final ArrayList<ViewId> vidCopy = new ArrayList<>( vidsToResave );
+			ActionHistoryRecorder.record(
 					sdReduced,
 					"resave",
 					Resave_N5Api.class.getName(),

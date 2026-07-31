@@ -38,6 +38,7 @@ import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHis
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map.Entry;
 
 import org.jdom2.Element;
 
@@ -80,7 +81,7 @@ public class XmlIoActionHistory extends XmlIoSingleton<ActionHistory>
 		if ( !r.getResultRef().isEmpty() )
 			e.setAttribute( ATTR_RESULT_REF, r.getResultRef() );
 
-		for ( final java.util.Map.Entry<String,String> p : r.getParams().entrySet() )
+		for ( final Entry<String,String> p : r.getParams().entrySet() )
 		{
 			final Element pe = new Element( PARAM_TAG );
 			pe.setAttribute( ATTR_PARAM_KEY, p.getKey() );

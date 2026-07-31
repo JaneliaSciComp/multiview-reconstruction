@@ -26,7 +26,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -66,6 +68,9 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.GenericLoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli;
+import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.export.Calibrateable;
 import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.export.ImgExport;
@@ -75,6 +80,7 @@ import net.preibisch.mvrecon.process.fusion.lazy.LazyAffineFusion;
 import net.preibisch.mvrecon.process.fusion.lazy.LazyNonRigidFusion;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.fusion.transformed.nonrigid.NonRigidTools;
+import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -114,10 +120,10 @@ public class Image_Fusion implements PlugIn
 		// that are NOT persisted in the XML; emitting -b with those names would fail in Spark. They map
 		// to Spark's default (no -b = fuse the full extent), so only a saved box is recorded as a name.
 		String bbTitleTmp = null;
-		if ( fusion.getBoundingBox() instanceof net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox )
+		if ( fusion.getBoundingBox() instanceof BoundingBox )
 		{
-			final String t = ( (net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox) fusion.getBoundingBox() ).getTitle();
-			for ( final net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox saved : spimData.getBoundingBoxes().getBoundingBoxes() )
+			final String t = ( (BoundingBox) fusion.getBoundingBox() ).getTitle();
+			for ( final BoundingBox saved : spimData.getBoundingBoxes().getBoundingBoxes() )
 				if ( saved.getTitle().equals( t ) ) { bbTitleTmp = t; break; }
 		}
 		final String bbTitle = bbTitleTmp;
@@ -179,29 +185,29 @@ public class Image_Fusion implements PlugIn
 
 		// record action history
 		{
-			final java.util.LinkedHashMap<String,String> params = net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.params();
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "fusion", fusion.getFusionType() );
+			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+			ActionHistoryRecorder.put( params, "fusion", fusion.getFusionType() );
 			// the GUI downsampling factor pre-scales the bounding box in-process; Spark fuses at the
 			// box's native resolution, so it is NOT a Spark flag. The -ds pyramid comes from the
 			// exporter's multi-resolution settings (see exporter.describeParameters() below).
 			// anisotropy: a non-NaN factor means "preserve anisotropy" was selected in the GUI
 			if ( !Double.isNaN( fusion.getAnisotropyFactor() ) )
 			{
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "preserveAnisotropy", Boolean.TRUE );
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "anisotropyFactor", fusion.getAnisotropyFactor() );
+				ActionHistoryRecorder.put( params, "preserveAnisotropy", Boolean.TRUE );
+				ActionHistoryRecorder.put( params, "anisotropyFactor", fusion.getAnisotropyFactor() );
 			}
 			// BigStitcher-Spark dataType name, derived from the actual output type above (not a
 			// separately hardcoded pixelType switch)
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "pixelType", N5Utils.dataType( (NativeType)type ).name() );
+			ActionHistoryRecorder.put( params, "pixelType", N5Utils.dataType( (NativeType)type ).name() );
 			// min/max are the intensity range that integer output is scaled from; only meaningful when
 			// the output is UINT8/UINT16 (FLOAT32 keeps raw values, Spark ignores the flags)
 			if ( fusion.getPixelType() == 1 || fusion.getPixelType() == 2 )
 			{
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "minIntensity", fusion.minIntensity() );
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "maxIntensity", fusion.maxIntensity() );
+				ActionHistoryRecorder.put( params, "minIntensity", fusion.minIntensity() );
+				ActionHistoryRecorder.put( params, "maxIntensity", fusion.maxIntensity() );
 			}
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "exporter", exporter.getDescription() );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "boundingBox", bbTitle );
+			ActionHistoryRecorder.put( params, "exporter", exporter.getDescription() );
+			ActionHistoryRecorder.put( params, "boundingBox", bbTitle );
 			// nonrigid (TPS): routes the second Spark step from `fusion` to `nonrigid-fusion`.
 			// Labels are joined with the multi-value delimiter so the translator can re-emit them
 			// as repeated `-ip <label>` flags. Requires at least one label; falling back to affine
@@ -213,23 +219,23 @@ public class Image_Fusion implements PlugIn
 				// labels from the GUI may carry an InterestPointTools.warningLabel suffix
 				// ("... (WARNING: Only available for N)") for incomplete coverage; strip it so the
 				// emitted -ip arg matches the actual label name
-				final String warn = net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools.warningLabel;
-				final java.util.ArrayList<String> cleaned = new java.util.ArrayList<>();
+				final String warn = InterestPointTools.warningLabel;
+				final ArrayList<String> cleaned = new ArrayList<>();
 				for ( final String raw : fusion.getNonRigidParameters().getLabels() )
 					cleaned.add( raw.contains( warn ) ? raw.substring( 0, raw.indexOf( warn ) ) : raw );
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "nonRigid", Boolean.TRUE );
-				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "interestPoints",
-						String.join( net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli.MULTI_VALUE_DELIM, cleaned ) );
+				ActionHistoryRecorder.put( params, "nonRigid", Boolean.TRUE );
+				ActionHistoryRecorder.put( params, "interestPoints",
+						String.join( ActionToSparkCli.MULTI_VALUE_DELIM, cleaned ) );
 			}
 			// pull exporter-specific params (n5Path, storage, blockSize, compression, …)
 			try
 			{
-				for ( final java.util.Map.Entry<String,String> e : exporter.describeParameters().entrySet() )
+				for ( final Map.Entry<String,String> e : exporter.describeParameters().entrySet() )
 					if ( e.getValue() != null )
 						params.put( e.getKey(), e.getValue() );
 			}
 			catch ( final Throwable ignore ) {}
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.record(
+			ActionHistoryRecorder.record(
 					spimData,
 					"fusion",
 					Image_Fusion.class.getName(),
