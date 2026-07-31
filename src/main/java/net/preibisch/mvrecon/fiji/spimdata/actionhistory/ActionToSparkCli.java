@@ -74,6 +74,15 @@ public class ActionToSparkCli
 		 * into repeated flag occurrences (e.g. {@code -ip beads -ip nuclei}). Used for {@code -ip}.
 		 */
 		String repeatKey = null;
+		/**
+		 * Whole-recipe skip condition evaluated against the recorded params; {@code null} = never
+		 * skip. Used for stages the mvrecon GUI can run without their sibling stage, e.g. "solver" is
+		 * skipped when {@code globalOptMethod=NO_OPTIMIZATION} (not a valid Spark --method value —
+		 * there is no "don't solve" mode) and "match-interestpoints" is skipped when
+		 * {@code skipMatching=true} (LoadCorrespondencesGUI reused existing correspondences, so
+		 * there is nothing new to match).
+		 */
+		Predicate<Map<String,String>> skipWhen = null;
 
 		Recipe( final String script, final boolean includeXml, final String[]... keyFlagPairs )
 		{
@@ -111,9 +120,12 @@ public class ActionToSparkCli
 				new String[]{ "maxSpots", "--maxSpots" }
 		) ) );
 
-		// registration in the mvrecon GUI is two Spark stages: descriptor matching + global solve
+		// registration in the mvrecon GUI is two Spark stages: descriptor matching + global solve.
+		// Either can run without the other: LoadCorrespondencesGUI reuses existing correspondences
+		// and skips matching (emit "solver" only), and GlobalOptType.NO_OPTIMIZATION skips the solve
+		// (emit "match-interestpoints" only — NO_OPTIMIZATION isn't a valid Solver --method value).
 		final List<Recipe> registration = new ArrayList<>();
-		registration.add( new Recipe(
+		final Recipe matchRecipe = new Recipe(
 				"match-interestpoints", true,
 				new String[]{ "label", "-l" },
 				new String[]{ "matchingMethod", "-m" },
@@ -144,8 +156,10 @@ public class ActionToSparkCli
 				new String[]{ "groupChannels", "--groupChannels" },
 				new String[]{ "splitTimepoints", "--splitTimepoints" },
 				new String[]{ "clearCorrespondences", "--clearCorrespondences" }
-		) );
-		registration.add( new Recipe(
+		);
+		matchRecipe.skipWhen = p -> "true".equalsIgnoreCase( p.get( "skipMatching" ) );
+		registration.add( matchRecipe );
+		final Recipe solverRecipe = new Recipe(
 				"solver", true,
 				new String[]{ "sourcePoints", "-s" },
 				new String[]{ "label", "-l" },
@@ -168,7 +182,9 @@ public class ActionToSparkCli
 				new String[]{ "groupIllums", "--groupIllums" },
 				new String[]{ "groupChannels", "--groupChannels" },
 				new String[]{ "splitTimepoints", "--splitTimepoints" }
-		) );
+		);
+		solverRecipe.skipWhen = p -> "NO_OPTIMIZATION".equals( p.get( "globalOptMethod" ) );
+		registration.add( solverRecipe );
 		r.put( "register-interestpoints", registration );
 
 		r.put( "pairwise-stitching", Collections.singletonList( new Recipe(
@@ -353,6 +369,8 @@ public class ActionToSparkCli
 		for ( final Recipe recipe : recipes )
 		{
 			if ( recipe.requiresNonRigid != null && recipe.requiresNonRigid != nonRigid )
+				continue;
+			if ( recipe.skipWhen != null && recipe.skipWhen.test( params ) )
 				continue;
 			out.add( renderOne( recipe, params, xmlPath ) );
 		}

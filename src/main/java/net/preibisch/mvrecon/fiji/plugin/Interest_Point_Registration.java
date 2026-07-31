@@ -278,7 +278,13 @@ public class Interest_Point_Registration implements PlugIn
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "matchAcrossLabels", brp.matchAcrossLabels );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "interestPointMergeDistance", gp == null ? null : gp.mergeDistance );
 			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "sourcePoints", "IP" );
-			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "clearCorrespondences", "true" );
+			// LoadCorrespondencesGUI reuses existing correspondences and skips matching entirely (see
+			// the "!LoadCorrespondencesGUI.class.isInstance(pairwiseMatching)" guard around line 429/551
+			// below); the Spark translator uses this to emit only "solver", not "match-interestpoints"
+			// (which would otherwise recompute matches with no matching method at all).
+			final boolean skipMatching = net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.LoadCorrespondencesGUI.class.isInstance( brp.pwr );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "skipMatching", skipMatching );
+			net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "clearCorrespondences", Boolean.toString( !skipMatching ) );
 			if ( arp != null && arp.globalOptParams != null )
 			{
 				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "globalOptMethod", arp.globalOptParams.method );
