@@ -25,7 +25,10 @@ package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 
 import ij.ImagePlus;
 import ij.gui.GenericDialog;
@@ -87,9 +90,9 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	public String getDescription() { return "Difference-of-Gaussian"; }
 
 	@Override
-	public java.util.Map<String,String> describeParameters()
+	public Map<String,String> describeParameters()
 	{
-		final java.util.LinkedHashMap<String,String> p = new java.util.LinkedHashMap<>();
+		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
 		p.put( "sigma", Double.toString( sigma ) );
 		p.put( "threshold", Double.toString( threshold ) );
 		// Spark --type is the detection point type (MIN/MAX/BOTH), not the algorithm
@@ -116,7 +119,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 			p.put( "downsampleXY", Integer.toString( downsampleXYIndex ) );
 		else
 		{
-			final java.util.LinkedHashSet<Integer> resolved = new java.util.LinkedHashSet<>();
+			final LinkedHashSet<Integer> resolved = new LinkedHashSet<>();
 			for ( final ViewId v : viewIdsToProcess )
 			{
 				final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( v.getTimePointId(), v.getViewSetupId() );

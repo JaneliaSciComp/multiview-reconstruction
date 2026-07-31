@@ -27,7 +27,9 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map.Entry;
 
 import ij.ImageJ;
 import ij.gui.GenericDialog;
@@ -198,7 +200,7 @@ public class Interest_Point_Detection implements PlugIn
 
 		// record action history before processing — params reflect the GUI choices that drive ipd
 		{
-			final java.util.LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
 			ActionHistoryRecorder.put( params, "label", label );
 			ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
 			ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
@@ -207,7 +209,7 @@ public class Interest_Point_Detection implements PlugIn
 			ActionHistoryRecorder.putViewSelection( params, data, viewIds );
 			// individual detection params (sigma, threshold, type, localization, intensities,
 			// downsampling) so the BigStitcher-Spark translator can emit them as CLI flags
-			for ( final java.util.Map.Entry<String,String> e : ipd.describeParameters().entrySet() )
+			for ( final Entry<String,String> e : ipd.describeParameters().entrySet() )
 				if ( e.getValue() != null )
 					params.put( e.getKey(), e.getValue() );
 			ActionHistoryRecorder.record(

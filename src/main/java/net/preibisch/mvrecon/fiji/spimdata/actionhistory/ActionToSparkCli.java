@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 /**
  * Renders an {@link ActionRecord} as one or more BigStitcher-Spark CLI command lines.
@@ -486,7 +487,7 @@ public class ActionToSparkCli
 			// multi-valued: emit `flag value` per non-empty element
 			if ( recipe.repeatKeys != null && recipe.repeatKeys.contains( mapping.getKey() ) )
 			{
-				for ( final String part : value.split( java.util.regex.Pattern.quote( MULTI_VALUE_DELIM ) ) )
+				for ( final String part : value.split( Pattern.quote( MULTI_VALUE_DELIM ) ) )
 					if ( !part.isEmpty() )
 						sb.append( ' ' ).append( flag ).append( ' ' ).append( quote( part ) );
 				continue;

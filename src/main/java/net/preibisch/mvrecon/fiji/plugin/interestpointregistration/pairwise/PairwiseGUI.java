@@ -22,6 +22,9 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
+import java.util.Collections;
+import java.util.Map;
+
 import ij.gui.GenericDialog;
 
 import net.preibisch.legacy.io.IOFunctions;
@@ -179,16 +182,16 @@ public abstract class PairwiseGUI
 	 *
 	 * <p>Default: empty map. Subclasses that have CLI-translatable params should override.</p>
 	 */
-	public java.util.Map<String,String> describeParameters()
+	public Map<String,String> describeParameters()
 	{
-		return java.util.Collections.emptyMap();
+		return Collections.emptyMap();
 	}
 
 	/**
 	 * Shared by every {@code describeParameters()} override that uses a {@link TransformationModelGUI}:
 	 * puts {@code transformationModel}, and (if regularized) {@code regularizationModel} + {@code lambda}.
 	 */
-	protected static void putModelParams( final java.util.Map<String,String> p, final TransformationModelGUI model )
+	protected static void putModelParams( final Map<String,String> p, final TransformationModelGUI model )
 	{
 		if ( model == null )
 			return;
@@ -209,7 +212,7 @@ public abstract class PairwiseGUI
 	 * {@code ransacMaxError}, {@code ransacMinInlierRatio}, {@code ransacMinNumInliers},
 	 * {@code ransacIterations}, {@code ransacMultiConsensus}.
 	 */
-	protected static void putRansacParams( final java.util.Map<String,String> p, final RANSACParameters ransacParams )
+	protected static void putRansacParams( final Map<String,String> p, final RANSACParameters ransacParams )
 	{
 		if ( ransacParams == null )
 			return;
