@@ -298,6 +298,23 @@ public class Interest_Point_Registration implements PlugIn
 				if ( Double.isFinite( absTh ) && absTh < Double.MAX_VALUE )
 					net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "absoluteThreshold", absTh );
 			}
+			// fixed views anchor the global optimization (GlobalOpt.compute is called with
+			// fmbp.fixedViews below) -- Solver's -fv defaults to "first view id" if omitted, which is
+			// very unlikely to match what the GUI actually fixed, so always record explicitly.
+			// An empty set means the user fixed nothing (mapping-back handles the reference frame
+			// instead), which is Solver's --disableFixedViews.
+			if ( fmbp.fixedViews != null && !fmbp.fixedViews.isEmpty() )
+			{
+				final java.util.ArrayList<String> fv = new java.util.ArrayList<>();
+				for ( final ViewId v : fmbp.fixedViews )
+					fv.add( v.getTimePointId() + "," + v.getViewSetupId() );
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "fixedViews",
+						String.join( net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli.MULTI_VALUE_DELIM, fv ) );
+			}
+			else
+			{
+				net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.put( params, "disableFixedViews", "true" );
+			}
 			// pull matcher-specific params (transformation model, regularization, RANSAC, descriptor params, ICP params, …)
 			try
 			{
