@@ -363,8 +363,8 @@ public class Image_Fusion implements PlugIn
 				//SimpleMultiThreading.threadHaltUnClean();
 			}
 
-			final String title = getTitle( fusion.getSplittingType(), group );
-	
+			final String title = FusionTools.getFusionGroupTitle( fusion.getSplittingType(), group );
+
 			if ( !exporter.exportImage(
 					supplier,
 					fusion.getBoundingBox(),
@@ -460,23 +460,6 @@ public class Image_Fusion implements PlugIn
 		return exporter.exportImage( processedOutput, fusion.getBoundingBox(), fusion.getDownsampling(), fusion.getAnisotropyFactor(), title, group, minmax[ 0 ], minmax[ 1 ] );
 	}
 	*/
-
-	public static String getTitle( final int splittingType, final Group< ViewDescription > group )
-	{
-		String title;
-		final ViewDescription vd0 = group.iterator().next();
-
-		if ( splittingType == 0 ) // "Each timepoint & channel"
-			title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId();
-		else if ( splittingType == 1 ) // "Each timepoint, channel & illumination"
-			title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId() + "_illum_" + vd0.getViewSetup().getIllumination().getId();
-		else if ( splittingType == 2 ) // "All views together"
-			title = "fused";
-		else // "All views"
-			title = "fused_tp_" + vd0.getTimePointId() + "_vs_" + vd0.getViewSetupId();
-
-		return title;
-	}
 
 	public static void main( String[] args )
 	{

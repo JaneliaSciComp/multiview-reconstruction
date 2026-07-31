@@ -293,7 +293,7 @@ public class Image_Deconvolution implements PlugIn
 			final ImgExport exporter,
 			final Group< ViewDescription > group )
 	{
-		final String title = Image_Fusion.getTitle( fusion.getSplittingType(), group );
+		final String title = FusionTools.getFusionGroupTitle( fusion.getSplittingType(), group );
 
 		return exporter.exportImage( BlockSupplier.of( output ), fusion.getBoundingBox(), fusion.getDownsampling(), Double.NaN, title, group );
 	}

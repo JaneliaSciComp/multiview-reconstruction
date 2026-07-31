@@ -1128,23 +1128,15 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			}
 		}
 		// Non-BDV: predict the first fusion group's s0 dataset path so the recorded nonrigid-fusion
-		// command can populate `-d <path>`. Title format mirrors Image_Fusion.getTitle exactly;
-		// inlined here to avoid a fiji.plugin → process.export dependency. Per-group path layout
-		// depends on the storage variant — see exportImage's branches around lines 341/394/405/451.
+		// command can populate `-d <path>`. Title comes from the same FusionTools.getFusionGroupTitle
+		// used by exportImage's caller, so this can't drift out of sync with the real title. Per-group
+		// path layout still depends on the storage variant — see exportImage's branches around
+		// lines 341/394/405/451.
 		else if ( fusion.getFusionGroups() != null && !fusion.getFusionGroups().isEmpty() )
 		{
 			final Group< ViewDescription > firstGroup =
 					Group.getGroupsSorted( fusion.getFusionGroups() ).iterator().next();
-			final ViewDescription vd0 = firstGroup.iterator().next();
-			final String title;
-			if ( splittingType == 0 ) // each tp & channel
-				title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId();
-			else if ( splittingType == 1 ) // each tp, channel & illumination
-				title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId() + "_illum_" + vd0.getViewSetup().getIllumination().getId();
-			else if ( splittingType == 2 ) // all views together
-				title = "fused";
-			else // each view
-				title = "fused_tp_" + vd0.getTimePointId() + "_vs_" + vd0.getViewSetupId();
+			final String title = net.preibisch.mvrecon.process.fusion.FusionTools.getFusionGroupTitle( splittingType, firstGroup );
 
 			if ( storageType == StorageFormat.N5 || storageType == StorageFormat.HDF5 )
 				firstAssignedDatasetPath = title + "/s0";

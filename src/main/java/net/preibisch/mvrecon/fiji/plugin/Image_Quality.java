@@ -193,7 +193,7 @@ public class Image_Quality implements PlugIn
 	{
 		final RandomAccessibleInterval< T > processedOutput = FusionTools.copyImg( output, new ImagePlusImgFactory< T >( type ), type, taskExecutor, true );
 
-		final String title = Image_Fusion.getTitle( quality.getSplittingType(), group );
+		final String title = FusionTools.getFusionGroupTitle( quality.getSplittingType(), group );
 
 		return exporter.exportImage( BlockSupplier.of( processedOutput ), quality.getBoundingBox(), quality.getDownsampling(), quality.getAnisotropyFactor(), title, group );
 	}
