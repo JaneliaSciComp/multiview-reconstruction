@@ -23,7 +23,9 @@
 package net.preibisch.mvrecon.fiji.spimdata.actionhistory;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +47,82 @@ import java.util.function.Predicate;
  */
 public class ActionToSparkCli
 {
+	/**
+	 * A reusable bundle of key→flag pairs (and, optionally, which of them are repeatable — see
+	 * {@code Recipe.repeatKeys}) mirroring a shared BigStitcher-Spark abstract command class. Recipes
+	 * for Spark commands that extend the same abstract class (e.g. {@code AbstractSelectableViews})
+	 * compose in the same group instead of each re-listing the same pairs by hand — the actual
+	 * failure mode that motivated this: adding a shared flag meant remembering to update every
+	 * recipe (and its {@code repeatKeys}) that used it.
+	 */
+	private static final class FlagGroup
+	{
+		final String[][] pairs;
+		final String[] repeatableKeys;
+
+		FlagGroup( final String[] repeatableKeys, final String[]... pairs )
+		{
+			this.pairs = pairs;
+			this.repeatableKeys = repeatableKeys;
+		}
+	}
+
+	/**
+	 * {@code AbstractSelectableViews}: --angleId/--tileId/--illuminationId/--channelId/--timepointId
+	 * (CSV id lists) and -vi (explicit "tp,vs" fallback, repeatable). Shared by detect-interestpoints,
+	 * match-interestpoints, and solver — see {@code ActionHistoryRecorder.putViewSelection}.
+	 */
+	private static final FlagGroup SELECTABLE_VIEWS = new FlagGroup(
+			new String[]{ "viewIds" },
+			new String[]{ "angleId", "--angleId" },
+			new String[]{ "tileId", "--tileId" },
+			new String[]{ "illuminationId", "--illuminationId" },
+			new String[]{ "channelId", "--channelId" },
+			new String[]{ "timepointId", "--timepointId" },
+			new String[]{ "viewIds", "-vi" }
+	);
+
+	/**
+	 * {@code AbstractRegistration}'s grouping flags (on top of {@link #SELECTABLE_VIEWS}, which it
+	 * also extends). Shared by match-interestpoints and solver.
+	 */
+	private static final FlagGroup REGISTRATION_GROUPING = new FlagGroup(
+			null,
+			new String[]{ "groupTiles", "--groupTiles" },
+			new String[]{ "groupIllums", "--groupIllums" },
+			new String[]{ "groupChannels", "--groupChannels" },
+			new String[]{ "splitTimepoints", "--splitTimepoints" }
+	);
+
+	/**
+	 * N5/Zarr/HDF5 output-container basics shared by every Spark command that writes one via the
+	 * N5-API machinery: create-fusion-container, nonrigid-fusion, and resave. NOT shared by "fusion"
+	 * (the second fusion phase reads an already-created container's metadata, it doesn't create one).
+	 *
+	 * <p>{@code blockScale} is deliberately NOT included here: create-fusion-container maps it to
+	 * the relative {@code --shardSizeFactor} while nonrigid-fusion/resave/fusion map it to the
+	 * absolute {@code --blockScale} — same recorded key, genuinely different flag semantics, so
+	 * grouping it here would silently emit the wrong flag for create-fusion-container.</p>
+	 */
+	private static final FlagGroup N5_OUTPUT_CONTAINER = new FlagGroup(
+			null,
+			new String[]{ "n5Path", "-o" },
+			new String[]{ "storage", "-s" },
+			new String[]{ "blockSize", "--blockSize" },
+			new String[]{ "useSharding", "--useSharding" }
+	);
+
+	/**
+	 * N5 compression flags shared by create-fusion-container and resave. NOT shared by
+	 * nonrigid-fusion, which hardcodes {@code ZstandardCompression(3)} with no CLI flag at all (see
+	 * the comment on {@code nonRigidRun} below).
+	 */
+	private static final FlagGroup COMPRESSION = new FlagGroup(
+			null,
+			new String[]{ "compression", "-c" },
+			new String[]{ "compressionLevel", "-cl" }
+	);
+
 	/** A single Spark command's name and the neutral-key → CLI-flag mapping. */
 	private static final class Recipe
 	{
@@ -87,9 +165,26 @@ public class ActionToSparkCli
 
 		Recipe( final String script, final boolean includeXml, final String[]... keyFlagPairs )
 		{
+			this( script, includeXml, new FlagGroup[0], keyFlagPairs );
+		}
+
+		/** Composes shared {@link FlagGroup}s (e.g. {@link #SELECTABLE_VIEWS}) in before the recipe's own pairs. */
+		Recipe( final String script, final boolean includeXml, final FlagGroup[] groups, final String[]... keyFlagPairs )
+		{
 			this.script = script;
 			this.includeXml = includeXml;
 			this.keyToFlag = new LinkedHashMap<>();
+			for ( final FlagGroup g : groups )
+			{
+				for ( final String[] kv : g.pairs )
+					keyToFlag.put( kv[ 0 ], kv[ 1 ] );
+				if ( g.repeatableKeys != null )
+				{
+					if ( repeatKeys == null )
+						repeatKeys = new HashSet<>();
+					repeatKeys.addAll( Arrays.asList( g.repeatableKeys ) );
+				}
+			}
 			for ( final String[] kv : keyFlagPairs )
 				keyToFlag.put( kv[ 0 ], kv[ 1 ] );
 		}
@@ -106,6 +201,7 @@ public class ActionToSparkCli
 
 		final Recipe detectRecipe = new Recipe(
 				"detect-interestpoints", true,
+				new FlagGroup[]{ SELECTABLE_VIEWS },
 				new String[]{ "label", "-l" },
 				new String[]{ "sigma", "-s" },
 				new String[]{ "threshold", "-t" },
@@ -118,18 +214,8 @@ public class ActionToSparkCli
 				new String[]{ "overlappingOnly", "--overlappingOnly" },
 				new String[]{ "blockSize", "--blockSize" },
 				new String[]{ "medianFilter", "--medianFilter" },
-				new String[]{ "maxSpots", "--maxSpots" },
-				// parsimonious view selection (see ActionHistoryRecorder.putViewSelection); angleId/
-				// tileId/illuminationId/channelId/timepointId are single comma-separated CSV values,
-				// viewIds is the explicit "tp,vs" fallback expanded into repeated -vi occurrences
-				new String[]{ "angleId", "--angleId" },
-				new String[]{ "tileId", "--tileId" },
-				new String[]{ "illuminationId", "--illuminationId" },
-				new String[]{ "channelId", "--channelId" },
-				new String[]{ "timepointId", "--timepointId" },
-				new String[]{ "viewIds", "-vi" }
+				new String[]{ "maxSpots", "--maxSpots" }
 		);
-		detectRecipe.repeatKeys = Collections.singleton( "viewIds" );
 		r.put( "detect-interestpoints", Collections.singletonList( detectRecipe ) );
 
 		// registration in the mvrecon GUI is two Spark stages: descriptor matching + global solve.
@@ -139,6 +225,9 @@ public class ActionToSparkCli
 		final List<Recipe> registration = new ArrayList<>();
 		final Recipe matchRecipe = new Recipe(
 				"match-interestpoints", true,
+				// SparkGeometricDescriptorMatching extends AbstractRegistration extends
+				// AbstractSelectableViews, so it gets both shared groups
+				new FlagGroup[]{ SELECTABLE_VIEWS, REGISTRATION_GROUPING },
 				new String[]{ "label", "-l" },
 				new String[]{ "matchingMethod", "-m" },
 				new String[]{ "registrationType", "-rtp" },
@@ -163,26 +252,14 @@ public class ActionToSparkCli
 				new String[]{ "icpMaxError", "-ime" },
 				new String[]{ "icpIterations", "-iit" },
 				new String[]{ "icpUseRANSAC", "--icpUseRANSAC" },
-				new String[]{ "groupTiles", "--groupTiles" },
-				new String[]{ "groupIllums", "--groupIllums" },
-				new String[]{ "groupChannels", "--groupChannels" },
-				new String[]{ "splitTimepoints", "--splitTimepoints" },
-				new String[]{ "clearCorrespondences", "--clearCorrespondences" },
-				// parsimonious view selection (see ActionHistoryRecorder.putViewSelection);
-				// SparkGeometricDescriptorMatching extends AbstractRegistration extends
-				// AbstractSelectableViews, so it accepts these same flags as detect-interestpoints
-				new String[]{ "angleId", "--angleId" },
-				new String[]{ "tileId", "--tileId" },
-				new String[]{ "illuminationId", "--illuminationId" },
-				new String[]{ "channelId", "--channelId" },
-				new String[]{ "timepointId", "--timepointId" },
-				new String[]{ "viewIds", "-vi" }
+				new String[]{ "clearCorrespondences", "--clearCorrespondences" }
 		);
 		matchRecipe.skipWhen = p -> "true".equalsIgnoreCase( p.get( "skipMatching" ) );
-		matchRecipe.repeatKeys = Collections.singleton( "viewIds" );
 		registration.add( matchRecipe );
 		final Recipe solverRecipe = new Recipe(
 				"solver", true,
+				// Solver extends AbstractRegistration extends AbstractSelectableViews, same as match
+				new FlagGroup[]{ SELECTABLE_VIEWS, REGISTRATION_GROUPING },
 				new String[]{ "sourcePoints", "-s" },
 				new String[]{ "label", "-l" },
 				new String[]{ "registrationType", "-rtp" },
@@ -199,23 +276,11 @@ public class ActionToSparkCli
 				new String[]{ "maxIterations", "--maxIterations" },
 				new String[]{ "maxPlateauwidth", "--maxPlateauwidth" },
 				new String[]{ "fixedViews", "-fv" },
-				new String[]{ "disableFixedViews", "--disableFixedViews" },
-				new String[]{ "groupTiles", "--groupTiles" },
-				new String[]{ "groupIllums", "--groupIllums" },
-				new String[]{ "groupChannels", "--groupChannels" },
-				new String[]{ "splitTimepoints", "--splitTimepoints" },
-				// parsimonious view selection (see ActionHistoryRecorder.putViewSelection); Solver
-				// extends AbstractRegistration extends AbstractSelectableViews, same flags as above
-				new String[]{ "angleId", "--angleId" },
-				new String[]{ "tileId", "--tileId" },
-				new String[]{ "illuminationId", "--illuminationId" },
-				new String[]{ "channelId", "--channelId" },
-				new String[]{ "timepointId", "--timepointId" },
-				new String[]{ "viewIds", "-vi" }
+				new String[]{ "disableFixedViews", "--disableFixedViews" }
 		);
 		solverRecipe.skipWhen = p -> "NO_OPTIMIZATION".equals( p.get( "globalOptMethod" ) );
-		// -fv and -vi are both repeatable ('0,0' '0,1' ...), one tp,vs pair per flag occurrence
-		solverRecipe.repeatKeys = new java.util.HashSet<>( java.util.Arrays.asList( "fixedViews", "viewIds" ) );
+		// -fv is also repeatable ('0,0' '0,1' ...); "viewIds" is already in repeatKeys via SELECTABLE_VIEWS
+		solverRecipe.repeatKeys.add( "fixedViews" );
 		registration.add( solverRecipe );
 		r.put( "register-interestpoints", registration );
 
@@ -242,12 +307,8 @@ public class ActionToSparkCli
 		final List<Recipe> fusion = new ArrayList<>();
 		final Recipe createContainer = new Recipe(
 				"create-fusion-container", true,
-				new String[]{ "n5Path", "-o" },
-				new String[]{ "storage", "-s" },
-				new String[]{ "compression", "-c" },
-				new String[]{ "compressionLevel", "-cl" },
+				new FlagGroup[]{ N5_OUTPUT_CONTAINER, COMPRESSION },
 				new String[]{ "pixelType", "-d" },
-				new String[]{ "blockSize", "--blockSize" },
 				new String[]{ "minIntensity", "--minIntensity" },
 				new String[]{ "maxIntensity", "--maxIntensity" },
 				new String[]{ "boundingBox", "-b" },
@@ -256,10 +317,11 @@ public class ActionToSparkCli
 				new String[]{ "downsampling", "-ds" },
 				new String[]{ "preserveAnisotropy", "--preserveAnisotropy" },
 				new String[]{ "anisotropyFactor", "--anisotropyFactor" },
-				new String[]{ "useSharding", "--useSharding" },
 				// CreateFusionContainer's shard size is blockSize * shardSizeFactor (a relative
 				// factor), which is exactly what mvrecon's "blockScale" already means (see
-				// ExportN5Api: shardSize = blockSize * blockScale) — same value, different flag name
+				// ExportN5Api: shardSize = blockSize * blockScale) — same value, different flag name.
+				// NOT part of N5_OUTPUT_CONTAINER: the other recipes sharing that group map
+				// "blockScale" to the absolute "--blockScale" instead (see N5_OUTPUT_CONTAINER's doc).
 				new String[]{ "blockScale", "--shardSizeFactor" },
 				new String[]{ "bdv", "--bdv" },
 				new String[]{ "xmlOut", "-xo" }
@@ -302,9 +364,7 @@ public class ActionToSparkCli
 		// create-fusion-container above), so --multiRes would be redundant.
 		final Recipe nonRigidRun = new Recipe(
 				"nonrigid-fusion", true,
-				new String[]{ "n5Path", "-o" },
-				new String[]{ "storage", "-s" },
-				new String[]{ "blockSize", "--blockSize" },
+				new FlagGroup[]{ N5_OUTPUT_CONTAINER },
 				new String[]{ "blockScale", "--blockScale" },
 				new String[]{ "pixelType", "-p" },
 				new String[]{ "minIntensity", "--minIntensity" },
@@ -317,7 +377,6 @@ public class ActionToSparkCli
 				new String[]{ "preserveAnisotropy", "--preserveAnisotropy" },
 				new String[]{ "anisotropyFactor", "--anisotropyFactor" },
 				new String[]{ "downsampling", "-ds" },
-				new String[]{ "useSharding", "--useSharding" },
 				new String[]{ "shardSize", "--shardSize" }
 		);
 		nonRigidRun.requiresNonRigid = true;
@@ -344,15 +403,10 @@ public class ActionToSparkCli
 		// "xmlOut" is absent and -xo is omitted.
 		final Recipe resave = new Recipe(
 				"resave", true,
-				new String[]{ "n5Path", "-o" },
+				new FlagGroup[]{ N5_OUTPUT_CONTAINER, COMPRESSION },
 				new String[]{ "xmlOut", "-xo" },
-				new String[]{ "storage", "-s" },
-				new String[]{ "blockSize", "--blockSize" },
 				new String[]{ "blockScale", "--blockScale" },
-				new String[]{ "downsampling", "-ds" },
-				new String[]{ "compression", "-c" },
-				new String[]{ "compressionLevel", "-cl" },
-				new String[]{ "useSharding", "--useSharding" }
+				new String[]{ "downsampling", "-ds" }
 		);
 		resave.xmlParamKey = "inputXml";
 		r.put( "resave", Collections.singletonList( resave ) );
