@@ -32,6 +32,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.File;
 import java.net.URI;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -61,6 +62,7 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionRecord;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli;
+import util.URITools;
 
 /**
  * Plugin: shows the recorded action history of the loaded dataset and lets the
@@ -103,6 +105,14 @@ public class Show_Action_History implements PlugIn
 		private final JTextArea detail;
 		private final JButton save;
 		private boolean dirty = false;
+		/**
+		 * Last-modified time of the on-disk XML at the moment this window's (independently loaded,
+		 * see {@link Show_Action_History#run}) copy was taken, or -1 if unknown (remote URI, or file
+		 * not yet found). Used by {@link #saveDataset()} to detect that some other window/process
+		 * touched the file since — this window has no live connection to any other open editor on
+		 * the same dataset, so saving would otherwise silently overwrite those changes.
+		 */
+		private long loadedMTime;
 
 		Frame( final SpimData2 data, final ActionHistory history, final URI xmlURI )
 		{
@@ -111,6 +121,7 @@ public class Show_Action_History implements PlugIn
 			this.history = history;
 			this.xmlURI = xmlURI;
 			this.xmlPath = xmlURI == null ? "" : xmlURI.toString();
+			this.loadedMTime = fileLastModified( xmlURI );
 
 			this.model = new HistoryTableModel( history );
 			this.table = new JTable( model );
@@ -282,6 +293,25 @@ public class Show_Action_History implements PlugIn
 			setTitle( "BigStitcher Action History *" );
 		}
 
+		/**
+		 * Best-effort last-modified time for a local-file XML URI, or -1 if the URI isn't a local
+		 * file, doesn't exist, or its scheme can't be resolved (remote URIs are never checked).
+		 */
+		private static long fileLastModified( final URI uri )
+		{
+			try
+			{
+				if ( uri == null || !URITools.isFile( uri ) )
+					return -1L;
+				final File f = new File( URITools.fromURI( uri ) );
+				return f.exists() ? f.lastModified() : -1L;
+			}
+			catch ( final Throwable ignore )
+			{
+				return -1L;
+			}
+		}
+
 		private void saveDataset()
 		{
 			if ( !dirty )
@@ -293,12 +323,31 @@ public class Show_Action_History implements PlugIn
 						"Save Action History", JOptionPane.ERROR_MESSAGE );
 				return;
 			}
+
+			// this window holds an independently loaded copy (see Show_Action_History.run()), not a
+			// live reference to whatever else might have the same XML open — if the file changed on
+			// disk since we loaded it, saving now would silently overwrite that other change with
+			// our (stale, save-history-changes-only) copy.
+			final long currentMTime = fileLastModified( xmlURI );
+			if ( loadedMTime > 0 && currentMTime > 0 && currentMTime != loadedMTime )
+			{
+				final int choice = JOptionPane.showConfirmDialog( this,
+						"The dataset file appears to have changed on disk since this window was opened\n"
+								+ "(e.g. edited by another BigStitcher window or process).\n\n"
+								+ "Saving now will overwrite the file with THIS window's copy, discarding those\n"
+								+ "other changes. Save anyway?",
+						"Dataset Changed On Disk", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE );
+				if ( choice != JOptionPane.YES_OPTION )
+					return;
+			}
+
 			final boolean ok = new XmlIoSpimData2().save( data, xmlURI );
 			if ( ok )
 			{
 				dirty = false;
 				save.setEnabled( false );
 				setTitle( "BigStitcher Action History" );
+				loadedMTime = fileLastModified( xmlURI ); // our own write is now the baseline
 				IOFunctions.println( "[ActionHistory] saved dataset to '" + xmlURI + "'." );
 			}
 			else
