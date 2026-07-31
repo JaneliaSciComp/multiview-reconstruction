@@ -209,11 +209,20 @@ public class ActionToSparkCli
 				new String[]{ "preserveAnisotropy", "--preserveAnisotropy" },
 				new String[]{ "anisotropyFactor", "--anisotropyFactor" },
 				new String[]{ "useSharding", "--useSharding" },
+				// CreateFusionContainer's shard size is blockSize * shardSizeFactor (a relative
+				// factor), which is exactly what mvrecon's "blockScale" already means (see
+				// ExportN5Api: shardSize = blockSize * blockScale) — same value, different flag name
+				new String[]{ "blockScale", "--shardSizeFactor" },
 				new String[]{ "bdv", "--bdv" },
 				new String[]{ "xmlOut", "-xo" }
 		);
 		createContainer.requiresNonRigid = false;
 		fusion.add( createContainer );
+		// fusionMethod/overlapExpansion (-fm/-oe) are intentionally NOT recorded by the mvrecon GUI:
+		// FusionMethod.THIN_PLATE_SPLINE is a split-dataset (oct-tree) capability
+		// (BlkThinPlateSplineFusion) that Image_Fusion/ExportN5Api never wires up today, so this
+		// path can only ever run as Spark's default AFFINE. Revisit once the GUI can drive TPS here
+		// (distinct from the "nonrigid-fusion" interest-point-based TPS below).
 		final Recipe fusionRun = new Recipe(
 				"fusion", false, // fusion uses container metadata, not -x
 				new String[]{ "n5Path", "-o" },
@@ -238,9 +247,11 @@ public class ActionToSparkCli
 		// the first group (no fan-out today, see ExportN5Api.firstAssignedViewId). If the GUI ran
 		// without BDV, `bdvFirst` is absent and the recorded command will need `-d <path>` filled
 		// in by hand before it runs.
-		// NOTE: SparkNonRigidFusion does not accept -c / -cl / -ds (compression,
-		// compressionLevel, downsampling pyramid) — see its @Option list — so those keys are
-		// recorded by the GUI exporter but intentionally not mapped here.
+		// NOTE: SparkNonRigidFusion does not accept -c / -cl (compression, compressionLevel) — it
+		// hardcodes ZstandardCompression(3) with no CLI flag — so those keys are recorded by the
+		// GUI exporter but intentionally not mapped here. --multiRes is also omitted: the GUI always
+		// records an explicit "-ds" pyramid when multi-resolution is on (same convention as
+		// create-fusion-container above), so --multiRes would be redundant.
 		final Recipe nonRigidRun = new Recipe(
 				"nonrigid-fusion", true,
 				new String[]{ "n5Path", "-o" },
@@ -254,7 +265,12 @@ public class ActionToSparkCli
 				new String[]{ "bdvFirst", "--bdv" },
 				new String[]{ "xmlOut", "-xo" },
 				new String[]{ "n5Dataset", "-d" },
-				new String[]{ "interestPoints", "-ip" }
+				new String[]{ "interestPoints", "-ip" },
+				new String[]{ "preserveAnisotropy", "--preserveAnisotropy" },
+				new String[]{ "anisotropyFactor", "--anisotropyFactor" },
+				new String[]{ "downsampling", "-ds" },
+				new String[]{ "useSharding", "--useSharding" },
+				new String[]{ "shardSize", "--shardSize" }
 		);
 		nonRigidRun.requiresNonRigid = true;
 		nonRigidRun.repeatKey = "interestPoints";
