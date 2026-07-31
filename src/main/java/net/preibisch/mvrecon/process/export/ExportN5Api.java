@@ -204,7 +204,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		if ( bdv && xmlOut != null ) p.put( "xmlOut", xmlOut.toString() );
 		// "tp,vs" for the first fusion group; consumed by the nonrigid-fusion recipe as --bdv
 		if ( bdv && firstAssignedViewId != null )
-			p.put( "bdvFirst", firstAssignedViewId.getTimePointId() + "," + firstAssignedViewId.getViewSetupId() );
+			p.put( "bdvFirst", ActionHistoryRecorder.formatViewId( firstAssignedViewId ) );
 		// non-BDV: predicted first-group s0 dataset path; consumed by the nonrigid-fusion recipe as -d
 		if ( !bdv && firstAssignedDatasetPath != null )
 			p.put( "n5Dataset", firstAssignedDatasetPath );

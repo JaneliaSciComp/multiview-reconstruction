@@ -28,7 +28,6 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -228,12 +227,7 @@ public class Image_Fusion implements PlugIn
 						String.join( ActionToSparkCli.MULTI_VALUE_DELIM, cleaned ) );
 			}
 			// pull exporter-specific params (n5Path, storage, blockSize, compression, …)
-			try
-			{
-				for ( final Map.Entry<String,String> e : exporter.describeParameters().entrySet() )
-					if ( e.getValue() != null )
-						params.put( e.getKey(), e.getValue() );
-			}
+			try { ActionHistoryRecorder.merge( params, exporter.describeParameters() ); }
 			catch ( final Throwable ignore ) {}
 			ActionHistoryRecorder.record(
 					spimData,

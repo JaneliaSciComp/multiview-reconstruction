@@ -82,7 +82,6 @@ import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
-import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -314,23 +313,14 @@ public class Interest_Point_Registration implements PlugIn
 			// instead), which is Solver's --disableFixedViews.
 			if ( fmbp.fixedViews != null && !fmbp.fixedViews.isEmpty() )
 			{
-				final ArrayList<String> fv = new ArrayList<>();
-				for ( final ViewId v : fmbp.fixedViews )
-					fv.add( v.getTimePointId() + "," + v.getViewSetupId() );
-				ActionHistoryRecorder.put( params, "fixedViews", String.join( ActionToSparkCli.MULTI_VALUE_DELIM, fv ) );
+				ActionHistoryRecorder.put( params, "fixedViews", ActionHistoryRecorder.joinViewIds( fmbp.fixedViews ) );
 			}
 			else
 			{
 				ActionHistoryRecorder.put( params, "disableFixedViews", "true" );
 			}
 			// pull matcher-specific params (transformation model, regularization, RANSAC, descriptor params, ICP params, …)
-			try
-			{
-				if ( brp.pwr != null )
-					for ( final Entry<String,String> e : brp.pwr.describeParameters().entrySet() )
-						if ( e.getValue() != null )
-							params.put( e.getKey(), e.getValue() );
-			}
+			try { if ( brp.pwr != null ) ActionHistoryRecorder.merge( params, brp.pwr.describeParameters() ); }
 			catch ( final Throwable ignore ) {}
 			final String resultRef = labels.isEmpty()
 					? "registrations"
