@@ -192,6 +192,11 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		p.put( "blockScale", bsFactorX + "," + bsFactorY + "," + bsFactorZ );
 		if ( compression != null ) p.put( "compression", net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder.sparkCompression( compression ) );
 		p.put( "useSharding", Boolean.toString( useSharding ) );
+		// absolute shard size in voxels, as SparkNonRigidFusion's --shardSize expects it; the
+		// affine create-fusion-container path instead takes a factor (blockScale IS that factor,
+		// see ActionToSparkCli's createContainer recipe), so this key is only consumed there
+		if ( useSharding && shardSize != null )
+			p.put( "shardSize", shardSize[ 0 ] + "," + shardSize[ 1 ] + "," + shardSize[ 2 ] );
 		if ( bdv ) p.put( "bdv", "true" );
 		if ( bdv && xmlOut != null ) p.put( "xmlOut", xmlOut.toString() );
 		// "tp,vs" for the first fusion group; consumed by the nonrigid-fusion recipe as --bdv
