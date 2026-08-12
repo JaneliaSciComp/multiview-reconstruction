@@ -181,30 +181,24 @@ public class XmlIoAllenOMEZarrLoader implements XmlIoBasicImgLoader< AllenOMEZar
 				final String path = c.getAttributeValue( "path" );
 				int[] indicies;
 
-				if ( version.equals( "3.0" ))
-				{
-					final String indiciesString = c.getAttributeValue( "indicies" );
+				// written since version 3.0; absent in older XMLs (and then the volume must be 3d,
+				// or 4d/5d with size 1 in the higher dimensions)
+				final String indiciesString = c.getAttributeValue( "indicies" );
 
-					if ( indiciesString.equals( "[]" ) )
-					{
-						indicies = null;
-					}
-					else
-					{
-						String[] split = indiciesString.split( " " );
-						indicies = new int[ split.length ];
-
-						for ( int i = 0; i < split.length; ++i )
-							indicies[ i ] = Integer.parseInt( split[ i ] );
-						//indicies = XmlHelpers.getIntArray( c, "indicies" );
-					}
-
-					//System.out.println( "Loaded indicies: " + Arrays.toString( indicies ));
-				}
-				else
+				if ( indiciesString == null || indiciesString.equals( "[]" ) )
 				{
 					indicies = null;
 				}
+				else
+				{
+					String[] split = indiciesString.split( " " );
+					indicies = new int[ split.length ];
+
+					for ( int i = 0; i < split.length; ++i )
+						indicies[ i ] = Integer.parseInt( split[ i ] );
+				}
+
+				//System.out.println( "Loaded indicies: " + Arrays.toString( indicies ));
 
 				zgroups.put( new ViewId( timepointId, setupId ), new OMEZARREntry(path, indicies) );
 			}
