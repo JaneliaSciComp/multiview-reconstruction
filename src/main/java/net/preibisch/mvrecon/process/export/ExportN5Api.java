@@ -191,15 +191,15 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
 		if ( path != null ) p.put( "n5Path", path.toString() );
 		if ( storageType != null ) p.put( "storage", storageType.toString() );
-		p.put( "blockSize", bsX + "," + bsY + "," + bsZ );
-		p.put( "blockScale", bsFactorX + "," + bsFactorY + "," + bsFactorZ );
+		p.put( "blockSize", ActionHistoryRecorder.csv( blocksize() ) );
+		p.put( "blockScale", ActionHistoryRecorder.csv( computeBlocksizeFactor() ) );
 		if ( compression != null ) p.put( "compression", ActionHistoryRecorder.sparkCompression( compression ) );
 		p.put( "useSharding", Boolean.toString( useSharding ) );
 		// absolute shard size in voxels, as SparkNonRigidFusion's --shardSize expects it; the
 		// affine create-fusion-container path instead takes a factor (blockScale IS that factor,
 		// see ActionToSparkCli's createContainer recipe), so this key is only consumed there
 		if ( useSharding && shardSize != null )
-			p.put( "shardSize", shardSize[ 0 ] + "," + shardSize[ 1 ] + "," + shardSize[ 2 ] );
+			p.put( "shardSize", ActionHistoryRecorder.csv( shardSize ) );
 		if ( bdv ) p.put( "bdv", "true" );
 		if ( bdv && xmlOut != null ) p.put( "xmlOut", xmlOut.toString() );
 		// "tp,vs" for the first fusion group; consumed by the nonrigid-fusion recipe as --bdv

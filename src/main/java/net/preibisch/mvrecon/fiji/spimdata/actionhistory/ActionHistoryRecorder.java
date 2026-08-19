@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.fiji.spimdata.actionhistory;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -30,6 +31,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
@@ -93,15 +95,7 @@ public final class ActionHistoryRecorder
 	/** Format an int vector as a bare "x,y,z" string, as the BigStitcher-Spark CLI expects (no brackets). */
 	public static String csv( final int[] v )
 	{
-		if ( v == null )
-			return null;
-		final StringBuilder sb = new StringBuilder();
-		for ( int i = 0; i < v.length; ++i )
-		{
-			if ( i > 0 ) sb.append( ',' );
-			sb.append( v[ i ] );
-		}
-		return sb.toString();
+		return v == null ? null : Arrays.stream( v ).mapToObj( String::valueOf ).collect( Collectors.joining( "," ) );
 	}
 
 	/** Convenience: put non-null value (skip nulls). */
@@ -124,6 +118,24 @@ public final class ActionHistoryRecorder
 		for ( final Map.Entry<String,String> e : src.entrySet() )
 			if ( e.getValue() != null )
 				dest.put( e.getKey(), e.getValue() );
+	}
+
+	/**
+	 * Best-effort variant of {@link #merge(Map, Map)}: calls {@code src} and merges its result,
+	 * swallowing any exception the sub-component's {@code describeParameters()} throws (mirrors the
+	 * best-effort contract of {@link #record}). Note: unlike {@link #merge(Map, Map)}, {@code src} is
+	 * a supplier so the call itself (not just the merge) is covered by the try/catch.
+	 */
+	public static void mergeSafe( final Map<String,String> dest, final java.util.function.Supplier<? extends Map<String,String>> src )
+	{
+		try
+		{
+			merge( dest, src.get() );
+		}
+		catch ( final Throwable t )
+		{
+			System.err.println( "ActionHistoryRecorder: failed to merge params: " + t );
+		}
 	}
 
 	/** "tp,vs" — the ViewId format every Spark CLI view-selection flag (-vi, -fv) expects. */
@@ -176,42 +188,31 @@ public final class ActionHistoryRecorder
 		if ( selected.size() == present.size() )
 			return;
 
-		final Set<Integer> allAngle = new LinkedHashSet<>(), usedAngle = new LinkedHashSet<>();
-		final Set<Integer> allTile = new LinkedHashSet<>(), usedTile = new LinkedHashSet<>();
-		final Set<Integer> allIllum = new LinkedHashSet<>(), usedIllum = new LinkedHashSet<>();
-		final Set<Integer> allChannel = new LinkedHashSet<>(), usedChannel = new LinkedHashSet<>();
-		final Set<Integer> allTP = new LinkedHashSet<>(), usedTP = new LinkedHashSet<>();
+		final int nDims = DIM_KEYS.length;
+		final List<Set<Integer>> all = new ArrayList<>( nDims );
+		final List<Set<Integer>> used = new ArrayList<>( nDims );
+		for ( int d = 0; d < nDims; ++d )
+		{
+			all.add( new LinkedHashSet<>() );
+			used.add( new LinkedHashSet<>() );
+		}
 
 		for ( final ViewDescription vd : present )
 		{
-			final int angle = vd.getViewSetup().getAngle().getId();
-			final int tile = vd.getViewSetup().getTile().getId();
-			final int illum = vd.getViewSetup().getIllumination().getId();
-			final int channel = vd.getViewSetup().getChannel().getId();
-			final int tp = vd.getTimePointId();
-
-			allAngle.add( angle );
-			allTile.add( tile );
-			allIllum.add( illum );
-			allChannel.add( channel );
-			allTP.add( tp );
-
-			if ( selected.contains( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) ) )
+			final boolean isSelected = selected.contains( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) );
+			for ( int d = 0; d < nDims; ++d )
 			{
-				usedAngle.add( angle );
-				usedTile.add( tile );
-				usedIllum.add( illum );
-				usedChannel.add( channel );
-				usedTP.add( tp );
+				final int v = DIM_EXTRACTORS[ d ].get( vd );
+				all.get( d ).add( v );
+				if ( isSelected )
+					used.get( d ).add( v );
 			}
 		}
 
 		// a dimension only needs a filter if it's actually restricted; "all values used" == default
-		final Set<Integer> fAngle = usedAngle.equals( allAngle ) ? null : usedAngle;
-		final Set<Integer> fTile = usedTile.equals( allTile ) ? null : usedTile;
-		final Set<Integer> fIllum = usedIllum.equals( allIllum ) ? null : usedIllum;
-		final Set<Integer> fChannel = usedChannel.equals( allChannel ) ? null : usedChannel;
-		final Set<Integer> fTP = usedTP.equals( allTP ) ? null : usedTP;
+		final List<Set<Integer>> filter = new ArrayList<>( nDims );
+		for ( int d = 0; d < nDims; ++d )
+			filter.add( used.get( d ).equals( all.get( d ) ) ? null : used.get( d ) );
 
 		// verify: does the cross-product of these per-dimension filters reconstruct the selection
 		// exactly? (required -- independent per-dimension filters can't express a cross-cutting
@@ -220,12 +221,16 @@ public final class ActionHistoryRecorder
 		boolean exact = true;
 		for ( final ViewDescription vd : present )
 		{
-			final boolean matches =
-					( fAngle == null || fAngle.contains( vd.getViewSetup().getAngle().getId() ) )
-					&& ( fTile == null || fTile.contains( vd.getViewSetup().getTile().getId() ) )
-					&& ( fIllum == null || fIllum.contains( vd.getViewSetup().getIllumination().getId() ) )
-					&& ( fChannel == null || fChannel.contains( vd.getViewSetup().getChannel().getId() ) )
-					&& ( fTP == null || fTP.contains( vd.getTimePointId() ) );
+			boolean matches = true;
+			for ( int d = 0; d < nDims; ++d )
+			{
+				final Set<Integer> f = filter.get( d );
+				if ( f != null && !f.contains( DIM_EXTRACTORS[ d ].get( vd ) ) )
+				{
+					matches = false;
+					break;
+				}
+			}
 			final boolean isSelected = selected.contains( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) );
 			if ( matches != isSelected )
 			{
@@ -240,11 +245,9 @@ public final class ActionHistoryRecorder
 
 		if ( exact )
 		{
-			if ( fAngle != null ) put( params, "angleId", joinIds( fAngle ) );
-			if ( fTile != null ) put( params, "tileId", joinIds( fTile ) );
-			if ( fIllum != null ) put( params, "illuminationId", joinIds( fIllum ) );
-			if ( fChannel != null ) put( params, "channelId", joinIds( fChannel ) );
-			if ( fTP != null ) put( params, "timepointId", joinIds( fTP ) );
+			for ( int d = 0; d < nDims; ++d )
+				if ( filter.get( d ) != null )
+					put( params, DIM_KEYS[ d ], joinIds( filter.get( d ) ) );
 		}
 		else
 		{
@@ -252,17 +255,26 @@ public final class ActionHistoryRecorder
 		}
 	}
 
+	/** Per-dimension {@code ViewDescription} accessor, paired with {@link #DIM_KEYS} by index. */
+	@FunctionalInterface
+	private interface DimExtractor
+	{
+		int get( ViewDescription vd );
+	}
+
+	// order defines the order params are emitted in putViewSelection()
+	private static final String[] DIM_KEYS = { "angleId", "tileId", "illuminationId", "channelId", "timepointId" };
+	private static final DimExtractor[] DIM_EXTRACTORS = {
+			vd -> vd.getViewSetup().getAngle().getId(),
+			vd -> vd.getViewSetup().getTile().getId(),
+			vd -> vd.getViewSetup().getIllumination().getId(),
+			vd -> vd.getViewSetup().getChannel().getId(),
+			vd -> vd.getTimePointId()
+	};
+
 	private static String joinIds( final Collection<Integer> ids )
 	{
-		final StringBuilder sb = new StringBuilder();
-		boolean first = true;
-		for ( final int id : ids )
-		{
-			if ( !first ) sb.append( ',' );
-			sb.append( id );
-			first = false;
-		}
-		return sb.toString();
+		return ids.stream().map( String::valueOf ).collect( Collectors.joining( "," ) );
 	}
 
 	/**

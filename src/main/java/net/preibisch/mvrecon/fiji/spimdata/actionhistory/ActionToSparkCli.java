@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -131,19 +131,6 @@ public class ActionToSparkCli
 		/** ordered: stable output across runs */
 		final LinkedHashMap<String,String> keyToFlag;
 		final boolean includeXml;
-		/**
-		 * If non-null, {@code -x} is taken from this recorded param key instead of the live project
-		 * path. Used for resave, whose {@code -x} is the original input XML (captured at record time),
-		 * not the currently open project (which is the resave's output).
-		 */
-		String xmlParamKey = null;
-		/**
-		 * Suppress this key's flag when {@link #suppressWhen} evaluates true against the recorded
-		 * params. Used for the single case of {@code --blockScale} being rejected by SparkFusion
-		 * once the container is sharded.
-		 */
-		String suppressKey = null;
-		Predicate<Map<String,String>> suppressWhen = null;
 		/**
 		 * Whole-recipe gate on the affine-vs-nonrigid fusion branch: {@code null} = always apply,
 		 * {@code true} = only when {@code nonRigid=true} was recorded, {@code false} = only when not.
@@ -283,7 +270,7 @@ public class ActionToSparkCli
 		// -fv is also repeatable ('0,0' '0,1' ...); "viewIds" is already in repeatKeys via SELECTABLE_VIEWS
 		solverRecipe.repeatKeys.add( "fixedViews" );
 		registration.add( solverRecipe );
-		r.put( "register-interestpoints", registration );
+		r.put( ActionHistory.REGISTER_INTERESTPOINTS, registration );
 
 		r.put( "pairwise-stitching", Collections.singletonList( new Recipe(
 				"stitching", true,
@@ -345,10 +332,6 @@ public class ActionToSparkCli
 				new String[]{ "channelId", "--channelId" },
 				new String[]{ "timepointId", "--timepointId" }
 		);
-		// SparkFusion rejects --blockScale once the container is sharded; shard size determines
-		// the compute-block size. Omit it whenever the create-fusion-container step would shard.
-		fusionRun.suppressKey = "blockScale";
-		fusionRun.suppressWhen = ActionToSparkCli::shardingEnabled;
 		fusionRun.requiresNonRigid = false;
 		fusion.add( fusionRun );
 
@@ -409,7 +392,6 @@ public class ActionToSparkCli
 				new String[]{ "blockScale", "--blockScale" },
 				new String[]{ "downsampling", "-ds" }
 		);
-		resave.xmlParamKey = "inputXml";
 		r.put( "resave", Collections.singletonList( resave ) );
 
 		return r;
@@ -471,7 +453,9 @@ public class ActionToSparkCli
 		sb.append( "./" ).append( recipe.script );
 		if ( recipe.includeXml )
 		{
-			final String x = recipe.xmlParamKey != null ? params.get( recipe.xmlParamKey ) : xmlPath;
+			// resave's -x is the original INPUT xml (recorded as "inputXml"), not the live project,
+			// which after a resave is the OUTPUT.
+			final String x = "resave".equals( recipe.script ) ? params.get( "inputXml" ) : xmlPath;
 			if ( x != null && !x.isEmpty() )
 				sb.append( " -x " ).append( quote( x ) );
 		}
@@ -481,7 +465,9 @@ public class ActionToSparkCli
 			final String value = params.get( mapping.getKey() );
 			if ( value == null || value.isEmpty() )
 				continue;
-			if ( mapping.getKey().equals( recipe.suppressKey ) && recipe.suppressWhen.test( params ) )
+			// SparkFusion rejects --blockScale once the container is sharded; shard size determines
+			// the compute-block size. Omit it whenever the create-fusion-container step would shard.
+			if ( "fusion".equals( recipe.script ) && "blockScale".equals( mapping.getKey() ) && shardingEnabled( params ) )
 				continue;
 			final String flag = mapping.getValue();
 			// multi-valued: emit `flag value` per non-empty element
@@ -541,9 +527,4 @@ public class ActionToSparkCli
 		return s;
 	}
 
-	/** True if the translator has a recipe for this action id. */
-	public static boolean isKnown( final String actionId )
-	{
-		return REGISTRY.containsKey( actionId );
-	}
 }

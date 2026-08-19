@@ -22,6 +22,9 @@
  */
 package net.preibisch.mvrecon.process.export;
 
+import java.util.Collections;
+import java.util.Map;
+
 import mpicbg.spim.data.sequence.ViewDescription;
 import net.imglib2.Interval;
 import net.imglib2.algorithm.blocks.BlockSupplier;
@@ -90,8 +93,8 @@ public interface ImgExport
 	 * <p>Default: empty map. Implementations that map cleanly to a Spark command
 	 * (e.g. N5/Zarr/HDF5 export) should override.</p>
 	 */
-	default java.util.Map<String,String> describeParameters()
+	default Map<String,String> describeParameters()
 	{
-		return java.util.Collections.emptyMap();
+		return Collections.emptyMap();
 	}
 }

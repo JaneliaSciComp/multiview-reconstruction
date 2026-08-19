@@ -62,6 +62,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.ImgLib2Temp.Pair;
 import net.preibisch.mvrecon.fiji.ImgLib2Temp.ValuePair;
+import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorer;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -559,7 +560,7 @@ public class InterestPointExplorerPanel extends JPanel
 				// drop matching action-history entries so the history reflects current data state
 				try
 				{
-					final net.preibisch.mvrecon.fiji.spimdata.SpimData2 sd = viewSetupExplorer.getSpimData();
+					final SpimData2 sd = viewSetupExplorer.getSpimData();
 					if ( sd != null && sd.getActionHistory() != null )
 						sd.getActionHistory().removeByResultRef( "interestpoints:" + label );
 				}
