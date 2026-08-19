@@ -118,14 +118,13 @@ public class Image_Fusion implements PlugIn
 		// The fusion box list also contains two COMPUTED boxes ("Currently Selected Views", "All Views")
 		// that are NOT persisted in the XML; emitting -b with those names would fail in Spark. They map
 		// to Spark's default (no -b = fuse the full extent), so only a saved box is recorded as a name.
-		String bbTitleTmp = null;
+		String bbTitle = null;
 		if ( fusion.getBoundingBox() instanceof BoundingBox )
 		{
 			final String t = ( (BoundingBox) fusion.getBoundingBox() ).getTitle();
-			for ( final BoundingBox saved : spimData.getBoundingBoxes().getBoundingBoxes() )
-				if ( saved.getTitle().equals( t ) ) { bbTitleTmp = t; break; }
+			if ( spimData.getBoundingBoxes().getBoundingBoxes().stream().anyMatch( saved -> saved.getTitle().equals( t ) ) )
+				bbTitle = t;
 		}
-		final String bbTitle = bbTitleTmp;
 
 		final List< Group< ViewDescription > > groups = fusion.getFusionGroups();
 		int i = 0;
@@ -227,8 +226,7 @@ public class Image_Fusion implements PlugIn
 						String.join( ActionToSparkCli.MULTI_VALUE_DELIM, cleaned ) );
 			}
 			// pull exporter-specific params (n5Path, storage, blockSize, compression, …)
-			try { ActionHistoryRecorder.merge( params, exporter.describeParameters() ); }
-			catch ( final Throwable ignore ) {}
+			ActionHistoryRecorder.mergeSafe( params, exporter::describeParameters );
 			ActionHistoryRecorder.record(
 					spimData,
 					"fusion",

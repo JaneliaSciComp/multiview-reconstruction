@@ -63,29 +63,16 @@ public class TransformationModelGUI
 	public double getLambda() { return lambda; }
 	public boolean isRegularize() { return regularize; }
 
-	/** Maps modelIndex to the BigStitcher-Spark transformation-model name. */
+	/** Maps modelIndex to the BigStitcher-Spark transformation-model name (uppercase of {@link #modelChoice}). */
 	public static String modelIndexToSparkName( final int idx )
 	{
-		switch ( idx )
-		{
-			case 0: return "TRANSLATION";
-			case 1: return "RIGID";
-			case 2: return "AFFINE";
-			default: return null;
-		}
+		return ( idx >= 0 && idx < modelChoice.length ) ? modelChoice[ idx ].toUpperCase() : null;
 	}
 
-	/** Maps regularizedModelIndex to the BigStitcher-Spark regularization-model name. */
+	/** Maps regularizedModelIndex to the BigStitcher-Spark regularization-model name. 0=Identity, 1..3 match {@link #modelIndexToSparkName}. */
 	public static String regularizationIndexToSparkName( final int idx )
 	{
-		switch ( idx )
-		{
-			case 0: return "IDENTITY";
-			case 1: return "TRANSLATION";
-			case 2: return "RIGID";
-			case 3: return "AFFINE";
-			default: return null;
-		}
+		return idx == 0 ? "IDENTITY" : modelIndexToSparkName( idx - 1 );
 	}
 
 	@SuppressWarnings({ "rawtypes", "unchecked" })

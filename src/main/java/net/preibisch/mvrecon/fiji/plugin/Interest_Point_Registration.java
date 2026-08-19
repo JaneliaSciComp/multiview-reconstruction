@@ -81,6 +81,7 @@ import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -320,14 +321,14 @@ public class Interest_Point_Registration implements PlugIn
 				ActionHistoryRecorder.put( params, "disableFixedViews", "true" );
 			}
 			// pull matcher-specific params (transformation model, regularization, RANSAC, descriptor params, ICP params, …)
-			try { if ( brp.pwr != null ) ActionHistoryRecorder.merge( params, brp.pwr.describeParameters() ); }
-			catch ( final Throwable ignore ) {}
+			if ( brp.pwr != null )
+				ActionHistoryRecorder.mergeSafe( params, brp.pwr::describeParameters );
 			final String resultRef = labels.isEmpty()
 					? "registrations"
 					: "interestpoints:" + labels.iterator().next();
 			ActionHistoryRecorder.record(
 					data,
-					"register-interestpoints",
+					ActionHistory.REGISTER_INTERESTPOINTS,
 					Interest_Point_Registration.class.getName(),
 					params,
 					viewIds,

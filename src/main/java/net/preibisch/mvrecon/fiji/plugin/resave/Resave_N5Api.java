@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.fiji.plugin.resave;
 
 import java.io.File;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -115,7 +116,7 @@ public class Resave_N5Api implements PlugIn
 			final Collection<? extends ViewId> vidsToResave,
 			final ParametersResaveN5Api n5Params,
 			final boolean saveXML,
-			final java.net.URI inputXmlURI )
+			final URI inputXmlURI )
 	{
 		final SpimData2 sdReduced = SpimData2Tools.reduceSpimData2( data, vidsToResave.stream().collect( Collectors.toList() ) );
 

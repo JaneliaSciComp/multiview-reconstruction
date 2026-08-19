@@ -25,10 +25,9 @@ package net.preibisch.mvrecon.fiji.spimdata.actionhistory;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.IdentityHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.function.Predicate;
 
 import mpicbg.spim.data.sequence.ViewId;
 
@@ -80,22 +79,6 @@ public class ActionHistory
 
 	public boolean isEmpty() { return records.isEmpty(); }
 
-	public ActionRecord last()
-	{
-		return records.isEmpty() ? null : records.get( records.size() - 1 );
-	}
-
-	/**
-	 * Remove every record matching the predicate.
-	 * @return number of records removed
-	 */
-	public int removeWhere( final Predicate<ActionRecord> p )
-	{
-		final int before = records.size();
-		records.removeIf( p );
-		return before - records.size();
-	}
-
 	/**
 	 * Convenience for data-tied removal: drop entries whose resultRef equals the given string.
 	 * @return number of records removed
@@ -104,7 +87,9 @@ public class ActionHistory
 	{
 		if ( resultRef == null || resultRef.isEmpty() )
 			return 0;
-		return removeWhere( r -> resultRef.equals( r.getResultRef() ) );
+		final int before = records.size();
+		records.removeIf( r -> resultRef.equals( r.getResultRef() ) );
+		return before - records.size();
 	}
 
 	/** action id used for GUI registration; kept in sync with the recorder in Interest_Point_Registration. */
@@ -128,7 +113,7 @@ public class ActionHistory
 		if ( unregisteredViews == null || unregisteredViews.isEmpty() )
 			return 0;
 
-		final Set<ActionRecord> touched = Collections.newSetFromMap( new IdentityHashMap<>() );
+		final Set<ActionRecord> touched = new HashSet<>();
 		for ( final ViewId v : unregisteredViews )
 		{
 			for ( int i = records.size() - 1; i >= 0; --i )
@@ -157,12 +142,9 @@ public class ActionHistory
 	{
 		if ( toRemove == null || toRemove.isEmpty() )
 			return 0;
-		final Set<ActionRecord> ids = Collections.newSetFromMap( new IdentityHashMap<>() );
-		ids.addAll( toRemove );
+		final Set<ActionRecord> ids = new HashSet<>( toRemove );
 		final int before = records.size();
 		records.removeIf( ids::contains );
 		return before - records.size();
 	}
-
-	public void clear() { records.clear(); }
 }
