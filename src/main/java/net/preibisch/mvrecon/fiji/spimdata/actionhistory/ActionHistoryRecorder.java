@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -209,7 +209,7 @@ public final class ActionHistoryRecorder
 			}
 		}
 
-		// a dimension only needs a filter if it's actually restricted; "all values used" == default
+        // filter = set(all dims that are restircted); "all values used" == default
 		final List<Set<Integer>> filter = new ArrayList<>( nDims );
 		for ( int d = 0; d < nDims; ++d )
 			filter.add( used.get( d ).equals( all.get( d ) ) ? null : used.get( d ) );

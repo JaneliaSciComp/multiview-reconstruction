@@ -52,9 +52,7 @@ public class ActionToSparkCli
 	 * A reusable bundle of key→flag pairs (and, optionally, which of them are repeatable — see
 	 * {@code Recipe.repeatKeys}) mirroring a shared BigStitcher-Spark abstract command class. Recipes
 	 * for Spark commands that extend the same abstract class (e.g. {@code AbstractSelectableViews})
-	 * compose in the same group instead of each re-listing the same pairs by hand — the actual
-	 * failure mode that motivated this: adding a shared flag meant remembering to update every
-	 * recipe (and its {@code repeatKeys}) that used it.
+	 * compose in the same group instead of each re-listing the same pairs by hand
 	 */
 	private static final class FlagGroup
 	{
@@ -335,7 +333,7 @@ public class ActionToSparkCli
 		fusionRun.requiresNonRigid = false;
 		fusion.add( fusionRun );
 
-		// Single-shot nonrigid (TPS) fusion: takes -x, writes its own dataset, requires -ip.
+		// Single-shot nonrigid fusion: takes -x, writes its own dataset, requires -ip.
 		// SparkNonRigidFusion validates exactly-one-of -d / --bdv. The GUI records `bdvFirst` as
 		// the (tp,vs) the first fusion group would receive — only meaningful in BDV mode, and only
 		// the first group (no fan-out today, see ExportN5Api.firstAssignedViewId). If the GUI ran
