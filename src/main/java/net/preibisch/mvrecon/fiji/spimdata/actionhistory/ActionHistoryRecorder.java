@@ -188,6 +188,7 @@ public final class ActionHistoryRecorder
 		if ( selected.size() == present.size() )
 			return;
 
+		final int n = present.size();
 		final int nDims = DIM_KEYS.length;
 		final List<Set<Integer>> all = new ArrayList<>( nDims );
 		final List<Set<Integer>> used = new ArrayList<>( nDims );
@@ -197,12 +198,23 @@ public final class ActionHistoryRecorder
 			used.add( new LinkedHashSet<>() );
 		}
 
-		for ( final ViewDescription vd : present )
+		// Cache each view's per-dimension values + selected flag once here (flat n*nDims array, one
+		// allocation) so the reconstruction-verify pass below never re-derives them -- avoids a second
+		// round of ViewSetup getter-chain calls and HashSet lookups per view. Matters at 100k+ tiles.
+		final int[] vals = new int[ n * nDims ];
+		final boolean[] isSelectedArr = new boolean[ n ];
+		for ( int i = 0; i < n; ++i )
 		{
-			final boolean isSelected = selected.contains( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) );
+			// ViewDescription extends ViewId (same equals/hashCode, keyed on timepoint+setup), so it
+			// probes the set directly -- no need to allocate a ViewId just to look itself up.
+			final ViewDescription vd = present.get( i );
+			final boolean isSelected = selected.contains( vd );
+			isSelectedArr[ i ] = isSelected;
+			final int base = i * nDims;
 			for ( int d = 0; d < nDims; ++d )
 			{
 				final int v = DIM_EXTRACTORS[ d ].get( vd );
+				vals[ base + d ] = v;
 				all.get( d ).add( v );
 				if ( isSelected )
 					used.get( d ).add( v );
@@ -219,20 +231,20 @@ public final class ActionHistoryRecorder
 		// subset, and silently emitting them anyway would select the wrong views)
 		int reconstructedCount = 0;
 		boolean exact = true;
-		for ( final ViewDescription vd : present )
+		for ( int i = 0; i < n; ++i )
 		{
+			final int base = i * nDims;
 			boolean matches = true;
 			for ( int d = 0; d < nDims; ++d )
 			{
 				final Set<Integer> f = filter.get( d );
-				if ( f != null && !f.contains( DIM_EXTRACTORS[ d ].get( vd ) ) )
+				if ( f != null && !f.contains( vals[ base + d ] ) )
 				{
 					matches = false;
 					break;
 				}
 			}
-			final boolean isSelected = selected.contains( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) );
-			if ( matches != isSelected )
+			if ( matches != isSelectedArr[ i ] )
 			{
 				exact = false;
 				break;
