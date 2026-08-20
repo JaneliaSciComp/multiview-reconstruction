@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -31,8 +31,8 @@ import mpicbg.spim.data.sequence.ViewId;
 
 /**
  * One recorded user action — a successful invocation of an mvrecon GUI command.
- * Stored as a neutral structured form (action id + parameter map) so that
- * translation to BigStitcher-Spark CLI is decoupled from XML persistence.
+ * Stored as a neutral structured form (action id + parameter map)
+ * --> translation to BigStitcher-Spark CLI is decoupled from XML persistence
  */
 public class ActionRecord
 {
