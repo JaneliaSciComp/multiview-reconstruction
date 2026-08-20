@@ -3,7 +3,7 @@
  * Software for the reconstruction of multi-view microscopic acquisitions
  * like Selective Plane Illumination Microscopy (SPIM) Data.
  * %%
- * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
+ * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
  * %%
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as
@@ -50,12 +50,10 @@ public class ActionHistory
 	{
 		if ( r == null )
 			return;
-		// add() is the single chokepoint for the recorder, the XML loader, and the Zarr v3
-		// JSON loader, so dedup here. A record identical in timestamp + actionId + resultRef +
-		// params is the same event re-added (e.g. a load-then-save round-trip re-reading the
-		// embedded history); recording the same event twice is never legitimate. This also
-		// self-heals already-duplicated files on the next load. affectedViews is intentionally
-		// excluded from the comparison so the check stays O(1) per record even for 100k+ tiles.
+		// dedups at add() (chokepoint for recorder, XML loader).
+        // Duplicate record: when two records have identical timestamps, actionIds, resultRefs +
+		// params; recording these is never legitimate.
+        // affectedViews is excluded from the comparison --> O(1) per record even for 100k+ tiles.
 		for ( final ActionRecord existing : records )
 			if ( sameEvent( existing, r ) )
 				return;
