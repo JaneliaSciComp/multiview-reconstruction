@@ -221,7 +221,7 @@ public final class ActionHistoryRecorder
 			}
 		}
 
-        // filter = set(all dims that are restircted); "all values used" == default
+        // filter = set(all dims that are restricted); "all values used" == default
 		final List<Set<Integer>> filter = new ArrayList<>( nDims );
 		for ( int d = 0; d < nDims; ++d )
 			filter.add( used.get( d ).equals( all.get( d ) ) ? null : used.get( d ) );
