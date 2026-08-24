@@ -144,7 +144,7 @@ public final class ActionHistoryRecorder
 		return v.getTimePointId() + "," + v.getViewSetupId();
 	}
 
-	/** {@value #MULTI_VALUE_DELIM}-delimited "tp,vs" pairs, for repeatKeys-expanded flags (-vi, -fv). */
+	/** {@value ActionToSparkCli#MULTI_VALUE_DELIM}-delimited "tp,vs" pairs, for repeatKeys-expanded flags (-vi, -fv). */
 	public static String joinViewIds( final Collection<? extends ViewId> views )
 	{
 		final List<String> parts = new ArrayList<>();
