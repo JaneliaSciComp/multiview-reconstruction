@@ -102,8 +102,11 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 			p.put( "type", "MAX" );
 		else if ( findMin )
 			p.put( "type", "MIN" );
-		// Spark --localization only supports NONE or QUADRATIC (no Gaussian-mask fit)
-		p.put( "localization", localization == 0 ? "NONE" : "QUADRATIC" );
+		// Spark's Localization enum only has NONE/QUADRATIC (no Gaussian-mask fit) -- record what
+		// actually ran, not a coerced guess; ActionToSparkCli recognizes "GAUSS_FIT" as unsupported
+		// and omits --localization (falling back to Spark's own QUADRATIC default) with a warning,
+		// rather than this silently claiming QUADRATIC ran when it didn't.
+		p.put( "localization", localization == 0 ? "NONE" : localization == 1 ? "QUADRATIC" : "GAUSS_FIT" );
 		if ( !Double.isNaN( minIntensity ) )
 			p.put( "minIntensity", Double.toString( minIntensity ) );
 		if ( !Double.isNaN( maxIntensity ) )
