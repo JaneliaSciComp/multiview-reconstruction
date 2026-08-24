@@ -179,6 +179,60 @@ public class ActionToSparkCli
 	/** Delimiter for multi-valued recorded params expanded into repeated flags (see {@code Recipe.repeatKeys}). */
 	public static final String MULTI_VALUE_DELIM = ";";
 
+	/**
+	 * A recorded (param key, value) that mvrecon can produce but BigStitcher-Spark cannot express —
+	 * single source of truth for the three things an unsupported value needs to do: skip whichever
+	 * recipe(s) can't run without it, omit just the one flag for recipes that can still run without
+	 * it, and explain why in the rendered script + log. Add one entry here instead of touching
+	 * {@code render()}, {@code renderOne()}, and a {@code Recipe.skipWhen} separately.
+	 */
+	private static final class UnsupportedValue
+	{
+		final String key, value, message;
+		/**
+		 * true: no recipe can emit a valid command with this value at all (a required flag with no
+		 * fallback, e.g. {@code -m}) — the recipe(s) needing {@code key} are skipped entirely, via
+		 * their {@code skipWhen} (see {@link #dropsWholeCommand}).
+		 * false: the flag is simply omitted, falling back to Spark's own default for the rest of an
+		 * otherwise-valid command (e.g. {@code --localization}).
+		 */
+		final boolean dropsWholeCommand;
+
+		UnsupportedValue( final String key, final String value, final String message, final boolean dropsWholeCommand )
+		{
+			this.key = key;
+			this.value = value;
+			this.message = message;
+			this.dropsWholeCommand = dropsWholeCommand;
+		}
+	}
+
+	private static final List<UnsupportedValue> UNSUPPORTED_VALUES = Collections.unmodifiableList( Arrays.asList(
+			new UnsupportedValue( "matchingMethod", "CENTER_OF_MASS",
+					"-m CENTER_OF_MASS is not supported in BigStitcher-Spark. It was therefore not translated.",
+					true ),
+			new UnsupportedValue( "globalOptMethod", "NO_OPTIMIZATION",
+					"--method NO_OPTIMIZATION is not supported in BigStitcher-Spark (global optimization is always run). "
+					+ "The solver step was therefore not translated.",
+					true ),
+			new UnsupportedValue( "localization", "GAUSS_FIT",
+					"-localization GAUSS_FIT is not supported in BigStitcher-Spark (only NONE/QUADRATIC). "
+					+ "It was therefore not translated; QUADRATIC (Spark's default) will be used instead.",
+					false )
+	) );
+
+	/** True if {@code params.get(key)} matches a {@link #UNSUPPORTED_VALUES} entry for that key. */
+	private static boolean isUnsupported( final Map<String,String> params, final String key, final boolean wholeCommandOnly )
+	{
+		final String v = params.get( key );
+		if ( v == null )
+			return false;
+		for ( final UnsupportedValue u : UNSUPPORTED_VALUES )
+			if ( u.key.equals( key ) && u.value.equals( v ) && ( !wholeCommandOnly || u.dropsWholeCommand ) )
+				return true;
+		return false;
+	}
+
 	private static final Map<String,List<Recipe>> REGISTRY = buildRegistry();
 
 	private static Map<String,List<Recipe>> buildRegistry()
@@ -240,7 +294,8 @@ public class ActionToSparkCli
 				new String[]{ "icpUseRANSAC", "--icpUseRANSAC" },
 				new String[]{ "clearCorrespondences", "--clearCorrespondences" }
 		);
-		matchRecipe.skipWhen = p -> "true".equalsIgnoreCase( p.get( "skipMatching" ) );
+		matchRecipe.skipWhen = p -> "true".equalsIgnoreCase( p.get( "skipMatching" ) )
+				|| isUnsupported( p, "matchingMethod", true );
 		registration.add( matchRecipe );
 		final Recipe solverRecipe = new Recipe(
 				"solver", true,
@@ -264,7 +319,7 @@ public class ActionToSparkCli
 				new String[]{ "fixedViews", "-fv" },
 				new String[]{ "disableFixedViews", "--disableFixedViews" }
 		);
-		solverRecipe.skipWhen = p -> "NO_OPTIMIZATION".equals( p.get( "globalOptMethod" ) );
+		solverRecipe.skipWhen = p -> isUnsupported( p, "globalOptMethod", true );
 		// -fv is also repeatable ('0,0' '0,1' ...); "viewIds" is already in repeatKeys via SELECTABLE_VIEWS
 		solverRecipe.repeatKeys.add( "fixedViews" );
 		registration.add( solverRecipe );
@@ -420,7 +475,7 @@ public class ActionToSparkCli
 		// here instead of only in the raw params dump.
 		final String limitMode = params.get( "limitDetectionsMode" );
 		if ( limitMode != null && !"BRIGHTEST".equals( limitMode ) )
-			out.add( "# WARNING: mvrecon limited detections to " + params.get( "maxDetections" ) + " (" + limitMode
+			warnUntranslated( out, "WARNING: mvrecon limited detections to " + params.get( "maxDetections" ) + " (" + limitMode
 					+ ") — BigStitcher-Spark's --maxSpots only supports brightest-N, so this limit is NOT applied below; results will include ALL detections." );
 
 		// mvrecon's "match Z resolution" auto XY-downsampling resolved to different factors across
@@ -428,10 +483,17 @@ public class ActionToSparkCli
 		// so no single flag can represent it; the recipe below has no "downsampleXY" key to emit.
 		final String dsxyVaries = params.get( "downsampleXYVaries" );
 		if ( dsxyVaries != null )
-			out.add( "# WARNING: mvrecon's auto XY-downsampling ('match Z resolution') resolved to different "
+			warnUntranslated( out, "WARNING: mvrecon's auto XY-downsampling ('match Z resolution') resolved to different "
 					+ "factors across the processed views " + dsxyVaries + " — BigStitcher-Spark's -dsxy takes "
 					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
 					+ "before running the command below." );
+
+		// every UNSUPPORTED_VALUES entry that fired for this action: whole-command ones already made
+		// their recipe skip itself (see matchRecipe/solverRecipe.skipWhen, both built from this same
+		// table); flag-only ones (e.g. GAUSS_FIT) are omitted below in renderOne(). Either way, say why.
+		for ( final UnsupportedValue u : UNSUPPORTED_VALUES )
+			if ( u.value.equals( params.get( u.key ) ) )
+				warnUntranslated( out, u.message );
 
 		for ( final Recipe recipe : recipes )
 		{
@@ -442,6 +504,19 @@ public class ActionToSparkCli
 			out.add( renderOne( recipe, params, xmlPath ) );
 		}
 		return out;
+	}
+
+	/**
+	 * Record a translation gap: adds a {@code #}-prefixed comment line to {@code out} (so it survives
+	 * into whatever copies the rendered script, e.g. Show_Action_History's clipboard actions) and
+	 * prints the same message to stderr (so it's visible immediately, without needing to inspect the
+	 * rendered script).
+	 */
+	private static void warnUntranslated( final List<String> out, final String msg )
+	{
+		final String line = "# " + msg;
+		out.add( line );
+		System.err.println( line );
 	}
 
 	private static String renderOne( final Recipe recipe, final Map<String,String> params, final String xmlPath )
@@ -466,6 +541,10 @@ public class ActionToSparkCli
 			// SparkFusion rejects --blockScale once the container is sharded; shard size determines
 			// the compute-block size. Omit it whenever the create-fusion-container step would shard.
 			if ( "fusion".equals( recipe.script ) && "blockScale".equals( mapping.getKey() ) && shardingEnabled( params ) )
+				continue;
+			// a flag-only UNSUPPORTED_VALUES entry (e.g. GAUSS_FIT) -- whole-command entries never
+			// reach here, their recipe already skipped itself via skipWhen (see isUnsupported()).
+			if ( isUnsupported( params, mapping.getKey(), false ) )
 				continue;
 			final String flag = mapping.getValue();
 			// multi-valued: emit `flag value` per non-empty element
