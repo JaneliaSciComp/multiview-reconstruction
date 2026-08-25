@@ -237,6 +237,16 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			// raw data-dim indices of x,y,z,c,t (see AllenOMEZarrProperties.rawAxisIndices);
 			// scale/translation/getDimensions() share this order, so the same indices apply to each
 			final Axis[] axes = multiscales[ 0 ].axes;
+
+			// validate dimensionality up front: scale/translation/getDimensions() are all
+			// axes[]-length arrays, and spatialTriple() below indexes them assuming at least 3
+			// entries, so a shorter array must be rejected here rather than crash there
+			if ( axes.length != 3 && axes.length != 4 && axes.length != 5 )
+			{
+				IOFunctions.println( "Only 3D (xyz), 4D (xyzc), and 5D (xyzct) OME-ZARRs are allowed. stopping" );
+				return null;
+			}
+
 			final int[] rawAxisIdx = AllenOMEZarrProperties.rawAxisIndices( axes );
 			final int[] xyz = rawAxisIdx != null ? new int[] { rawAxisIdx[ 0 ], rawAxisIdx[ 1 ], rawAxisIdx[ 2 ] } : null;
 
