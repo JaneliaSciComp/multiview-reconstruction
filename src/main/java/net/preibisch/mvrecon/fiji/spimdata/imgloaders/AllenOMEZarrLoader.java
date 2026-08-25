@@ -29,6 +29,7 @@ import java.util.Map;
 
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.AxisUtils;
 
 import bdv.ViewerSetupImgLoader;
 import bdv.img.n5.N5ImageLoader;
@@ -131,29 +132,8 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 		if ( m != n || !isPermutation( desired ) )
 			return vol;
 
-		// realize the permutation via pairwise swaps: after step q, position q holds its target;
-		// cur[k] is the raw dim currently at position k. desired[q] still sits in cur[q+1..n-1].
-		RandomAccessibleInterval< T > out = vol;
-		final int[] cur = new int[ n ];
-		for ( int k = 0; k < n; ++k )
-			cur[ k ] = k;
-
-		for ( int q = 0; q < n; ++q )
-		{
-			if ( cur[ q ] == desired[ q ] )
-				continue;
-
-			int from = q + 1;
-			while ( cur[ from ] != desired[ q ] )
-				++from;
-
-			out = Views.permute( out, q, from );
-			final int tmp = cur[ q ];
-			cur[ q ] = cur[ from ];
-			cur[ from ] = tmp;
-		}
-
-		return out;
+		// desired[] is destination->source; AxisUtils.permute() wants source->destination
+		return AxisUtils.permute( vol, AxisUtils.invertPermutation( desired ) );
 	}
 
 	// true iff a[] is a permutation of 0..a.length-1

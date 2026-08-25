@@ -22,7 +22,6 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders;
 
-import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -30,6 +29,7 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.AxisUtils;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata.OmeNgffDataset;
@@ -108,11 +108,29 @@ public class AllenOMEZarrProperties implements N5Properties
 		final String path = getMultiscaleDatasetPathOrDefault(n5, timepointId, setupId, level);
 		final long[] dimensions = n5.getDatasetAttributes( path ).getDimensions();
 
-		final int[] xyz = getRawSpatialAxesIndices( n5, setupId, timepointId );
-		if ( xyz == null )
-			return Arrays.copyOf( dimensions, 3 ); // axes metadata missing/incomplete: assume standard TCZYX/XYZCT order
+		return spatialTriple( dimensions, getRawSpatialAxesIndices( n5, setupId, timepointId ) );
+	}
 
-		return new long[] { dimensions[ xyz[ 0 ] ], dimensions[ xyz[ 1 ] ], dimensions[ xyz[ 2 ] ] };
+	/**
+	 * The three spatial (x,y,z) entries of a per-axis array (dimensions/scale/translation, all in
+	 * reversed n5 order), in true x,y,z order; xyz = raw indices from {@link #xyzAxesIndices}, or
+	 * {@code null} to assume the standard {0,1,2} order. Overloaded for long[] and double[].
+	 */
+	public static long[] spatialTriple( final long[] a, final int[] xyz )
+	{
+		final int[] r = xyzOrDefault( xyz );
+		return new long[] { a[ r[ 0 ] ], a[ r[ 1 ] ], a[ r[ 2 ] ] };
+	}
+
+	public static double[] spatialTriple( final double[] a, final int[] xyz )
+	{
+		final int[] r = xyzOrDefault( xyz );
+		return new double[] { a[ r[ 0 ] ], a[ r[ 1 ] ], a[ r[ 2 ] ] };
+	}
+
+	private static int[] xyzOrDefault( final int[] xyz )
+	{
+		return xyz != null ? xyz : new int[] { 0, 1, 2 };
 	}
 
 	/**
@@ -142,15 +160,19 @@ public class AllenOMEZarrProperties implements N5Properties
 		if ( axes == null )
 			return null;
 
-		final String[] xyz = { "x", "y", "z" };
-		final int[] idx = { -1, -1, -1 };
-
-		for ( int i = 0; i < axes.length; ++i )
-			for ( int d = 0; d < 3; ++d )
-				if ( xyz[ d ].equalsIgnoreCase( axes[ i ].getName() ) )
-					idx[ d ] = axes.length - 1 - i; // dimensions[]/scale[]/translation[] are axes[] reversed
+		final int[] idx = {
+				rawAxisIndexByName( axes, "x" ),
+				rawAxisIndexByName( axes, "y" ),
+				rawAxisIndexByName( axes, "z" ) };
 
 		return ( idx[ 0 ] < 0 || idx[ 1 ] < 0 || idx[ 2 ] < 0 ) ? null : idx;
+	}
+
+	// last (i.e. lowest raw index) axis matching the given name, case-insensitively, or -1 if none
+	private static int rawAxisIndexByName( final Axis[] axes, final String name )
+	{
+		final int[] matches = AxisUtils.indexes( axes, a -> name.equalsIgnoreCase( a.getName() ) );
+		return matches.length == 0 ? -1 : axes.length - 1 - matches[ matches.length - 1 ];
 	}
 
 	/** See {@link #rawAxisIndices(Axis[])}. */
@@ -204,12 +226,11 @@ public class AllenOMEZarrProperties implements N5Properties
 	 */
 	public static int rawAxisIndexByType( final Axis[] axes, final String type )
 	{
-		if ( axes != null )
-			for ( int i = 0; i < axes.length; ++i )
-				if ( type.equalsIgnoreCase( axes[ i ].getType() ) )
-					return axes.length - 1 - i; // dimensions[] is axes[] reversed
+		if ( axes == null )
+			return -1;
 
-		return -1;
+		final int[] matches = AxisUtils.indexes( axes, a -> type.equalsIgnoreCase( a.getType() ) );
+		return matches.length == 0 ? -1 : axes.length - 1 - matches[ 0 ];
 	}
 
 	//
@@ -270,8 +291,7 @@ public class AllenOMEZarrProperties implements N5Properties
 		// index of x/y/z within the raw (reversed) scale/translation arrays - see
 		// getRawSpatialAxesIndices(); falls back to the standard TCZYX/XYZCT position
 		// (0,1,2) if the axes metadata is missing or incomplete
-		final int[] xyzIdx = xyzAxesIndices( multiScaleMetadata.axes );
-		final int[] raw = xyzIdx != null ? xyzIdx : new int[] { 0, 1, 2 };
+		final int[] raw = xyzOrDefault( xyzAxesIndices( multiScaleMetadata.axes ) );
 
 		// iterate over all resolution levels for scale
 		for ( int s = 0; s < multiScaleMetadata.datasets.length; ++s )

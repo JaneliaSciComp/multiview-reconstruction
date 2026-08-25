@@ -239,8 +239,8 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			final Axis[] axes = multiscales[ 0 ].axes;
 
 			// validate dimensionality up front: scale/translation/getDimensions() are all
-			// axes[]-length arrays, and spatialTriple() below indexes them assuming at least 3
-			// entries, so a shorter array must be rejected here rather than crash there
+			// axes[]-length arrays, and spatialTriple() below indexes into them assuming at
+			// least 3 entries, so a shorter array must be rejected here rather than crash there
 			if ( axes.length != 3 && axes.length != 4 && axes.length != 5 )
 			{
 				IOFunctions.println( "Only 3D (xyz), 4D (xyzc), and 5D (xyzct) OME-ZARRs are allowed. stopping" );
@@ -271,8 +271,8 @@ public class OMEZARR implements MultiViewDatasetDefinition
 				translation = new double[] { 0, 0, 0 };
 
 			// keep the three spatial entries in true x,y,z order (not merely the first three)
-			scale = spatialTriple( scale, xyz );
-			translation = spatialTriple( translation, xyz );
+			scale = AllenOMEZarrProperties.spatialTriple( scale, xyz );
+			translation = AllenOMEZarrProperties.spatialTriple( translation, xyz );
 
 			String unit = "unknown";
 			for ( int d = 0; d < multiscales[ 0 ].axes.length; ++d )
@@ -304,7 +304,7 @@ public class OMEZARR implements MultiViewDatasetDefinition
 
                 // highest-resolution level = largest spatial voxel count (robust to axis order and
                 // to spatial axes the producer left un-downsampled; comparing one raw dim is not)
-                final long[] sp = spatialTriple( attr.getDimensions(), xyz );
+                final long[] sp = AllenOMEZarrProperties.spatialTriple( attr.getDimensions(), xyz );
                 final long vol = sp[ 0 ] * sp[ 1 ] * sp[ 2 ];
                 if ( fullScaleAttributes == null || vol > fullScaleVol )
                 {
@@ -348,7 +348,7 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			}
 
 			// resolved x,y,z size for this dataset (used for the ViewSetup size, see spatialDimsMap)
-			spatialDimsMap.put( dataset, spatialTriple( fullDims, xyz ) );
+			spatialDimsMap.put( dataset, AllenOMEZarrProperties.spatialTriple( fullDims, xyz ) );
 
 			if ( numDimensions != 3 && numDimensions != 4 && numDimensions != 5 )
 			{
@@ -910,19 +910,6 @@ public class OMEZARR implements MultiViewDatasetDefinition
 		}
 
 		return entries;
-	}
-
-	// the three spatial (x,y,z) entries of a per-axis array (dimensions/scale/translation, all in
-	// reversed n5 order); xyz = raw indices from AllenOMEZarrProperties.xyzAxesIndices, or null to
-	// take the first three (standard order). Overloaded for long[] and double[].
-	private static long[] spatialTriple( final long[] a, final int[] xyz )
-	{
-		return xyz == null ? new long[] { a[ 0 ], a[ 1 ], a[ 2 ] } : new long[] { a[ xyz[ 0 ] ], a[ xyz[ 1 ] ], a[ xyz[ 2 ] ] };
-	}
-
-	private static double[] spatialTriple( final double[] a, final int[] xyz )
-	{
-		return xyz == null ? new double[] { a[ 0 ], a[ 1 ], a[ 2 ] } : new double[] { a[ xyz[ 0 ] ], a[ xyz[ 1 ] ], a[ xyz[ 2 ] ] };
 	}
 
 	protected static boolean hasCommonScale( final Map< String, Pair< DatasetAttributes, Pair< VoxelDimensions, double[] > > > attr )
