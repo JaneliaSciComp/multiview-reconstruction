@@ -153,20 +153,47 @@ public class AllenOMEZarrProperties implements N5Properties
 		return ( idx[ 0 ] < 0 || idx[ 1 ] < 0 || idx[ 2 ] < 0 ) ? null : idx;
 	}
 
-	/**
-	 * Raw (reversed-from-metadata) dimension index of each canonical axis, as
-	 * {@code { xRaw, yRaw, zRaw, cRaw, tRaw }} (x/y/z by name, c/t by type; cRaw/tRaw are -1 when
-	 * that axis is not declared), or {@code null} if the axes metadata does not name all of x,y,z
-	 * (callers then assume the standard XYZCT order).
-	 */
+	/** See {@link #rawAxisIndices(Axis[])}. */
 	public int[] getRawAxisIndices( final N5Reader n5, final int setupId, final int timepointId )
 	{
-		final Axis[] axes = getViewSetupMultiscaleMetadata( n5, timepointId, setupId ).axes;
+		return rawAxisIndices( getViewSetupMultiscaleMetadata( n5, timepointId, setupId ).axes );
+	}
+
+	/**
+	 * Raw (reversed-from-metadata) index of each canonical axis: {@code { xRaw, yRaw, zRaw, cRaw,
+	 * tRaw }}. x/y/z are matched by name; c/t by type, falling back to whichever raw indices x/y/z
+	 * didn't claim (not the fixed positions 3/4, which may already be a spatial axis if axes[]
+	 * isn't in canonical order). cRaw/tRaw are -1 if that axis isn't declared at all. Returns
+	 * {@code null} if x/y/z aren't all named (callers then assume the standard XYZCT order).
+	 */
+	public static int[] rawAxisIndices( final Axis[] axes )
+	{
 		final int[] xyz = xyzAxesIndices( axes );
 		if ( xyz == null )
 			return null;
 
-		return new int[] { xyz[ 0 ], xyz[ 1 ], xyz[ 2 ], rawAxisIndexByType( axes, Axis.CHANNEL ), rawAxisIndexByType( axes, Axis.TIME ) };
+		int cRaw = rawAxisIndexByType( axes, Axis.CHANNEL );
+		int tRaw = rawAxisIndexByType( axes, Axis.TIME );
+
+		if ( cRaw < 0 || tRaw < 0 )
+		{
+			final boolean[] claimed = new boolean[ axes.length ];
+			claimed[ xyz[ 0 ] ] = claimed[ xyz[ 1 ] ] = claimed[ xyz[ 2 ] ] = true;
+			if ( cRaw >= 0 ) claimed[ cRaw ] = true;
+			if ( tRaw >= 0 ) claimed[ tRaw ] = true;
+
+			for ( int r = 0; r < axes.length && ( cRaw < 0 || tRaw < 0 ); ++r )
+			{
+				if ( claimed[ r ] )
+					continue;
+				if ( cRaw < 0 )
+					cRaw = r;
+				else
+					tRaw = r;
+			}
+		}
+
+		return new int[] { xyz[ 0 ], xyz[ 1 ], xyz[ 2 ], cRaw, tRaw };
 	}
 
 	/**

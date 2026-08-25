@@ -234,11 +234,11 @@ public class OMEZARR implements MultiViewDatasetDefinition
 				return null;
 			}
 
-			// raw (reversed-from-metadata) data-dim indices of x,y,z by name; null if axes are
-			// missing/incomplete (fall back to {0,1,2}). scale, translation and getDimensions()
-			// all share this reversed order, so the same indices apply to each.
+			// raw data-dim indices of x,y,z,c,t (see AllenOMEZarrProperties.rawAxisIndices);
+			// scale/translation/getDimensions() share this order, so the same indices apply to each
 			final Axis[] axes = multiscales[ 0 ].axes;
-			final int[] xyz = AllenOMEZarrProperties.xyzAxesIndices( axes );
+			final int[] rawAxisIdx = AllenOMEZarrProperties.rawAxisIndices( axes );
+			final int[] xyz = rawAxisIdx != null ? new int[] { rawAxisIdx[ 0 ], rawAxisIdx[ 1 ], rawAxisIdx[ 2 ] } : null;
 
 			final OmeNgffDataset ds = multiscales[ 0 ].datasets[ 0 ];
 			double[] scale = null;
@@ -303,13 +303,11 @@ public class OMEZARR implements MultiViewDatasetDefinition
                 }
 			}
 
-			// channel/time data-dims located by TYPE (robust to non-standard ordering), falling back
-			// to the canonical positions 3/4 when the axis type metadata is missing
+			// channel/time dims from rawAxisIdx; fall back to positions 3/4 only if x/y/z couldn't
+			// be resolved by name at all (rawAxisIdx == null)
 			final long[] fullDims = fullScaleAttributes.getDimensions();
-			final int cRaw = AllenOMEZarrProperties.rawAxisIndexByType( axes, Axis.CHANNEL );
-			final int tRaw = AllenOMEZarrProperties.rawAxisIndexByType( axes, Axis.TIME );
-			final int cDim = cRaw >= 0 ? cRaw : 3;
-			final int tDim = tRaw >= 0 ? tRaw : 4;
+			final int cDim = rawAxisIdx != null && rawAxisIdx[ 3 ] >= 0 ? rawAxisIdx[ 3 ] : 3;
+			final int tDim = rawAxisIdx != null && rawAxisIdx[ 4 ] >= 0 ? rawAxisIdx[ 4 ] : 4;
 
 			if ( numDimensions == -1 )
 			{
