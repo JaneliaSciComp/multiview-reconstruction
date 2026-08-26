@@ -22,13 +22,13 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
-import java.util.Collections;
 import java.util.Map;
 
 import ij.gui.GenericDialog;
 
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.TransformationModelGUI;
+import net.preibisch.mvrecon.fiji.plugin.util.DescribesParameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwise;
@@ -37,7 +37,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 
 import mpicbg.spim.data.sequence.ViewId;
 
-public abstract class PairwiseGUI
+public abstract class PairwiseGUI implements DescribesParameters
 {
 	//protected TransformationModelGUI presetModel = null;
 
@@ -172,20 +172,6 @@ public abstract class PairwiseGUI
 	 * @return - the error allowed for the global optimization
 	 */
 	public abstract double globalOptError();
-
-	/**
-	 * Optional hook used by the action-history feature to capture matcher-specific
-	 * parameters (RANSAC iterations, search radius, neighbors, …) after
-	 * {@link #parseDialog(ij.gui.GenericDialog)} has run. Keys should match the
-	 * neutral param names the action-history translator expects, e.g.
-	 * {@code ransacIterations}, {@code ransacMaxError}, {@code numNeighbors}.
-	 *
-	 * <p>Default: empty map. Subclasses that have CLI-translatable params should override.</p>
-	 */
-	public Map<String,String> describeParameters()
-	{
-		return Collections.emptyMap();
-	}
 
 	/**
 	 * Shared by every {@code describeParameters()} override that uses a {@link TransformationModelGUI}:

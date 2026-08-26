@@ -22,18 +22,16 @@
  */
 package net.preibisch.mvrecon.process.export;
 
-import java.util.Collections;
-import java.util.Map;
-
 import mpicbg.spim.data.sequence.ViewDescription;
 import net.imglib2.Interval;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionExportInterface;
+import net.preibisch.mvrecon.fiji.plugin.util.DescribesParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
-public interface ImgExport
+public interface ImgExport extends DescribesParameters
 {
 	/**
 	 * specify the desired 3d blocksize used for the Lazy instances
@@ -82,19 +80,4 @@ public interface ImgExport
 	 * @return - to be displayed in the generic dialog
 	 */
 	String getDescription();
-
-	/**
-	 * Optional hook used by the action-history feature to capture exporter-specific
-	 * parameters (output path, storage format, block size, compression, …) after
-	 * {@link #queryParameters(FusionExportInterface)} has run. Keys should match the
-	 * neutral param names the action-history translator expects so the resulting
-	 * record can be rendered as a BigStitcher-Spark CLI invocation.
-	 *
-	 * <p>Default: empty map. Implementations that map cleanly to a Spark command
-	 * (e.g. N5/Zarr/HDF5 export) should override.</p>
-	 */
-	default Map<String,String> describeParameters()
-	{
-		return Collections.emptyMap();
-	}
 }
