@@ -325,21 +325,6 @@ public class ActionToSparkCli
 		registration.add( solverRecipe );
 		r.put( ActionHistory.REGISTER_INTERESTPOINTS, registration );
 
-		r.put( "pairwise-stitching", Collections.singletonList( new Recipe(
-				"stitching", true,
-				new String[]{ "downsampling", "-ds" },
-				new String[]{ "peaksToCheck", "-p" },
-				new String[]{ "minR", "--minR" },
-				new String[]{ "maxR", "--maxR" },
-				new String[]{ "maxShiftX", "--maxShiftX" },
-				new String[]{ "maxShiftY", "--maxShiftY" },
-				new String[]{ "maxShiftZ", "--maxShiftZ" },
-				new String[]{ "maxShiftTotal", "--maxShiftTotal" },
-				new String[]{ "channelCombine", "--channelCombine" },
-				new String[]{ "illumCombine", "--illumCombine" },
-				new String[]{ "disableSubpixelResolution", "--disableSubpixelResolution" }
-		) ) );
-
 		// Spark affine fusion is a two-phase workflow: create-fusion-container first (driver-only,
 		// uses -x), then fusion (distributed, reads container metadata, no -x). The TPS nonrigid
 		// path is a single-shot nonrigid-fusion that creates its own writer/dataset
@@ -424,15 +409,6 @@ public class ActionToSparkCli
 		// intensity-adjustment is intentionally NOT registered: its Spark equivalent is a two-stage
 		// workflow (SparkIntensityMatching + IntensitySolver) over an N5 coefficient container, which
 		// has no faithful single-action mapping from the mvrecon GUI (coefficients live in the XML).
-
-		r.put( "icp-refine", Collections.singletonList( new Recipe(
-				"match-interestpoints", true,
-				new String[]{ "label", "-l" },
-				new String[]{ "matchingMethod", "-m" }, // expected to be "ICP"
-				new String[]{ "icpMaxError", "-ime" },
-				new String[]{ "icpIterations", "-iit" },
-				new String[]{ "icpUseRANSAC", "--icpUseRANSAC" }
-		) ) );
 
 		// resave's -x is the original INPUT xml (recorded as "inputXml"), not the live project,
 		// which after a resave is the OUTPUT. -xo (output xml) is only recorded for formats that
