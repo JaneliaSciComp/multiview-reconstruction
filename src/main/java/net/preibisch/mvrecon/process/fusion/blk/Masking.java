@@ -100,6 +100,18 @@ class Masking
 			for ( int d = 0; d < n; ++d )
 			{
 				final int dim = ( int ) interval.dimension( d );
+
+				if ( dim <= 1 )
+				{
+					// degenerate (e.g. a 2d image's z dimension): there is no room for a border,
+					// so the single valid pixel must always be inside (b0=0 <= l0 < b3=dim).
+					// Otherwise b0=border, b3=dim-1-border collapse to b0>=b3 and every pixel
+					// would incorrectly be masked out.
+					b0[ d ] = 0;
+					b3[ d ] = dim;
+					continue;
+				}
+
 				b0[ d ] = border[ d ];
 				b3[ d ] = dim - 1 - border[ d ];
 

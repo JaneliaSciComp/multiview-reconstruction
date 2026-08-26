@@ -164,7 +164,7 @@ public class BlkAffineFusion
 		// go through the views and check if they are all 2-dimensional
 		final boolean is2d = is2d( viewIds, viewDescriptions );
 
-		if ( !supports( is2d, intensityAdjustmentModels ) )
+		if ( !supports( intensityAdjustmentModels ) )
 		{
 			if ( intensityAdjustmentCoefficients != null )
 				// TODO: support intensity adjustmen with Coefficients in LazyAffineFusion
@@ -415,13 +415,8 @@ public class BlkAffineFusion
 		.allMatch( vs -> vs.getSize().dimension( 2 ) == 1 );
 	}
 
-	private static boolean supports(
-			final boolean is2d,
-			final Map< ViewId, AffineModel1D > intensityAdjustments )
+	private static boolean supports( final Map< ViewId, AffineModel1D > intensityAdjustments )
 	{
-		if ( is2d )
-			return false; // TODO
-
 		if ( intensityAdjustments != null )
 			return false; // TODO
 

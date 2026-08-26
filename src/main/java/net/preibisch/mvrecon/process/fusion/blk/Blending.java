@@ -123,6 +123,20 @@ class Blending
 			for ( int d = 0; d < n; ++d )
 			{
 				final int dim = ( int ) interval.dimension( d );
+
+				if ( dim <= 1 )
+				{
+					// degenerate (e.g. a 2d image's z dimension): there is no room for a
+					// border or blending, so the single valid pixel must always get full
+					// weight (b0=b1=0 <= l0 < b2=b3=dim). Otherwise b0=border, b3=dim-1-border
+					// collapse and computeWeight() would fall through to 0 for every pixel.
+					b0[ d ] = 0;
+					b1[ d ] = 0;
+					b2[ d ] = dim;
+					b3[ d ] = dim;
+					continue;
+				}
+
 				b0[ d ] = border[ d ];
 				b1[ d ] = border[ d ] + blending[ d ];
 				b2[ d ] = dim - 1 - border[ d ] - blending[ d ];

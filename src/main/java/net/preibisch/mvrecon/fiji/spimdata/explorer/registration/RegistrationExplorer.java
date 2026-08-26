@@ -81,7 +81,6 @@ public class RegistrationExplorer< AS extends SpimData2 >
 		for (List<BasicViewDescription< ? >> vdsI : viewDescriptions)
 			vdsFlat.addAll( vdsI );
 		panel.updateViewDescriptions( vdsFlat );
-		System.out.println( viewDescriptions );
 	}
 
 	@Override
