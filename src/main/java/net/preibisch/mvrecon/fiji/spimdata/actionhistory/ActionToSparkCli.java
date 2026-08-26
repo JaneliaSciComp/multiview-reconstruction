@@ -33,6 +33,8 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
+import mpicbg.spim.data.sequence.ViewId;
+
 /**
  * Renders an {@link ActionRecord} as one or more BigStitcher-Spark CLI command lines.
  *
@@ -442,7 +444,8 @@ public class ActionToSparkCli
 			return Collections.singletonList( "# unknown action: " + record.getActionId() );
 
 		final ArrayList<String> out = new ArrayList<>( recipes.size() );
-		final Map<String,String> params = record.getParams();
+		final Map<String,String> params = new LinkedHashMap<>( record.getParams() );
+		expandViewSetupCompaction( params );
 		final boolean nonRigid = nonRigid( params );
 
 		// "Around median"/"Weakest" detection limits have no Spark CLI equivalent (--maxSpots only
@@ -540,6 +543,88 @@ public class ActionToSparkCli
 				sb.append( ' ' ).append( flag ).append( ' ' ).append( quote( value ) );
 		}
 		return sb.toString();
+	}
+
+	/**
+	 * Expands the storage-side view-setup-id compaction (see
+	 * {@code ActionHistoryRecorder.putViewSelection}/{@code putViewSetupIdCompaction}) back into the
+	 * "viewIds" ("tp,vs" CSV) key the recipes above already translate via {@code -vi} -- so that
+	 * storage-side space savings never need a matching change to the recipes/flags. Handles both
+	 * forms {@code putViewSetupIdCompaction} can produce: one set under the plain {@code "viewSetupId"}
+	 * prefix covering every used timepoint, or a separate set per timepoint under
+	 * {@code "viewSetupId@<tp>"}. No-op if neither is present (e.g. the "+" menu match, the basis
+	 * check's per-dimension filters, or a plain {@code timepointId} restriction already covered the
+	 * recorded selection).
+	 */
+	// package-private (not private) so ActionHistoryViewSetupCompactionTest can exercise both the
+	// global and per-timepoint expansion forms directly
+	static void expandViewSetupCompaction( final Map<String,String> params )
+	{
+		final String tpCsv = params.get( "timepointId" );
+		if ( tpCsv == null || tpCsv.isEmpty() )
+			return;
+
+		// one set covers every used timepoint (global), or each timepoint has its own "viewSetupId@<tp>..."
+		// set (per-timepoint) -- either way, look up per timepoint and skip any that has neither (e.g. a
+		// plain basis-check timepointId restriction, no view-setup compaction at all).
+		final List<Integer> globalViewSetupIds = decodeIdCompaction( params, "viewSetupId" );
+		final List<ViewId> pairs = new ArrayList<>();
+		for ( final String tpStr : tpCsv.split( "," ) )
+		{
+			final int tp = Integer.parseInt( tpStr.trim() );
+			final List<Integer> ids = globalViewSetupIds != null ? globalViewSetupIds : decodeIdCompaction( params, "viewSetupId@" + tpStr.trim() );
+			if ( ids == null )
+				continue;
+			for ( final int vs : ids )
+				pairs.add( new ViewId( tp, vs ) );
+		}
+
+		if ( !pairs.isEmpty() )
+			params.put( "viewIds", ActionHistoryRecorder.joinViewIds( pairs ) );
+	}
+
+	/**
+	 * Decodes a "{@code <prefix>RangeStart}"/"{@code End}", "{@code <prefix>BitsetStart}"/"{@code Bits}",
+	 * or "{@code <prefix>s}" triple (whichever {@code putViewSetupIdCompaction} chose) into a
+	 * concrete id list, or {@code null} if none of the three forms is present.
+	 */
+	// package-private (not private) so ActionHistoryViewSetupCompactionTest can round-trip it against
+	// ActionHistoryRecorder.putViewSetupIdCompaction without duplicating this codec in test code.
+	static List<Integer> decodeIdCompaction( final Map<String,String> params, final String prefix )
+	{
+		final String rangeStart = params.get( prefix + "RangeStart" );
+		if ( rangeStart != null )
+		{
+			final int start = Integer.parseInt( rangeStart );
+			final int end = Integer.parseInt( params.get( prefix + "RangeEnd" ) );
+			final List<Integer> out = new ArrayList<>( end - start + 1 );
+			for ( int v = start; v <= end; ++v )
+				out.add( v );
+			return out;
+		}
+
+		final String bitsetStart = params.get( prefix + "BitsetStart" );
+		if ( bitsetStart != null )
+		{
+			final int start = Integer.parseInt( bitsetStart );
+			final String bits = params.get( prefix + "BitsetBits" );
+			final List<Integer> out = new ArrayList<>();
+			for ( int i = 0; i < bits.length(); ++i )
+				if ( bits.charAt( i ) == '1' )
+					out.add( start + i );
+			return out;
+		}
+
+		final String idsCsv = params.get( prefix + "s" ); // e.g. prefix "viewSetupId" -> "viewSetupIds", matching putViewSetupIdCompaction
+		if ( idsCsv != null && !idsCsv.isEmpty() )
+		{
+			final List<Integer> out = new ArrayList<>();
+			for ( final String s : idsCsv.split( "," ) )
+				out.add( Integer.parseInt( s.trim() ) );
+			return out;
+		}
+
+		return null;
 	}
 
 	/**
