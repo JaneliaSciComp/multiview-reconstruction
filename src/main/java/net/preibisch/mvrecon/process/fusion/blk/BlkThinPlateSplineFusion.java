@@ -74,6 +74,7 @@ import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
+import net.preibisch.mvrecon.process.fusion.blk.tps.DistanceFunction3D;
 import net.preibisch.mvrecon.process.fusion.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.blk.tps.MaskingFunction3D;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
@@ -283,8 +284,11 @@ public class BlkThinPlateSplineFusion
 				masks.add( createMasking( inputImg, border, dfield, new UnsignedByteType() ) );
 				break;
 			case AVG_BLEND:
-			case CLOSEST_PIXEL_WINS:
 				weights.add( createBlending( inputImg, border, blending, dfield ) );
+				break;
+			case CLOSEST_PIXEL_WINS:
+				// squared distance to the view center; smallest distance wins
+				weights.add( createDistance( inputImg, dfield ) );
 				break;
 			case AVG_BLEND_CONTENT:
 			case AVG_CONTENT:
@@ -389,6 +393,16 @@ public class BlkThinPlateSplineFusion
 		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
 		return DisplacementFieldBlockSupplier.create( transformFromField, dfield,
 				BlendingFunction3D.of( dfield.getType(), interval, border, blending ) );
+	}
+
+	private static < D extends NativeType< D > & RealType< D > > BlockSupplier< FloatType > createDistance(
+			final Interval interval,
+			final TransformedDisplacementField< D > transformedDisplacementField )
+	{
+		final AffineGet transformFromField = transformedDisplacementField.transformFromField();
+		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
+		return DisplacementFieldBlockSupplier.create( transformFromField, dfield,
+				DistanceFunction3D.of( dfield.getType(), interval ) );
 	}
 
 	/**
