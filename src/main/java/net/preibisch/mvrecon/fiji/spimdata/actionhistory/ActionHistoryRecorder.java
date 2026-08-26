@@ -50,7 +50,15 @@ public final class ActionHistoryRecorder
 	private ActionHistoryRecorder() {}
 
 	/**
-	 * Record an action. Any field may be null/empty except {@code actionId}.
+	 * Whether new actions are recorded (set from the "Enable_action_history" checkbox in Data_Explorer's
+	 * advanced-options dialog; on by default). Existing history already stored in the XML is always
+	 * loaded/shown regardless of this flag -- it only gates {@link #record}.
+	 */
+	public static boolean enabled = true;
+
+	/**
+	 * Record an action. Any field may be null/empty except {@code actionId}. No-op if {@link #enabled}
+	 * is false.
 	 *
 	 * @param data         dataset to attach the record to
 	 * @param actionId     stable identifier matching the translator registry, e.g. "register-interestpoints"
@@ -67,6 +75,8 @@ public final class ActionHistoryRecorder
 			final List<? extends ViewId> affectedViews,
 			final String resultRef )
 	{
+		if ( !enabled )
+			return;
 		try
 		{
 			if ( data == null )
