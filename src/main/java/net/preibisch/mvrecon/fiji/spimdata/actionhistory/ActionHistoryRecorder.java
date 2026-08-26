@@ -164,31 +164,15 @@ public final class ActionHistoryRecorder
 	}
 
 	/**
-	 * Describe a view selection as the most parsimonious BigStitcher-Spark view-selection flags,
-	 * trying progressively more expensive/general tiers until one reproduces the selection exactly:
-	 *
+	 * Describe a view selection as compact BigStitcher-Spark view-selection params:
 	 * <ol>
 	 * <li>everything present was selected -- nothing to store</li>
-	 * <li><b>the basis check</b>: do independent per-dimension id sets ({@code angleId}/{@code tileId}/
-	 *     {@code illuminationId}/{@code channelId}/{@code timepointId}) reconstruct the selection via
-	 *     their cross-product? (e.g. "illumination 0 AND channel 1, all tiles/angles/timepoints") --
-	 *     the minimal such filter, and provably the most permissive one possible: if <em>any</em>
-	 *     per-dimension filter over these same 5 dimensions could reconstruct the selection, this
-	 *     minimal one does too (a wider filter can only match more views on some dimension, and every
-	 *     selected view already sits inside the minimal filter's bounds on every dimension)</li>
-	 * <li>the view-setup-id compaction: group the recorded views by timepoint and take the union of
-	 *     view-setup ids used across all of them. If {@code {union} x {used timepoints}} reconstructs
-	 *     the selection exactly (i.e. every used timepoint used that same union -- trivially true, a
-	 *     no-op check, when there's only one used timepoint), store that one compact view-setup-id
-	 *     encoding (see {@link #putViewSetupIdCompaction}) alongside the timepoint list. Otherwise
-	 *     store each timepoint with its own compact view-setup-id list -- always exact by
-	 *     construction, since each one is derived directly from what was actually selected at that
-	 *     timepoint, so no further "explicit id list" fallback is needed below this tier.</li>
+	 * <li>the basis check: do per-dimension id sets ({@code angleId}/{@code tileId}/
+	 *     {@code illuminationId}/{@code channelId}/{@code timepointId}) reconstruct the selection?
+	 *     This is the minimal, most permissive such filter (see {@link #reconstructsExactly})</li>
+	 * <li>view-setup-id compaction: group by timepoint and compact the used view-setup ids
+	 *     (see {@link #putViewSetupCompaction})</li>
 	 * </ol>
-	 *
-	 * Storing per-dimension ids/a compact view-setup encoding instead of spelling out every "tp,vs"
-	 * pair is also far more robust to re-running against a slightly different dataset, and is what
-	 * {@code ActionToSparkCli} expects for {@code --angleId} etc. and {@code -vi}.
 	 */
 	public static void putViewSelection(
 			final LinkedHashMap<String,String> params,
@@ -205,9 +189,7 @@ public final class ActionHistoryRecorder
 
 		final Set<ViewId> selected = new HashSet<>( viewIds );
 
-		// fast path: everything present was selected (the common "process all loaded views" case) --
-		// no filter is needed at all, and skips the per-dimension pass + reconstruction-verify pass
-		// below entirely. Matters on datasets with tens of thousands of tiles.
+		// fast path: everything selected -- no filter needed
 		if ( selected.size() == present.size() )
 			return;
 
@@ -221,15 +203,12 @@ public final class ActionHistoryRecorder
 			used.add( new LinkedHashSet<>() );
 		}
 
-		// Cache each view's per-dimension values + selected flag once here (flat n*nDims array, one
-		// allocation) so the reconstruction-verify pass below never re-derives them -- avoids a second
-		// round of ViewSetup getter-chain calls and HashSet lookups per view. Matters at 100k+ tiles.
+		// cache per-dimension values + selected flag once (flat n*nDims array) so the verify pass
+		// below doesn't re-derive them
 		final int[] vals = new int[ n * nDims ];
 		final boolean[] isSelectedArr = new boolean[ n ];
 		for ( int i = 0; i < n; ++i )
 		{
-			// ViewDescription extends ViewId (same equals/hashCode, keyed on timepoint+setup), so it
-			// probes the set directly -- no need to allocate a ViewId just to look itself up.
 			final ViewDescription vd = present.get( i );
 			final boolean isSelected = selected.contains( vd );
 			isSelectedArr[ i ] = isSelected;
@@ -244,7 +223,7 @@ public final class ActionHistoryRecorder
 			}
 		}
 
-		// the basis check: filter = set(all dims that are restricted); "all values used" == default
+		// basis check: filter = restricted dims only; "all values used" == unrestricted
 		final List<Set<Integer>> filter = new ArrayList<>( nDims );
 		for ( int d = 0; d < nDims; ++d )
 			filter.add( normalizeFilter( used.get( d ), all.get( d ) ) );
@@ -266,21 +245,16 @@ public final class ActionHistoryRecorder
 				put( params, DIM_KEYS[ d ], joinIds( filter.get( d ) ) );
 	}
 
-	/** {@code restricted} (already {@code null} == unrestricted), collapsed to {@code null} if it covers every present value -- same convention everywhere a per-dimension filter is built. */
+	/** {@code null} (unrestricted) if {@code restricted} is null or covers every present value, else {@code restricted}. */
 	private static Set<Integer> normalizeFilter( final Set<Integer> restricted, final Set<Integer> all )
 	{
 		return restricted == null || restricted.equals( all ) ? null : restricted;
 	}
 
 	/**
-	 * View-setup-id compaction: the basis check above requires angle/tile/illumination/channel to
-	 * each independently factor out. This is more permissive -- it groups the recorded views by
-	 * timepoint (directly off {@code viewIds}, not the dataset's {@code present} views -- unlike the
-	 * tiers above, this one can't over/under-select, so it doesn't need to be checked against the
-	 * rest of the dataset) and takes the union of view-setup ids used across all of them.
+	 * Fallback for selections the basis check can't express: group by timepoint, take the union of
+	 * view-setup ids used, and compact that. Package-private for direct testing.
 	 */
-	// package-private (not private) so ActionHistoryViewSetupCompactionTest can exercise it directly
-	// with plain ViewIds, without needing a real dataset.
 	static void putViewSetupCompaction( final LinkedHashMap<String,String> params, final Collection<? extends ViewId> viewIds )
 	{
 		final Map<Integer,Set<Integer>> setupIdsByTimepoint = new LinkedHashMap<>();
@@ -291,9 +265,7 @@ public final class ActionHistoryRecorder
 			unionSetupIds.add( v.getViewSetupId() );
 		}
 
-		// does {union} x {used timepoints} reconstruct the selection, i.e. did every used timepoint
-		// use that same union? With only one used timepoint there's nothing to compare against, so
-		// this is trivially true -- a no-op check, not a special case.
+		// did every used timepoint use that same union? (trivially true with only one timepoint)
 		boolean sameSetupIdsEveryTimepoint = true;
 		for ( final Set<Integer> setupIds : setupIdsByTimepoint.values() )
 		{
@@ -304,11 +276,8 @@ public final class ActionHistoryRecorder
 			}
 		}
 
-		// always record the concrete timepoint set (even if it's every present timepoint) so
-		// ActionToSparkCli can cross/pair it with the compacted viewSetupId set(s) below and
-		// reconstruct explicit "-vi" pairs without needing the live dataset -- translation is
-		// deliberately kept a pure function of the stored params (see
-		// ActionToSparkCli.expandViewSetupCompaction).
+		// always store the concrete timepoint list, so ActionToSparkCli can rebuild "-vi" pairs
+		// (see ActionToSparkCli.expandViewSetupCompaction) without needing the live dataset
 		put( params, "timepointId", joinIds( setupIdsByTimepoint.keySet() ) );
 
 		if ( sameSetupIdsEveryTimepoint )
@@ -317,20 +286,13 @@ public final class ActionHistoryRecorder
 		}
 		else
 		{
-			// no single view-setup-id set applies to every timepoint -- compact each timepoint's own
-			// set separately (namespaced by timepoint), which by construction always reproduces the
-			// selection exactly, so there's no explicit-id-list fallback left to fall back to.
+			// per-timepoint sets differ -- compact each one separately, namespaced by timepoint
 			for ( final Map.Entry<Integer,Set<Integer>> e : setupIdsByTimepoint.entrySet() )
 				putViewSetupIdCompaction( params, "viewSetupId@" + e.getKey(), e.getValue() );
 		}
 	}
 
-	/**
-	 * True iff, for every present view, "matches every non-null per-dimension filter" agrees with
-	 * {@code isSelectedArr} -- i.e. the cross-product of {@code filter} reproduces the selection
-	 * exactly. Used by the basis check in {@link #putViewSelection}.
-	 */
-	// package-private (not private) so ActionHistoryBasisCheckTest can exercise it directly
+	/** True iff {@code filter}'s cross-product reproduces exactly the views marked in {@code isSelectedArr}. */
 	static boolean reconstructsExactly(
 			final int[] vals,
 			final boolean[] isSelectedArr,
@@ -358,20 +320,13 @@ public final class ActionHistoryRecorder
 			if ( matches )
 				++reconstructedCount;
 		}
-		// e.g. a selected ViewId that isn't present in the dataset at all
 		return reconstructedCount == selectedCount;
 	}
 
 	/**
-	 * Compact encoding of an id set for the view-setup-id-compaction tier above, keyed under
-	 * {@code prefix} (e.g. {@code "viewSetupId"} for the single-set-covers-every-timepoint case, or
-	 * {@code "viewSetupId@<tp>"} for that one timepoint's own set): a contiguous range, else a
-	 * one-hot bitset over [min,max] (so e.g. only ids 999997/999999 out of a million cost a
-	 * 3-character bitset starting at 999997), else a plain id list. {@code ActionToSparkCli}
-	 * ({@code decodeIdCompaction}) knows how to reverse all three forms.
+	 * Encodes {@code ids} under {@code prefix} as a range, else a one-hot bitset, else a plain list.
+	 * {@code ActionToSparkCli.decodeIdCompaction} reverses all three forms.
 	 */
-	// package-private (not private) so ActionHistoryViewSetupCompactionTest can round-trip it against
-	// ActionToSparkCli.decodeIdCompaction without duplicating this codec in test code.
 	static void putViewSetupIdCompaction( final LinkedHashMap<String,String> params, final String prefix, final Set<Integer> ids )
 	{
 		final int[] sorted = ids.stream().mapToInt( Integer::intValue ).toArray();
@@ -387,9 +342,7 @@ public final class ActionHistoryRecorder
 		}
 
 		final int span = max - min + 1;
-		// ponytail: 8x is a rough heuristic (a bitset char costs ~1 byte, an explicit id costs
-		// several bytes with its delimiter) -- tune if real datasets show it's off, or if two
-		// far-apart ids with nothing selected in between make the bitset the bigger of the two.
+		// ponytail: 8x is a rough size heuristic, tune if it's ever off
 		if ( span <= sorted.length * 8 )
 		{
 			final StringBuilder bits = new StringBuilder( span );

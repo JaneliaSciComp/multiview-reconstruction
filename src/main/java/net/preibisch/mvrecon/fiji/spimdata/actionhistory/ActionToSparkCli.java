@@ -546,27 +546,17 @@ public class ActionToSparkCli
 	}
 
 	/**
-	 * Expands the storage-side view-setup-id compaction (see
-	 * {@code ActionHistoryRecorder.putViewSelection}/{@code putViewSetupIdCompaction}) back into the
-	 * "viewIds" ("tp,vs" CSV) key the recipes above already translate via {@code -vi} -- so that
-	 * storage-side space savings never need a matching change to the recipes/flags. Handles both
-	 * forms {@code putViewSetupIdCompaction} can produce: one set under the plain {@code "viewSetupId"}
-	 * prefix covering every used timepoint, or a separate set per timepoint under
-	 * {@code "viewSetupId@<tp>"}. No-op if neither is present (e.g. the "+" menu match, the basis
-	 * check's per-dimension filters, or a plain {@code timepointId} restriction already covered the
-	 * recorded selection).
+	 * Expands {@code ActionHistoryRecorder.putViewSetupCompaction}'s stored form back into the
+	 * "viewIds" key the recipes above translate via {@code -vi}. Handles both a single
+	 * {@code "viewSetupId"} set covering every timepoint, and per-timepoint
+	 * {@code "viewSetupId@<tp>"} sets. No-op if neither is present.
 	 */
-	// package-private (not private) so ActionHistoryViewSetupCompactionTest can exercise both the
-	// global and per-timepoint expansion forms directly
 	static void expandViewSetupCompaction( final Map<String,String> params )
 	{
 		final String tpCsv = params.get( "timepointId" );
 		if ( tpCsv == null || tpCsv.isEmpty() )
 			return;
 
-		// one set covers every used timepoint (global), or each timepoint has its own "viewSetupId@<tp>..."
-		// set (per-timepoint) -- either way, look up per timepoint and skip any that has neither (e.g. a
-		// plain basis-check timepointId restriction, no view-setup compaction at all).
 		final List<Integer> globalViewSetupIds = decodeIdCompaction( params, "viewSetupId" );
 		final List<ViewId> pairs = new ArrayList<>();
 		for ( final String tpStr : tpCsv.split( "," ) )
@@ -583,13 +573,7 @@ public class ActionToSparkCli
 			params.put( "viewIds", ActionHistoryRecorder.joinViewIds( pairs ) );
 	}
 
-	/**
-	 * Decodes a "{@code <prefix>RangeStart}"/"{@code End}", "{@code <prefix>BitsetStart}"/"{@code Bits}",
-	 * or "{@code <prefix>s}" triple (whichever {@code putViewSetupIdCompaction} chose) into a
-	 * concrete id list, or {@code null} if none of the three forms is present.
-	 */
-	// package-private (not private) so ActionHistoryViewSetupCompactionTest can round-trip it against
-	// ActionHistoryRecorder.putViewSetupIdCompaction without duplicating this codec in test code.
+	/** Decodes whichever form {@code putViewSetupIdCompaction} stored under {@code prefix}, or {@code null} if none is present. */
 	static List<Integer> decodeIdCompaction( final Map<String,String> params, final String prefix )
 	{
 		final String rangeStart = params.get( prefix + "RangeStart" );
@@ -615,7 +599,7 @@ public class ActionToSparkCli
 			return out;
 		}
 
-		final String idsCsv = params.get( prefix + "s" ); // e.g. prefix "viewSetupId" -> "viewSetupIds", matching putViewSetupIdCompaction
+		final String idsCsv = params.get( prefix + "s" );
 		if ( idsCsv != null && !idsCsv.isEmpty() )
 		{
 			final List<Integer> out = new ArrayList<>();
