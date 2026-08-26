@@ -507,8 +507,9 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Determining same Min & Max for all views... " );
 			preprocess();
 		}
-		else
+		else if ( Double.isNaN( minIntensity ) || Double.isNaN( maxIntensity ) )
 		{
+			// only auto-detect when the user did not provide min/max in the dialog
 			final double[] minmax = FusionTools.minMaxApprox1( img );
 
 			minIntensity = minmax[ 0 ];
