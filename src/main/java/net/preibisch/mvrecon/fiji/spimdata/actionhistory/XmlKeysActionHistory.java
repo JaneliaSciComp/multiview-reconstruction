@@ -36,6 +36,8 @@ public class XmlKeysActionHistory
 	public static final String VIEW_TAG              = "view";
 	public static final String ATTR_VIEW_TP          = "tp";
 	public static final String ATTR_VIEW_SETUP       = "setup";
+	/** Compact replacement for a long run of {@link #VIEW_TAG} children -- see XmlIoActionHistory. */
+	public static final String VIEWS_TAG             = "Views";
 
 	private XmlKeysActionHistory() {}
 }

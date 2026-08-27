@@ -553,12 +553,24 @@ public class ActionToSparkCli
 	 */
 	static void expandViewSetupCompaction( final Map<String,String> params )
 	{
+		final List<ViewId> pairs = decodeViewSetupCompaction( params );
+		if ( !pairs.isEmpty() )
+			params.put( "viewIds", ActionHistoryRecorder.joinViewIds( pairs ) );
+	}
+
+	/**
+	 * Decodes {@code ActionHistoryRecorder.putViewSetupCompaction}'s stored form into a concrete
+	 * {@link ViewId} list (empty if neither form is present). Also used by {@code XmlIoActionHistory}
+	 * to expand a compacted {@code affectedViews} list back into full {@link ViewId}s on load.
+	 */
+	static List<ViewId> decodeViewSetupCompaction( final Map<String,String> params )
+	{
 		final String tpCsv = params.get( "timepointId" );
 		if ( tpCsv == null || tpCsv.isEmpty() )
-			return;
+			return Collections.emptyList();
 
 		final List<Integer> globalViewSetupIds = decodeIdCompaction( params, "viewSetupId" );
-		final List<ViewId> pairs = new ArrayList<>();
+		final List<ViewId> out = new ArrayList<>();
 		for ( final String tpStr : tpCsv.split( "," ) )
 		{
 			final int tp = Integer.parseInt( tpStr.trim() );
@@ -566,11 +578,9 @@ public class ActionToSparkCli
 			if ( ids == null )
 				continue;
 			for ( final int vs : ids )
-				pairs.add( new ViewId( tp, vs ) );
+				out.add( new ViewId( tp, vs ) );
 		}
-
-		if ( !pairs.isEmpty() )
-			params.put( "viewIds", ActionHistoryRecorder.joinViewIds( pairs ) );
+		return out;
 	}
 
 	/** Decodes whichever form {@code putViewSetupIdCompaction} stored under {@code prefix}, or {@code null} if none is present. */

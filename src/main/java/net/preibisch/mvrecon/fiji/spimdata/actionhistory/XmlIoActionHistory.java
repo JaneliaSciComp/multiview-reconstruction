@@ -33,6 +33,7 @@ import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHis
 import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.ATTR_VIEW_SETUP;
 import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.ATTR_VIEW_TP;
 import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.PARAM_TAG;
+import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.VIEWS_TAG;
 import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.VIEW_TAG;
 
 import java.util.ArrayList;
@@ -88,12 +89,24 @@ public class XmlIoActionHistory extends XmlIoSingleton<ActionHistory>
 			pe.setAttribute( ATTR_PARAM_VALUE, p.getValue() == null ? "" : p.getValue() );
 			e.addContent( pe );
 		}
-		for ( final ViewId v : r.getAffectedViews() )
+		if ( !r.getAffectedViews().isEmpty() )
 		{
-			final Element ve = new Element( VIEW_TAG );
-			ve.setAttribute( ATTR_VIEW_TP, Integer.toString( v.getTimePointId() ) );
-			ve.setAttribute( ATTR_VIEW_SETUP, Integer.toString( v.getViewSetupId() ) );
-			e.addContent( ve );
+			// compact form instead of one <view> per affected view (which for a large action can run
+			// to tens of thousands of elements) -- same codec ActionHistoryRecorder.putViewSelection
+			// uses for its own "viewSetupId" params, just nested under <Views> instead of <param>
+			// directly under <Action>, so it can't collide with a real CLI-translation param key.
+			final LinkedHashMap<String,String> viewsMap = new LinkedHashMap<>();
+			ActionHistoryRecorder.putViewSetupCompaction( viewsMap, r.getAffectedViews() );
+
+			final Element views = new Element( VIEWS_TAG );
+			for ( final Entry<String,String> p : viewsMap.entrySet() )
+			{
+				final Element pe = new Element( PARAM_TAG );
+				pe.setAttribute( ATTR_PARAM_KEY, p.getKey() );
+				pe.setAttribute( ATTR_PARAM_VALUE, p.getValue() );
+				views.addContent( pe );
+			}
+			e.addContent( views );
 		}
 		return e;
 	}
@@ -112,6 +125,7 @@ public class XmlIoActionHistory extends XmlIoSingleton<ActionHistory>
 		for ( final Element pe : e.getChildren( PARAM_TAG ) )
 			params.put( pe.getAttributeValue( ATTR_PARAM_KEY ), pe.getAttributeValue( ATTR_PARAM_VALUE ) );
 
+		// legacy per-view <view> elements, still readable from files saved before compact <Views>
 		final List<ViewId> views = new ArrayList<>();
 		for ( final Element ve : e.getChildren( VIEW_TAG ) )
 		{
@@ -119,6 +133,16 @@ public class XmlIoActionHistory extends XmlIoSingleton<ActionHistory>
 			final int setup = Integer.parseInt( ve.getAttributeValue( ATTR_VIEW_SETUP ) );
 			views.add( new ViewId( tp, setup ) );
 		}
+
+		final Element viewsElem = e.getChild( VIEWS_TAG );
+		if ( viewsElem != null )
+		{
+			final LinkedHashMap<String,String> viewsMap = new LinkedHashMap<>();
+			for ( final Element pe : viewsElem.getChildren( PARAM_TAG ) )
+				viewsMap.put( pe.getAttributeValue( ATTR_PARAM_KEY ), pe.getAttributeValue( ATTR_PARAM_VALUE ) );
+			views.addAll( ActionToSparkCli.decodeViewSetupCompaction( viewsMap ) );
+		}
+
 		return new ActionRecord( actionId, ts, klass, params, views, resultRef );
 	}
 }
