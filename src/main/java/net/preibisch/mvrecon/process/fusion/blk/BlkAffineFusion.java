@@ -226,7 +226,6 @@ public class BlkAffineFusion
 			// instantiate blending if necessary
 			final float[] blending = Util.getArrayFromValue( FusionTools.defaultBlendingRange, 3 );
 			final float[] border = Util.getArrayFromValue( FusionTools.defaultBlendingBorder, 3 );
-			final float[] borderClosestPixelWins = Util.getArrayFromValue( 0f, 3 );
 
 			// adjust both for z-scaling (anisotropy), downsampling, and registrations itself
 			FusionTools.adjustBlending( viewDimensions.get( viewId ), Group.pvid( viewId ), blending, border, model );
@@ -252,8 +251,8 @@ public class BlkAffineFusion
 				masks.add( Masking.create( inputImg, border, transform ) );
 				break;
 			case CLOSEST_PIXEL_WINS:
-				// we need to use the blending weights, whatever weight is highest wins
-				weights.add( Blending.create( inputImg, borderClosestPixelWins, blending, transform ) );
+				// squared distance to the view center in fused coordinates; smallest distance wins
+				weights.add( Distance.create( inputImg, transform ) );
 				break;
 			case AVG_BLEND_CONTENT:
 				final BlockSupplier< FloatType > cb1 = ContentBased.create( inputImg, sigma1, sigma2, ContentBased.defaultScale );
