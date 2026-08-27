@@ -13,6 +13,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A healthy build takes 2-4 minutes. Without this, an unreachable
+    # maven.scijava.org makes Maven retry silently until the 6-hour default
+    # limit, burning Actions minutes for no output.
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
