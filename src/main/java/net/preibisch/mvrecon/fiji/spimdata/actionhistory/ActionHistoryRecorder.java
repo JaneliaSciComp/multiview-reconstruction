@@ -25,6 +25,7 @@ package net.preibisch.mvrecon.fiji.spimdata.actionhistory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -58,7 +59,8 @@ public final class ActionHistoryRecorder
 
 	/**
 	 * Record an action. Any field may be null/empty except {@code actionId}. No-op if {@link #enabled}
-	 * is false.
+	 * is false. Adds a description of {@code affectedViews} to {@code params} (see
+	 * {@link #putViewSelection}) before storing -- callers don't need to call it themselves.
 	 *
 	 * @param data         dataset to attach the record to
 	 * @param actionId     stable identifier matching the translator registry, e.g. "register-interestpoints"
@@ -84,11 +86,15 @@ public final class ActionHistoryRecorder
 			final ActionHistory history = data.getActionHistory();
 			if ( history == null )
 				return;
+			final LinkedHashMap<String,String> mergedParams = new LinkedHashMap<>();
+			if ( params != null )
+				mergedParams.putAll( params );
+			putViewSelection( mergedParams, data, affectedViews );
 			history.add( new ActionRecord(
 					actionId,
 					System.currentTimeMillis(),
 					mvreconClass,
-					params,
+					mergedParams,
 					affectedViews,
 					resultRef ) );
 		}
@@ -182,10 +188,7 @@ public final class ActionHistoryRecorder
 		if ( params == null || data == null || viewIds == null || viewIds.isEmpty() )
 			return;
 
-		final List<ViewDescription> present = new ArrayList<>();
-		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
-			if ( vd.isPresent() )
-				present.add( vd );
+		final List<ViewDescription> present = presentViews( data.getSequenceDescription().getViewDescriptions().values() );
 
 		final Set<ViewId> selected = new HashSet<>( viewIds );
 
@@ -403,5 +406,86 @@ public final class ActionHistoryRecorder
 		return simple.endsWith( "Compression" ) && simple.length() > "Compression".length()
 				? simple.substring( 0, simple.length() - "Compression".length() )
 				: simple;
+	}
+
+	/**
+	 * Reconstructs the view list a recorded action operated on, from its stored {@code params} and
+	 * {@code viewDescriptions} -- the read-side counterpart of {@link #putViewSelection}: no
+	 * dimension/view-setup keys means every present view; view-setup-id keys decode directly; else
+	 * cross the per-dimension filter against {@code present}. Takes the already-present-filtered
+	 * view descriptions (not a dataset) so {@code XmlIoActionHistory} doesn't need the whole live
+	 * {@code SpimData2} just to expand a recorded selection, and can filter once per load instead of
+	 * once per record (see {@link #presentViews}).
+	 */
+	static List<ViewId> expandViewSelection( final List<ViewDescription> present, final Map<String,String> params )
+	{
+		final List<ViewId> viewSetupCompaction = ActionToSparkCli.decodeViewSetupCompaction( params );
+		if ( !viewSetupCompaction.isEmpty() )
+			return viewSetupCompaction;
+
+		final List<Set<Integer>> filter = new ArrayList<>( DIM_KEYS.length );
+		boolean anyRestricted = false;
+		for ( final String key : DIM_KEYS )
+		{
+			final Set<Integer> ids = parseCsvIdSet( params.get( key ) );
+			filter.add( ids );
+			if ( ids != null )
+				anyRestricted = true;
+		}
+		if ( !anyRestricted )
+			return new ArrayList<>( present );
+
+		final List<ViewId> out = new ArrayList<>();
+		for ( final ViewDescription vd : present )
+			if ( matchesFilter( filter, vd ) )
+				out.add( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) );
+		return out;
+	}
+
+	/**
+	 * True iff every non-null entry in {@code filter} accepts {@code vd}'s corresponding dimension
+	 * value. Not shared with {@link #reconstructsExactly}'s inner loop -- that one runs against a
+	 * precomputed flat {@code int[]} instead of a live {@code ViewDescription} specifically to avoid
+	 * repeated {@code ViewSetup} getter-chain calls across its O(n) verify pass at 100k+ views; this
+	 * one runs once per view with no repeated candidates to amortize against, so the direct
+	 * {@code ViewDescription} form is both simpler and just as fast here.
+	 */
+	private static boolean matchesFilter( final List<Set<Integer>> filter, final ViewDescription vd )
+	{
+		for ( int d = 0; d < DIM_KEYS.length; ++d )
+		{
+			final Set<Integer> f = filter.get( d );
+			if ( f != null && !f.contains( DIM_EXTRACTORS[ d ].get( vd ) ) )
+				return false;
+		}
+		return true;
+	}
+
+	/** {@code viewDescriptions}, filtering out missing ones. Used by {@link #putViewSelection} and by {@code XmlIoActionHistory}. */
+	static List<ViewDescription> presentViews( final Collection<? extends ViewDescription> viewDescriptions )
+	{
+		final List<ViewDescription> out = new ArrayList<>();
+		for ( final ViewDescription vd : viewDescriptions )
+			if ( vd.isPresent() )
+				out.add( vd );
+		return out;
+	}
+
+	/** Comma-separated ints, or an empty list if {@code csv} is null/empty. */
+	static List<Integer> parseCsvInts( final String csv )
+	{
+		if ( csv == null || csv.isEmpty() )
+			return Collections.emptyList();
+		final List<Integer> out = new ArrayList<>();
+		for ( final String s : csv.split( "," ) )
+			out.add( Integer.parseInt( s.trim() ) );
+		return out;
+	}
+
+	/** {@link #parseCsvInts}, or {@code null} (unrestricted) if empty. */
+	private static Set<Integer> parseCsvIdSet( final String csv )
+	{
+		final List<Integer> ids = parseCsvInts( csv );
+		return ids.isEmpty() ? null : new HashSet<>( ids );
 	}
 }

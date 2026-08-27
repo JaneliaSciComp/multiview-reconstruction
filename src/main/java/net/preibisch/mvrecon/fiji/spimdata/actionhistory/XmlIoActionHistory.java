@@ -30,13 +30,10 @@ import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHis
 import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.ATTR_PARAM_VALUE;
 import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.ATTR_RESULT_REF;
 import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.ATTR_TIMESTAMP;
-import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.ATTR_VIEW_SETUP;
-import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.ATTR_VIEW_TP;
 import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.PARAM_TAG;
-import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.VIEWS_TAG;
-import static net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlKeysActionHistory.VIEW_TAG;
 
-import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map.Entry;
@@ -45,6 +42,7 @@ import org.jdom2.Element;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.base.XmlIoSingleton;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 
 public class XmlIoActionHistory extends XmlIoSingleton<ActionHistory>
@@ -55,6 +53,11 @@ public class XmlIoActionHistory extends XmlIoSingleton<ActionHistory>
 		handledTags.add( ACTION_HISTORY_TAG );
 	}
 
+	/**
+	 * Affected views are not written per-view (see {@link #actionToXml}): {@code ActionHistoryRecorder
+	 * .record} already adds a compact description of them to {@code params}, so
+	 * {@link #fromXml(Element, Collection)} re-derives the concrete view list from that instead.
+	 */
 	public Element toXml( final ActionHistory history )
 	{
 		final Element elem = super.toXml();
@@ -64,11 +67,27 @@ public class XmlIoActionHistory extends XmlIoSingleton<ActionHistory>
 		return elem;
 	}
 
-	public ActionHistory fromXml( final Element historyElem ) throws SpimDataException
+	/**
+	 * @param viewDescriptions used to re-derive a {@code register-interestpoints} record's
+	 *                         {@code affectedViews} from its {@code params} (see
+	 *                         {@link ActionHistoryRecorder#expandViewSelection}) -- only the view
+	 *                         descriptions are needed, not the whole live dataset. {@code
+	 *                         affectedViews} is the one thing every other action id's params don't
+	 *                         already fully cover for translation, and it's also the only thing
+	 *                         {@link ActionHistory#removeRegistrationsForViews} ever reads back out of
+	 *                         it, so it's the only action id worth expanding at all.
+	 */
+	public ActionHistory fromXml( final Element historyElem, final Collection<? extends ViewDescription> viewDescriptions ) throws SpimDataException
 	{
 		final ActionHistory history = super.fromXml( historyElem );
+		// built at most once, and only if a register-interestpoints record actually shows up
+		List<ViewDescription> present = null;
 		for ( final Element e : historyElem.getChildren( ACTION_TAG ) )
-			history.add( actionFromXml( e ) );
+		{
+			if ( present == null && ActionHistory.REGISTER_INTERESTPOINTS.equals( e.getAttributeValue( ATTR_ACTION_ID ) ) )
+				present = ActionHistoryRecorder.presentViews( viewDescriptions );
+			history.add( actionFromXml( e, present ) );
+		}
 		return history;
 	}
 
@@ -89,29 +108,10 @@ public class XmlIoActionHistory extends XmlIoSingleton<ActionHistory>
 			pe.setAttribute( ATTR_PARAM_VALUE, p.getValue() == null ? "" : p.getValue() );
 			e.addContent( pe );
 		}
-		if ( !r.getAffectedViews().isEmpty() )
-		{
-			// compact form instead of one <view> per affected view (which for a large action can run
-			// to tens of thousands of elements) -- same codec ActionHistoryRecorder.putViewSelection
-			// uses for its own "viewSetupId" params, just nested under <Views> instead of <param>
-			// directly under <Action>, so it can't collide with a real CLI-translation param key.
-			final LinkedHashMap<String,String> viewsMap = new LinkedHashMap<>();
-			ActionHistoryRecorder.putViewSetupCompaction( viewsMap, r.getAffectedViews() );
-
-			final Element views = new Element( VIEWS_TAG );
-			for ( final Entry<String,String> p : viewsMap.entrySet() )
-			{
-				final Element pe = new Element( PARAM_TAG );
-				pe.setAttribute( ATTR_PARAM_KEY, p.getKey() );
-				pe.setAttribute( ATTR_PARAM_VALUE, p.getValue() );
-				views.addContent( pe );
-			}
-			e.addContent( views );
-		}
 		return e;
 	}
 
-	private static ActionRecord actionFromXml( final Element e )
+	private static ActionRecord actionFromXml( final Element e, final List<ViewDescription> present )
 	{
 		final String actionId = e.getAttributeValue( ATTR_ACTION_ID );
 		final String tsStr = e.getAttributeValue( ATTR_TIMESTAMP );
@@ -125,23 +125,11 @@ public class XmlIoActionHistory extends XmlIoSingleton<ActionHistory>
 		for ( final Element pe : e.getChildren( PARAM_TAG ) )
 			params.put( pe.getAttributeValue( ATTR_PARAM_KEY ), pe.getAttributeValue( ATTR_PARAM_VALUE ) );
 
-		// legacy per-view <view> elements, still readable from files saved before compact <Views>
-		final List<ViewId> views = new ArrayList<>();
-		for ( final Element ve : e.getChildren( VIEW_TAG ) )
-		{
-			final int tp = Integer.parseInt( ve.getAttributeValue( ATTR_VIEW_TP ) );
-			final int setup = Integer.parseInt( ve.getAttributeValue( ATTR_VIEW_SETUP ) );
-			views.add( new ViewId( tp, setup ) );
-		}
-
-		final Element viewsElem = e.getChild( VIEWS_TAG );
-		if ( viewsElem != null )
-		{
-			final LinkedHashMap<String,String> viewsMap = new LinkedHashMap<>();
-			for ( final Element pe : viewsElem.getChildren( PARAM_TAG ) )
-				viewsMap.put( pe.getAttributeValue( ATTR_PARAM_KEY ), pe.getAttributeValue( ATTR_PARAM_VALUE ) );
-			views.addAll( ActionToSparkCli.decodeViewSetupCompaction( viewsMap ) );
-		}
+		// affectedViews is only ever read back out for register-interestpoints (see fromXml) --
+		// every other action id can skip the per-view reconstruction entirely
+		final List<ViewId> views = ActionHistory.REGISTER_INTERESTPOINTS.equals( actionId )
+				? ActionHistoryRecorder.expandViewSelection( present, params )
+				: Collections.emptyList();
 
 		return new ActionRecord( actionId, ts, klass, params, views, resultRef );
 	}

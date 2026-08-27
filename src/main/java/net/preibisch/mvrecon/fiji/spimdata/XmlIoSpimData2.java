@@ -270,7 +270,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		if ( elem == null )
 			actionHistory = new ActionHistory();
 		else
-			actionHistory = xmlActionHistory.fromXml( elem );
+			actionHistory = xmlActionHistory.fromXml( elem, seq.getViewDescriptions().values() );
 		spimData.setActionHistory( actionHistory );
 
 		return spimData;

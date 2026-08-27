@@ -571,10 +571,9 @@ public class ActionToSparkCli
 
 		final List<Integer> globalViewSetupIds = decodeIdCompaction( params, "viewSetupId" );
 		final List<ViewId> out = new ArrayList<>();
-		for ( final String tpStr : tpCsv.split( "," ) )
+		for ( final int tp : ActionHistoryRecorder.parseCsvInts( tpCsv ) )
 		{
-			final int tp = Integer.parseInt( tpStr.trim() );
-			final List<Integer> ids = globalViewSetupIds != null ? globalViewSetupIds : decodeIdCompaction( params, "viewSetupId@" + tpStr.trim() );
+			final List<Integer> ids = globalViewSetupIds != null ? globalViewSetupIds : decodeIdCompaction( params, "viewSetupId@" + tp );
 			if ( ids == null )
 				continue;
 			for ( final int vs : ids )
@@ -609,16 +608,8 @@ public class ActionToSparkCli
 			return out;
 		}
 
-		final String idsCsv = params.get( prefix + "s" );
-		if ( idsCsv != null && !idsCsv.isEmpty() )
-		{
-			final List<Integer> out = new ArrayList<>();
-			for ( final String s : idsCsv.split( "," ) )
-				out.add( Integer.parseInt( s.trim() ) );
-			return out;
-		}
-
-		return null;
+		final List<Integer> ids = ActionHistoryRecorder.parseCsvInts( params.get( prefix + "s" ) );
+		return ids.isEmpty() ? null : ids;
 	}
 
 	/**

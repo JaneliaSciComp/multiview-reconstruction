@@ -267,11 +267,11 @@ public class Interest_Point_Registration implements PlugIn
 				for ( final HashMap<String,Double> m : brp.labelMap.values() )
 					if ( m != null ) labels.addAll( m.keySet() );
 			ActionHistoryRecorder.put( params, "label", String.join( ",", labels ) );
-			// which views this ran on -- prefers parsimonious --angleId/--tileId/--illuminationId/
-			// --channelId/--timepointId filters over spelling out every view id (see putViewSelection).
-			// SparkGeometricDescriptorMatching and Solver both extend AbstractRegistration extends
-			// AbstractSelectableViews, so both stages below accept these same flags.
-			ActionHistoryRecorder.putViewSelection( params, data, viewIds );
+			// which views this ran on -- record() below adds parsimonious --angleId/--tileId/
+			// --illuminationId/--channelId/--timepointId filters over spelling out every view id
+			// (see ActionHistoryRecorder.putViewSelection). SparkGeometricDescriptorMatching and Solver
+			// both extend AbstractRegistration extends AbstractSelectableViews, so both stages below
+			// accept these same flags.
 			ActionHistoryRecorder.put( params, "registrationType", brp.registrationType );
 			// timepoint-registration sub-parameters only apply to specific registration types
 			if ( arp != null && brp.registrationType == RegistrationType.TO_REFERENCE_TIMEPOINT )
