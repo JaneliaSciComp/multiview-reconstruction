@@ -30,6 +30,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -79,8 +80,10 @@ import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionExportInterface;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.plugin.util.PluginHelper;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
+import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
@@ -182,9 +185,64 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	@Override
 	public String getDescription() { return "OME-ZARR/N5/HDF5 export using N5-API"; }
 
+	@Override
+	public Map<String,String> describeParameters()
+	{
+		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
+		if ( path != null ) p.put( "n5Path", path.toString() );
+		if ( storageType != null ) p.put( "storage", storageType.toString() );
+		p.put( "blockSize", ActionHistoryRecorder.csv( blocksize() ) );
+		p.put( "blockScale", ActionHistoryRecorder.csv( computeBlocksizeFactor() ) );
+		if ( compression != null ) p.put( "compression", ActionHistoryRecorder.sparkCompression( compression ) );
+		p.put( "useSharding", Boolean.toString( useSharding ) );
+		// absolute shard size in voxels, as SparkNonRigidFusion's --shardSize expects it; the
+		// affine create-fusion-container path instead takes a factor (blockScale IS that factor,
+		// see ActionToSparkCli's createContainer recipe), so this key is only consumed there
+		if ( useSharding && shardSize != null )
+			p.put( "shardSize", ActionHistoryRecorder.csv( shardSize ) );
+		if ( bdv ) p.put( "bdv", "true" );
+		if ( bdv && xmlOut != null ) p.put( "xmlOut", xmlOut.toString() );
+		// "tp,vs" for the first fusion group; consumed by the nonrigid-fusion recipe as --bdv
+		if ( bdv && firstAssignedViewId != null )
+			p.put( "bdvFirst", ActionHistoryRecorder.formatViewId( firstAssignedViewId ) );
+		// non-BDV: predicted first-group s0 dataset path; consumed by the nonrigid-fusion recipe as -d
+		if ( !bdv && firstAssignedDatasetPath != null )
+			p.put( "n5Dataset", firstAssignedDatasetPath );
+		p.put( "multiRes", Boolean.toString( downsampling != null ) );
+		// the multi-resolution pyramid as Spark's -ds expects it (split=";"): "1,1,1;2,2,1;4,4,2;..."
+		if ( downsampling != null )
+		{
+			final StringBuilder ds = new StringBuilder();
+			for ( int d = 0; d < downsampling.length; ++d )
+			{
+				if ( d > 0 ) ds.append( ';' );
+				ds.append( downsampling[ d ][ 0 ] ).append( ',' ).append( downsampling[ d ][ 1 ] ).append( ',' ).append( downsampling[ d ][ 2 ] );
+			}
+			p.put( "downsampling", ds.toString() );
+		}
+		return p;
+	}
+
 	private MultiResolutionLevelInfo[] mrInfoZarr = null;
 	private ArrayList<TimePoint> timepoints;
 	private ArrayList<Channel> channels;
+	/**
+	 * (tp, vs) the first fusion group would receive if the run executed now. Computed at the
+	 * end of {@link #queryParameters} using the same logic as {@link #getViewIdForGroup} for
+	 * a fresh {@code countViewIds} map. Surfaces in {@link #describeParameters} as
+	 * {@code bdvFirst} so the action history can put a meaningful {@code --bdv tp,vs} on the
+	 * single recorded nonrigid-fusion command.
+	 */
+	private ViewId firstAssignedViewId = null;
+	/**
+	 * Predicted s0 dataset path for the first fusion group in non-BDV mode. Surfaces in
+	 * {@link #describeParameters} as {@code n5Dataset} so the recorded nonrigid-fusion command
+	 * has a populated {@code -d <path>} value (the only dataset path SparkNonRigidFusion accepts
+	 * when {@code --bdv} is absent). Layout depends on the storage variant:
+	 * N5/HDF5 → {@code title/s0}; ZARR sub-container → {@code title.zarr/0};
+	 * ZARR single container → {@code /0}.
+	 */
+	private String firstAssignedDatasetPath = null;
 
 	@Override
 	public <T extends RealType<T> & NativeType<T>> boolean exportImage(
@@ -1059,6 +1117,39 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		else
 		{
 			this.downsampling = new int[][] {{1,1,1}}; // no downsampling
+		}
+
+		// Record a (tp,vs) for action history. Prefer the user-picked value when the GUI asked
+		// for one (single-group BDV); otherwise pick a real ViewId from the current bounding-box
+		// selection rather than inventing one from the assignment algorithm — that way --bdv
+		// always points to a view that actually exists in the input data.
+		if ( bdv )
+		{
+			if ( manuallyAssignViewId )
+			{
+				firstAssignedViewId = new ViewId( tpId, vsId );
+			}
+			else if ( fusion.getViews() != null && !fusion.getViews().isEmpty() )
+			{
+				final ViewId v = fusion.getViews().iterator().next();
+				firstAssignedViewId = new ViewId( v.getTimePointId(), v.getViewSetupId() );
+			}
+		}
+		// Non-BDV: predict the first fusion group's s0 dataset path so the recorded nonrigid-fusion
+		// command can populate `-d <path>`. Title comes from the same FusionTools.getFusionGroupTitle
+		// used by exportImage's caller, so this can't drift out of sync with the real title. Per-group
+		// path layout still depends on the storage variant — see exportImage's branches around
+		// lines 341/394/405/451.
+		else if ( fusion.getFusionGroups() != null && !fusion.getFusionGroups().isEmpty() )
+		{
+			final Group< ViewDescription > firstGroup =
+					Group.getGroupsSorted( fusion.getFusionGroups() ).iterator().next();
+			final String title = FusionTools.getFusionGroupTitle( splittingType, firstGroup );
+
+			if ( storageType == StorageFormat.N5 || storageType == StorageFormat.HDF5 )
+				firstAssignedDatasetPath = title + "/s0";
+			else if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
+				firstAssignedDatasetPath = omeZarrOneContainer ? "/0" : title + ".zarr/0";
 		}
 
 		return true;

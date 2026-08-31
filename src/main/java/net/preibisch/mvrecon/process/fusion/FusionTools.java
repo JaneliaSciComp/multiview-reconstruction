@@ -370,6 +370,27 @@ public class FusionTools
 		return new FinalInterval( dim );
 	}
 
+	/**
+	 * Naming convention for a fused output group, shared by Image_Fusion, Image_Deconvolution,
+	 * Image_Quality, and the action-history dataset-path prediction in ExportN5Api.
+	 */
+	public static String getFusionGroupTitle( final int splittingType, final Group< ViewDescription > group )
+	{
+		String title;
+		final ViewDescription vd0 = group.iterator().next();
+
+		if ( splittingType == 0 ) // "Each timepoint & channel"
+			title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId();
+		else if ( splittingType == 1 ) // "Each timepoint, channel & illumination"
+			title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId() + "_illum_" + vd0.getViewSetup().getIllumination().getId();
+		else if ( splittingType == 2 ) // "All views together"
+			title = "fused";
+		else // "All views"
+			title = "fused_tp_" + vd0.getTimePointId() + "_vs_" + vd0.getViewSetupId();
+
+		return title;
+	}
+
 	public static boolean is2d( final Collection< ? extends BasicViewDescription< ? > > views )
 	{
 		// go through the images and check if they are all 2-dimensional

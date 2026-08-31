@@ -56,6 +56,25 @@ public class TransformationModelGUI
 		this.lambda = lambda;
 	}
 
+	/** 0=Translation, 1=Rigid, 2=Affine — matches BigStitcher-Spark {@code -tm}. */
+	public int getModelIndex() { return modelIndex; }
+	/** 0=Identity, 1=Translation, 2=Rigid, 3=Affine — matches BigStitcher-Spark {@code -rm} (when regularized). */
+	public int getRegularizedModelIndex() { return regularizedModelIndex; }
+	public double getLambda() { return lambda; }
+	public boolean isRegularize() { return regularize; }
+
+	/** Maps modelIndex to the BigStitcher-Spark transformation-model name (uppercase of {@link #modelChoice}). */
+	public static String modelIndexToSparkName( final int idx )
+	{
+		return ( idx >= 0 && idx < modelChoice.length ) ? modelChoice[ idx ].toUpperCase() : null;
+	}
+
+	/** Maps regularizedModelIndex to the BigStitcher-Spark regularization-model name. 0=Identity, 1..3 match {@link #modelIndexToSparkName}. */
+	public static String regularizationIndexToSparkName( final int idx )
+	{
+		return idx == 0 ? "IDENTITY" : modelIndexToSparkName( idx - 1 );
+	}
+
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public < M extends AbstractModel<M> & Affine3D<M>> M getModel()
 	{

@@ -43,6 +43,8 @@ import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.XmlIoSequenceDescription;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlIoActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.XmlIoBoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
@@ -66,6 +68,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 	final XmlIoPointSpreadFunctions xmlPointSpreadFunctions;
 	final XmlIoStitchingResults xmlStitchingResults;
 	final XmlIoIntensityAdjustments xmlIntensityAdjustments;
+	final XmlIoActionHistory xmlActionHistory;
 
 	URI lastURI;
 	public static int numBackups = 5;
@@ -89,6 +92,9 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 
 		this.xmlIntensityAdjustments = new XmlIoIntensityAdjustments();
 		this.handledTags.add( xmlIntensityAdjustments.getTag() );
+
+		this.xmlActionHistory = new XmlIoActionHistory();
+		this.handledTags.add( xmlActionHistory.getTag() );
 
 		if ( initN5Writing )
 		{
@@ -259,6 +265,14 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 			intensityAdjustments = xmlIntensityAdjustments.fromXml( elem );
 		spimData.setIntensityAdjustments( intensityAdjustments );
 
+		final ActionHistory actionHistory;
+		elem = root.getChild( xmlActionHistory.getTag() );
+		if ( elem == null )
+			actionHistory = new ActionHistory();
+		else
+			actionHistory = xmlActionHistory.fromXml( elem );
+		spimData.setActionHistory( actionHistory );
+
 		return spimData;
 	}
 
@@ -278,6 +292,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		root.addContent( xmlPointSpreadFunctions.toXml( spimData.getPointSpreadFunctions() ) );
 		root.addContent( xmlStitchingResults.toXml( spimData.getStitchingResults() ) );
 		root.addContent( xmlIntensityAdjustments.toXml( spimData.getIntensityAdjustments() ) );
+		root.addContent( xmlActionHistory.toXml( spimData.getActionHistory() ) );
 
 		return root;
 	}

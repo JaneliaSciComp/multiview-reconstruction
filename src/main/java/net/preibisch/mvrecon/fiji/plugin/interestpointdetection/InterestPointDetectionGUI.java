@@ -22,8 +22,10 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -101,4 +103,11 @@ public abstract class InterestPointDetectionGUI
 	 * @return - stored in the XML so that it is reproducible how the points were segmented
 	 */
 	public abstract String getParameters();
+
+	/**
+	 * Neutral key/value parameters for the action history, using keys that the
+	 * BigStitcher-Spark translator maps to detect-interestpoints CLI flags
+	 * (e.g. "sigma" -&gt; -s, "type" -&gt; --type). Default: none.
+	 */
+	public Map<String,String> describeParameters() { return Collections.emptyMap(); }
 }

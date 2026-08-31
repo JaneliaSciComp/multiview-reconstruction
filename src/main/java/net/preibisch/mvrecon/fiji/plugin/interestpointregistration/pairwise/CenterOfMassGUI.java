@@ -22,6 +22,9 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 import ij.gui.GenericDialog;
 
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.TransformationModelGUI;
@@ -87,4 +90,20 @@ public class CenterOfMassGUI extends PairwiseGUI
 
 	@Override
 	public double globalOptError() { return 5.0; }
+
+	/**
+	 * BigStitcher-Spark's {@code -m} has no center-of-mass option (only FAST_ROTATION/
+	 * FAST_TRANSLATION/PRECISE_TRANSLATION/ICP) — recorded anyway so the action history documents
+	 * what actually ran. {@code ActionToSparkCli} recognizes "CENTER_OF_MASS" as unsupported and
+	 * skips translating it (with an explanatory comment) rather than emitting an invalid -m value.
+	 */
+	@Override
+	public Map<String,String> describeParameters()
+	{
+		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
+		p.put( "matchingMethod", "CENTER_OF_MASS" );
+		putModelParams( p, getMatchingModel() );
+		p.put( "centerType", centerChoice[ centerType ] );
+		return p;
+	}
 }

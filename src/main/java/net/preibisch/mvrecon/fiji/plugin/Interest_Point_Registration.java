@@ -30,6 +30,8 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -79,6 +81,8 @@ import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -253,6 +257,83 @@ public class Interest_Point_Registration implements PlugIn
 				brp.matchAcrossLabels,
 				arp.showStatistics ) )
 			return false;
+
+		// record action history
+		{
+			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+			// collapse the per-view label map to a comma-separated unique label list
+			final LinkedHashSet<String> labels = new LinkedHashSet<>();
+			if ( brp.labelMap != null )
+				for ( final HashMap<String,Double> m : brp.labelMap.values() )
+					if ( m != null ) labels.addAll( m.keySet() );
+			ActionHistoryRecorder.put( params, "label", String.join( ",", labels ) );
+			// which views this ran on -- prefers parsimonious --angleId/--tileId/--illuminationId/
+			// --channelId/--timepointId filters over spelling out every view id (see putViewSelection).
+			// SparkGeometricDescriptorMatching and Solver both extend AbstractRegistration extends
+			// AbstractSelectableViews, so both stages below accept these same flags.
+			ActionHistoryRecorder.putViewSelection( params, data, viewIds );
+			ActionHistoryRecorder.put( params, "registrationType", brp.registrationType );
+			// timepoint-registration sub-parameters only apply to specific registration types
+			if ( arp != null && brp.registrationType == RegistrationType.TO_REFERENCE_TIMEPOINT )
+				ActionHistoryRecorder.put( params, "referenceTP", arp.referenceTimePoint );
+			if ( arp != null && brp.registrationType == RegistrationType.ALL_TO_ALL_WITH_RANGE )
+				ActionHistoryRecorder.put( params, "rangeTP", arp.range );
+			ActionHistoryRecorder.put( params, "overlapType", brp.overlapType );
+			ActionHistoryRecorder.put( params, "interestpointsForReg", brp.interestPointOverlapType );
+			// matchingMethod (e.g. FAST_TRANSLATION, ICP) is set by pwr.describeParameters() below
+			ActionHistoryRecorder.put( params, "groupTiles", brp.groupTiles );
+			ActionHistoryRecorder.put( params, "groupIllums", brp.groupIllums );
+			ActionHistoryRecorder.put( params, "groupChannels", brp.groupChannels );
+			ActionHistoryRecorder.put( params, "matchAcrossLabels", brp.matchAcrossLabels );
+			ActionHistoryRecorder.put( params, "interestPointMergeDistance", gp == null ? null : gp.mergeDistance );
+			ActionHistoryRecorder.put( params, "sourcePoints", "IP" );
+			// LoadCorrespondencesGUI reuses existing correspondences and skips matching entirely (see
+			// the "!LoadCorrespondencesGUI.class.isInstance(pairwiseMatching)" guard around line 429/551
+			// below); the Spark translator uses this to emit only "solver", not "match-interestpoints"
+			// (which would otherwise recompute matches with no matching method at all).
+			final boolean skipMatching = LoadCorrespondencesGUI.class.isInstance( brp.pwr );
+			ActionHistoryRecorder.put( params, "skipMatching", skipMatching );
+			ActionHistoryRecorder.put( params, "clearCorrespondences", Boolean.toString( !skipMatching ) );
+			if ( arp != null && arp.globalOptParams != null )
+			{
+				ActionHistoryRecorder.put( params, "globalOptMethod", arp.globalOptParams.method );
+				ActionHistoryRecorder.put( params, "preAlign", arp.globalOptParams.preAlign ? "PREALIGN" : "NO_PREALIGN" );
+				// thresholds are only meaningful for ITERATIVE strategies; SIMPLE/NO_OPTIMIZATION
+				// encode them as Double.MAX_VALUE, which would render as a garbage CLI value — skip those
+				final double relTh = arp.globalOptParams.relativeThreshold;
+				final double absTh = arp.globalOptParams.absoluteThreshold;
+				if ( Double.isFinite( relTh ) && relTh < Double.MAX_VALUE )
+					ActionHistoryRecorder.put( params, "relativeThreshold", relTh );
+				if ( Double.isFinite( absTh ) && absTh < Double.MAX_VALUE )
+					ActionHistoryRecorder.put( params, "absoluteThreshold", absTh );
+			}
+			// fixed views anchor the global optimization (GlobalOpt.compute is called with
+			// fmbp.fixedViews below) -- Solver's -fv defaults to "first view id" if omitted, which is
+			// very unlikely to match what the GUI actually fixed, so always record explicitly.
+			// An empty set means the user fixed nothing (mapping-back handles the reference frame
+			// instead), which is Solver's --disableFixedViews.
+			if ( fmbp.fixedViews != null && !fmbp.fixedViews.isEmpty() )
+			{
+				ActionHistoryRecorder.put( params, "fixedViews", ActionHistoryRecorder.joinViewIds( fmbp.fixedViews ) );
+			}
+			else
+			{
+				ActionHistoryRecorder.put( params, "disableFixedViews", "true" );
+			}
+			// pull matcher-specific params (transformation model, regularization, RANSAC, descriptor params, ICP params, …)
+			if ( brp.pwr != null )
+				ActionHistoryRecorder.mergeSafe( params, brp.pwr::describeParameters );
+			final String resultRef = labels.isEmpty()
+					? "registrations"
+					: "interestpoints:" + labels.iterator().next();
+			ActionHistoryRecorder.record(
+					data,
+					ActionHistory.REGISTER_INTERESTPOINTS,
+					Interest_Point_Registration.class.getName(),
+					params,
+					viewIds,
+					resultRef );
+		}
 
 		// save the XML including transforms and correspondences
 		if ( saveXML )

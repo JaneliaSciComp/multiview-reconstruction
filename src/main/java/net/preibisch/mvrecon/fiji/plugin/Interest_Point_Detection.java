@@ -27,6 +27,7 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 import ij.ImageJ;
@@ -42,6 +43,7 @@ import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AbstractImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -194,6 +196,27 @@ public class Interest_Point_Detection implements PlugIn
 
 		// if grouped, we need to get the min/max intensity for all groups
 		ipd.preprocess();
+
+		// record action history before processing — params reflect the GUI choices that drive ipd
+		{
+			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+			ActionHistoryRecorder.put( params, "label", label );
+			ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
+			ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
+			// which views this ran on -- prefers parsimonious --angleId/--tileId/--illuminationId/
+			// --channelId/--timepointId filters over spelling out every view id (see putViewSelection)
+			ActionHistoryRecorder.putViewSelection( params, data, viewIds );
+			// individual detection params (sigma, threshold, type, localization, intensities,
+			// downsampling) so the BigStitcher-Spark translator can emit them as CLI flags
+			ActionHistoryRecorder.merge( params, ipd.describeParameters() );
+			ActionHistoryRecorder.record(
+					data,
+					"detect-interestpoints",
+					Interest_Point_Detection.class.getName(),
+					params,
+					viewIds,
+					"interestpoints:" + label );
+		}
 
 		// now extract all the detections
 		for ( final TimePoint tp : SpimData2.getAllTimePointsSorted( data, viewIds ) )

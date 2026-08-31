@@ -22,6 +22,9 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
+import java.util.Collections;
+import java.util.Map;
+
 import ij.gui.GenericDialog;
 
 import net.preibisch.legacy.io.IOFunctions;
@@ -169,4 +172,55 @@ public abstract class PairwiseGUI
 	 * @return - the error allowed for the global optimization
 	 */
 	public abstract double globalOptError();
+
+	/**
+	 * Optional hook used by the action-history feature to capture matcher-specific
+	 * parameters (RANSAC iterations, search radius, neighbors, …) after
+	 * {@link #parseDialog(ij.gui.GenericDialog)} has run. Keys should match the
+	 * neutral param names the action-history translator expects, e.g.
+	 * {@code ransacIterations}, {@code ransacMaxError}, {@code numNeighbors}.
+	 *
+	 * <p>Default: empty map. Subclasses that have CLI-translatable params should override.</p>
+	 */
+	public Map<String,String> describeParameters()
+	{
+		return Collections.emptyMap();
+	}
+
+	/**
+	 * Shared by every {@code describeParameters()} override that uses a {@link TransformationModelGUI}:
+	 * puts {@code transformationModel}, and (if regularized) {@code regularizationModel} + {@code lambda}.
+	 */
+	protected static void putModelParams( final Map<String,String> p, final TransformationModelGUI model )
+	{
+		if ( model == null )
+			return;
+
+		final String tm = TransformationModelGUI.modelIndexToSparkName( model.getModelIndex() );
+		if ( tm != null ) p.put( "transformationModel", tm );
+
+		if ( model.isRegularize() )
+		{
+			final String rm = TransformationModelGUI.regularizationIndexToSparkName( model.getRegularizedModelIndex() );
+			if ( rm != null ) p.put( "regularizationModel", rm );
+			p.put( "lambda", Double.toString( model.getLambda() ) );
+		}
+	}
+
+	/**
+	 * Shared by every {@code describeParameters()} override that uses {@link RANSACParameters}: puts
+	 * {@code ransacMaxError}, {@code ransacMinInlierRatio}, {@code ransacMinNumInliers},
+	 * {@code ransacIterations}, {@code ransacMultiConsensus}.
+	 */
+	protected static void putRansacParams( final Map<String,String> p, final RANSACParameters ransacParams )
+	{
+		if ( ransacParams == null )
+			return;
+
+		p.put( "ransacMaxError", Double.toString( ransacParams.getMaxEpsilon() ) );
+		p.put( "ransacMinInlierRatio", Double.toString( ransacParams.getMinInlierRatio() ) );
+		p.put( "ransacMinNumInliers", Integer.toString( ransacParams.getMinNumMatches() ) );
+		p.put( "ransacIterations", Integer.toString( ransacParams.getNumIterations() ) );
+		p.put( "ransacMultiConsensus", Boolean.toString( ransacParams.multiConsensus() ) );
+	}
 }

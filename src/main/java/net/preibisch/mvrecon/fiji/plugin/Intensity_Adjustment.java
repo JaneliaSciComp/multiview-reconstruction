@@ -200,6 +200,11 @@ public class Intensity_Adjustment implements PlugIn
 
 		data.getIntensityAdjustments().getIntensityAdjustments().putAll( intensityMapping );
 
+		// NOTE: intensity adjustment is intentionally NOT recorded in the action history. The Spark
+		// equivalent is a two-stage workflow (SparkIntensityMatching + IntensitySolver) operating on
+		// an N5 coefficient container, whereas mvrecon stores coefficients in the XML — there is no
+		// faithful single-action translation, so recording it would only emit a misleading CLI.
+
 		if ( saveXML )
 			new XmlIoSpimData2().saveWithFilename( data, xmlFileName );
 

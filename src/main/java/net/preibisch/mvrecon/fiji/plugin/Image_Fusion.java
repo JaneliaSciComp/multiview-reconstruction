@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -33,6 +34,8 @@ import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 import com.google.common.collect.Sets;
+
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
 import ij.ImageJ;
 import ij.plugin.PlugIn;
@@ -64,6 +67,9 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.GenericLoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli;
+import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.export.Calibrateable;
 import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.export.ImgExport;
@@ -73,6 +79,7 @@ import net.preibisch.mvrecon.process.fusion.lazy.LazyAffineFusion;
 import net.preibisch.mvrecon.process.fusion.lazy.LazyNonRigidFusion;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.fusion.transformed.nonrigid.NonRigidTools;
+import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -104,6 +111,20 @@ public class Image_Fusion implements PlugIn
 
 		if ( !fusion.queryDetails() )
 			return false;
+
+		// capture the named bounding box BEFORE it is rewrapped (and retitled "DefaultBoundingBox")
+		// by the anisotropy/downsampling adjustments below. Spark's -b takes the box name listed in
+		// the XML, so the Interval coordinates are useless here — only the title is.
+		// The fusion box list also contains two COMPUTED boxes ("Currently Selected Views", "All Views")
+		// that are NOT persisted in the XML; emitting -b with those names would fail in Spark. They map
+		// to Spark's default (no -b = fuse the full extent), so only a saved box is recorded as a name.
+		String bbTitle = null;
+		if ( fusion.getBoundingBox() instanceof BoundingBox )
+		{
+			final String t = ( (BoundingBox) fusion.getBoundingBox() ).getTitle();
+			if ( spimData.getBoundingBoxes().getBoundingBoxes().stream().anyMatch( saved -> saved.getTitle().equals( t ) ) )
+				bbTitle = t;
+		}
 
 		final List< Group< ViewDescription > > groups = fusion.getFusionGroups();
 		int i = 0;
@@ -137,6 +158,83 @@ public class Image_Fusion implements PlugIn
 		// query exporter parameters
 		if ( !exporter.queryParameters( fusion ) )
 			return false;
+
+		// the converter/type pair used to build the fused output; invariant across all groups, so it
+		// is built once here (also feeds the action-history "pixelType" string below, keeping it in
+		// sync with the actual output type instead of a second hardcoded mapping)
+		final Converter conv;
+		final Type type;
+
+		if ( fusion.getPixelType() == 2 )
+		{
+			conv = new RealUnsignedByteConverter<>( fusion.minIntensity(), fusion.maxIntensity() );
+			type = new UnsignedByteType();
+		}
+		else if ( fusion.getPixelType() == 1 )
+		{
+			conv = new RealUnsignedShortConverter<>( fusion.minIntensity(), fusion.maxIntensity() );
+			type = new UnsignedShortType();
+		}
+		else
+		{
+			conv = null;
+			type = new FloatType();
+		}
+
+		// record action history
+		{
+			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+			ActionHistoryRecorder.put( params, "fusion", fusion.getFusionType() );
+			// the GUI downsampling factor pre-scales the bounding box in-process; Spark fuses at the
+			// box's native resolution, so it is NOT a Spark flag. The -ds pyramid comes from the
+			// exporter's multi-resolution settings (see exporter.describeParameters() below).
+			// anisotropy: a non-NaN factor means "preserve anisotropy" was selected in the GUI
+			if ( !Double.isNaN( fusion.getAnisotropyFactor() ) )
+			{
+				ActionHistoryRecorder.put( params, "preserveAnisotropy", Boolean.TRUE );
+				ActionHistoryRecorder.put( params, "anisotropyFactor", fusion.getAnisotropyFactor() );
+			}
+			// BigStitcher-Spark dataType name, derived from the actual output type above (not a
+			// separately hardcoded pixelType switch)
+			ActionHistoryRecorder.put( params, "pixelType", N5Utils.dataType( (NativeType)type ).name() );
+			// min/max are the intensity range that integer output is scaled from; only meaningful when
+			// the output is UINT8/UINT16 (FLOAT32 keeps raw values, Spark ignores the flags)
+			if ( fusion.getPixelType() == 1 || fusion.getPixelType() == 2 )
+			{
+				ActionHistoryRecorder.put( params, "minIntensity", fusion.minIntensity() );
+				ActionHistoryRecorder.put( params, "maxIntensity", fusion.maxIntensity() );
+			}
+			ActionHistoryRecorder.put( params, "exporter", exporter.getDescription() );
+			ActionHistoryRecorder.put( params, "boundingBox", bbTitle );
+			// nonrigid (TPS): routes the second Spark step from `fusion` to `nonrigid-fusion`.
+			// Labels are joined with the multi-value delimiter so the translator can re-emit them
+			// as repeated `-ip <label>` flags. Requires at least one label; falling back to affine
+			// for an empty label list, since SparkNonRigidFusion requires `-ip`.
+			if ( fusion.getNonRigidParameters().isActive()
+					&& fusion.getNonRigidParameters().getLabels() != null
+					&& !fusion.getNonRigidParameters().getLabels().isEmpty() )
+			{
+				// labels from the GUI may carry an InterestPointTools.warningLabel suffix
+				// ("... (WARNING: Only available for N)") for incomplete coverage; strip it so the
+				// emitted -ip arg matches the actual label name
+				final String warn = InterestPointTools.warningLabel;
+				final ArrayList<String> cleaned = new ArrayList<>();
+				for ( final String raw : fusion.getNonRigidParameters().getLabels() )
+					cleaned.add( raw.contains( warn ) ? raw.substring( 0, raw.indexOf( warn ) ) : raw );
+				ActionHistoryRecorder.put( params, "nonRigid", Boolean.TRUE );
+				ActionHistoryRecorder.put( params, "interestPoints",
+						String.join( ActionToSparkCli.MULTI_VALUE_DELIM, cleaned ) );
+			}
+			// pull exporter-specific params (n5Path, storage, blockSize, compression, …)
+			ActionHistoryRecorder.mergeSafe( params, exporter::describeParameters );
+			ActionHistoryRecorder.record(
+					spimData,
+					"fusion",
+					Image_Fusion.class.getName(),
+					params,
+					viewsToProcess,
+					"fusion" );
+		}
 
 		// one common executerservice
 		final ExecutorService taskExecutor = Executors.newFixedThreadPool( Threads.numThreads() );
@@ -172,25 +270,6 @@ public class Image_Fusion implements PlugIn
 
 			final int[] blocksize = exporter.blocksize();
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): block size used during fusion: " + Util.printCoordinates( blocksize ) );
-
-			final Converter conv;
-			final Type type;
-
-			if ( fusion.getPixelType() == 2 )
-			{
-				conv = new RealUnsignedByteConverter<>( fusion.minIntensity(), fusion.maxIntensity() );
-				type = new UnsignedByteType();
-			}
-			else if ( fusion.getPixelType() == 1 )
-			{
-				conv = new RealUnsignedShortConverter<>( fusion.minIntensity(), fusion.maxIntensity() );
-				type = new UnsignedShortType();
-			}
-			else
-			{
-				conv = null;
-				type = new FloatType();
-			}
 
 			// get, and update the transformations with anisotropy, downsampling
 			final Set< ? extends ViewId > views =
@@ -281,8 +360,8 @@ public class Image_Fusion implements PlugIn
 				//SimpleMultiThreading.threadHaltUnClean();
 			}
 
-			final String title = getTitle( fusion.getSplittingType(), group );
-	
+			final String title = FusionTools.getFusionGroupTitle( fusion.getSplittingType(), group );
+
 			if ( !exporter.exportImage(
 					supplier,
 					fusion.getBoundingBox(),
@@ -378,23 +457,6 @@ public class Image_Fusion implements PlugIn
 		return exporter.exportImage( processedOutput, fusion.getBoundingBox(), fusion.getDownsampling(), fusion.getAnisotropyFactor(), title, group, minmax[ 0 ], minmax[ 1 ] );
 	}
 	*/
-
-	public static String getTitle( final int splittingType, final Group< ViewDescription > group )
-	{
-		String title;
-		final ViewDescription vd0 = group.iterator().next();
-
-		if ( splittingType == 0 ) // "Each timepoint & channel"
-			title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId();
-		else if ( splittingType == 1 ) // "Each timepoint, channel & illumination"
-			title = "fused_tp_" + vd0.getTimePointId() + "_ch_" + vd0.getViewSetup().getChannel().getId() + "_illum_" + vd0.getViewSetup().getIllumination().getId();
-		else if ( splittingType == 2 ) // "All views together"
-			title = "fused";
-		else // "All views"
-			title = "fused_tp_" + vd0.getTimePointId() + "_vs_" + vd0.getViewSetupId();
-
-		return title;
-	}
 
 	public static void main( String[] args )
 	{
