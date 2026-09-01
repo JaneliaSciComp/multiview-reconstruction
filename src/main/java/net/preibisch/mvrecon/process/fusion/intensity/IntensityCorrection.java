@@ -30,6 +30,11 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import mpicbg.models.AffineModel1D;
+import mpicbg.models.IdentityModel;
+import mpicbg.models.InterpolatedAffineModel1D;
+import mpicbg.models.Model;
+import mpicbg.models.TranslationModel1D;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RealInterval;
@@ -150,10 +155,34 @@ public class IntensityCorrection {
             final double maxTrust
     ) {
         return matchRansac(spimData,
+                viewId1, viewId2,
+                renderScale, coefficientsSize, minIntensity, maxIntensity, minNumCandidates,
+                new AffineModel1D(),
+                iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust);
+    }
+
+    public static ViewPairCoefficientMatches matchRansac(
+            final AbstractSpimData<?> spimData,
+            final ViewId viewId1,
+            final ViewId viewId2,
+            final double renderScale,
+            final int[] coefficientsSize,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates,
+            final Model<?> ransacModel,
+            final int iterations,
+            final double maxEpsilon,
+            final double minInlierRatio,
+            final int minNumInliers,
+            final double maxTrust
+    ) {
+        return matchRansac(spimData,
                 viewId1, Collections.emptyList(),
                 viewId2, Collections.emptyList(),
                 (v, i) -> v,
                 renderScale, coefficientsSize, minIntensity, maxIntensity, minNumCandidates,
+                ransacModel,
                 iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust);
     }
 
@@ -175,12 +204,62 @@ public class IntensityCorrection {
             final int minNumInliers,
             final double maxTrust
     ) {
+        return matchRansac(spimData,
+                viewId1, viewId1Bleachers,
+                viewId2, viewId2Bleachers,
+                unbleachFunction,
+                renderScale, coefficientsSize, minIntensity, maxIntensity, minNumCandidates,
+                new AffineModel1D(),
+                iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust);
+    }
+
+    /**
+     * @param ransacModel 1D model to fit with RANSAC ({@code AffineModel1D}, {@code TranslationModel1D},
+     *        or any {@code InterpolatedAffineModel1D}, see {@link #regularizedAffineModel1D}); it is
+     *        copied, the given instance is never modified
+     */
+    public static ViewPairCoefficientMatches matchRansac(
+            final AbstractSpimData<?> spimData,
+            final ViewId viewId1,
+            final List<ViewId> viewId1Bleachers,
+            final ViewId viewId2,
+            final List<ViewId> viewId2Bleachers,
+            final UnbleachFunction unbleachFunction,
+            final double renderScale,
+            final int[] coefficientsSize,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates,
+            final Model<?> ransacModel,
+            final int iterations,
+            final double maxEpsilon,
+            final double minInlierRatio,
+            final int minNumInliers,
+            final double maxTrust
+    ) {
         final IntensityMatcher matcher = new IntensityMatcher(spimData, renderScale, coefficientsSize, unbleachFunction);
         final List<CoefficientMatch> match = matcher.match(
                 viewId1, viewId1Bleachers, viewId2, viewId2Bleachers,
-                minIntensity, maxIntensity, minNumCandidates, iterations, maxEpsilon,
+                minIntensity, maxIntensity, minNumCandidates,
+                ransacModel, iterations, maxEpsilon,
                 minInlierRatio, minNumInliers, maxTrust);
         return new ViewPairCoefficientMatches(viewId1, viewId2, match);
+    }
+
+    /**
+     * Create an {@code AffineModel1D} regularized towards {@code TranslationModel1D} and
+     * {@code IdentityModel}, the same composition that {@link IntensitySolver} uses for
+     * the global solve.
+     *
+     * @param lambdaTranslation weight of the translation regularizer
+     * @param lambdaIdentity weight of the identity regularizer
+     */
+    public static InterpolatedAffineModel1D<InterpolatedAffineModel1D<AffineModel1D, TranslationModel1D>, IdentityModel>
+            regularizedAffineModel1D(final double lambdaTranslation, final double lambdaIdentity)
+    {
+        return new InterpolatedAffineModel1D<>(
+                new InterpolatedAffineModel1D<>(new AffineModel1D(), new TranslationModel1D(), lambdaTranslation),
+                new IdentityModel(), lambdaIdentity);
     }
 
     public static ViewPairCoefficientMatches matchHistograms(
