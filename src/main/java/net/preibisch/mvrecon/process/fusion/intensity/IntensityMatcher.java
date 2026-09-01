@@ -34,6 +34,8 @@ import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import mpicbg.models.AffineModel1D;
+import mpicbg.models.Model;
 import mpicbg.models.PointMatch;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.sequence.ViewId;
@@ -120,7 +122,7 @@ class IntensityMatcher {
 	}
 
     /**
-     * Match using RANSAC
+     * Match using RANSAC (with an {@code AffineModel1D})
      *
      * @param view1
      * @param view1Bleachers
@@ -150,8 +152,46 @@ class IntensityMatcher {
             final int minNumInliers,
             final double maxTrust
     ) {
+        return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates,
+                new AffineModel1D(), iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust);
+    }
+
+    /**
+     * Match using RANSAC with the given model
+     *
+     * @param view1
+     * @param view1Bleachers
+     * @param view2
+     * @param view2Bleachers
+     * @param minIntensity threshold for intensities to consider for RANSAC, anything below that value will be discarded
+     * @param maxIntensity threshold for intensities to consider for RANSAC, anything above that value will be discarded
+     * @param minNumCandidates minimum number of (non-discarded) overlapping pixels required to consider two coefficient regions overlapping
+     * @param ransacModel 1D model to fit with RANSAC ({@code AffineModel1D}, {@code TranslationModel1D},
+     *        or any {@code InterpolatedAffineModel1D}); it is copied, the given instance is never modified
+     * @param iterations number of RANSAC iterations (only for RANSAC)
+     * @param maxEpsilon maximal allowed transfer error (only for RANSAC)
+     * @param minInlierRatio minimal number of inliers to number of candidates (only for RANSAC)
+     * @param minNumInliers minimally required absolute number of inliers (only for RANSAC)
+     * @param maxTrust reject candidates with a cost larger than maxTrust * median cost (only for RANSAC)
+     * @return
+     */
+    public List<CoefficientMatch> match(
+            final ViewId view1,
+            final List<ViewId> view1Bleachers,
+            final ViewId view2,
+            final List<ViewId> view2Bleachers,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates,
+            final Model<?> ransacModel,
+            final int iterations,
+            final double maxEpsilon,
+            final double minInlierRatio,
+            final int minNumInliers,
+            final double maxTrust
+    ) {
         final IntensityMatchingFilter filter = new RansacIntensityMatchingFilter(
-                new FastAffineModel1D(),
+                ransacModel,
                 iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust);
         return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates, filter);
     }
