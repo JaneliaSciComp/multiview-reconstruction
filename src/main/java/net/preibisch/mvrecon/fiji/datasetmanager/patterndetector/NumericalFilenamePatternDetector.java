@@ -24,32 +24,104 @@ package net.preibisch.mvrecon.fiji.datasetmanager.patterndetector;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 
 public class NumericalFilenamePatternDetector implements FilenamePatternDetector
 {
+
+	private static final Pattern NUMERICAL_PATTERN = Pattern.compile( "(\\d+)(.*)" );
+	private static final Pattern PREFIX_PATTERN = Pattern.compile( "([^0-9]+)(\\d+).*" );
+
 	private List<String> invariants;
 	private List<List<String>> variables;
+
+	private List<String> tStrings;
+	private StringBuilder stringRepresentation;
 
 	@Override
 	public void detectPatterns(List< String > files)
 	{
-		Pair< List< String >, List< List< String > > > res = detectNumericPatterns( files );
-		invariants = res.getA();
-		variables = res.getB();
+		tStrings = new ArrayList<>();
+		files.forEach( tStrings::add );
+		invariants = new ArrayList<>();
+		variables = new ArrayList<>();
+		stringRepresentation = new StringBuilder();
+
+		while(true) {
+			boolean hadNumeric = numericPrefixes(tStrings);
+			boolean hadPrefix = nonnumericPrefixes(tStrings);
+			if( !hadNumeric && !hadPrefix )
+				break;
+		}
+		suffix(tStrings);
 	}
-	
+
+	private boolean suffix(Iterable<String> strings) {
+
+		String suffix = null;
+		for (String s : strings){
+			if (suffix == null)
+				suffix = s;
+			else if( !s.equals(suffix)) {
+				stringRepresentation.append(".*");
+				return false;
+			}
+		}
+		stringRepresentation.append(suffix);
+		return true;
+	}
+
+	private boolean nonnumericPrefixes(Iterable<String> strings)
+	{
+		List<String> prefixes = new ArrayList<>();
+		List<String> remainders = new ArrayList<>();
+		for (String s : strings){
+			Matcher m = PREFIX_PATTERN.matcher( s );
+			if (! m.matches())
+				return false;
+
+			prefixes.add(m.group( 1 ));
+			remainders.add(m.group( 2 ));
+		}
+
+		final String prefix = prefixes.get(0);
+		if (!prefixes.stream().allMatch(x -> x.equals(prefix))) {
+			return false;
+		}
+
+		invariants.add(prefix);
+		stringRepresentation.append(prefix);
+
+		tStrings = tStrings.stream().map( s -> s.substring(prefix.length() ) ).collect( Collectors.toList() );
+		return true;
+	}
+
+	private boolean numericPrefixes(Iterable<String> strings)
+	{
+		List<String> prefixes = new ArrayList<>();
+		List<String> remainders = new ArrayList<>();
+		for (String s : strings){
+			Matcher m = NUMERICAL_PATTERN.matcher( s );
+			if (! m.matches())
+				return false;
+
+			prefixes.add(m.group( 1 ));
+			remainders.add(m.group( 2 ));
+		}
+
+		stringRepresentation.append(String.format("{%d}", variables.size()));
+		variables.add( prefixes );
+		tStrings = remainders;
+		return true;
+	}
+
 	@Override
 	public String getInvariant(int n){ return invariants.get( n );}
 	@Override
@@ -67,13 +139,10 @@ public class NumericalFilenamePatternDetector implements FilenamePatternDetector
 	@Override
 	public String getStringRepresentation()
 	{
-		StringBuilder sb = new StringBuilder();
-		for (int i = 0; i < invariants.size() - 1; i++)
-			sb.append( invariants.get( i ) + "{" + i + "}" );
-		sb.append( invariants.get( invariants.size()-1 ) );
-		return sb.toString();
+		return stringRepresentation.toString();
 	}
-	
+
+	@Deprecated
 	public static String maxPrefix(List<String> strings)
 	{
 
@@ -105,6 +174,7 @@ public class NumericalFilenamePatternDetector implements FilenamePatternDetector
 		}
 	}
 	
+	@Deprecated
 	public static Pair<List<String>, List<String>> collectNumericPrefixes(Iterable<String> strings)
 	{
 		Pattern p = Pattern.compile( "(\\d+)(.+?)" );
@@ -120,6 +190,7 @@ public class NumericalFilenamePatternDetector implements FilenamePatternDetector
 		return new ValuePair< List<String>, List<String> >( prefixes, remainders );
 	}
 	
+	@Deprecated
 	public static Pair<List<String>, List<List<String>>> detectNumericPatterns(Iterable<String> strings)
 	{
 		
@@ -166,45 +237,5 @@ public class NumericalFilenamePatternDetector implements FilenamePatternDetector
 
 	@Override
 	public int getNumVariables(){return variables.size();}
-	
-	public static void main(String[] args)
-	{
-		List< String > files = null;
-		try
-		{
-			Stream< Path > w = Files.list( Paths.get( "/Users/david/Desktop/Bordeaux/BIC Reconstruction/170331_EA810_Fred_MosZXY_Nocrop_12-36-22/" ));
-			
-					files = w.filter( new Predicate< Path >()
-					{
-
-						boolean res = false;
-						@Override
-						public boolean test(Path t)
-						{
-							try
-							{
-								res = Files.size( t ) > 100000;
-							}
-							catch ( IOException e )
-							{
-								// TODO Auto-generated catch block
-								e.printStackTrace();
-							}
-							return res;
-						}
-					} ).map( p -> p.toFile().getAbsolutePath()).collect( Collectors.toList() );
-		}
-		catch ( IOException e )
-		{
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		
-		System.out.println( files.get( 0 ) );
-		
-		Pair< List< String >, List< List< String > > > detectNumericPatterns = detectNumericPatterns( files );
-		
-		
-	}
 	
 }
