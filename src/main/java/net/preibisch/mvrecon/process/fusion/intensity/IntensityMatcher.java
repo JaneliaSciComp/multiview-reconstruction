@@ -66,7 +66,6 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.LinAlgHelpers;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.FastAffineModel1D;
 import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.FlattenedMatches;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -197,7 +196,7 @@ class IntensityMatcher {
     }
 
     /**
-     * Match using Histograms
+     * Match using Histograms (with an {@code AffineModel1D})
      *
      * @param view1
      * @param view1Bleachers
@@ -217,7 +216,35 @@ class IntensityMatcher {
             final double maxIntensity,
             final int minNumCandidates
     ) {
-        final IntensityMatchingFilter filter = new HistogramIntensityMatchingFilter(new FastAffineModel1D());
+        return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates,
+                new AffineModel1D());
+    }
+
+    /**
+     * Match using Histograms with the given model
+     *
+     * @param view1
+     * @param view1Bleachers
+     * @param view2
+     * @param view2Bleachers
+     * @param minIntensity threshold for intensities to consider for RANSAC, anything below that value will be discarded
+     * @param maxIntensity threshold for intensities to consider for RANSAC, anything above that value will be discarded
+     * @param minNumCandidates minimum number of (non-discarded) overlapping pixels required to consider two coefficient regions overlapping
+     * @param model 1D model to fit to the matched histogram quantiles ({@code AffineModel1D}, {@code TranslationModel1D},
+     *        or any {@code InterpolatedAffineModel1D}); it is copied, the given instance is never modified
+     * @return
+     */
+    public List<CoefficientMatch> match(
+            final ViewId view1,
+            final List<ViewId> view1Bleachers,
+            final ViewId view2,
+            final List<ViewId> view2Bleachers,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates,
+            final Model<?> model
+    ) {
+        final IntensityMatchingFilter filter = new HistogramIntensityMatchingFilter(model);
         return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates, filter);
     }
 

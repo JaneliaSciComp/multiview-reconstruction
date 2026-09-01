@@ -273,10 +273,28 @@ public class IntensityCorrection {
             final int minNumCandidates
     ) {
         return matchHistograms(spimData,
+                viewId1, viewId2,
+                renderScale, coefficientsSize, minIntensity, maxIntensity, minNumCandidates,
+                new AffineModel1D());
+    }
+
+    public static ViewPairCoefficientMatches matchHistograms(
+            final AbstractSpimData<?> spimData,
+            final ViewId viewId1,
+            final ViewId viewId2,
+            final double renderScale,
+            final int[] coefficientsSize,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates,
+            final Model<?> model
+    ) {
+        return matchHistograms(spimData,
                 viewId1, Collections.emptyList(),
                 viewId2, Collections.emptyList(),
                 (v, i) -> v,
-                renderScale, coefficientsSize, minIntensity, maxIntensity, minNumCandidates);
+                renderScale, coefficientsSize, minIntensity, maxIntensity, minNumCandidates,
+                model);
     }
 
     public static ViewPairCoefficientMatches matchHistograms(
@@ -292,10 +310,38 @@ public class IntensityCorrection {
             final double maxIntensity,
             final int minNumCandidates
     ) {
+        return matchHistograms(spimData,
+                viewId1, viewId1Bleachers,
+                viewId2, viewId2Bleachers,
+                unbleachFunction,
+                renderScale, coefficientsSize, minIntensity, maxIntensity, minNumCandidates,
+                new AffineModel1D());
+    }
+
+    /**
+     * @param model 1D model to fit to the matched histogram quantiles ({@code AffineModel1D},
+     *        {@code TranslationModel1D}, or any {@code InterpolatedAffineModel1D}, see
+     *        {@link #regularizedAffineModel1D}); it is copied, the given instance is never modified
+     */
+    public static ViewPairCoefficientMatches matchHistograms(
+            final AbstractSpimData<?> spimData,
+            final ViewId viewId1,
+            final List<ViewId> viewId1Bleachers,
+            final ViewId viewId2,
+            final List<ViewId> viewId2Bleachers,
+            final UnbleachFunction unbleachFunction,
+            final double renderScale,
+            final int[] coefficientsSize,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates,
+            final Model<?> model
+    ) {
         final IntensityMatcher matcher = new IntensityMatcher(spimData, renderScale, coefficientsSize, unbleachFunction);
         final List<CoefficientMatch> match = matcher.match(
                 viewId1, viewId1Bleachers, viewId2, viewId2Bleachers,
-                minIntensity, maxIntensity, minNumCandidates);
+                minIntensity, maxIntensity, minNumCandidates,
+                model);
         return new ViewPairCoefficientMatches(viewId1, viewId2, match);
     }
 
