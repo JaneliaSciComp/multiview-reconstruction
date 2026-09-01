@@ -27,7 +27,9 @@ import java.net.URI;
 import java.util.Arrays;
 import java.util.Map;
 
+import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.AxisUtils;
 
 import bdv.ViewerSetupImgLoader;
 import bdv.img.n5.N5ImageLoader;
@@ -58,16 +60,34 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 	 */
 	private final StorageFormat format;
 
+	// kept locally (in addition to being handed to the N5ImageLoader superclass) so
+	// prepareCachedImage() below can query axes metadata to correct the spatial axis
+	// order of the volume built by the superclass, see correctSpatialAxesOrder()
+	private final N5Reader n5Reader;
+
+	private AllenOMEZarrProperties allenProperties;
+
 	public AllenOMEZarrLoader(
 			final URI n5URI,
 			final StorageFormat format,
 			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
 			final Map< ViewId, OMEZARREntry > viewIdToPath )
 	{
-		super( URITools.instantiateN5Reader( format, n5URI ), n5URI, sequenceDescription );
+		this( n5URI, format, sequenceDescription, viewIdToPath, URITools.instantiateN5Reader( format, n5URI ) );
+	}
+
+	private AllenOMEZarrLoader(
+			final URI n5URI,
+			final StorageFormat format,
+			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
+			final Map< ViewId, OMEZARREntry > viewIdToPath,
+			final N5Reader n5Reader )
+	{
+		super( n5Reader, n5URI, sequenceDescription );
 		this.sequenceDescription = sequenceDescription;
 		this.format = format;
 		this.viewIdToPath = viewIdToPath;
+		this.n5Reader = n5Reader;
 	}
 
 	public Map< ViewId, OMEZARREntry > getViewIdToPath()
@@ -78,7 +98,55 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 	@Override
 	protected N5Properties createN5PropertiesInstance()
 	{
-		return new AllenOMEZarrProperties( sequenceDescription, viewIdToPath );
+		return allenProperties = new AllenOMEZarrProperties( sequenceDescription, viewIdToPath );
+	}
+
+	/**
+	 * Permute the raw, n5-zarr-reported volume into canonical X,Y,Z,(C),(T) data order using the
+	 * declared axes metadata (spatial axes by name, channel/time by type; see
+	 * {@link AllenOMEZarrProperties#getRawAxisIndices}). OME-NGFF does not require the canonical
+	 * order, so a producer may declare e.g. axes=[x,y,z] instead of [z,y,x] (looks transposed) or
+	 * put channel/time off their usual positions (would swap c/t in the positional hyperslicing of
+	 * {@link OMEZARREntry#extract3DVolume}); reordering here makes that downstream slicing correct
+	 * by construction.
+	 */
+	private < T > RandomAccessibleInterval< T > reorderToCanonicalAxes( final RandomAccessibleInterval< T > vol, final int setupId, final int timepointId )
+	{
+		if ( allenProperties == null || n5Reader == null )
+			return vol;
+
+		final int[] raw = allenProperties.getRawAxisIndices( n5Reader, setupId, timepointId ); // { xRaw, yRaw, zRaw, cRaw, tRaw }
+		if ( raw == null )
+			return vol; // axes metadata missing/incomplete: assume the volume is already canonical
+
+		// desired[p] = raw dim that belongs at output position p, in canonical order X,Y,Z,(C),(T),
+		// keeping only declared axes (raw[i] >= 0). Bail unless it maps every dim distinctly (i.e.
+		// the metadata agrees with the data), rather than applying a bogus permutation.
+		final int n = vol.numDimensions();
+		final int[] desired = new int[ n ];
+		int m = 0;
+		for ( final int r : raw )
+			if ( r >= 0 && m < n )
+				desired[ m++ ] = r;
+
+		if ( m != n || !isPermutation( desired ) )
+			return vol;
+
+		// desired[] is destination->source; AxisUtils.permute() wants source->destination
+		return AxisUtils.permute( vol, AxisUtils.invertPermutation( desired ) );
+	}
+
+	// true iff a[] is a permutation of 0..a.length-1
+	private static boolean isPermutation( final int[] a )
+	{
+		final boolean[] seen = new boolean[ a.length ];
+		for ( final int v : a )
+		{
+			if ( v < 0 || v >= a.length || seen[ v ] )
+				return false;
+			seen[ v ] = true;
+		}
+		return true;
 	}
 
 	public StorageFormat getFormat() { return format; }
@@ -151,7 +219,10 @@ public class AllenOMEZarrLoader extends N5ImageLoader
 			final CacheHints cacheHints,
 			final T type )
 	{
-		return viewIdToPath.get( new ViewId(timepointId, setupId) ).extract3DVolume( super.prepareCachedImage( datasetPath, setupId, timepointId, level, cacheHints, type ) );
+		final RandomAccessibleInterval< T > vol = reorderToCanonicalAxes(
+				super.prepareCachedImage( datasetPath, setupId, timepointId, level, cacheHints, type ),
+				setupId, timepointId );
+		return viewIdToPath.get( new ViewId(timepointId, setupId) ).extract3DVolume( vol );
 		//return Views.hyperSlice( Views.hyperSlice( super.prepareCachedImage( datasetPath, setupId, 0, level, cacheHints, type ), 4, 0 ), 3, 0);
 		/*
 		return super.prepareCachedImage( datasetPath, setupId, 0, level, cacheHints, type ).view()

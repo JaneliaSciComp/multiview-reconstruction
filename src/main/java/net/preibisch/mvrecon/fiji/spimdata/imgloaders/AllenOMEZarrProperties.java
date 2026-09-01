@@ -22,13 +22,14 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders;
 
-import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.AxisUtils;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata.OmeNgffDataset;
@@ -106,8 +107,130 @@ public class AllenOMEZarrProperties implements N5Properties
 	{
 		final String path = getMultiscaleDatasetPathOrDefault(n5, timepointId, setupId, level);
 		final long[] dimensions = n5.getDatasetAttributes( path ).getDimensions();
-		// dataset dimensions is 5D, remove the channel and time dimensions
-		return Arrays.copyOf( dimensions, 3 );
+
+		return spatialTriple( dimensions, getRawSpatialAxesIndices( n5, setupId, timepointId ) );
+	}
+
+	/**
+	 * The three spatial (x,y,z) entries of a per-axis array (dimensions/scale/translation, all in
+	 * reversed n5 order), in true x,y,z order; xyz = raw indices from {@link #xyzAxesIndices}, or
+	 * {@code null} to assume the standard {0,1,2} order. Overloaded for long[] and double[].
+	 */
+	public static long[] spatialTriple( final long[] a, final int[] xyz )
+	{
+		final int[] r = xyzOrDefault( xyz );
+		return new long[] { a[ r[ 0 ] ], a[ r[ 1 ] ], a[ r[ 2 ] ] };
+	}
+
+	public static double[] spatialTriple( final double[] a, final int[] xyz )
+	{
+		final int[] r = xyzOrDefault( xyz );
+		return new double[] { a[ r[ 0 ] ], a[ r[ 1 ] ], a[ r[ 2 ] ] };
+	}
+
+	private static int[] xyzOrDefault( final int[] xyz )
+	{
+		return xyz != null ? xyz : new int[] { 0, 1, 2 };
+	}
+
+	/**
+	 * Index of the x, y, and z axes (in that order) within the RAW dimension order used
+	 * by the underlying N5/n5-zarr {@code CellGrid} / {@code RandomAccessibleInterval},
+	 * which is the reverse of the declared OME-NGFF {@code axes} metadata order (e.g.
+	 * metadata axes=[t,c,z,y,x] is reported as data dimensions=[x,y,z,c,t]) - and the
+	 * same reversal applies to the per-axis {@code scale}/{@code translation} arrays in
+	 * the coordinateTransformations metadata (see {@link #getMipMapResolutions}).
+	 * Producers that declare a different (but equally NGFF-valid) axes order - e.g.
+	 * axes=[x,y,z] instead of [z,y,x] - would otherwise have X and Z silently swapped by
+	 * callers that assume the standard TCZYX/XYZCT position (0,1,2), which shows up as a
+	 * rotated/transposed volume, or (for scale/translation) a squished/stretched one.
+	 * Look up the x/y/z entries by name instead.
+	 *
+	 * @return {xIndex, yIndex, zIndex} into the raw (reversed) per-axis array, or
+	 *         {@code null} if the axes metadata is missing or does not name all three
+	 *         spatial axes (callers should then assume the standard {0,1,2} order).
+	 */
+	public int[] getRawSpatialAxesIndices( final N5Reader n5, final int setupId, final int timepointId )
+	{
+		return xyzAxesIndices( getViewSetupMultiscaleMetadata( n5, timepointId, setupId ).axes );
+	}
+
+	public static int[] xyzAxesIndices( final Axis[] axes )
+	{
+		if ( axes == null )
+			return null;
+
+		final int[] idx = {
+				rawAxisIndexByName( axes, "x" ),
+				rawAxisIndexByName( axes, "y" ),
+				rawAxisIndexByName( axes, "z" ) };
+
+		return ( idx[ 0 ] < 0 || idx[ 1 ] < 0 || idx[ 2 ] < 0 ) ? null : idx;
+	}
+
+	// last (i.e. lowest raw index) axis matching the given name, case-insensitively, or -1 if none
+	private static int rawAxisIndexByName( final Axis[] axes, final String name )
+	{
+		final int[] matches = AxisUtils.indexes( axes, a -> name.equalsIgnoreCase( a.getName() ) );
+		return matches.length == 0 ? -1 : axes.length - 1 - matches[ matches.length - 1 ];
+	}
+
+	/** See {@link #rawAxisIndices(Axis[])}. */
+	public int[] getRawAxisIndices( final N5Reader n5, final int setupId, final int timepointId )
+	{
+		return rawAxisIndices( getViewSetupMultiscaleMetadata( n5, timepointId, setupId ).axes );
+	}
+
+	/**
+	 * Raw (reversed-from-metadata) index of each canonical axis: {@code { xRaw, yRaw, zRaw, cRaw,
+	 * tRaw }}. x/y/z are matched by name; c/t by type, falling back to whichever raw indices x/y/z
+	 * didn't claim (not the fixed positions 3/4, which may already be a spatial axis if axes[]
+	 * isn't in canonical order). cRaw/tRaw are -1 if that axis isn't declared at all. Returns
+	 * {@code null} if x/y/z aren't all named (callers then assume the standard XYZCT order).
+	 */
+	public static int[] rawAxisIndices( final Axis[] axes )
+	{
+		final int[] xyz = xyzAxesIndices( axes );
+		if ( xyz == null )
+			return null;
+
+		int cRaw = rawAxisIndexByType( axes, Axis.CHANNEL );
+		int tRaw = rawAxisIndexByType( axes, Axis.TIME );
+
+		if ( cRaw < 0 || tRaw < 0 )
+		{
+			final boolean[] claimed = new boolean[ axes.length ];
+			claimed[ xyz[ 0 ] ] = claimed[ xyz[ 1 ] ] = claimed[ xyz[ 2 ] ] = true;
+			if ( cRaw >= 0 ) claimed[ cRaw ] = true;
+			if ( tRaw >= 0 ) claimed[ tRaw ] = true;
+
+			for ( int r = 0; r < axes.length && ( cRaw < 0 || tRaw < 0 ); ++r )
+			{
+				if ( claimed[ r ] )
+					continue;
+				if ( cRaw < 0 )
+					cRaw = r;
+				else
+					tRaw = r;
+			}
+		}
+
+		return new int[] { xyz[ 0 ], xyz[ 1 ], xyz[ 2 ], cRaw, tRaw };
+	}
+
+	/**
+	 * Raw (reversed-from-metadata) dimension index of the axis with the given OME-NGFF
+	 * {@code type} ({@link Axis#CHANNEL}/{@link Axis#TIME}), or -1 if none. Channel and time are
+	 * matched by type since - unlike the three {@code type=space} axes told apart by x/y/z name -
+	 * their type is a more reliable discriminator than the non-standardized axis name.
+	 */
+	public static int rawAxisIndexByType( final Axis[] axes, final String type )
+	{
+		if ( axes == null )
+			return -1;
+
+		final int[] matches = AxisUtils.indexes( axes, a -> type.equalsIgnoreCase( a.getType() ) );
+		return matches.length == 0 ? -1 : axes.length - 1 - matches[ 0 ];
 	}
 
 	//
@@ -165,6 +288,11 @@ public class AllenOMEZarrProperties implements N5Properties
 		// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
 		final String path = n5properties.getPath( setupId, timePointId );
 
+		// index of x/y/z within the raw (reversed) scale/translation arrays - see
+		// getRawSpatialAxesIndices(); falls back to the standard TCZYX/XYZCT position
+		// (0,1,2) if the axes metadata is missing or incomplete
+		final int[] raw = xyzOrDefault( xyzAxesIndices( multiScaleMetadata.axes ) );
+
 		// iterate over all resolution levels for scale
 		for ( int s = 0; s < multiScaleMetadata.datasets.length; ++s )
 		{
@@ -181,7 +309,7 @@ public class AllenOMEZarrProperties implements N5Properties
 
 					for ( int d = 0; d < mipMapResolutions[ s ].length; ++d )
 					{
-						mipMapResolutions[ s ][ d ] = scale.getScale()[ d ] / scaleS0[ d ];
+						mipMapResolutions[ s ][ d ] = scale.getScale()[ raw[ d ] ] / scaleS0[ raw[ d ] ];
 						mipMapResolutions[ s ][ d ] = Math.round(mipMapResolutions[ s ][ d ]*10000)/10000d; // round to the 5th digit
 					}
 				}
@@ -231,7 +359,7 @@ public class AllenOMEZarrProperties implements N5Properties
 						if ( Math.abs( r - 1.0 ) < 0.01 )
 							continue;
 
-						final double pxTranslation = (t.getTranslation()[d] - translationS0[d]) / scaleS0[d];
+						final double pxTranslation = (t.getTranslation()[ raw[ d ] ] - translationS0[ raw[ d ] ]) / scaleS0[ raw[ d ] ];
                         final double logScale = Math.log( r ) / Math.log(2);
 						final double expectedAveraging = Math.pow(2, logScale - 1) - 0.5; // 0.5, 1.5, 3.5, 7.5, ...
 						final boolean matchesAveraging = Math.abs( pxTranslation - expectedAveraging ) < 0.05;
