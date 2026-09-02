@@ -42,7 +42,11 @@ class HistogramIntensityMatchingFilter implements IntensityMatchingFilter {
 
     private static final Logger LOG = LoggerFactory.getLogger(HistogramIntensityMatchingFilter.class);
 
+    static final int DEFAULT_NUM_SAMPLES = 100;
+
     private final Model<?> model;
+
+    private final int numSamples;
 
     /**
      * Fit the model to matched quantiles of the two intensity distributions,
@@ -54,9 +58,18 @@ class HistogramIntensityMatchingFilter implements IntensityMatchingFilter {
      * @param model the 1D model to fit ({@code AffineModel1D}, {@code TranslationModel1D},
      *              or any {@code InterpolatedAffineModel1D}); it is copied, the given
      *              instance is never modified
+     * @param numSamples number of quantile samples taken from each intensity distribution
+     *              for the model fit
      */
-    public HistogramIntensityMatchingFilter(final Model<?> model) {
+    public HistogramIntensityMatchingFilter(final Model<?> model, final int numSamples) {
+        if (numSamples < 1)
+            throw new IllegalArgumentException("numSamples must be >= 1, was " + numSamples);
         this.model = model.copy();
+        this.numSamples = numSamples;
+    }
+
+    public HistogramIntensityMatchingFilter(final Model<?> model) {
+        this(model, DEFAULT_NUM_SAMPLES);
     }
 
     @Override
@@ -73,7 +86,6 @@ class HistogramIntensityMatchingFilter implements IntensityMatchingFilter {
         final double[] histo2 = Arrays.copyOf(candidates.q()[0], candidates.size());
         Arrays.sort(histo2);
 
-        final int numSamples = 100; // TODO: make this a parameter?
         final List<PointMatch> matches = new ArrayList<>(numSamples);
         for (int i = 0; i < numSamples; ++i) {
             final double p = histo1[histo1.length * i / numSamples];

@@ -80,6 +80,24 @@ public class HistogramIntensityMatchingFilterTest {
 	}
 
 	@Test
+	public void customNumSamplesRecoversModel() {
+		final Random rnd = new Random(11);
+		final double[][] pq = linearData(rnd, 1000, 1.5, 20.0);
+
+		// few samples: quantiles still lie exactly on the line
+		final List<PointMatch> few = runFilter(new AffineModel1D(), pq, 10);
+		assertEquals(2, few.size());
+		assertEquals(1.5, slopeOf(few), 1e-9);
+		assertEquals(20.0, offsetOf(few), 1e-6);
+
+		// more samples than candidates: duplicate samples, still exact
+		final List<PointMatch> many = runFilter(new AffineModel1D(), pq, 5000);
+		assertEquals(2, many.size());
+		assertEquals(1.5, slopeOf(many), 1e-9);
+		assertEquals(20.0, offsetOf(many), 1e-6);
+	}
+
+	@Test
 	public void degenerateIntensitiesLeaveMatchesEmpty() {
 		// all candidates at the same intensity
 		final double[] p = new double[200];
@@ -108,6 +126,13 @@ public class HistogramIntensityMatchingFilterTest {
 
 	private static List<PointMatch> runFilter(final Model<?> model, final double[][] pq) {
 		final HistogramIntensityMatchingFilter filter = new HistogramIntensityMatchingFilter(model);
+		final List<PointMatch> reduced = new ArrayList<>();
+		filter.filter(flatten(pq[0], pq[1]), reduced);
+		return reduced;
+	}
+
+	private static List<PointMatch> runFilter(final Model<?> model, final double[][] pq, final int numSamples) {
+		final HistogramIntensityMatchingFilter filter = new HistogramIntensityMatchingFilter(model, numSamples);
 		final List<PointMatch> reduced = new ArrayList<>();
 		filter.filter(flatten(pq[0], pq[1]), reduced);
 		return reduced;
