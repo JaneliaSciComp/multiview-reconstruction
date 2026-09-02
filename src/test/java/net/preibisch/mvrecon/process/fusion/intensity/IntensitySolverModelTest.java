@@ -34,6 +34,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityMatcher.CoefficientMatch;
 import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.Point1D;
 import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.PointMatch1D;
+import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.ScaleModel1D;
 
 import org.junit.jupiter.api.Test;
 
@@ -83,6 +84,29 @@ public class IntensitySolverModelTest {
 		final double[] offsets = coefficients.values().stream()
 				.mapToDouble(c -> c.flattenedCoefficients[1][0]).toArray();
 		assertEquals(OFFSET, Math.abs(offsets[0] - offsets[1]), 0.1);
+	}
+
+	@Test
+	public void scaleModelSolvesMultiplicativeDifference() {
+		// view2 intensities = 1.5 * view1 intensities
+		final double factor = 1.5;
+		final List<PointMatch> matches = new ArrayList<>();
+		matches.add(new PointMatch1D(new Point1D(50), new Point1D(50 * factor), 1.0));
+		matches.add(new PointMatch1D(new Point1D(200), new Point1D(200 * factor), 1.0));
+		final CoefficientMatch coefficientMatch = new CoefficientMatch(0, 0, 1000, matches);
+		final List<ViewPairCoefficientMatches> pairwise = Collections.singletonList(new ViewPairCoefficientMatches(
+				new ViewId(0, 0), new ViewId(0, 1), Collections.singletonList(coefficientMatch)));
+
+		final Map<ViewId, Coefficients> coefficients = IntensityCorrection.solve(
+				COEFFICIENTS_SIZE, pairwise, ITERATIONS, new ScaleModel1D());
+		assertEquals(2, coefficients.size());
+
+		// scale-only: offset stays exactly 0, per-view scales compensate the factor
+		coefficients.values().forEach(c -> assertEquals(0.0, c.flattenedCoefficients[1][0], 0.0));
+		final double[] scales = coefficients.values().stream()
+				.mapToDouble(c -> c.flattenedCoefficients[0][0]).toArray();
+		final double ratio = Math.max(scales[0], scales[1]) / Math.min(scales[0], scales[1]);
+		assertEquals(factor, ratio, 0.01);
 	}
 
 	@Test

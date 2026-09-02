@@ -32,6 +32,7 @@ import mpicbg.models.Model;
 import mpicbg.models.PointMatch;
 import mpicbg.models.TranslationModel1D;
 import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.FlattenedMatches;
+import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.ScaleModel1D;
 
 import org.junit.jupiter.api.Test;
 
@@ -77,6 +78,19 @@ public class RansacIntensityMatchingFilterTest {
 		assertEquals(2, reduced.size());
 		assertEquals(1.0, slopeOf(reduced), 1e-9);
 		assertEquals(30.0, offsetOf(reduced), 1e-6);
+	}
+
+	@Test
+	public void scaleModelRecoversScale() {
+		final Random rnd = new Random(31);
+		final double[][] pq = linearData(rnd, 800, 200, 1.5, 0.0);
+
+		final List<PointMatch> reduced = runFilter(
+				new ScaleModel1D(), pq, 0.1, 0.5, 10, 3.0);
+
+		assertEquals(2, reduced.size());
+		assertEquals(1.5, slopeOf(reduced), 1e-9);
+		assertEquals(0.0, offsetOf(reduced), 1e-6);
 	}
 
 	@Test
