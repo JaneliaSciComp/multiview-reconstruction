@@ -28,9 +28,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
-import mpicbg.models.AffineModel1D;
+import mpicbg.models.Affine1D;
 import mpicbg.models.IllDefinedDataPointsException;
-import mpicbg.models.InterpolatedAffineModel1D;
 import mpicbg.models.Model;
 import mpicbg.models.NotEnoughDataPointsException;
 import mpicbg.models.Tile;
@@ -169,23 +168,19 @@ class IntensityTile {
 	 * intensity-correct images.
 	 */
 	public Coefficients getCoefficients() {
-		final int numCoefficients = 2; // AffineModel1D
+		final int numCoefficients = 2; // linear map: m00, m01
 		final int n = nSubTiles();
 		final double[][] coefficients = new double[numCoefficients][n];
 		for (int i = 0; i < n; i++) {
-			final Tile<?> tile = getSubTileAtIndex(i);
+			final Model<?> model = getSubTileAtIndex(i).getModel();
+			if (!(model instanceof Affine1D))
+				throw new IllegalArgumentException("sub-tile model must implement Affine1D, got " + model.getClass().getSimpleName());
 
-			final AffineModel1D model;
-			if ( InterpolatedAffineModel1D.class.isInstance( tile.getModel() ) )
-				model = ((InterpolatedAffineModel1D<?, ?>)tile.getModel()).createAffineModel1D();
-			else
-				model = (AffineModel1D) tile.getModel();
-
-			final double[] matrix = model.getMatrix(null);
-			final double m00 = matrix[0];
-			final double m01 = matrix[1];
-			coefficients[0][i] = m00;
-			coefficients[1][i] = m01;
+			// exactly length 2: IdentityModel.toArray writes further entries into longer arrays
+			final double[] matrix = new double[2];
+			((Affine1D<?>) model).toArray(matrix);
+			coefficients[0][i] = matrix[0];
+			coefficients[1][i] = matrix[1];
 		}
 		return new Coefficients(coefficients, getSubTileGridSize());
 	}

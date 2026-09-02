@@ -350,7 +350,22 @@ public class IntensityCorrection {
 			final Collection<ViewPairCoefficientMatches> pairwiseMatches,
 			final int iterations
 	){
-		final IntensitySolver solver = new IntensitySolver(coefficientsSize);
+		return solve(coefficientsSize, pairwiseMatches, iterations, regularizedAffineModel1D(0.01, 0.01));
+	}
+
+    /**
+     * @param model 1D model to fit per sub-tile ({@code AffineModel1D}, {@code TranslationModel1D},
+     *        {@code IdentityModel}, or any {@code InterpolatedAffineModel1D}, see
+     *        {@link #regularizedAffineModel1D}); it is copied for every sub-tile, the given
+     *        instance is never modified
+     */
+    public static Map<ViewId, Coefficients> solve(
+			final int[] coefficientsSize,
+			final Collection<ViewPairCoefficientMatches> pairwiseMatches,
+			final int iterations,
+			final Model<?> model
+	){
+		final IntensitySolver solver = new IntensitySolver(coefficientsSize, model);
 		pairwiseMatches.forEach(solver::connect);
 		solver.solveForGlobalCoefficients(iterations);
 		final Map<ViewId, IntensityTile> intensityTiles = solver.getIntensityTiles();
