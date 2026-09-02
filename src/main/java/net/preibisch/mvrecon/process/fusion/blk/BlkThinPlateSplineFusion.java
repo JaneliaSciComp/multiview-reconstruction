@@ -29,6 +29,7 @@ import static net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion.convertTo
 import static net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion.extendInput;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -45,6 +46,7 @@ import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
+import net.imglib2.FinalRealInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockSupplier;
@@ -57,9 +59,8 @@ import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
 import net.imglib2.converter.Converter;
 import net.imglib2.realtransform.AffineGet;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.ThinplateSplineTransform;
-import net.imglib2.realtransform.interval.IntervalSamplingMethod;
+import net.imglib2.realtransform.inverse.InverseRealTransformGradientDescent;
 import net.imglib2.realtransform.inverse.WrappedIterativeInvertibleRealTransform;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
@@ -143,6 +144,18 @@ public class BlkThinPlateSplineFusion
 		final List< ? extends ViewId > sortedViewIds = new ArrayList<>( viewIds );
 		sortedViewIds.sort( fusionOrder != null ? fusionOrder : Comparator.naturalOrder() );
 
+		// Pre-fit per-view approximate affines from the landmarks (used for the bounding
+		// boxes below, and downstream for blending-weight adjustment). Done once here so
+		// initWithLoadedDfields no longer needs the full landmark map and can be driven
+		// from a cached-affines container instead.
+		final Map< ViewId, AffineTransform3D > approximateAffines = new HashMap<>();
+		for ( final ViewId viewId : sortedViewIds )
+		{
+			final Landmarks landmarks = viewLandmarks.get( viewId );
+			approximateAffines.put( viewId,
+					fitAffineTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() ) );
+		}
+
 		// back-projected bounding box (render coordinates) for every underlying view
 		final Map< ViewId, Interval > viewBounds = new HashMap<>();
 		for ( final ViewId viewId : sortedViewIds )
@@ -152,7 +165,8 @@ public class BlkThinPlateSplineFusion
 					// we go from output to input
 					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
 			final Dimensions dims = viewDimensions.get( viewId );
-			viewBounds.put( viewId, inverseTransformedBoundingBox( tps, dims ) );
+			viewBounds.put( viewId,
+					inverseTransformedBoundingBox( tps, dims, approximateAffines.get( viewId ) ) );
 		}
 
 		// Sample the dfield (eager ArrayImg allocation) only for views that overlap
@@ -166,17 +180,6 @@ public class BlkThinPlateSplineFusion
 			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
 					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
 			rawDfields.put( viewId, DisplacementFields.sample( tps, viewBounds.get( viewId ), spacing ) );
-		}
-
-		// Pre-fit per-view approximate affines from the landmarks (used downstream only for
-		// blending-weight adjustment). Done once here so initWithLoadedDfields no longer needs
-		// the full landmark map and can be driven from a cached-affines container instead.
-		final Map< ViewId, AffineTransform3D > approximateAffines = new HashMap<>();
-		for ( final ViewId viewId : sortedViewIds )
-		{
-			final Landmarks landmarks = viewLandmarks.get( viewId );
-			approximateAffines.put( viewId,
-					fitAffineTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() ) );
 		}
 
 		return initWithLoadedDfields(
@@ -197,7 +200,7 @@ public class BlkThinPlateSplineFusion
 	 *
 	 * @param viewBounds
 	 * 		back-projected bounding box (render coordinates) per view, as
-	 * 		produced by {@link #inverseTransformedBoundingBox(ThinplateSplineTransform, Dimensions)}.
+	 * 		produced by {@link #inverseTransformedBoundingBox(ThinplateSplineTransform, Dimensions, AffineTransform3D)}.
 	 * @param rawDfields
 	 * 		un-offset displacement fields per view, as produced by
 	 * 		{@code DisplacementFields.sample(tps, viewBounds.get(viewId), spacing)}.
@@ -453,25 +456,103 @@ public class BlkThinPlateSplineFusion
 	 * Get the bounding box in render coordinates of an image of the given
 	 * {@code dimension} when back-projected through the inverse of the given
 	 * {@code transform} from rendered to image coordinates.
+	 * <p>
+	 * The inverse is imglib2's {@code InverseRealTransformGradientDescent}, seeded per
+	 * corner with {@code approxAffine}. We drive it corner by corner instead of calling
+	 * {@code boundingInterval(interval, CORNERS)}, because that convenience wrapper goes
+	 * through {@code apply(s,t)}, which seeds the descent with the query point itself --
+	 * an image coordinate, while the answer is in render space, potentially tens of
+	 * thousands of pixels away. The descent then converges onto a spurious preimage and
+	 * the bogus box silently drops the view from every block it should have contributed
+	 * to. There is no other way to pass a guess: {@code setGuess} is a deprecated no-op.
+	 * <p>
+	 * A TPS from few landmarks is non-injective where the corners extrapolate, so a
+	 * converged corner is not always the right one. A corner is used only if it converged
+	 * and stayed near the affine estimate. If not, the affine estimate is used.
 	 *
 	 * @param transform
 	 * 		forward transform (from rendered to image coordinates)
 	 * @param dimensions
 	 * 		image dimensions
+	 * @param approxAffine
+	 * 		affine approximation of the view's TPS, from {@link #fitAffineTransform};
+	 * 		seeds the inverse at each corner and is the fallback for corners that fail
+	 * 		the checks above
 	 *
 	 * @return bounding box in render coordinates
 	 */
 	public static Interval inverseTransformedBoundingBox(
 			final ThinplateSplineTransform transform,
-			final Dimensions dimensions )
+			final Dimensions dimensions,
+			final AffineTransform3D approxAffine )
 	{
-		// transforms from source img pixels to render coordinates
-		final RealTransform invTransform = new WrappedIterativeInvertibleRealTransform<>( transform ).inverse();
+		final InverseRealTransformGradientDescent optimizer =
+				new WrappedIterativeInvertibleRealTransform<>( transform ).getOptimzer();
 
-		// estimated bounding box of the source img transformed to render coordinates
-		return Intervals.smallestContainingInterval(
-				invTransform.boundingInterval(
-						new FinalInterval( dimensions ),
-						IntervalSamplingMethod.CORNERS ) );
+		// The imglib2 defaults, on purpose. A wider backtracking range (beta,
+		// stepSizeMaxTries) converges more corners but lets the descent reach the
+		// spurious preimages, which moved measured boxes by tens of thousands of pixels.
+		final double tolerance = 0.5;
+		final int maxIters = 100;
+
+		final int n = dimensions.numDimensions();
+
+		// A corner cannot be further from the affine estimate than the image is wide;
+		// beyond that it is a different branch of the inverse. Measured: real deviations
+		// reach ~266px on a ~4100px tile, wrong-branch ones start at ~46000px.
+		double maxDeviation = 0;
+		for ( int d = 0; d < n; ++d )
+			maxDeviation = Math.max( maxDeviation, dimensions.dimension( d ) );
+
+		final double[] min = new double[ n ];
+		final double[] max = new double[ n ];
+		Arrays.fill( min, Double.POSITIVE_INFINITY );
+		Arrays.fill( max, Double.NEGATIVE_INFINITY );
+
+		final double[] corner = new double[ n ];
+		final double[] affine = new double[ n ];
+		final double[] guess = new double[ n ];
+		int numFallbacks = 0;
+
+		for ( int c = 0; c < ( 1 << n ); ++c )
+		{
+			for ( int d = 0; d < n; ++d )
+				corner[ d ] = ( ( c >> d ) & 1 ) == 0 ? 0 : dimensions.dimension( d ) - 1;
+
+			// Hand the optimizer its own copy: affine is both the reference for the
+			// distance check below and the fallback value, and how inverseTol treats its
+			// guess argument is not part of imglib2's documented contract.
+			approxAffine.apply( corner, affine );
+			System.arraycopy( affine, 0, guess, 0, n );
+
+			// the result is left in getEstimate()
+			final double error = optimizer.inverseTol( corner, guess, tolerance, maxIters );
+			final double[] estimate = optimizer.getEstimate();
+
+			double deviation = 0;
+			for ( int d = 0; d < n; ++d )
+				deviation = Math.max( deviation, Math.abs( estimate[ d ] - affine[ d ] ) );
+
+			final boolean trust = error < tolerance && deviation <= maxDeviation;
+			if ( !trust )
+				++numFallbacks;
+
+			for ( int d = 0; d < n; ++d )
+			{
+				final double p = trust ? estimate[ d ] : affine[ d ];
+				min[ d ] = Math.min( min[ d ], p );
+				max[ d ] = Math.max( max[ d ], p );
+			}
+		}
+
+		// System.out, not IOFunctions: IOFunctions.println defaults to routing through
+		// SwingUtilities/IJ.log, which on a headless Spark executor touches AWT and can
+		// drop the message.
+		if ( numFallbacks > 0 )
+			System.out.println( "[TPS] inverseTransformedBoundingBox: " + numFallbacks + " of "
+					+ ( 1 << n ) + " corner(s) did not yield a trustworthy inverse; "
+					+ "used the approximate affine for those." );
+
+		return Intervals.smallestContainingInterval( new FinalRealInterval( min, max ) );
 	}
 }
