@@ -28,13 +28,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
-import mpicbg.models.AffineModel1D;
 import mpicbg.models.IdentityModel;
-import mpicbg.models.InterpolatedAffineModel1D;
+import mpicbg.models.Model;
 import mpicbg.models.PointMatch;
 import mpicbg.models.Tile;
-import mpicbg.models.TranslationModel1D;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.iterator.IntervalIterator;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityMatcher.CoefficientMatch;
@@ -47,15 +46,24 @@ class IntensitySolver {
 
 	private static final Logger LOG = LoggerFactory.getLogger(IntensitySolver.class);
 
-	public static double lambda1 = 0.01;
-	public static double lambda2 = 0.01;
-
 	private final int[] numCoefficients;
+
+	private final Model<?> modelTemplate;
 
 	private final Map<ViewId, IntensityTile> intensityTiles = new ConcurrentHashMap<>();
 
 	IntensitySolver(final int[] coefficientsSize) {
+		this(coefficientsSize, IntensityCorrection.regularizedAffineModel1D(0.01, 0.01));
+	}
+
+	/**
+	 * @param modelTemplate 1D model to fit per sub-tile ({@code AffineModel1D}, {@code TranslationModel1D},
+	 *        {@code IdentityModel}, or any {@code InterpolatedAffineModel1D}); it is copied for every
+	 *        sub-tile, the given instance is never modified
+	 */
+	IntensitySolver(final int[] coefficientsSize, final Model<?> modelTemplate) {
 		this.numCoefficients = coefficientsSize;
+		this.modelTemplate = modelTemplate.copy();
 	}
 
 	public void connect(final ViewPairCoefficientMatches matches) {
@@ -91,12 +99,13 @@ class IntensitySolver {
 		p1IntensityTile.connectTo(p2IntensityTile);
 	}
 
+	@SuppressWarnings({ "rawtypes", "unchecked" })
 	IntensityTile getIntensityTile(final ViewId viewId) {
 		final int nFittingCycles = 1; // TODO: expose parameter (?)
 		return intensityTiles.computeIfAbsent(
 				viewId,
 				v -> new IntensityTile(
-						() -> new InterpolatedAffineModel1D<>( new InterpolatedAffineModel1D<>( new AffineModel1D(), new TranslationModel1D(), lambda1), new IdentityModel(), lambda2),//FastAffineModel1D::new,
+						(Supplier) () -> modelTemplate.copy(),
 						numCoefficients,
 						nFittingCycles));
 	}
