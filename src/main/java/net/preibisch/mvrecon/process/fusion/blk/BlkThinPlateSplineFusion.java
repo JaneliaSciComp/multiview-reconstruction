@@ -476,7 +476,7 @@ public class BlkThinPlateSplineFusion
 		// transforms from source img pixels to render coordinates
 		final RealTransform invTransform = new WrappedIterativeInvertibleRealTransform<>( transform ).inverse();
 
-		final RealTransform invTransformGuess = new GuessingRealTransform( invTransform, invTransform );
+		final RealTransform invTransformGuess = new GuessingRealTransform( invTransform, invGuess );
 
 		// estimated bounding box of the source img transformed to render coordinates
 		return Intervals.smallestContainingInterval(
