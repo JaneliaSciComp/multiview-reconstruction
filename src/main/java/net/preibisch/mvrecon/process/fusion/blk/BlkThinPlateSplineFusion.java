@@ -47,6 +47,9 @@ import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.RealLocalizable;
+import net.imglib2.RealPoint;
+import net.imglib2.RealPositionable;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.algorithm.blocks.dfield.DisplacementField;
@@ -57,6 +60,7 @@ import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
 import net.imglib2.converter.Converter;
 import net.imglib2.realtransform.AffineGet;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.realtransform.InvertibleRealTransform;
 import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.realtransform.interval.IntervalSamplingMethod;
@@ -143,6 +147,18 @@ public class BlkThinPlateSplineFusion
 		final List< ? extends ViewId > sortedViewIds = new ArrayList<>( viewIds );
 		sortedViewIds.sort( fusionOrder != null ? fusionOrder : Comparator.naturalOrder() );
 
+		// Pre-fit per-view approximate affines from the landmarks (used downstream for initialization
+		// for inverting the TPS transforms, as well as blending-weight adjustment). Done once here so
+		// initWithLoadedDfields no longer needs the full landmark map and can be driven from a cached-affines
+		// container instead.
+		final Map< ViewId, AffineTransform3D > approximateAffines = new HashMap<>();
+		for ( final ViewId viewId : sortedViewIds )
+		{
+			final Landmarks landmarks = viewLandmarks.get( viewId );
+			approximateAffines.put( viewId,
+					fitAffineTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() ) );
+		}
+
 		// back-projected bounding box (render coordinates) for every underlying view
 		final Map< ViewId, Interval > viewBounds = new HashMap<>();
 		for ( final ViewId viewId : sortedViewIds )
@@ -152,13 +168,13 @@ public class BlkThinPlateSplineFusion
 					// we go from output to input
 					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
 			final Dimensions dims = viewDimensions.get( viewId );
-			viewBounds.put( viewId, inverseTransformedBoundingBox( tps, dims ) );
+			viewBounds.put( viewId, inverseTransformedBoundingBox( tps, approximateAffines.get( viewId ).inverse(), dims ) );
 		}
 
 		// Sample the dfield (eager ArrayImg allocation) only for views that overlap
 		// the fusionInterval. This preserves the historical optimization where
 		// non-overlapping views never trigger a TPS rasterization.
-		final Overlap preFilterOverlap = new Overlap( sortedViewIds, viewBounds, 3 ).filter( fusionInterval );
+		final Overlap preFilterOverlap = new Overlap( sortedViewIds, viewBounds, defaultIntervalExpansion, 3 ).filter( fusionInterval );
 		final Map< ViewId, TransformedDisplacementField< DoubleType > > rawDfields = new HashMap<>();
 		for ( final ViewId viewId : preFilterOverlap.getViewIds() )
 		{
@@ -166,17 +182,6 @@ public class BlkThinPlateSplineFusion
 			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
 					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
 			rawDfields.put( viewId, DisplacementFields.sample( tps, viewBounds.get( viewId ), spacing ) );
-		}
-
-		// Pre-fit per-view approximate affines from the landmarks (used downstream only for
-		// blending-weight adjustment). Done once here so initWithLoadedDfields no longer needs
-		// the full landmark map and can be driven from a cached-affines container instead.
-		final Map< ViewId, AffineTransform3D > approximateAffines = new HashMap<>();
-		for ( final ViewId viewId : sortedViewIds )
-		{
-			final Landmarks landmarks = viewLandmarks.get( viewId );
-			approximateAffines.put( viewId,
-					fitAffineTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() ) );
 		}
 
 		return initWithLoadedDfields(
@@ -230,7 +235,7 @@ public class BlkThinPlateSplineFusion
 		// Which views to process (use un-altered bounding box and registrations).
 		// Final filtering happens per Cell. Here we just pre-filter everything
 		// outside the fusionInterval.
-		final Overlap overlap = new Overlap( sortedViewIds, viewBounds, 3 )
+		final Overlap overlap = new Overlap( sortedViewIds, viewBounds, defaultIntervalExpansion, 3 )
 				.filter( fusionInterval )
 				.offset( fusionInterval.minAsLongArray() );
 
@@ -456,6 +461,8 @@ public class BlkThinPlateSplineFusion
 	 *
 	 * @param transform
 	 * 		forward transform (from rendered to image coordinates)
+	 * @param invGuess
+	 * 		a guess of the inverse TPS to better initialize InverseRealTransformGradientDescent
 	 * @param dimensions
 	 * 		image dimensions
 	 *
@@ -463,15 +470,62 @@ public class BlkThinPlateSplineFusion
 	 */
 	public static Interval inverseTransformedBoundingBox(
 			final ThinplateSplineTransform transform,
+			final RealTransform /*AffineGet*/ invGuess,
 			final Dimensions dimensions )
 	{
 		// transforms from source img pixels to render coordinates
 		final RealTransform invTransform = new WrappedIterativeInvertibleRealTransform<>( transform ).inverse();
 
+		final RealTransform invTransformGuess = new GuessingRealTransform( invTransform, invTransform );
+
 		// estimated bounding box of the source img transformed to render coordinates
 		return Intervals.smallestContainingInterval(
-				invTransform.boundingInterval(
+				invTransformGuess.boundingInterval(
 						new FinalInterval( dimensions ),
 						IntervalSamplingMethod.CORNERS ) );
+	}
+
+	/**
+	 * We need this so the InverseRealTransformGradientDescent can take a guess.
+	 * Measured: real deviations reach ~266px on a ~4100px tile, wrong-branch ones start at ~46000px.
+	 */
+	public static class GuessingRealTransform implements RealTransform
+	{
+		final RealTransform invTransform, invGuess;
+		
+		public GuessingRealTransform(
+				final RealTransform /*WrappedIterativeInvertibleRealTransform*/ invTransform,
+				final RealTransform /*AffineGet*/ invGuess )
+		{
+			this.invTransform = invTransform;
+			this.invGuess = invGuess;
+		}
+
+		@Override
+		public int numSourceDimensions() { return invTransform.numSourceDimensions(); }
+
+		@Override
+		public int numTargetDimensions() {  return invTransform.numTargetDimensions(); }
+
+		@Override
+		public void apply(double[] source, double[] target)
+		{
+			invGuess.apply( source, source );
+			invTransform.apply( source, target );
+		}
+
+		@Override
+		public void apply( RealLocalizable source, RealPositionable target )
+		{
+			final RealPoint p = new RealPoint( source );
+			invGuess.apply( p, p );
+			invTransform.apply( p, target);
+		}
+
+		@Override
+		public RealTransform copy()
+		{
+			return new GuessingRealTransform( invTransform, invGuess );
+		}
 	}
 }
