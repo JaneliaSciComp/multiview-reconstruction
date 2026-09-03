@@ -44,6 +44,12 @@ public class Coefficients implements Serializable {
 	 */
 	final double[][] flattenedCoefficients;
 
+	/**
+	 * The lowest intensity the correction applies to. {@link Double#NaN} (the default)
+	 * means every voxel is corrected.
+	 */
+	private final double threshold;
+
 	public Coefficients(
 			final double[][] coefficients,
 			final int... fieldDimensions) {
@@ -64,6 +70,30 @@ public class Coefficients implements Serializable {
 		strides = IntervalIndexer.createAllocationSteps(size);
 		flattenedCoefficients = new double[numCoefficients][];
 		Arrays.setAll(flattenedCoefficients, i -> coefficients[i].clone());
+		threshold = Double.NaN;
+	}
+
+	private Coefficients(final Coefficients other, final double threshold) {
+		this.size = other.size;
+		this.strides = other.strides;
+		this.flattenedCoefficients = other.flattenedCoefficients;
+		this.threshold = threshold;
+	}
+
+	/**
+	 * @return the lowest intensity the correction applies to; voxels below it are left
+	 *         unchanged. {@link Double#NaN} means every voxel is corrected.
+	 */
+	public double threshold() {
+		return threshold;
+	}
+
+	/**
+	 * @return a view of these coefficients that only applies to intensities {@code >= threshold}
+	 *         (pass {@link Double#NaN} to correct every voxel)
+	 */
+	public Coefficients withThreshold(final double threshold) {
+		return new Coefficients(this, threshold);
 	}
 
 	int size(final int d) {

@@ -52,6 +52,8 @@ class CoefficientsIO {
 		final DatasetAttributes attr = new DatasetAttributes(dimensions, blockSize, DataType.FLOAT64, new RawCompression());
 		n5Writer.createDataset(datasetPath, attr);
 		n5Writer.setAttribute(datasetPath, "coefficients version", "1.0");
+		if (Double.isFinite(coefficients.threshold()))
+			n5Writer.setAttribute(datasetPath, "threshold", coefficients.threshold());
 
 		final long[] gridPosition = new long[n + 1];
 		for (int i = 0; i < coefficients.numCoefficients(); ++i) {
@@ -74,6 +76,8 @@ class CoefficientsIO {
 			final DataBlock<?> block = n5Reader.readBlock(datasetPath, attr, gridPosition);
 			coefficients[i] = (double[]) block.getData();
 		}
-		return new Coefficients(coefficients, fieldDimensions);
+		final Double threshold = n5Reader.getAttribute(datasetPath, "threshold", double.class);
+		final Coefficients loaded = new Coefficients(coefficients, fieldDimensions);
+		return threshold == null ? loaded : loaded.withThreshold(threshold);
 	}
 }
