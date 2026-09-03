@@ -57,6 +57,7 @@ class Overlap
 	public Overlap(
 			final List< ? extends ViewId > viewIds,
 			final Map< ? extends ViewId, ? extends Interval > viewBounds,
+			final int expandOverlap,
 			final int numDimensions )
 	{
 		this.viewIds = viewIds;
@@ -64,7 +65,7 @@ class Overlap
 		numViews = viewIds.size();
 		bb = new long[ numViews * numDimensions * 2 ];
 		for ( int i = 0; i < numViews; ++i )
-			setBounds( i, viewBounds.get( viewIds.get( i ) ) );
+			setBounds( i, Intervals.expand( viewBounds.get( viewIds.get( i ) ), expandOverlap ) );
 	}
 
 	public Overlap(
