@@ -147,29 +147,20 @@ public class BlkThinPlateSplineFusion
 		final List< ? extends ViewId > sortedViewIds = new ArrayList<>( viewIds );
 		sortedViewIds.sort( fusionOrder != null ? fusionOrder : Comparator.naturalOrder() );
 
-		// Pre-fit per-view approximate affines from the landmarks (used downstream for initialization
-		// for inverting the TPS transforms, as well as blending-weight adjustment). Done once here so
-		// initWithLoadedDfields no longer needs the full landmark map and can be driven from a cached-affines
-		// container instead.
+		// Per view: TPS (render -> image), approximate affine (image -> render) and the
+		// back-projected bounding box (render coordinates). The affines seed the iterative
+		// TPS inverse for the bounding boxes and are used downstream for blending-weight
+		// adjustment. Done once here so initWithLoadedDfields no longer needs the full
+		// landmark map and can be driven from a cached-affines container instead.
+		final Map< ViewId, ThinplateSplineTransform > tpsMap = new HashMap<>();
 		final Map< ViewId, AffineTransform3D > approximateAffines = new HashMap<>();
-		for ( final ViewId viewId : sortedViewIds )
-		{
-			final Landmarks landmarks = viewLandmarks.get( viewId );
-			approximateAffines.put( viewId,
-					fitAffineTransform( landmarks.getSourcePoints(), landmarks.getTargetPoints() ) );
-		}
-
-		// back-projected bounding box (render coordinates) for every underlying view
 		final Map< ViewId, Interval > viewBounds = new HashMap<>();
 		for ( final ViewId viewId : sortedViewIds )
 		{
-			final Landmarks landmarks = viewLandmarks.get( viewId );
-			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
-					// we go from output to input
-					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
-			final Dimensions dims = viewDimensions.get( viewId );
-			// the approximate affine maps image -> render, i.e. it approximates the *inverse* TPS
-			viewBounds.put( viewId, inverseTransformedBoundingBox( tps, approximateAffines.get( viewId ), dims ) );
+			final TpsSetup setup = setupTps( viewLandmarks.get( viewId ), viewDimensions.get( viewId ) );
+			tpsMap.put( viewId, setup.tps );
+			approximateAffines.put( viewId, setup.approximateAffine );
+			viewBounds.put( viewId, setup.boundingBox );
 		}
 
 		// Sample the dfield (eager ArrayImg allocation) only for views that overlap
@@ -178,12 +169,7 @@ public class BlkThinPlateSplineFusion
 		final Overlap preFilterOverlap = new Overlap( sortedViewIds, viewBounds, defaultIntervalExpansion, 3 ).filter( fusionInterval );
 		final Map< ViewId, TransformedDisplacementField< DoubleType > > rawDfields = new HashMap<>();
 		for ( final ViewId viewId : preFilterOverlap.getViewIds() )
-		{
-			final Landmarks landmarks = viewLandmarks.get( viewId );
-			final ThinplateSplineTransform tps = new ThinplateSplineTransform(
-					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
-			rawDfields.put( viewId, DisplacementFields.sample( tps, viewBounds.get( viewId ), spacing ) );
-		}
+			rawDfields.put( viewId, DisplacementFields.sample( tpsMap.get( viewId ), viewBounds.get( viewId ), spacing ) );
 
 		return initWithLoadedDfields(
 				converter, imgLoader, viewIds, viewDescriptions, approximateAffines,
@@ -203,7 +189,8 @@ public class BlkThinPlateSplineFusion
 	 *
 	 * @param viewBounds
 	 * 		back-projected bounding box (render coordinates) per view, as
-	 * 		produced by {@link #inverseTransformedBoundingBox(ThinplateSplineTransform, RealTransform, Dimensions)}.
+	 * 		produced by {@link #setupTps(Landmarks, Dimensions)} (i.e. by
+	 * 		{@link #inverseTransformedBoundingBox(ThinplateSplineTransform, RealTransform, Dimensions)}).
 	 * @param rawDfields
 	 * 		un-offset displacement fields per view, as produced by
 	 * 		{@code DisplacementFields.sample(tps, viewBounds.get(viewId), spacing)}.
@@ -454,6 +441,64 @@ public class BlkThinPlateSplineFusion
 				mm[2][0], mm[2][1], mm[2][2], mm[2][3] );
 
 		return t;
+	}
+
+	/**
+	 * Everything fusion needs up front from one view's landmarks: the forward TPS
+	 * (render to image coordinates), the affine approximating its inverse (image to
+	 * render coordinates) and the back-projected bounding box in render coordinates.
+	 * <p>
+	 * Create instances with {@link #setupTps(Landmarks, Dimensions)}, so that all callers
+	 * (the local {@link #init init} and the Spark displacement-field cache) agree on the
+	 * transform directions and on seeding the iterative TPS inverse.
+	 */
+	public static final class TpsSetup
+	{
+		/** forward transform, from render to image coordinates */
+		public final ThinplateSplineTransform tps;
+
+		/** affine approximation of the <em>inverse</em> TPS, from image to render coordinates */
+		public final AffineTransform3D approximateAffine;
+
+		/** bounding box of the image in render coordinates */
+		public final Interval boundingBox;
+
+		TpsSetup( final ThinplateSplineTransform tps, final AffineTransform3D approximateAffine, final Interval boundingBox )
+		{
+			this.tps = tps;
+			this.approximateAffine = approximateAffine;
+			this.boundingBox = boundingBox;
+		}
+	}
+
+	/**
+	 * Build the per-view transforms from landmarks: the TPS from the landmark target
+	 * points (render coordinates) to the source points (image coordinates), the affine
+	 * fitted the other way round (image to render, see {@link #fitAffineTransform}), and
+	 * the bounding box of the image in render coordinates from
+	 * {@link #inverseTransformedBoundingBox(ThinplateSplineTransform, RealTransform, Dimensions)},
+	 * with the affine seeding the iterative TPS inverse.
+	 *
+	 * @param landmarks
+	 * 		source (image) and target (render) landmark coordinates of the view
+	 * @param dimensions
+	 * 		image dimensions of the view
+	 *
+	 * @return TPS, approximate affine and bounding box
+	 */
+	public static TpsSetup setupTps( final Landmarks landmarks, final Dimensions dimensions )
+	{
+		// we go from output to input
+		final ThinplateSplineTransform tps = new ThinplateSplineTransform(
+				landmarks.getTargetPoints(), landmarks.getSourcePoints() );
+
+		// the approximate affine maps image -> render, i.e. it approximates the *inverse* TPS
+		final AffineTransform3D approximateAffine = fitAffineTransform(
+				landmarks.getSourcePoints(), landmarks.getTargetPoints() );
+
+		final Interval boundingBox = inverseTransformedBoundingBox( tps, approximateAffine, dimensions );
+
+		return new TpsSetup( tps, approximateAffine, boundingBox );
 	}
 
 	/**
