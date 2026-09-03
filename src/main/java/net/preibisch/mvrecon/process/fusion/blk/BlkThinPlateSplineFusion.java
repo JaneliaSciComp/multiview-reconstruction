@@ -48,7 +48,6 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealLocalizable;
-import net.imglib2.RealPoint;
 import net.imglib2.RealPositionable;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.convert.Convert;
@@ -60,10 +59,10 @@ import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
 import net.imglib2.converter.Converter;
 import net.imglib2.realtransform.AffineGet;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.realtransform.InvertibleRealTransform;
 import net.imglib2.realtransform.RealTransform;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.imglib2.realtransform.interval.IntervalSamplingMethod;
+import net.imglib2.realtransform.inverse.InverseRealTransformGradientDescent;
 import net.imglib2.realtransform.inverse.WrappedIterativeInvertibleRealTransform;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
@@ -75,6 +74,7 @@ import net.imglib2.util.ConstantUtils;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
@@ -168,7 +168,8 @@ public class BlkThinPlateSplineFusion
 					// we go from output to input
 					landmarks.getTargetPoints(), landmarks.getSourcePoints() );
 			final Dimensions dims = viewDimensions.get( viewId );
-			viewBounds.put( viewId, inverseTransformedBoundingBox( tps, approximateAffines.get( viewId ).inverse(), dims ) );
+			// the approximate affine maps image -> render, i.e. it approximates the *inverse* TPS
+			viewBounds.put( viewId, inverseTransformedBoundingBox( tps, approximateAffines.get( viewId ), dims ) );
 		}
 
 		// Sample the dfield (eager ArrayImg allocation) only for views that overlap
@@ -202,7 +203,7 @@ public class BlkThinPlateSplineFusion
 	 *
 	 * @param viewBounds
 	 * 		back-projected bounding box (render coordinates) per view, as
-	 * 		produced by {@link #inverseTransformedBoundingBox(ThinplateSplineTransform, Dimensions)}.
+	 * 		produced by {@link #inverseTransformedBoundingBox(ThinplateSplineTransform, RealTransform, Dimensions)}.
 	 * @param rawDfields
 	 * 		un-offset displacement fields per view, as produced by
 	 * 		{@code DisplacementFields.sample(tps, viewBounds.get(viewId), spacing)}.
@@ -439,6 +440,7 @@ public class BlkThinPlateSplineFusion
 		} catch (NotEnoughDataPointsException | IllDefinedDataPointsException e)
 		{
 			e.printStackTrace();
+			throw new RuntimeException( e );
 		}
 
 		final double[][] mm = new double[ 3 ][ 4 ];
@@ -458,11 +460,30 @@ public class BlkThinPlateSplineFusion
 	 * Get the bounding box in render coordinates of an image of the given
 	 * {@code dimension} when back-projected through the inverse of the given
 	 * {@code transform} from rendered to image coordinates.
+	 * <p>
+	 * The inverse is imglib2's iterative {@link InverseRealTransformGradientDescent}.
+	 * Its {@code apply(s, t)} is implemented as {@code inverseTol(s, s, ...)}, i.e. the
+	 * descent is seeded with the query point itself: an image coordinate, while the
+	 * answer is a render coordinate that can be tens of thousands of pixels away. From
+	 * there the descent converges onto a spurious preimage, and the resulting bogus box
+	 * silently drops the view from every block it should have contributed to.
+	 * {@code setGuess} is a deprecated no-op, so the only way to provide a seed is to
+	 * call {@code inverseTol(target, guess, ...)} directly. That is what
+	 * {@link GuessingRealTransform} does, using {@code invGuess} (the per-view
+	 * approximate affine) to compute the seed for every corner.
+	 * <p>
+	 * A TPS from few landmarks is non-injective where the corners extrapolate, so a
+	 * converged corner is not always the right one. A corner is used only if it
+	 * converged and stayed within {@code max(dimensions)} of the guess; otherwise the
+	 * guess itself is used.
 	 *
 	 * @param transform
 	 * 		forward transform (from rendered to image coordinates)
 	 * @param invGuess
-	 * 		a guess of the inverse TPS to better initialize InverseRealTransformGradientDescent
+	 * 		approximation of the <em>inverse</em> transform (from image to render
+	 * 		coordinates), e.g. the affine from {@link #fitAffineTransform}. Seeds the
+	 * 		iterative inverse at each corner and is the fallback for corners that fail
+	 * 		the checks above.
 	 * @param dimensions
 	 * 		image dimensions
 	 *
@@ -470,62 +491,189 @@ public class BlkThinPlateSplineFusion
 	 */
 	public static Interval inverseTransformedBoundingBox(
 			final ThinplateSplineTransform transform,
-			final RealTransform /*AffineGet*/ invGuess,
+			final RealTransform invGuess,
 			final Dimensions dimensions )
 	{
-		// transforms from source img pixels to render coordinates
-		final RealTransform invTransform = new WrappedIterativeInvertibleRealTransform<>( transform ).inverse();
+		// A corner cannot be further from the guess than the image is wide; beyond
+		// that it is a different branch of the inverse. Measured: real deviations
+		// reach ~266px on a ~4100px tile, wrong-branch ones start at ~46000px.
+		double maxDeviation = 0;
+		for ( int d = 0; d < dimensions.numDimensions(); ++d )
+			maxDeviation = Math.max( maxDeviation, dimensions.dimension( d ) );
 
-		final RealTransform invTransformGuess = new GuessingRealTransform( invTransform, invGuess );
+		// transforms from source img pixels to render coordinates, seeded with invGuess
+		final GuessingRealTransform invTransform = new GuessingRealTransform(
+				new WrappedIterativeInvertibleRealTransform<>( transform ), invGuess, maxDeviation );
 
 		// estimated bounding box of the source img transformed to render coordinates
-		return Intervals.smallestContainingInterval(
-				invTransformGuess.boundingInterval(
+		final Interval bb = Intervals.smallestContainingInterval(
+				invTransform.boundingInterval(
 						new FinalInterval( dimensions ),
 						IntervalSamplingMethod.CORNERS ) );
+
+		if ( invTransform.numFallbacks() > 0 )
+			IOFunctions.println( "[TPS] inverseTransformedBoundingBox: " + invTransform.numFallbacks() + " of "
+					+ invTransform.numApplied() + " corner(s) did not yield a trustworthy inverse; "
+					+ "used the approximate affine for those." );
+
+		return bb;
 	}
 
 	/**
-	 * We need this so the InverseRealTransformGradientDescent can take a guess.
-	 * Measured: real deviations reach ~266px on a ~4100px tile, wrong-branch ones start at ~46000px.
+	 * The inverse of an iteratively invertible transform (e.g. a TPS), where every
+	 * inversion is seeded with a guess computed by a second transform instead of with
+	 * the query point itself.
+	 * <p>
+	 * For a point {@code p}, {@link #apply} computes {@code guess = invGuess(p)} and then
+	 * runs {@link InverseRealTransformGradientDescent#inverseTol(double[], double[], double, int)
+	 * inverseTol(p, guess, tolerance, maxIters)}: the descent solves {@code forward(x) = p}
+	 * starting at {@code guess}. Note that this is <em>not</em> the same as composing
+	 * {@code invGuess} with {@code WrappedIterativeInvertibleRealTransform.inverse()}.
+	 * That would end up in {@code inverseTol(guess, guess, ...)} and solve
+	 * {@code forward(x) = guess}, i.e. invert a different point, still seeded with itself.
+	 * <p>
+	 * The solution is used only if the descent converged ({@code error < tolerance}) and
+	 * it lies within {@code maxDeviation} (per dimension) of the guess; otherwise the
+	 * guess itself is returned and {@link #numFallbacks()} is incremented.
+	 * <p>
+	 * Not thread-safe (the underlying optimizer is stateful); use {@link #copy()} per thread.
 	 */
 	public static class GuessingRealTransform implements RealTransform
 	{
-		final RealTransform invTransform, invGuess;
-		
+		// imglib2's InverseRealTransformGradientDescent defaults, on purpose. A wider
+		// backtracking range (beta, stepSizeMaxTries) converges more corners but lets the
+		// descent reach the spurious preimages, which moved measured boxes by tens of
+		// thousands of pixels.
+		public static final double DEFAULT_TOLERANCE = 0.5;
+
+		public static final int DEFAULT_MAX_ITERS = 100;
+
+		private final WrappedIterativeInvertibleRealTransform< ? > forward;
+
+		private final InverseRealTransformGradientDescent optimizer;
+
+		private final RealTransform invGuess;
+
+		private final double maxDeviation;
+
+		private final double tolerance;
+
+		private final int maxIters;
+
+		private final int n;
+
+		private final double[] guess;
+
+		private final double[] tmpSource;
+
+		private final double[] tmpTarget;
+
+		private int numApplied = 0;
+
+		private int numFallbacks = 0;
+
+		/**
+		 * @param forward
+		 * 		the (wrapped) forward transform to invert
+		 * @param invGuess
+		 * 		approximation of the inverse of {@code forward}; provides the seed and the fallback
+		 * @param maxDeviation
+		 * 		a solution further than this (in any dimension) from the guess is rejected
+		 */
 		public GuessingRealTransform(
-				final RealTransform /*WrappedIterativeInvertibleRealTransform*/ invTransform,
-				final RealTransform /*AffineGet*/ invGuess )
+				final WrappedIterativeInvertibleRealTransform< ? > forward,
+				final RealTransform invGuess,
+				final double maxDeviation )
 		{
-			this.invTransform = invTransform;
+			this( forward, invGuess, maxDeviation, DEFAULT_TOLERANCE, DEFAULT_MAX_ITERS );
+		}
+
+		public GuessingRealTransform(
+				final WrappedIterativeInvertibleRealTransform< ? > forward,
+				final RealTransform invGuess,
+				final double maxDeviation,
+				final double tolerance,
+				final int maxIters )
+		{
+			n = forward.numSourceDimensions();
+			if ( forward.numTargetDimensions() != n )
+				throw new IllegalArgumentException( "iterative inversion requires numSourceDimensions == numTargetDimensions" );
+			if ( invGuess.numSourceDimensions() != n || invGuess.numTargetDimensions() != n )
+				throw new IllegalArgumentException( "invGuess dimensionality does not match the forward transform" );
+
+			this.forward = forward;
+			this.optimizer = forward.getOptimzer();
 			this.invGuess = invGuess;
+			this.maxDeviation = maxDeviation;
+			this.tolerance = tolerance;
+			this.maxIters = maxIters;
+
+			guess = new double[ n ];
+			tmpSource = new double[ n ];
+			tmpTarget = new double[ n ];
+		}
+
+		/** @return number of points inverted so far */
+		public int numApplied()
+		{
+			return numApplied;
+		}
+
+		/** @return number of points for which the guess was returned instead of the descent result */
+		public int numFallbacks()
+		{
+			return numFallbacks;
 		}
 
 		@Override
-		public int numSourceDimensions() { return invTransform.numSourceDimensions(); }
-
-		@Override
-		public int numTargetDimensions() {  return invTransform.numTargetDimensions(); }
-
-		@Override
-		public void apply(double[] source, double[] target)
+		public int numSourceDimensions()
 		{
-			invGuess.apply( source, source );
-			invTransform.apply( source, target );
+			return forward.numTargetDimensions();
 		}
 
 		@Override
-		public void apply( RealLocalizable source, RealPositionable target )
+		public int numTargetDimensions()
 		{
-			final RealPoint p = new RealPoint( source );
-			invGuess.apply( p, p );
-			invTransform.apply( p, target);
+			return forward.numSourceDimensions();
 		}
 
 		@Override
-		public RealTransform copy()
+		public void apply( final double[] source, final double[] target )
 		{
-			return new GuessingRealTransform( invTransform, invGuess );
+			// seed: where the guess transform puts this point
+			invGuess.apply( source, guess );
+
+			// solve forward(x) = source, starting at guess. inverseTol copies the guess but
+			// keeps a reference to its target argument, so hand it source directly (source
+			// is not modified here) and read the estimate before touching target.
+			final double error = optimizer.inverseTol( source, guess, tolerance, maxIters );
+			final double[] estimate = optimizer.getEstimate();
+
+			double deviation = 0;
+			for ( int d = 0; d < n; ++d )
+				deviation = Math.max( deviation, Math.abs( estimate[ d ] - guess[ d ] ) );
+
+			final boolean trust = error < tolerance && deviation <= maxDeviation;
+			++numApplied;
+			if ( !trust )
+				++numFallbacks;
+
+			// write last: source and target may be the same array (Corners.bounds calls apply(pt, pt))
+			System.arraycopy( trust ? estimate : guess, 0, target, 0, n );
+		}
+
+		@Override
+		public void apply( final RealLocalizable source, final RealPositionable target )
+		{
+			source.localize( tmpSource );
+			apply( tmpSource, tmpTarget );
+			target.setPosition( tmpTarget );
+		}
+
+		@Override
+		public GuessingRealTransform copy()
+		{
+			return new GuessingRealTransform( forward.copy(), invGuess.copy(), maxDeviation, tolerance, maxIters );
 		}
 	}
 }
