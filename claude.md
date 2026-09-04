@@ -295,6 +295,12 @@ Originally s1+ levels passed `blockSize` instead of `shardSize` to `assembleJobs
 #### Lesson: Zarr v3 Dimensions Reading
 `getAttribute(DIMENSIONS_KEY)` returns `null` in Zarr v3 because dimensions live in `zarr.json` as `shape`, not as a separate attribute. Use `getDatasetAttributes(ds).getDimensions()` instead.
 
+#### Lesson: Sharding State Leaked Into HDF5/N5 Export (2026-09-03)
+`ExportN5Api.useSharding` defaults to `defaultUseSharding` (true) and was only assigned inside the OME-ZARR dialog branch of `queryParameters()`. For HDF5/N5 it stayed true, `shardSize` was computed for any format, and `setupMultiResolutionPyramid()` created the dataset with `blockSize = shardSize` (e.g. 256x256x128) while blocks were addressed in units of the real block size (64x64x32). HDF5 failed with `selection + offset not within extent` for every block whose grid offset times the shard size left the volume. Fix: reset `useSharding=false`/`shardSize=null` right after the format is chosen, compute `shardSize` only for `StorageFormat.ZARR`, and guard `exportImage()` the same way.
+
+#### Lesson: HDF5 Cannot Delete Empty Blocks at the Boundary (2026-09-03)
+`N5Utils.saveNonEmptyBlock()` asks the writer to `deleteBlock()` for chunks that contain only the default value. `N5HDF5Writer.deleteChunk()` (n5-hdf5 3.0.0) emulates deletion by writing a zero block of the **full** block size, which at the dataset boundary fails with `selection + offset not within extent`. It only shows up when a boundary chunk of a downsampled level (or a resaved view) is entirely background, e.g. one channel not covering a corner of the fused volume. Fix: `N5ApiTools.saveNonEmptyBlock()` wraps the call and uses `N5Utils.saveBlock()` (all blocks, cropped) when the writer is an `N5HDF5Writer`. Use this helper instead of `N5Utils.saveNonEmptyBlock()` directly. Upstream fix would be to crop the empty block in `deleteChunk()`.
+
 #### ZARR v2 Support
 All ZARR (v3) format checks are paired with `|| StorageFormat.ZARR2` (11 sites: `Resave_N5Api`, `ExportN5Api`, `N5ApiTools`). v3-specific features (sharding dialogs/code paths) are intentionally excluded for v2.
 
