@@ -197,6 +197,15 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	{
 		final BlockSupplier<T> blockSupplier = blockSupplierIn.threadSafe();
 
+		// sharding only exists for Zarr v3; for HDF5/N5/ZARR2 a shard-sized "blockSize" would be
+		// written into the dataset metadata while blocks are addressed by the real block size
+		// (HDF5 then fails with "selection + offset not within extent")
+		if ( storageType != StorageFormat.ZARR )
+		{
+			this.useSharding = false;
+			this.shardSize = null;
+		}
+
 		final T type = blockSupplier.getType();
 		final DataType dataType = N5Utils.dataType( type );
 		final EnumSet< DataType > supportedDataTypes = EnumSet.of( DataType.UINT8, DataType.UINT16, DataType.FLOAT32 );
@@ -749,6 +758,11 @@ public class ExportN5Api implements ImgExport, Calibrateable
 
 		this.storageType = StorageFormat.values()[ defaultOption = gdInit.getNextChoiceIndex() ];
 		this.compression = PluginHelper.parseCompression( gdInit );
+
+		// sharding is a Zarr v3 feature; reset it here so a stale value (field default or a previous
+		// OME-ZARR export) is never applied to N5/HDF5/ZARR2. It is set below in the OME-ZARR dialog.
+		this.useSharding = false;
+		this.shardSize = null;
 		this.bdv = defaultBDV = gdInit.getNextBoolean();
 		final boolean multiRes = defaultMultiRes = gdInit.getNextBoolean();
 		this.splittingType = fusion.getSplittingType();
@@ -1010,7 +1024,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			}
 		}
 
-		if ( useSharding )
+		if ( storageType == StorageFormat.ZARR && useSharding ) // v3
 		{
 			this.shardSize = new int[] { bsX * bsFactorX, bsY * bsFactorY, bsZ * bsFactorZ };
 			IOFunctions.println( "ZARR v3 shard size: " + Arrays.toString( this.shardSize ));
