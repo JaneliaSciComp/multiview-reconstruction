@@ -73,7 +73,7 @@ import org.slf4j.LoggerFactory;
 import static net.imglib2.util.Intervals.intersect;
 import static net.imglib2.util.Intervals.isEmpty;
 import static net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension.border;
-import static net.imglib2.view.fluent.RandomAccessibleView.Interpolation.nLinear;
+import static net.imglib2.view.fluent.RandomAccessibleView.Interpolation.nearestNeighbor;
 
 class IntensityMatcher {
 
@@ -515,8 +515,11 @@ class IntensityMatcher {
 	 */
 	private static RandomAccessible<?> scaleTile(final TileInfo tile, final int mipmapLevel, final AffineTransform3D renderScale) {
 		final AffineTransform3D transform = mipmapToRenderCoordinates(tile, mipmapLevel, renderScale);
+		// nearest neighbour, NOT nLinear: interpolation is for rendering. Smoothing both views
+		// onto the render grid biases the intensity DISTRIBUTIONS the matcher measures (it also
+		// used to round every sample, since the interpolation ran in the integer pixel type).
 		return RealViews.affine(tile.getImage(mipmapLevel).view()
-						.extend(border()).interpolate(nLinear()),
+						.extend(border()).interpolate(nearestNeighbor()),
 				transform);
 	}
 
