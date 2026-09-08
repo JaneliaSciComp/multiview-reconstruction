@@ -102,24 +102,10 @@ public class Data_Explorer implements PlugIn
 		final int totalViews = data.getSequenceDescription().getViewSetups().size() * data.getSequenceDescription().getTimePoints().size();
 		if ( advanced || totalViews > LARGE_DATASET_THRESHOLD )
 		{
-			final GenericDialog gd = new GenericDialog( "Large dataset" );
-			gd.addMessage( "This dataset has " + totalViews + " views. Opening BigDataViewer for many views can be slow." );
-			gd.addCheckbox( "Open_BigDataViewer_at_startup", totalViews < LARGE_DATASET_DISABLE_BDV_THRESHOLD );
-			gd.addCheckbox( "Use_lazy_BDV_mode (adds & removes views when selected)", totalViews >= LARGE_DATASET_LAZY_RECOMMEND_THRESHOLD );
-			gd.addCheckbox( "Enable_action_history", ActionHistoryRecorder.enabled );
-			gd.addMessage( "Alignment log settings:", GUIHelper.mediumstatusfont );
-			gd.addNumericField( "Max_per-pair_connection_log_lines", InterestPointMatchCreator.maxPerPairLog, 0 );
-			gd.addNumericField( "Max_per-pair_correspondence-load_log_lines", PairwiseResult.maxPerPairCorrLog, 0 );
-			gd.addNumericField( "Max_per-view_transformation_log_lines", TransformationTools.maxPerViewTransformLog, 0 );
-			gd.showDialog();
-			if ( gd.wasCanceled() )
+			final Boolean openBDVChoice = showAdvancedOptionsDialog( totalViews );
+			if ( openBDVChoice == null )
 				return;
-			openBDV = gd.getNextBoolean();
-			BDVPopup.useLazyMode = gd.getNextBoolean();
-			ActionHistoryRecorder.enabled = gd.getNextBoolean();
-			InterestPointMatchCreator.maxPerPairLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
-			PairwiseResult.maxPerPairCorrLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
-			TransformationTools.maxPerViewTransformLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+			openBDV = openBDVChoice;
 		}
 
 		start = System.currentTimeMillis();
@@ -127,6 +113,40 @@ public class Data_Explorer implements PlugIn
 		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] ViewSetupExplorer creation took " + (System.currentTimeMillis() - start) + " ms" );
 
 		explorer.getFrame().toFront();
+	}
+
+	/**
+	 * Shows the "large dataset" advanced-options dialog (BDV startup, lazy BDV mode, action-history
+	 * toggle, alignment-log line caps) and applies the chosen values to the relevant statics.
+	 * Also called by BigStitcher's dataset-open flow, so the two stay in sync -- add new options
+	 * here only, not in a copy.
+	 *
+	 * @param totalViews number of views in the dataset, shown in the dialog message and used for defaults
+	 * @return the user's choice for whether to open BigDataViewer at startup, or {@code null} if canceled
+	 */
+	public static Boolean showAdvancedOptionsDialog( final int totalViews )
+	{
+		final GenericDialog gd = new GenericDialog( "Large dataset" );
+		gd.addMessage( "This dataset has " + totalViews + " views. Opening BigDataViewer for many views can be slow." );
+		gd.addCheckbox( "Open_BigDataViewer_at_startup", totalViews < LARGE_DATASET_DISABLE_BDV_THRESHOLD );
+		gd.addCheckbox( "Use_lazy_BDV_mode (adds & removes views when selected)", totalViews >= LARGE_DATASET_LAZY_RECOMMEND_THRESHOLD );
+		gd.addCheckbox( "Enable_action_history", ActionHistoryRecorder.enabled );
+		gd.addMessage( "Alignment log settings:", GUIHelper.mediumstatusfont );
+		gd.addNumericField( "Max_per-pair_connection_log_lines", InterestPointMatchCreator.maxPerPairLog, 0 );
+		gd.addNumericField( "Max_per-pair_correspondence-load_log_lines", PairwiseResult.maxPerPairCorrLog, 0 );
+		gd.addNumericField( "Max_per-view_transformation_log_lines", TransformationTools.maxPerViewTransformLog, 0 );
+		gd.showDialog();
+		if ( gd.wasCanceled() )
+			return null;
+
+		final boolean openBDV = gd.getNextBoolean();
+		BDVPopup.useLazyMode = gd.getNextBoolean();
+		ActionHistoryRecorder.enabled = gd.getNextBoolean();
+		InterestPointMatchCreator.maxPerPairLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+		PairwiseResult.maxPerPairCorrLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+		TransformationTools.maxPerViewTransformLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
+
+		return openBDV;
 	}
 
 	public static SimpleInfoBox showNote()
