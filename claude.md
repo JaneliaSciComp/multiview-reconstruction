@@ -456,8 +456,9 @@ affine+rigid λ=0.01, splitPoints weight 0.01):
 | solver | beads mean / max | splitPoints mean / max | solve |
 |---|---|---|---|
 | none (pre-solve) | 10.52 / 74.57 | 1.13 / 1.63 | – |
-| GlobalOpt | 2.068 / 9.657 | 3.424 / 31.04 | 123 s |
-| **APGO affine / INFORMATION** | **2.020 / 8.364** | **1.672 / 8.448** | **3.8 s** |
+| GlobalOpt | 2.069 / 9.73 | 3.437 / 30.97 | 119 s |
+| APGO affine / INFORMATION, `M` only | 2.023 / 8.355 | 1.677 / 8.371 | 3.9 s |
+| **APGO affine / INFORMATION, `M/σ²`** | **2.024 / 6.614** | **1.456 / 5.792** | **8.2 s** |
 
 `GlobalOpt` must sacrifice the splitPoints to fit the beads; APGO does not have to.
 
@@ -471,11 +472,24 @@ link determines translation but not shear".
 
 `Weighting.INFORMATION` replaces `Σ w‖r‖²` with `Σ rᵀΛr`, where `Λ = I₃ ⊗ M` and
 `M = Σᵢ wᵢ[pᵢ;1][pᵢ;1]ᵀ` is the weighted second moment of the link's source points — one 4x4
-accumulation per link, no free parameters. That is the same quadratic form as
-`Σᵢ‖G_a pᵢ − G_b qᵢ‖²`, so the collapse becomes lossless to second order (ordinary factor-graph
-marginalization), and it subsumes match count and label weights, which already live in `M`.
+accumulation per link, no free parameters.
 
-The evidence is that **the DOF trend reverses**. Per-link max bead error:
+`Λ = JᵀWJ` is the Hessian of the per-link fit, so it is the same quadratic form as
+`Σᵢ‖G_a pᵢ − G_b qᵢ‖²` — the collapse is lossless to second order, and match count and label
+weights are subsumed because both already live in `M`.
+
+`Parameters.scaleByResidualVariance` (on by default) completes it to the full `Λ = JᵀWJ / σ²` by
+dividing each link by its own fit residual. Per-link rms runs 1.46 → 16.6 px for beads against a
+median of 2.31, so without it a badly-fitting link is trusted per-point as much as a good one and
+sets the worst case. With it, bead max drops 21% (8.36 → 6.61) and splitPoints max 31%
+(8.37 → 5.79) while mean and median do not move — it fixes the tail. The ~130x spread it
+introduces is far below the 10^4 that makes a *scalar* weight diverge, because it rescales links
+without touching the directional structure. `minResidual` (0.5 px) floors it; the smallest
+observed rms is 1.0, so on real data it never binds — it exists so an exact synthetic fit does not
+divide by zero.
+
+The evidence for the information matrix itself is that **the DOF trend reverses**. Per-link max
+bead error:
 
 | | affine (12) | rigid (6) | translation (3) |
 |---|---|---|---|
