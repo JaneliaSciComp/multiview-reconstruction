@@ -49,7 +49,14 @@ public class GlobalOptimizationParameters
 		ONE_ROUND_ITERATIVE,
 		TWO_ROUND_SIMPLE,
 		TWO_ROUND_ITERATIVE,
-		NO_OPTIMIZATION
+		NO_OPTIMIZATION,
+
+		/**
+		 * Lie-group solve over per-link transforms rather than point matches, see
+		 * {@link net.preibisch.mvrecon.process.interestpointregistration.global.apgo.APGOSolver}.
+		 * Always solves a full affine, so it ignores the chosen transformation model.
+		 */
+		APGO
 	}
 
 	public enum PreAlign
@@ -64,7 +71,8 @@ public class GlobalOptimizationParameters
 			"One-Round with iterative dropping of bad links",
 			"Two-Round using metadata to align unconnected Tiles",
 			"Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links", // default
-			"NO global optimization, just store the corresponding interest points"
+			"NO global optimization, just store the corresponding interest points",
+			"APGO (Lie-group solve over per-link transforms; always affine)"
 	};
 
 	private final static String[] methodDescriptionsSimple = {
@@ -75,6 +83,7 @@ public class GlobalOptimizationParameters
 			"Two-Round: Handle unconnected tiles, remove wrong links STRICT (2.5x / 3.5px)",
 			"Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)", // default
 			"NO global optimization, just store the corresponding interest points",
+			"APGO (Lie-group solve over per-link transforms; always affine)",
 			"Show full options dialog"
 	};
 
@@ -127,8 +136,10 @@ public class GlobalOptimizationParameters
 
 	public static GlobalOptimizationParameters getGlobalOptimizationParametersForSelection( final int selected, final boolean preAlign )
 	{
-		if ( selected == 7 )
+		if ( selected == 8 )
 			return askUserForParameters( false, preAlign ? PreAlign.TRUE : PreAlign.FALSE );
+		else if ( selected == 7 )
+			return new GlobalOptimizationParameters( Double.MAX_VALUE, Double.MAX_VALUE, GlobalOptType.APGO, preAlign, false );
 		else if ( selected == 0 )
 			return new GlobalOptimizationParameters( Double.MAX_VALUE, Double.MAX_VALUE, GlobalOptType.ONE_ROUND_SIMPLE, preAlign, false );
 		else if ( selected == 1 )
@@ -204,6 +215,8 @@ public class GlobalOptimizationParameters
 		}
 		else if (methodIdx == 3)
 			method = GlobalOptType.TWO_ROUND_ITERATIVE;
+		else if (methodIdx == 5)
+			method = GlobalOptType.APGO;
 		else
 			method = GlobalOptType.NO_OPTIMIZATION;
 

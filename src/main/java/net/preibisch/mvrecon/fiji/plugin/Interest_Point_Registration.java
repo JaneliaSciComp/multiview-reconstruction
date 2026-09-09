@@ -39,6 +39,7 @@ import java.util.stream.Collectors;
 import ij.gui.GenericDialog;
 import ij.plugin.PlugIn;
 import mpicbg.models.AbstractModel;
+import mpicbg.models.AffineModel3D;
 import mpicbg.models.Affine3D;
 import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
@@ -86,6 +87,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOpt;
+import net.preibisch.mvrecon.process.interestpointregistration.global.apgo.APGOSolver;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOptIterative;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOptTwoRound;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.ConvergenceStrategy;
@@ -408,7 +410,26 @@ public class Interest_Point_Registration implements PlugIn
 				IOFunctions.println( "[TIMING] Total time before GlobalOpt: " + (System.currentTimeMillis() - processRegistrationStart) + " ms" );
 				start = System.currentTimeMillis();
 
-				if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
+				if ( globalOptParameters.method == GlobalOptType.APGO )
+				{
+					// The selected model is used to fit each link's pairwise transform. The solve
+					// itself is always over full affines - that is intrinsic to the method - so a
+					// lower-DOF selection constrains the links, not the per-view output.
+					final APGOSolver.Parameters apgoParameters = new APGOSolver.Parameters();
+					apgoParameters.pairwiseModel = model;
+
+					if ( !AffineModel3D.class.isInstance( model ) )
+						IOFunctions.println( "APGO: fitting each link with " + model.getClass().getSimpleName()
+								+ " as selected, but the global solve is over full affines regardless." );
+
+					// safe because everything downstream only ever reads the model through Affine3D
+					@SuppressWarnings( { "unchecked", "rawtypes" } )
+					final HashMap< ViewId, Tile< M > > apgo = ( HashMap ) APGOSolver.computeTiles(
+							pmc, fixedViews, subset.getGroups(), apgoParameters );
+
+					models = apgo;
+				}
+				else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
 				{
 					final ConvergenceStrategy cs = new ConvergenceStrategy( Double.isNaN( globalOptParameters.maxError ) ? pairwiseMatching.globalOptError() : globalOptParameters.maxError, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth );
 
@@ -519,7 +540,26 @@ public class Interest_Point_Registration implements PlugIn
 
 				//models = (HashMap< ViewId, Tile< ? extends AbstractModel< ? > > >)(Object)GlobalOpt.compute( pairwiseMatching.getMatchingModel().getModel(), pmc, cs, fixedViews, groups );
 
-				if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
+				if ( globalOptParameters.method == GlobalOptType.APGO )
+				{
+					// The selected model is used to fit each link's pairwise transform. The solve
+					// itself is always over full affines - that is intrinsic to the method - so a
+					// lower-DOF selection constrains the links, not the per-view output.
+					final APGOSolver.Parameters apgoParameters = new APGOSolver.Parameters();
+					apgoParameters.pairwiseModel = model;
+
+					if ( !AffineModel3D.class.isInstance( model ) )
+						IOFunctions.println( "APGO: fitting each link with " + model.getClass().getSimpleName()
+								+ " as selected, but the global solve is over full affines regardless." );
+
+					// safe because everything downstream only ever reads the model through Affine3D
+					@SuppressWarnings( { "unchecked", "rawtypes" } )
+					final HashMap< ViewId, Tile< M > > apgo = ( HashMap ) APGOSolver.computeTiles(
+							pmc, fixedViews, subset.getGroups(), apgoParameters );
+
+					models = apgo;
+				}
+				else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
 				{
 					final ConvergenceStrategy cs = new ConvergenceStrategy( Double.isNaN( globalOptParameters.maxError ) ? pairwiseMatching.globalOptError() : globalOptParameters.maxError, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth );
 

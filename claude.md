@@ -433,6 +433,163 @@ When opening a Split dataset in Data Explorer:
 
 Detected via `isSplitDataset()` checking for `SplitViewerImgLoader` / `SplitMultiResolutionImgLoader`.
 
+## APGO — Lie-group global optimization (2026-09-09)
+
+A Java port of [bigstream `stitch.py::find_tile_transforms`](https://github.com/JaneliaSciComp/bigstream/blob/499c114/bigstream/stitch.py#L483),
+in `...process.interestpointregistration.global.apgo`. Where `GlobalOpt` iterates point matches
+through mpicbg's `TileConfiguration`, APGO collapses each link to one pairwise transform and
+solves on the affine Lie group: matrix-log init, then Gauss-Newton.
+
+Selectable as `GlobalOptType.APGO`. The transformation model the user selects is used to fit each
+link's pairwise transform (`Parameters.pairwiseModel`, a prototype copied per link — any
+`Model & Affine3D` works, including `InterpolatedAffineModel3D`). The **solve itself is always
+over full affines**, which is intrinsic to the method, so a lower-DOF selection constrains the
+links, not the per-view output; APGO logs a note when the two differ. Measured per-link model
+against bead max error: affine 8.355, affine+rigid λ=0.01 8.356, rigid 8.583, translation 8.997 —
+so the production selection is indistinguishable from pure affine, and full affine is the right
+default under `INFORMATION`.
+
+**It beats `GlobalOpt` on this data.** Benchmarked on `20260819_ExpID96_S4` (1678 views, 13370
+links, 1.03M correspondences) from the pre-solve state, production config (3 px, 12 inliers,
+affine+rigid λ=0.01, splitPoints weight 0.01):
+
+| solver | beads mean / max | splitPoints mean / max | solve |
+|---|---|---|---|
+| none (pre-solve) | 10.52 / 74.57 | 1.13 / 1.63 | – |
+| GlobalOpt | 2.068 / 9.657 | 3.424 / 31.04 | 123 s |
+| **APGO affine / INFORMATION** | **2.020 / 8.364** | **1.672 / 8.448** | **3.8 s** |
+
+`GlobalOpt` must sacrifice the splitPoints to fit the beads; APGO does not have to.
+
+### The one thing that matters: a scalar weight cannot express directional uncertainty
+
+Overlap regions are thin slabs, so a link constrains its affine columns along the thin axis
+hundreds of times more weakly than translation — measured `σ_min/σ_max` of 0.20 for beads and
+0.025 for splitPoints, i.e. curvature ratios of 25x and 1540x *within the same link*. A scalar
+weight scales the whole 12-D residual uniformly: it can say "trust this link less", never "this
+link determines translation but not shear".
+
+`Weighting.INFORMATION` replaces `Σ w‖r‖²` with `Σ rᵀΛr`, where `Λ = I₃ ⊗ M` and
+`M = Σᵢ wᵢ[pᵢ;1][pᵢ;1]ᵀ` is the weighted second moment of the link's source points — one 4x4
+accumulation per link, no free parameters. That is the same quadratic form as
+`Σᵢ‖G_a pᵢ − G_b qᵢ‖²`, so the collapse becomes lossless to second order (ordinary factor-graph
+marginalization), and it subsumes match count and label weights, which already live in `M`.
+
+The evidence is that **the DOF trend reverses**. Per-link max bead error:
+
+| | affine (12) | rigid (6) | translation (3) |
+|---|---|---|---|
+| scalar `UNIFORM` | 49.79 | 23.35 | 17.24 |
+| `INFORMATION` | **8.35** | 8.56 | 8.98 |
+
+Extra parameters are noise when the objective cannot say which ones a link measured, and signal
+when it can. Nothing else changed between those two rows.
+
+### Performance: two fixes worth 166 s → 3.8 s
+
+- **Never use `Tile.findConnectedTile`.** It answers "which tile owns the other end of this match"
+  by scanning every match of every connected tile for an identity hit — O(partners × their
+  matches). At 2M matches that was ~40 s, most of the runtime. A tile's own matches always carry
+  `p1` on that tile (`PointMatch.flip` keeps the `Point` objects, only swapping roles), so one
+  `IdentityHashMap<Point,Integer>` pass answers it in O(1).
+- **Do not over-converge the inner solve.** CG was hitting its 10000-iteration cap every time — a
+  graph Laplacian's condition number grows with diameter², and the information anisotropy
+  multiplies it, so a tight tolerance is unreachable *and* unnecessary for a Gauss-Newton inner
+  step. Quality is flat from 50 to 2500 iterations. Same story outside: `convergenceThreshold`
+  stops GN after 1 iteration here and does not fire on synthetic data that needs all 10.
+
+The matrix-log initialization alone already beats `GlobalOpt` (2.021 / 8.674 in 2.9 s).
+
+### Gotchas
+
+- **`Model.fit(Collection)` reads `p1.getL()` against `p2.getW()`.** `Tile.apply()` overwrites
+  `getW()`, so fitting after another solver has run silently uses *its* output. Build fresh
+  `Point`s from `getL()` on both sides.
+- **Split-boundary correspondences are coplanar**, so `AffineModel3D.fit` throws
+  `IllDefinedDataPointsException`. Without an affine→rigid→translation fallback every such link is
+  silently dropped.
+- **One bad link poisons everything** — all views are coupled through the incidence matrix, so a
+  single non-finite `log T` turns the whole solution into NaN with no other symptom. Validate
+  determinant and finiteness at fit time.
+- **`XmlIoSpimData2.saveWithFilename` takes a bare file name**, assembled against `basePath`. An
+  absolute path silently builds a nested `<basePath>/Volumes/.../dataset.xml` tree and copies
+  `interestpoints.n5` into it.
+- **`GlobalOpt` is not deterministic** with a plain affine model: three runs on identical input
+  gave max 20.9 / 14.4 / 36.2 px. The production rigid-regularized model is much tighter
+  (25.3 / 27.3 / 27.6). Report it as a range over repeats; APGO is bit-identical.
+
+### Multi-consensus: no solver consumes it
+
+`RANSAC` multi-consensus mode (GUI checkbox → `RANSACParameters`) flattens all consensus sets into
+`PairwiseResult.getInliers()` with a parallel `getInlierSetIds()`. **`InterestPointMatchCreator`
+never reads the set ids**, so `GlobalOpt` and APGO both receive the sets merged and fit one
+relative transform to their union — a least-squares compromise between incompatible models,
+weighted by set size. `MaxErrorLinkRemoval` buckets per partner tile, so its only lever is
+dropping the whole link.
+
+The ids are persisted (`Interest_Point_Registration:391` → v2 N5, 4xN) and consumed **only** by
+`process/splitting/*`. The intended pipeline is: detect multi-consensus at match time → persist →
+`ConsensusSetCriterion` cuts tiles where sets disagree → re-register, now single-consensus. Note
+`LoadCorrespondencesPairwise` reads the ids and discards them, so a "Load Correspondences" run
+cannot carry the signal forward — it is available exactly once, at match time.
+
+### Method notes for re-running this
+
+- **Score per label, never pooled.** 10503 of the 13370 pairs are `splitPoints`, which start out
+  already consistent (max 1.63 px before any solve), so pooled percentiles mostly measure the
+  tiling glue and hide the registration. This produced a wrong conclusion once.
+- **Benchmark from the pre-solve state**, stripping the leading `AffineModel3D regularized...`
+  transform — otherwise you are asking each solver to improve on an already optimal answer.
+  Both solvers are insensitive to the starting point: also stripping `Stitching Transform`
+  (baseline 45.2 / 151.6) changes the answers by <0.01 px.
+- **Cache the pairwise results.** `-Dapgo.cache=/path/pairs.bin` in `BenchmarkAPGO`; assembling
+  them costs ~2.5 min over SMB and reloads in 0.2 s. Do this before debugging numerics.
+- **Validate against the real reference.** `~/basic2/apgo_reference.py` runs bigstream's
+  `find_tile_transforms` verbatim on a bipartite grid exported by `APGOReferenceExport`; Java and
+  bigstream agree to 3.2e-13. Plus exact-recovery on synthetic data (1.6e-13), which is what
+  catches a wrong sign or slot convention. `~/basic2` has numpy 1.26 / scipy 1.12.
+- Compare **displacement of points**, never raw matrix entries — linear terms of ~0.02 against
+  translations of ~10 in one threshold is meaningless.
+
+### Every approximation is measured, and none of them matter
+
+Audited on the hardest available starting point (solve *and* stitching stripped, bead baseline
+45.2 mean / 151.6 max). Effect on bead error:
+
+| approximation | how tested | effect |
+|---|---|---|
+| `dexp⁻¹` omitted from the Jacobian | implemented exactly, checked against finite differences | 0.02 px max |
+| BCH + linearization of the step | step damping 1.0 → 0.125 with 8x the iterations | **0.0005 px** |
+| CG stopped at 250 iterations | swept 50 → 2500 | 0.05 px |
+| Gauss-Newton stopped adaptively | swept 0 → 10 iterations | 0.02 px vs full |
+| Tikhonov prior 1e-6 | swept 1e-9 → 1e-2 | flat to 1e-4, biased only at 1e-2 |
+| `Λ = I₃ ⊗ M` assumes the linear part is I | deviation measured at 2.7%; ±5/20/50% weight jitter | ≤0.01 px |
+| `Mat4` exp/log truncation | round trip over 1000 random affines | 7.6e-14 |
+
+Total spread across every setting: ~0.1 px on max and ~0.002 px on mean, against a 1.3 px max gap
+to `GlobalOpt`. The conclusion rests on none of them. `Parameters.stepDamping` and `tikhonov`
+remain as diagnostics for re-running this — halve the step and double the iterations, and if
+second-order truncation mattered the answer would improve.
+
+The `dexp⁻¹` row deserves a note, since it is the one that looks like it should matter. The
+`dexp` the reference applies, to the residual, is provably a no-op: it is applied to `r` itself
+and `dexp_x(x) = x` because `ad_x(x) = 0` (measured: 5e-16). The correction only bites on the
+*solved* step, which is not parallel to `r` once many links compromise —
+`Parameters.jacobianDexpOrder` implements it there properly, and it is worth 0.02 px. It scales
+with `‖r‖`, so it would matter on data whose initial misalignment is large.
+
+These are all *local* sensitivity tests around the found solution; they show nothing is biasing
+the answer, not that no distant better optimum exists. The best evidence for the latter is that
+two starting points differing 4x in initial error converge to within 0.003 px (see method notes).
+
+### Measured dead ends — do not retry
+
+Scalar weighting by match count or by fit residual (both diverge — any heterogeneous scalar drives
+the weighted Laplacian near-singular); affine regularized toward rigid/translation per link (the
+optimum sits at the boundary, never beating pure translation); per-label discrete DOF (a two-level
+approximation of the information matrix, underperforms plain translation); beads-only links (5
+disconnected components, 93 unconstrained views — the splitPoints carry the connectivity).
+
 ## House Rules
 
 - **Never commit without explicit user consent.**
