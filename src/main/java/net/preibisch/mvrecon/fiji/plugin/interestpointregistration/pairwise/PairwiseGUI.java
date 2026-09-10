@@ -22,10 +22,13 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
+import java.util.Map;
+
 import ij.gui.GenericDialog;
 
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.TransformationModelGUI;
+import net.preibisch.mvrecon.fiji.plugin.util.DescribesParameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwise;
@@ -34,7 +37,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 
 import mpicbg.spim.data.sequence.ViewId;
 
-public abstract class PairwiseGUI
+public abstract class PairwiseGUI implements DescribesParameters
 {
 	//protected TransformationModelGUI presetModel = null;
 
@@ -169,4 +172,41 @@ public abstract class PairwiseGUI
 	 * @return - the error allowed for the global optimization
 	 */
 	public abstract double globalOptError();
+
+	/**
+	 * Shared by every {@code describeParameters()} override that uses a {@link TransformationModelGUI}:
+	 * puts {@code transformationModel}, and (if regularized) {@code regularizationModel} + {@code lambda}.
+	 */
+	protected static void putModelParams( final Map<String,String> p, final TransformationModelGUI model )
+	{
+		if ( model == null )
+			return;
+
+		final String tm = TransformationModelGUI.modelIndexToSparkName( model.getModelIndex() );
+		if ( tm != null ) p.put( "transformationModel", tm );
+
+		if ( model.isRegularize() )
+		{
+			final String rm = TransformationModelGUI.regularizationIndexToSparkName( model.getRegularizedModelIndex() );
+			if ( rm != null ) p.put( "regularizationModel", rm );
+			p.put( "lambda", Double.toString( model.getLambda() ) );
+		}
+	}
+
+	/**
+	 * Shared by every {@code describeParameters()} override that uses {@link RANSACParameters}: puts
+	 * {@code ransacMaxError}, {@code ransacMinInlierRatio}, {@code ransacMinNumInliers},
+	 * {@code ransacIterations}, {@code ransacMultiConsensus}.
+	 */
+	protected static void putRansacParams( final Map<String,String> p, final RANSACParameters ransacParams )
+	{
+		if ( ransacParams == null )
+			return;
+
+		p.put( "ransacMaxError", Double.toString( ransacParams.getMaxEpsilon() ) );
+		p.put( "ransacMinInlierRatio", Double.toString( ransacParams.getMinInlierRatio() ) );
+		p.put( "ransacMinNumInliers", Integer.toString( ransacParams.getMinNumMatches() ) );
+		p.put( "ransacIterations", Integer.toString( ransacParams.getNumIterations() ) );
+		p.put( "ransacMultiConsensus", Boolean.toString( ransacParams.multiConsensus() ) );
+	}
 }

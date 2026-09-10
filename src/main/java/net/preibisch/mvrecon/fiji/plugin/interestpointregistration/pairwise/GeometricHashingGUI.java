@@ -23,6 +23,8 @@
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
 import java.awt.Font;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.TransformationModelGUI;
@@ -118,4 +120,20 @@ public class GeometricHashingGUI extends PairwiseGUI
 
 	@Override
 	public double globalOptError() { return ransacParams.getMaxEpsilon(); }
+
+	@Override
+	public Map<String,String> describeParameters()
+	{
+		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
+		// matching method name as used on the Spark CLI
+		p.put( "matchingMethod", "FAST_ROTATION" );
+		// transformation/regularization model + lambda
+		putModelParams( p, model );
+		// descriptor params
+		p.put( "redundancy", Integer.toString( GeometricHashingParameters.redundancy ) );
+		p.put( "significance", Double.toString( GeometricHashingParameters.ratioOfDistance ) );
+		// RANSAC params
+		putRansacParams( p, ransacParams );
+		return p;
+	}
 }

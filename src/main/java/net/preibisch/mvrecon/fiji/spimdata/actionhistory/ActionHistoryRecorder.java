@@ -1,0 +1,491 @@
+/*-
+ * #%L
+ * Software for the reconstruction of multi-view microscopic acquisitions
+ * like Selective Plane Illumination Microscopy (SPIM) Data.
+ * %%
+ * Copyright (C) 2012 - 2026 Multiview Reconstruction developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
+package net.preibisch.mvrecon.fiji.spimdata.actionhistory;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import mpicbg.spim.data.sequence.ViewDescription;
+import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+
+/**
+ * Static helper used by GUI plugins to record a successful command into the
+ * dataset's {@link ActionHistory}.
+ *
+ * <p>All calls are best-effort: a null dataset, null history, or any thrown
+ * exception is swallowed so that recording can never break the GUI command
+ * that triggered it.</p>
+ */
+public final class ActionHistoryRecorder
+{
+	private ActionHistoryRecorder() {}
+
+	/**
+	 * Whether new actions are recorded (set from the "Enable_action_history" checkbox in Data_Explorer's
+	 * advanced-options dialog; on by default). Existing history already stored in the XML is always
+	 * loaded/shown regardless of this flag -- it only gates {@link #record}.
+	 */
+	public static boolean enabled = true;
+
+	/**
+	 * Record an action. Any field may be null/empty except {@code actionId}. No-op if {@link #enabled}
+	 * is false. Adds a description of {@code affectedViews} to {@code params} (see
+	 * {@link #putViewSelection}) before storing -- callers don't need to call it themselves.
+	 *
+	 * @param data         dataset to attach the record to
+	 * @param actionId     stable identifier matching the translator registry, e.g. "register-interestpoints"
+	 * @param mvreconClass the FQN of the originating mvrecon plugin class
+	 * @param params       parameter key/value pairs (use a LinkedHashMap to preserve order)
+	 * @param affectedViews views the action operated on (may be null)
+	 * @param resultRef    pointer used by data-tied removal (see ActionHistory.removeByResultRef)
+	 */
+	public static void record(
+			final SpimData2 data,
+			final String actionId,
+			final String mvreconClass,
+			final Map<String,String> params,
+			final List<? extends ViewId> affectedViews,
+			final String resultRef )
+	{
+		if ( !enabled )
+			return;
+		try
+		{
+			if ( data == null )
+				return;
+			final ActionHistory history = data.getActionHistory();
+			if ( history == null )
+				return;
+			final LinkedHashMap<String,String> mergedParams = new LinkedHashMap<>();
+			if ( params != null )
+				mergedParams.putAll( params );
+			putViewSelection( mergedParams, data, affectedViews );
+			history.add( new ActionRecord(
+					actionId,
+					System.currentTimeMillis(),
+					mvreconClass,
+					mergedParams,
+					affectedViews,
+					resultRef ) );
+		}
+		catch ( final Throwable t )
+		{
+			// never let history recording break a plugin
+			System.err.println( "ActionHistoryRecorder: failed to record '" + actionId + "': " + t );
+		}
+	}
+
+	/** Convenience: start a new ordered param map. */
+	public static LinkedHashMap<String,String> params() { return new LinkedHashMap<>(); }
+
+	/** Format an int vector as a bare "x,y,z" string, as the BigStitcher-Spark CLI expects (no brackets). */
+	public static String csv( final int[] v )
+	{
+		return v == null ? null : Arrays.stream( v ).mapToObj( String::valueOf ).collect( Collectors.joining( "," ) );
+	}
+
+	/** Convenience: put non-null value (skip nulls). */
+	public static void put( final LinkedHashMap<String,String> map, final String key, final Object value )
+	{
+		if ( map == null || key == null || value == null )
+			return;
+		map.put( key, value.toString() );
+	}
+
+	/**
+	 * Merge a sub-component's {@code describeParameters()} output into the action's param map,
+	 * skipping null values. Used by callers that pull exporter/matcher-specific params in on top of
+	 * their own (e.g. Image_Fusion + its ImgExport, Interest_Point_Registration + its PairwiseGUI).
+	 */
+	public static void merge( final Map<String,String> dest, final Map<String,String> src )
+	{
+		if ( dest == null || src == null )
+			return;
+		for ( final Map.Entry<String,String> e : src.entrySet() )
+			if ( e.getValue() != null )
+				dest.put( e.getKey(), e.getValue() );
+	}
+
+	/**
+	 * Best-effort variant of {@link #merge(Map, Map)}: calls {@code src} and merges its result,
+	 * swallowing any exception the sub-component's {@code describeParameters()} throws (mirrors the
+	 * best-effort contract of {@link #record}). Note: unlike {@link #merge(Map, Map)}, {@code src} is
+	 * a supplier so the call itself (not just the merge) is covered by the try/catch.
+	 */
+	public static void mergeSafe( final Map<String,String> dest, final java.util.function.Supplier<? extends Map<String,String>> src )
+	{
+		try
+		{
+			merge( dest, src.get() );
+		}
+		catch ( final Throwable t )
+		{
+			System.err.println( "ActionHistoryRecorder: failed to merge params: " + t );
+		}
+	}
+
+	/** "tp,vs" — the ViewId format every Spark CLI view-selection flag (-vi, -fv) expects. */
+	public static String formatViewId( final ViewId v )
+	{
+		return v.getTimePointId() + "," + v.getViewSetupId();
+	}
+
+	/** {@value ActionToSparkCli#MULTI_VALUE_DELIM}-delimited "tp,vs" pairs, for repeatKeys-expanded flags (-vi, -fv). */
+	public static String joinViewIds( final Collection<? extends ViewId> views )
+	{
+		final List<String> parts = new ArrayList<>();
+		for ( final ViewId v : views )
+			parts.add( formatViewId( v ) );
+		return String.join( ActionToSparkCli.MULTI_VALUE_DELIM, parts );
+	}
+
+	/**
+	 * Describe a view selection as compact BigStitcher-Spark view-selection params:
+	 * <ol>
+	 * <li>everything present was selected -- nothing to store</li>
+	 * <li>the basis check: do per-dimension id sets ({@code angleId}/{@code tileId}/
+	 *     {@code illuminationId}/{@code channelId}/{@code timepointId}) reconstruct the selection?
+	 *     This is the minimal, most permissive such filter (see {@link #reconstructsExactly})</li>
+	 * <li>view-setup-id compaction: group by timepoint and compact the used view-setup ids
+	 *     (see {@link #putViewSetupCompaction})</li>
+	 * </ol>
+	 */
+	public static void putViewSelection(
+			final LinkedHashMap<String,String> params,
+			final SpimData2 data,
+			final Collection<? extends ViewId> viewIds )
+	{
+		if ( params == null || data == null || viewIds == null || viewIds.isEmpty() )
+			return;
+
+		final List<ViewDescription> present = presentViews( data.getSequenceDescription().getViewDescriptions().values() );
+
+		final Set<ViewId> selected = new HashSet<>( viewIds );
+
+		// fast path: everything selected -- no filter needed
+		if ( selected.size() == present.size() )
+			return;
+
+		final int n = present.size();
+		final int nDims = DIM_KEYS.length;
+		final List<Set<Integer>> all = new ArrayList<>( nDims );
+		final List<Set<Integer>> used = new ArrayList<>( nDims );
+		for ( int d = 0; d < nDims; ++d )
+		{
+			all.add( new LinkedHashSet<>() );
+			used.add( new LinkedHashSet<>() );
+		}
+
+		// cache per-dimension values + selected flag once (flat n*nDims array) so the verify pass
+		// below doesn't re-derive them
+		final int[] vals = new int[ n * nDims ];
+		final boolean[] isSelectedArr = new boolean[ n ];
+		for ( int i = 0; i < n; ++i )
+		{
+			final ViewDescription vd = present.get( i );
+			final boolean isSelected = selected.contains( vd );
+			isSelectedArr[ i ] = isSelected;
+			final int base = i * nDims;
+			for ( int d = 0; d < nDims; ++d )
+			{
+				final int v = DIM_EXTRACTORS[ d ].get( vd );
+				vals[ base + d ] = v;
+				all.get( d ).add( v );
+				if ( isSelected )
+					used.get( d ).add( v );
+			}
+		}
+
+		// basis check: filter = restricted dims only; "all values used" == unrestricted
+		final List<Set<Integer>> filter = new ArrayList<>( nDims );
+		for ( int d = 0; d < nDims; ++d )
+			filter.add( normalizeFilter( used.get( d ), all.get( d ) ) );
+
+		if ( reconstructsExactly( vals, isSelectedArr, n, nDims, filter, selected.size() ) )
+		{
+			emitDimFilter( params, filter );
+			return;
+		}
+
+		putViewSetupCompaction( params, viewIds );
+	}
+
+	/** Stores each non-null per-dimension id set in {@code filter} under its {@link #DIM_KEYS} name. */
+	private static void emitDimFilter( final LinkedHashMap<String,String> params, final List<Set<Integer>> filter )
+	{
+		for ( int d = 0; d < filter.size(); ++d )
+			if ( filter.get( d ) != null )
+				put( params, DIM_KEYS[ d ], joinIds( filter.get( d ) ) );
+	}
+
+	/** {@code null} (unrestricted) if {@code restricted} is null or covers every present value, else {@code restricted}. */
+	private static Set<Integer> normalizeFilter( final Set<Integer> restricted, final Set<Integer> all )
+	{
+		return restricted == null || restricted.equals( all ) ? null : restricted;
+	}
+
+	/**
+	 * Fallback for selections the basis check can't express: group by timepoint, take the union of
+	 * view-setup ids used, and compact that. Package-private for direct testing.
+	 */
+	static void putViewSetupCompaction( final LinkedHashMap<String,String> params, final Collection<? extends ViewId> viewIds )
+	{
+		final Map<Integer,Set<Integer>> setupIdsByTimepoint = new LinkedHashMap<>();
+		final Set<Integer> unionSetupIds = new LinkedHashSet<>();
+		for ( final ViewId v : viewIds )
+		{
+			setupIdsByTimepoint.computeIfAbsent( v.getTimePointId(), tp -> new LinkedHashSet<>() ).add( v.getViewSetupId() );
+			unionSetupIds.add( v.getViewSetupId() );
+		}
+
+		// did every used timepoint use that same union? (trivially true with only one timepoint)
+		boolean sameSetupIdsEveryTimepoint = true;
+		for ( final Set<Integer> setupIds : setupIdsByTimepoint.values() )
+		{
+			if ( !setupIds.equals( unionSetupIds ) )
+			{
+				sameSetupIdsEveryTimepoint = false;
+				break;
+			}
+		}
+
+		// always store the concrete timepoint list, so ActionToSparkCli can rebuild "-vi" pairs
+		// (see ActionToSparkCli.expandViewSetupCompaction) without needing the live dataset
+		put( params, "timepointId", joinIds( setupIdsByTimepoint.keySet() ) );
+
+		if ( sameSetupIdsEveryTimepoint )
+		{
+			putViewSetupIdCompaction( params, "viewSetupId", unionSetupIds );
+		}
+		else
+		{
+			// per-timepoint sets differ -- compact each one separately, namespaced by timepoint
+			for ( final Map.Entry<Integer,Set<Integer>> e : setupIdsByTimepoint.entrySet() )
+				putViewSetupIdCompaction( params, "viewSetupId@" + e.getKey(), e.getValue() );
+		}
+	}
+
+	/** True iff {@code filter}'s cross-product reproduces exactly the views marked in {@code isSelectedArr}. */
+	static boolean reconstructsExactly(
+			final int[] vals,
+			final boolean[] isSelectedArr,
+			final int n,
+			final int nDims,
+			final List<Set<Integer>> filter,
+			final int selectedCount )
+	{
+		int reconstructedCount = 0;
+		for ( int i = 0; i < n; ++i )
+		{
+			final int base = i * nDims;
+			boolean matches = true;
+			for ( int d = 0; d < nDims; ++d )
+			{
+				final Set<Integer> f = filter.get( d );
+				if ( f != null && !f.contains( vals[ base + d ] ) )
+				{
+					matches = false;
+					break;
+				}
+			}
+			if ( matches != isSelectedArr[ i ] )
+				return false;
+			if ( matches )
+				++reconstructedCount;
+		}
+		return reconstructedCount == selectedCount;
+	}
+
+	/**
+	 * Encodes {@code ids} under {@code prefix} as a range, else a one-hot bitset, else a plain list.
+	 * {@code ActionToSparkCli.decodeIdCompaction} reverses all three forms.
+	 */
+	static void putViewSetupIdCompaction( final LinkedHashMap<String,String> params, final String prefix, final Set<Integer> ids )
+	{
+		final int[] sorted = ids.stream().mapToInt( Integer::intValue ).toArray();
+		Arrays.sort( sorted );
+		final int min = sorted[ 0 ];
+		final int max = sorted[ sorted.length - 1 ];
+
+		if ( max - min + 1 == sorted.length )
+		{
+			put( params, prefix + "RangeStart", min );
+			put( params, prefix + "RangeEnd", max );
+			return;
+		}
+
+		final int span = max - min + 1;
+		// ponytail: 8x is a rough size heuristic, tune if it's ever off
+		if ( span <= sorted.length * 8 )
+		{
+			final StringBuilder bits = new StringBuilder( span );
+			int next = 0;
+			for ( int v = min; v <= max; ++v )
+			{
+				if ( next < sorted.length && sorted[ next ] == v )
+				{
+					bits.append( '1' );
+					++next;
+				}
+				else
+				{
+					bits.append( '0' );
+				}
+			}
+			put( params, prefix + "BitsetStart", min );
+			put( params, prefix + "BitsetBits", bits.toString() );
+			return;
+		}
+
+		put( params, prefix + "s", joinIds( ids ) );
+	}
+
+	/** Per-dimension {@code ViewDescription} accessor, paired with {@link #DIM_KEYS} by index. */
+	@FunctionalInterface
+	private interface DimExtractor
+	{
+		int get( ViewDescription vd );
+	}
+
+	// order defines the order params are emitted in putViewSelection()
+	private static final String[] DIM_KEYS = { "angleId", "tileId", "illuminationId", "channelId", "timepointId" };
+	private static final DimExtractor[] DIM_EXTRACTORS = {
+			vd -> vd.getViewSetup().getAngle().getId(),
+			vd -> vd.getViewSetup().getTile().getId(),
+			vd -> vd.getViewSetup().getIllumination().getId(),
+			vd -> vd.getViewSetup().getChannel().getId(),
+			vd -> vd.getTimePointId()
+	};
+
+	private static String joinIds( final Collection<Integer> ids )
+	{
+		return ids.stream().map( String::valueOf ).collect( Collectors.joining( "," ) );
+	}
+
+	/**
+	 * Map an N5 {@code Compression} object to the name BigStitcher-Spark's {@code Compressions} enum
+	 * expects (Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw). The N5 implementation classes are named
+	 * {@code <Name>Compression} (e.g. {@code ZstandardCompression}), so we strip the trailing
+	 * "Compression" from the simple class name. Returns null for null input.
+	 */
+	public static String sparkCompression( final Object compression )
+	{
+		if ( compression == null )
+			return null;
+		final String simple = compression.getClass().getSimpleName();
+		return simple.endsWith( "Compression" ) && simple.length() > "Compression".length()
+				? simple.substring( 0, simple.length() - "Compression".length() )
+				: simple;
+	}
+
+	/**
+	 * Reconstructs the view list a recorded action operated on, from its stored {@code params} and
+	 * {@code viewDescriptions} -- the read-side counterpart of {@link #putViewSelection}: no
+	 * dimension/view-setup keys means every present view; view-setup-id keys decode directly; else
+	 * cross the per-dimension filter against {@code present}. Takes the already-present-filtered
+	 * view descriptions (not a dataset) so {@code XmlIoActionHistory} doesn't need the whole live
+	 * {@code SpimData2} just to expand a recorded selection, and can filter once per load instead of
+	 * once per record (see {@link #presentViews}).
+	 */
+	static List<ViewId> expandViewSelection( final List<ViewDescription> present, final Map<String,String> params )
+	{
+		final List<ViewId> viewSetupCompaction = ActionToSparkCli.decodeViewSetupCompaction( params );
+		if ( !viewSetupCompaction.isEmpty() )
+			return viewSetupCompaction;
+
+		final List<Set<Integer>> filter = new ArrayList<>( DIM_KEYS.length );
+		boolean anyRestricted = false;
+		for ( final String key : DIM_KEYS )
+		{
+			final Set<Integer> ids = parseCsvIdSet( params.get( key ) );
+			filter.add( ids );
+			if ( ids != null )
+				anyRestricted = true;
+		}
+		if ( !anyRestricted )
+			return new ArrayList<>( present );
+
+		final List<ViewId> out = new ArrayList<>();
+		for ( final ViewDescription vd : present )
+			if ( matchesFilter( filter, vd ) )
+				out.add( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) );
+		return out;
+	}
+
+	/**
+	 * True iff every non-null entry in {@code filter} accepts {@code vd}'s corresponding dimension
+	 * value. Not shared with {@link #reconstructsExactly}'s inner loop -- that one runs against a
+	 * precomputed flat {@code int[]} instead of a live {@code ViewDescription} specifically to avoid
+	 * repeated {@code ViewSetup} getter-chain calls across its O(n) verify pass at 100k+ views; this
+	 * one runs once per view with no repeated candidates to amortize against, so the direct
+	 * {@code ViewDescription} form is both simpler and just as fast here.
+	 */
+	private static boolean matchesFilter( final List<Set<Integer>> filter, final ViewDescription vd )
+	{
+		for ( int d = 0; d < DIM_KEYS.length; ++d )
+		{
+			final Set<Integer> f = filter.get( d );
+			if ( f != null && !f.contains( DIM_EXTRACTORS[ d ].get( vd ) ) )
+				return false;
+		}
+		return true;
+	}
+
+	/** {@code viewDescriptions}, filtering out missing ones. Used by {@link #putViewSelection} and by {@code XmlIoActionHistory}. */
+	static List<ViewDescription> presentViews( final Collection<? extends ViewDescription> viewDescriptions )
+	{
+		final List<ViewDescription> out = new ArrayList<>();
+		for ( final ViewDescription vd : viewDescriptions )
+			if ( vd.isPresent() )
+				out.add( vd );
+		return out;
+	}
+
+	/** Comma-separated ints, or an empty list if {@code csv} is null/empty. */
+	static List<Integer> parseCsvInts( final String csv )
+	{
+		if ( csv == null || csv.isEmpty() )
+			return Collections.emptyList();
+		final List<Integer> out = new ArrayList<>();
+		for ( final String s : csv.split( "," ) )
+			out.add( Integer.parseInt( s.trim() ) );
+		return out;
+	}
+
+	/** {@link #parseCsvInts}, or {@code null} (unrestricted) if empty. */
+	private static Set<Integer> parseCsvIdSet( final String csv )
+	{
+		final List<Integer> ids = parseCsvInts( csv );
+		return ids.isEmpty() ? null : new HashSet<>( ids );
+	}
+}

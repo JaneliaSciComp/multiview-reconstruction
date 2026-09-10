@@ -22,6 +22,9 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.TransformationModelGUI;
@@ -111,4 +114,16 @@ public class IterativeClosestPointGUI extends PairwiseGUI
 
 	@Override
 	public double globalOptError() { return parameters.getMaxDistance(); }
+
+	@Override
+	public Map<String,String> describeParameters()
+	{
+		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
+		p.put( "matchingMethod", "ICP" );
+		putModelParams( p, model );
+		p.put( "icpMaxError", Double.toString( IterativeClosestPointParameters.maxDistance ) );
+		p.put( "icpIterations", Integer.toString( IterativeClosestPointParameters.maxIterations ) );
+		p.put( "icpUseRANSAC", Boolean.toString( IterativeClosestPointParameters.defaultUseRANSAC ) );
+		return p;
+	}
 }

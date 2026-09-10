@@ -25,13 +25,14 @@ package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 import java.util.HashMap;
 import java.util.List;
 
+import net.preibisch.mvrecon.fiji.plugin.util.DescribesParameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
 
-public abstract class InterestPointDetectionGUI
+public abstract class InterestPointDetectionGUI implements DescribesParameters
 {
 	/*
 	 * which viewIds to process, set in queryParameters

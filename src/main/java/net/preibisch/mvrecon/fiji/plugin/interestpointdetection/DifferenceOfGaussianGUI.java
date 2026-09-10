@@ -25,7 +25,10 @@ package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 
 import ij.ImagePlus;
 import ij.gui.GenericDialog;
@@ -85,6 +88,72 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 
 	@Override
 	public String getDescription() { return "Difference-of-Gaussian"; }
+
+	@Override
+	public Map<String,String> describeParameters()
+	{
+		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
+		p.put( "sigma", Double.toString( sigma ) );
+		p.put( "threshold", Double.toString( threshold ) );
+		// Spark --type is the detection point type (MIN/MAX/BOTH), not the algorithm
+		if ( findMin && findMax )
+			p.put( "type", "BOTH" );
+		else if ( findMax )
+			p.put( "type", "MAX" );
+		else if ( findMin )
+			p.put( "type", "MIN" );
+		// Spark's Localization enum only has NONE/QUADRATIC (no Gaussian-mask fit) -- record what
+		// actually ran, not a coerced guess; ActionToSparkCli recognizes "GAUSS_FIT" as unsupported
+		// and omits --localization (falling back to Spark's own QUADRATIC default) with a warning,
+		// rather than this silently claiming QUADRATIC ran when it didn't.
+		p.put( "localization", localization == 0 ? "NONE" : localization == 1 ? "QUADRATIC" : "GAUSS_FIT" );
+		if ( !Double.isNaN( minIntensity ) )
+			p.put( "minIntensity", Double.toString( minIntensity ) );
+		if ( !Double.isNaN( maxIntensity ) )
+			p.put( "maxIntensity", Double.toString( maxIntensity ) );
+		// downsampleXYIndex holds the actual factor (1,2,4,...) for fixed choices, or 0/-1 for the
+		// "match Z resolution" auto modes, which compute a factor per view from voxel calibration
+		// (DownsampleTools.downsampleFactor) rather than a single fixed number. Resolve it here from
+		// the actual views being processed so the recorded command carries the real number instead
+		// of silently omitting -dsxy, which would leave Spark's own --downsampleXY default (2) in
+		// effect -- likely wrong. If views disagree (mixed calibration), a single whole-job flag
+		// can't represent it; record the distinct values and let the render-time warning surface it.
+		if ( downsampleXYIndex >= 1 )
+			p.put( "downsampleXY", Integer.toString( downsampleXYIndex ) );
+		else
+		{
+			final LinkedHashSet<Integer> resolved = new LinkedHashSet<>();
+			for ( final ViewId v : viewIdsToProcess )
+			{
+				final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( v.getTimePointId(), v.getViewSetupId() );
+				if ( vd.isPresent() )
+					resolved.add( DownsampleTools.downsampleFactor( downsampleXYIndex, downsampleZ, vd.getViewSetup().getVoxelSize() ) );
+			}
+			if ( resolved.size() == 1 )
+				p.put( "downsampleXY", Integer.toString( resolved.iterator().next() ) );
+			else if ( resolved.size() > 1 )
+				p.put( "downsampleXYVaries", resolved.toString() );
+		}
+		p.put( "downsampleZ", Integer.toString( downsampleZ ) );
+		// mvrecon's "Limit amount of detections" offers three modes (brightest / around median /
+		// weakest); Spark's --maxSpots only supports "brightest N per view", so only that mode
+		// translates to a flag. Record the mode + count regardless, so a non-brightest limit that
+		// silently can't be translated is still visible in the params dump / XML rather than
+		// vanishing without a trace (see ActionToSparkCli's warning comment for the CLI-side half
+		// of this).
+		if ( limitDetections )
+		{
+			final String mode;
+			if ( maxDetectionsTypeIndex == 0 ) mode = "BRIGHTEST";
+			else if ( maxDetectionsTypeIndex == 1 ) mode = "AROUND_MEDIAN";
+			else mode = "WEAKEST";
+			p.put( "limitDetectionsMode", mode );
+			p.put( "maxDetections", Integer.toString( maxDetections ) );
+			if ( maxDetectionsTypeIndex == 0 )
+				p.put( "maxSpots", Integer.toString( maxDetections ) );
+		}
+		return p;
+	}
 
 	@Override
 	public DifferenceOfGaussianGUI newInstance( final SpimData2 spimData, final List< ViewId > viewIdsToProcess )

@@ -266,7 +266,7 @@ public class SelectionDialog extends JDialog
 				if ( !vd.isPresent() )
 					continue;
 
-				if ( matchesSelection( vd, timepoints, viewSetups, angles, channels, illuminations, tiles, useAnd ) )
+				if ( matchesSelection( data, vd, timepoints, viewSetups, angles, channels, illuminations, tiles, useAnd ) )
 					selectedViews.add( vd );
 			}
 
@@ -300,7 +300,8 @@ public class SelectionDialog extends JDialog
 		}
 	}
 
-	private boolean matchesSelection(
+	private static boolean matchesSelection(
+			final SpimData2 data,
 			final BasicViewDescription<?> vd,
 			final Set<Integer> timepoints,
 			final Set<Integer> viewSetups,
@@ -355,7 +356,7 @@ public class SelectionDialog extends JDialog
 	 * Parse input string supporting ranges (4-10) and comma-separated values (1,6,10,100,2).
 	 * Returns null if input is empty/whitespace only.
 	 */
-	private Set<Integer> parseInput( final String input ) throws NumberFormatException
+	private static Set<Integer> parseInput( final String input ) throws NumberFormatException
 	{
 		if ( input == null || input.trim().isEmpty() )
 			return null;

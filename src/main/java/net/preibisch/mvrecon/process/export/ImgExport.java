@@ -28,9 +28,10 @@ import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionExportInterface;
+import net.preibisch.mvrecon.fiji.plugin.util.DescribesParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
-public interface ImgExport
+public interface ImgExport extends DescribesParameters
 {
 	/**
 	 * specify the desired 3d blocksize used for the Lazy instances

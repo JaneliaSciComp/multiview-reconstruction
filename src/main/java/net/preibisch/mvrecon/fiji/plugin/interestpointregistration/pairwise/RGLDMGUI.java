@@ -23,6 +23,8 @@
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
 import java.awt.Font;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.TransformationModelGUI;
@@ -137,4 +139,20 @@ public class RGLDMGUI extends PairwiseGUI
 
 	@Override
 	public double globalOptError() { return ransacParams.getMaxEpsilon(); }
+
+	@Override
+	public Map<String,String> describeParameters()
+	{
+		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
+		p.put( "matchingMethod", "PRECISE_TRANSLATION" );
+		putModelParams( p, model );
+		// descriptor params — read the statics that parseDialog() just assigned
+		p.put( "numNeighbors", Integer.toString( RGLDMParameters.numNeighbors ) );
+		p.put( "redundancy", Integer.toString( RGLDMParameters.redundancy ) );
+		p.put( "significance", Double.toString( RGLDMParameters.ratioOfDistance ) );
+		if ( RGLDMParameters.defaultLimitSearchRadius )
+			p.put( "searchRadius", Double.toString( RGLDMParameters.defaultSearchRadius ) );
+		putRansacParams( p, ransacParams );
+		return p;
+	}
 }

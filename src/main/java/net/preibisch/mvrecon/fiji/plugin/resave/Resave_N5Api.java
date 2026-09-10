@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.fiji.plugin.resave;
 
 import java.io.File;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -61,6 +62,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 import net.preibisch.mvrecon.process.export.RetryTracker;
@@ -91,7 +93,7 @@ public class Resave_N5Api implements PlugIn
 			for ( final ViewSetup vs : xml.getViewSetupsToProcess() )
 				vidsToProcess.add( new ViewId( tp.getId(), vs.getId() ) );
 
-		resaveN5( xml.getData(), vidsToProcess, n5params, true );
+		resaveN5( xml.getData(), vidsToProcess, n5params, true, xml.getXMLURI() );
 	}
 
 
@@ -100,6 +102,21 @@ public class Resave_N5Api implements PlugIn
 			final Collection<? extends ViewId> vidsToResave,
 			final ParametersResaveN5Api n5Params,
 			final boolean saveXML )
+	{
+		return resaveN5( data, vidsToResave, n5Params, saveXML, null );
+	}
+
+	/**
+	 * @param inputXmlURI URI of the source/input BigStitcher XML this resave reads from; recorded in
+	 *        the action history so the BigStitcher-Spark translation can emit the correct {@code -x}
+	 *        (input) rather than the resaved output. May be null when unknown (e.g. initial import).
+	 */
+	public static SpimData2 resaveN5(
+			final SpimData2 data,
+			final Collection<? extends ViewId> vidsToResave,
+			final ParametersResaveN5Api n5Params,
+			final boolean saveXML,
+			final URI inputXmlURI )
 	{
 		final SpimData2 sdReduced = SpimData2Tools.reduceSpimData2( data, vidsToResave.stream().collect( Collectors.toList() ) );
 
@@ -457,6 +474,49 @@ public class Resave_N5Api implements PlugIn
 			throw new RuntimeException( "There is no ImgLoader available for " + n5Params.format + ". Data is resaved, but we will not be able to load it" );
 
 		sdReduced.setBasePathURI( URITools.getParentURINoEx( n5Params.xmlURI ) );
+
+		// best-effort: recording history must never abort a resave whose actual N5 data has
+		// already been written (that would leave orphaned data with a stale/unwritten XML below)
+		try
+		{
+			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+			ActionHistoryRecorder.put( params, "inputXml", inputXmlURI );
+			ActionHistoryRecorder.put( params, "n5Path", n5Params.n5URI );
+			// Zarr v3 embeds the SpimData JSON into the -o container's zarr.json and writes no separate
+			// xml (see XmlIoSpimData2.save), so -xo is meaningless there; only record it for formats
+			// that actually produce a standalone output xml (N5, HDF5, Zarr v2).
+			if ( n5Params.format != StorageFormat.ZARR )
+				ActionHistoryRecorder.put( params, "xmlOut", n5Params.xmlURI );
+			ActionHistoryRecorder.put( params, "storage", n5Params.format );
+			// Spark expects bare "x,y,z" — Arrays.toString would yield "[x,y,z]" which picocli rejects
+			ActionHistoryRecorder.put( params, "blockSize", ActionHistoryRecorder.csv( n5Params.subdivisions[ 0 ] ) );
+			ActionHistoryRecorder.put( params, "blockScale", ActionHistoryRecorder.csv( n5Params.blockSizeFactor ) );
+			// downsampling pyramid as Spark's -ds expects it: "1,1,1;2,2,1;4,4,2;..."
+			if ( n5Params.resolutions != null )
+			{
+				final StringBuilder ds = new StringBuilder();
+				for ( int d = 0; d < n5Params.resolutions.length; ++d )
+				{
+					if ( d > 0 ) ds.append( ';' );
+					ds.append( ActionHistoryRecorder.csv( n5Params.resolutions[ d ] ) );
+				}
+				ActionHistoryRecorder.put( params, "downsampling", ds.toString() );
+			}
+			ActionHistoryRecorder.put( params, "compression", ActionHistoryRecorder.sparkCompression( n5Params.compression ) );
+			ActionHistoryRecorder.put( params, "useSharding", n5Params.useSharding );
+			final ArrayList<ViewId> vidCopy = new ArrayList<>( vidsToResave );
+			ActionHistoryRecorder.record(
+					sdReduced,
+					"resave",
+					Resave_N5Api.class.getName(),
+					params,
+					vidCopy,
+					"resave:" + n5Params.n5URI );
+		}
+		catch ( final Throwable t )
+		{
+			IOFunctions.println( "[ActionHistory] failed to record 'resave': " + t );
+		}
 
 		if ( saveXML )
 		{
