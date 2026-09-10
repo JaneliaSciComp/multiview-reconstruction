@@ -57,6 +57,7 @@ import javax.swing.JLabel;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata.OmeNgffDataset;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformation;
@@ -93,6 +94,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrProperties;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
@@ -194,6 +196,10 @@ public class OMEZARR implements MultiViewDatasetDefinition
 		//
 		final HashMap< String, Pair< DatasetAttributes, Pair< VoxelDimensions, double[] > > > attrMap = new HashMap<>();
 
+		// per-dataset x,y,z size resolved from the OME-NGFF axes, so a non-standard axis order
+		// yields the correct ViewSetup size instead of the raw, reversed n5 getDimensions().
+		final HashMap< String, long[] > spatialDimsMap = new HashMap<>();
+
 		int numDimensions = -1;
 		long sizeC = -1;
 		long sizeT = -1;
@@ -228,6 +234,22 @@ public class OMEZARR implements MultiViewDatasetDefinition
 				return null;
 			}
 
+			// raw data-dim indices of x,y,z,c,t (see AllenOMEZarrProperties.rawAxisIndices);
+			// scale/translation/getDimensions() share this order, so the same indices apply to each
+			final Axis[] axes = multiscales[ 0 ].axes;
+
+			// validate dimensionality up front: scale/translation/getDimensions() are all
+			// axes[]-length arrays, and spatialTriple() below indexes into them assuming at
+			// least 3 entries, so a shorter array must be rejected here rather than crash there
+			if ( axes.length != 3 && axes.length != 4 && axes.length != 5 )
+			{
+				IOFunctions.println( "Only 3D (xyz), 4D (xyzc), and 5D (xyzct) OME-ZARRs are allowed. stopping" );
+				return null;
+			}
+
+			final int[] rawAxisIdx = AllenOMEZarrProperties.rawAxisIndices( axes );
+			final int[] xyz = rawAxisIdx != null ? new int[] { rawAxisIdx[ 0 ], rawAxisIdx[ 1 ], rawAxisIdx[ 2 ] } : null;
+
 			final OmeNgffDataset ds = multiscales[ 0 ].datasets[ 0 ];
 			double[] scale = null;
 			double[] translation = null;
@@ -248,11 +270,9 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			if ( translation == null )
 				translation = new double[] { 0, 0, 0 };
 
-			if ( scale.length > 3 )
-				scale = new double[] { scale[ 0 ], scale[ 1 ], scale[ 2 ] };
-
-			if ( translation.length > 3 )
-				translation = new double[] { translation[ 0 ], translation[ 1 ], translation[ 2 ] };
+			// keep the three spatial entries in true x,y,z order (not merely the first three)
+			scale = AllenOMEZarrProperties.spatialTriple( scale, xyz );
+			translation = AllenOMEZarrProperties.spatialTriple( translation, xyz );
 
 			String unit = "unknown";
 			for ( int d = 0; d < multiscales[ 0 ].axes.length; ++d )
@@ -269,6 +289,7 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			IOFunctions.println( multiscales[ 0 ].datasets.length + " resolution steps." );
 
 			DatasetAttributes fullScaleAttributes = null;
+			long fullScaleVol = -1;
 
 			for ( final OmeNgffDataset level : multiscales[ 0 ].datasets )
 			{
@@ -281,23 +302,29 @@ public class OMEZARR implements MultiViewDatasetDefinition
                 IOFunctions.println("BlockSize: " + Arrays.toString(attr.getBlockSize()));
                 IOFunctions.println("DataType: " + attr.getDataType());
 
-                if (fullScaleAttributes == null || attr.getDimensions()[0] > fullScaleAttributes.getDimensions()[0])
+                // highest-resolution level = largest spatial voxel count (robust to axis order and
+                // to spatial axes the producer left un-downsampled; comparing one raw dim is not)
+                final long[] sp = AllenOMEZarrProperties.spatialTriple( attr.getDimensions(), xyz );
+                final long vol = sp[ 0 ] * sp[ 1 ] * sp[ 2 ];
+                if ( fullScaleAttributes == null || vol > fullScaleVol )
+                {
                     fullScaleAttributes = attr;
+                    fullScaleVol = vol;
+                }
 			}
+
+			// channel/time dims from rawAxisIdx; fall back to positions 3/4 only if x/y/z couldn't
+			// be resolved by name at all (rawAxisIdx == null)
+			final long[] fullDims = fullScaleAttributes.getDimensions();
+			final int cDim = rawAxisIdx != null && rawAxisIdx[ 3 ] >= 0 ? rawAxisIdx[ 3 ] : 3;
+			final int tDim = rawAxisIdx != null && rawAxisIdx[ 4 ] >= 0 ? rawAxisIdx[ 4 ] : 4;
 
 			if ( numDimensions == -1 )
 			{
 				numDimensions = fullScaleAttributes.getNumDimensions();
 
-				if ( numDimensions >=4 )
-				{
-					sizeC = fullScaleAttributes.getDimensions()[ 3 ];
-				}
-
-			if ( numDimensions >=5 )
-			{
-				sizeT = fullScaleAttributes.getDimensions()[ 4 ];
-				}
+				if ( numDimensions >= 4 ) sizeC = fullDims[ cDim ];
+				if ( numDimensions >= 5 ) sizeT = fullDims[ tDim ];
 			}
 			else
 			{
@@ -307,18 +334,21 @@ public class OMEZARR implements MultiViewDatasetDefinition
 					return null;
 				}
 
-				if ( numDimensions >=4 && sizeC != fullScaleAttributes.getDimensions()[ 3 ] )
+				if ( numDimensions >= 4 && sizeC != fullDims[ cDim ] )
 				{
-					IOFunctions.println( "numDimensions mismatch for sizeC [3] in dataset dimensions. stopping" );
+					IOFunctions.println( "sizeC (channel axis) mismatch across datasets. stopping" );
 					return null;
 				}
 
-				if ( numDimensions >=5 && sizeT != fullScaleAttributes.getDimensions()[ 4 ] )
+				if ( numDimensions >= 5 && sizeT != fullDims[ tDim ] )
 				{
-					IOFunctions.println( "numDimensions mismatch for sizeT [4] in dataset dimensions. stopping" );
+					IOFunctions.println( "sizeT (time axis) mismatch across datasets. stopping" );
 					return null;
 				}
 			}
+
+			// resolved x,y,z size for this dataset (used for the ViewSetup size, see spatialDimsMap)
+			spatialDimsMap.put( dataset, AllenOMEZarrProperties.spatialTriple( fullDims, xyz ) );
 
 			if ( numDimensions != 3 && numDimensions != 4 && numDimensions != 5 )
 			{
@@ -740,6 +770,7 @@ public class OMEZARR implements MultiViewDatasetDefinition
 
 			// we need the metadata
 			final Pair<DatasetAttributes, Pair<VoxelDimensions, double[]>> meta = attrMap.get( dataset );
+			final long[] spatialDims = spatialDimsMap.get( dataset );
 
 			// has a pattern, so we need to load and update the metadata
 			if ( tileId >= 0 && meta.getB().getB() != null )
@@ -755,14 +786,14 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			if ( chId >= 0 )
 			{
 				// channel had a pattern, so it's a single channel for this dataset, still possibly multiple timepoints
-				viewIdToPath.putAll( updateViewSetup(dataset, viewSetups, meta, angleId, chId, illumId, tileId, tpId, sizeT, numDimensions ) );
+				viewIdToPath.putAll( updateViewSetup(dataset, viewSetups, meta, spatialDims, angleId, chId, illumId, tileId, tpId, sizeT, numDimensions ) );
 			}
 			else
 			{
 				// if the channels are inside the 4D/5D OME-ZARR, this dataset could contain more than one ViewSetup
                 // if 3D OME-ZARR with no channel pattern (sizeC=0), create 1 channel (channelID 0)
 				for ( int c = 0; c < Math.max(1, sizeC); ++c )
-					viewIdToPath.putAll( updateViewSetup( dataset, viewSetups, meta, angleId, c, illumId, tileId, tpId, sizeT, numDimensions ) );
+					viewIdToPath.putAll( updateViewSetup( dataset, viewSetups, meta, spatialDims, angleId, c, illumId, tileId, tpId, sizeT, numDimensions ) );
 			}
 		}
 
@@ -807,6 +838,7 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			final String dataset,
 			final Collection< ViewSetup > viewSetups,
 			final Pair<DatasetAttributes, Pair<VoxelDimensions, double[]>> meta,
+			final long[] spatialDims,
 			final int angleId,
 			final int channelId,
 			final int illumId,
@@ -823,7 +855,8 @@ public class OMEZARR implements MultiViewDatasetDefinition
 			{
 				IOFunctions.println( "ViewSetupId: " + vs.getId() );
 
-				vs.setSize( new FinalDimensions( meta.getA().getDimensions() ) );
+				// axis-resolved x,y,z size, not raw getDimensions() (reversed, and 4D/5D includes c/t)
+				vs.setSize( new FinalDimensions( spatialDims ) );
 				vs.setVoxelSize( meta.getB().getA() );
 
 				if ( tpId >= 0 )
