@@ -22,8 +22,6 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
-import java.awt.Font;
-
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.TransformationModelGUI;
@@ -38,7 +36,7 @@ public class LoadCorrespondencesGUI extends PairwiseGUI
 {
 	public static int defaultModel = 2;
 	public static boolean defaultRegularize = true;
-	public static int defaultMinNumMatches = 12;
+	public static int defaultMinNumMatches = 4;
 	public static double defaultGlobalOptError = 5.0;
 
 	protected TransformationModelGUI model = null;
@@ -57,7 +55,7 @@ public class LoadCorrespondencesGUI extends PairwiseGUI
 	{
 		gd.addChoice( "Transformation model", TransformationModelGUI.modelChoice, TransformationModelGUI.modelChoice[ defaultModel ] );
 		gd.addCheckbox( "Regularize_model", defaultRegularize );
-		gd.addSlider( "Minmal_number_of_inliers", 4, 100, defaultMinNumMatches );
+		gd.addSlider( "Minmal_number_of_inliers", 1, 100, defaultMinNumMatches );
 		gd.addSlider( "Max_error_for_global_optimization (px)", 0.0, 20.0, defaultGlobalOptError );
 		gd.addMessage( "Note: Corresponding points will be loaded according to the selected interest point label and pre-selection of interest points.", GUIHelper.smallStatusFont );
 		gd.addMessage( "");

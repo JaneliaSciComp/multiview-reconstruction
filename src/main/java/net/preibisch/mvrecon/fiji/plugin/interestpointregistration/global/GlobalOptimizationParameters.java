@@ -28,7 +28,7 @@ public class GlobalOptimizationParameters
 {
 	public static int defaultGlobalOpt = 3;
 	public static int defaultSimple = 5;
-	public static boolean defaultPrealign = true;
+	public static boolean defaultPrealign = false;
 
 	final static double relativeBase = 2.5;
 	final static double absoluteBase = 3.5;
