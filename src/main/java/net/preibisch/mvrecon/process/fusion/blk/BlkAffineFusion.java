@@ -251,8 +251,8 @@ public class BlkAffineFusion
 				masks.add( Masking.create( inputImg, border, transform ) );
 				break;
 			case CLOSEST_PIXEL_WINS:
-				// we need to use the blending weights, whatever weight is highest wins
-				weights.add( Blending.create( inputImg, border, blending, transform ) );
+				// squared distance to the view center in fused coordinates; smallest distance wins
+				weights.add( Distance.create( inputImg, transform ) );
 				break;
 			case AVG_BLEND_CONTENT:
 				final BlockSupplier< FloatType > cb1 = ContentBased.create( inputImg, sigma1, sigma2, ContentBased.defaultScale );

@@ -44,6 +44,7 @@ import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.RawCompression;
 import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
+import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
@@ -365,8 +366,6 @@ public class N5ApiTools
 				return "OME-ZARR v3";
 			else if (s.name().equals("ZARR2"))
 				return "OME-ZARR v2 (deprecated)";
-			else if (s.name().equals("HDF5"))
-				return "HDF5 (currently not supported)";
 			else
 				return s.name();
 		}).toArray(String[]::new);
@@ -587,6 +586,30 @@ public class N5ApiTools
 		return mrInfo;
 	}
 
+	/**
+	 * Like {@link N5Utils#saveNonEmptyBlock(RandomAccessibleInterval, N5Writer, String, long[], NativeType)},
+	 * i.e. blocks that only contain the default value are not written (deleted) - except for HDF5.
+	 *
+	 * HDF5 cannot delete chunks; n5-hdf5 (3.0.0) emulates deleteBlock() by writing a zero block of the
+	 * full block size. At the dataset boundary that block extends beyond the extent and HDF5 fails with
+	 * "selection + offset not within extent". For HDF5 we therefore always write every (cropped) block.
+	 *
+	 * TODO: for sharded Zarr v3 datasets it is not yet verified that skipping empty blocks (sparse shards)
+	 * is fully supported when reading; if not, complete shards including empty blocks must be written.
+	 */
+	public static < T extends NativeType< T > > void saveNonEmptyBlock(
+			final RandomAccessibleInterval< T > source,
+			final N5Writer n5,
+			final String dataset,
+			final long[] gridOffset,
+			final T defaultValue )
+	{
+		if ( n5 instanceof N5HDF5Writer )
+			N5Utils.saveBlock( source, n5, dataset, gridOffset );
+		else
+			N5Utils.saveNonEmptyBlock( source, n5, dataset, gridOffset, defaultValue );
+	}
+
 	public static < T extends NativeType< T > & RealType< T > > void writeDownsampledBlock(
 			final N5Writer n5,
 			final MultiResolutionLevelInfo mrInfo,
@@ -612,11 +635,7 @@ public class N5ApiTools
 		final RandomAccessibleInterval< T > downsampled = BlockAlgoUtils.cellImg( blocks, dimensions, new int[] { 64 } );
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
 
-		// For sharded datasets, we must write complete shards including empty blocks
-		// because sparse shard reading is not fully supported yet
-		// using saveNonEmptyBlock again - need to test if this is supported with sharding
-		N5Utils.saveNonEmptyBlock(sourceGridBlock, n5, dataset, gridBlock[2], previousScale.getType().createVariable() );
-//		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridBlock[2]);
+		saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridBlock[2], previousScale.getType().createVariable() );
 	}
 
 	public static < T extends NativeType< T > & RealType< T > > void writeDownsampledBlock5dOMEZARR(
@@ -665,9 +684,7 @@ public class N5ApiTools
 
 		final RandomAccessibleInterval<T> sourceGridBlock = Views.offsetInterval(downsampled5d, blockOffset, blockSize);
 
-		// using saveNonEmptyBlock again - need to test if this is supported with sharding
-		N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, downsampled5d.getType().createVariable() );
-//		N5Utils.saveBlock(sourceGridBlock, n5, dataset, gridOffset );
+		saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, downsampled5d.getType().createVariable() );
 	}
 
 	public static List<long[][]> assembleJobs( final MultiResolutionLevelInfo mrInfo )
@@ -808,9 +825,7 @@ public class N5ApiTools
 		}
 
 		final RandomAccessibleInterval< T > sourceGridBlock = Views.offsetInterval( image, blockOffset, blockSize );
-		// using saveNonEmptyBlock again - need to test if this is supported with sharding
-		N5Utils.saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, image.getType().createVariable() );
-//		N5Utils.saveBlock( sourceGridBlock, n5, dataset, gridOffset );
+		saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, image.getType().createVariable() );
 
 		System.out.println( "ViewId " + Group.pvid( viewId ) + ", written block: offset=" + Util.printCoordinates( blockOffset ) + ", dimension=" + Util.printCoordinates( blockSize ) );
 	}

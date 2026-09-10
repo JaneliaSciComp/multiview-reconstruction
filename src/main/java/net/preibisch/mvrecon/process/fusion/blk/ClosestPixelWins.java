@@ -40,12 +40,17 @@ import net.imglib2.util.Intervals;
 
 class ClosestPixelWins
 {
+	/**
+	 * Per pixel, the view with the smallest {@code distance} (squared distance to the
+	 * view center, see {@link Distance}) wins. Views report
+	 * {@code Float.POSITIVE_INFINITY} outside their bounds, so they never win there.
+	 */
 	public static BlockSupplier< FloatType > of(
 			final List< BlockSupplier< FloatType > > images,
-			final List< BlockSupplier< FloatType > > weights,
+			final List< BlockSupplier< FloatType > > distances,
 			final Overlap overlap )
 	{
-		return new ClosestPixelWinsBlockSupplier( images, weights, overlap );
+		return new ClosestPixelWinsBlockSupplier( images, distances, overlap );
 	}
 
 	private static class ClosestPixelWinsBlockSupplier extends AbstractBlockSupplier< FloatType >
@@ -54,7 +59,7 @@ class ClosestPixelWins
 
 		private final List< BlockSupplier< FloatType > > images;
 
-		private final List< BlockSupplier< FloatType > > weights;
+		private final List< BlockSupplier< FloatType > > distances;
 
 		private final Overlap overlap;
 
@@ -62,14 +67,14 @@ class ClosestPixelWins
 
 		ClosestPixelWinsBlockSupplier(
 				final List< BlockSupplier< FloatType > > images,
-				final List< BlockSupplier< FloatType > > weights,
+				final List< BlockSupplier< FloatType > > distances,
 				final Overlap overlap )
 		{
 			this.numDimensions = images.get( 0 ).numDimensions();
 			this.images = images;
-			this.weights = weights;
+			this.distances = distances;
 			this.overlap = overlap;
-			tempArrays = Cast.unchecked( new TempArray[ 4 ] );
+			tempArrays = Cast.unchecked( new TempArray[ 3 ] );
 			Arrays.setAll( tempArrays, i -> TempArray.forPrimitiveType( FLOAT ) );
 		}
 
@@ -77,9 +82,9 @@ class ClosestPixelWins
 		{
 			numDimensions = s.numDimensions;
 			images = new ArrayList<>( s.images.size() );
-			weights = new ArrayList<>( s.weights.size() );
+			distances = new ArrayList<>( s.distances.size() );
 			s.images.forEach( i -> images.add( i.independentCopy() ) );
-			s.weights.forEach( i -> weights.add( i.independentCopy() ) );
+			s.distances.forEach( i -> distances.add( i.independentCopy() ) );
 			overlap = s.overlap;
 			tempArrays = Cast.unchecked( new TempArray[ 3 ] );
 			Arrays.setAll( tempArrays, i -> TempArray.forPrimitiveType( FLOAT ) );
@@ -94,12 +99,12 @@ class ClosestPixelWins
 
 			final int len = safeInt( Intervals.numElements( size ) );
 			final float[] tmpI = tempArrays[ 0 ].get( len );
-			final float[] tmpW = tempArrays[ 1 ].get( len );
-			final float[] maxW = tempArrays[ 2 ].get( len );
+			final float[] tmpD = tempArrays[ 1 ].get( len );
+			final float[] minD = tempArrays[ 2 ].get( len );
 			final float[] fdest = Cast.unchecked( dest );
 
 			Arrays.fill( fdest, 0 );
-			Arrays.fill( maxW, 0 );
+			Arrays.fill( minD, Float.POSITIVE_INFINITY );
 
 			final long[] srcMax = new long[ srcPos.length ];
 			Arrays.setAll( srcMax, d -> srcPos[ d ] + size[ d ] - 1 );
@@ -107,12 +112,12 @@ class ClosestPixelWins
 			for ( int i : overlapping )
 			{
 				images.get( i ).copy( interval, tmpI );
-				weights.get( i ).copy( interval, tmpW );
+				distances.get( i ).copy( interval, tmpD );
 				for ( int x = 0; x < len; ++x )
 				{
-					if ( tmpW[ x ] > maxW[ x ] )
+					if ( tmpD[ x ] < minD[ x ] )
 					{
-						maxW[ x ] = tmpW[ x ];
+						minD[ x ] = tmpD[ x ];
 						fdest[ x ] = tmpI[ x ];
 					}
 				}

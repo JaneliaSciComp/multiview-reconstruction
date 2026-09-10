@@ -248,10 +248,10 @@ public class RANSAC
 				setSizes = setSizes.substring( 0, setSizes.length() - 1);
 
 				return new ValuePair< String, Double >(
-						"Found " + inlierSets.size() + " set(s) containing " + sumInliers + "/" + sizeCandidatea + " inliers (" + 
+						"Found " + inlierSets.size() + " set(s) containing " + sumInliers + "/" + sizeCandidatea + " inliers (" +
 						nf.format(sumInliers/(double)sizeCandidatea) + ") with min/avg/max set-error ("+nfErrors.format(minError)+"/"+
 						nfErrors.format(avgError)+"/"+nfErrors.format(maxError)+") and set sizes (" + setSizes + ")." ,
-						Double.NaN );
+						avgError );
 			}
 			else
 			{
