@@ -197,6 +197,15 @@ public class ExportN5Api implements ImgExport, Calibrateable
 	{
 		final BlockSupplier<T> blockSupplier = blockSupplierIn.threadSafe();
 
+		// sharding only exists for Zarr v3; for HDF5/N5/ZARR2 a shard-sized "blockSize" would be
+		// written into the dataset metadata while blocks are addressed by the real block size
+		// (HDF5 then fails with "selection + offset not within extent")
+		if ( storageType != StorageFormat.ZARR )
+		{
+			this.useSharding = false;
+			this.shardSize = null;
+		}
+
 		final T type = blockSupplier.getType();
 		final DataType dataType = N5Utils.dataType( type );
 		final EnumSet< DataType > supportedDataTypes = EnumSet.of( DataType.UINT8, DataType.UINT16, DataType.FLOAT32 );
@@ -717,7 +726,9 @@ public class ExportN5Api implements ImgExport, Calibrateable
 		gdInit.addChoice( "Export as ...", options, options[ defaultOption ] );
 
 		gdInit.addMessage(
-				"For cluster/cloud - distributed fusion please check out BigStitcher-Spark.", GUIHelper.smallStatusFont, GUIHelper.neutral );
+				"For local export HDF5 is a reasonable format choice (unless you need a specific one)\n"
+				+ "since it supports small blocksizes, can be written multi-threaded, and produces a single file.\n\n"
+				+ "For cluster/cloud - distributed fusion please check out BigStitcher-Spark.", GUIHelper.smallStatusFont, GUIHelper.neutral );
 
 		gdInit.addMessage(
 				"Note: you can always add new datasets to an existing HDF5/N5/ZARR container, so you can specify\n"
@@ -747,18 +758,15 @@ public class ExportN5Api implements ImgExport, Calibrateable
 
 		this.storageType = StorageFormat.values()[ defaultOption = gdInit.getNextChoiceIndex() ];
 		this.compression = PluginHelper.parseCompression( gdInit );
+
+		// sharding is a Zarr v3 feature; reset it here so a stale value (field default or a previous
+		// OME-ZARR export) is never applied to N5/HDF5/ZARR2. It is set below in the OME-ZARR dialog.
+		this.useSharding = false;
+		this.shardSize = null;
 		this.bdv = defaultBDV = gdInit.getNextBoolean();
 		final boolean multiRes = defaultMultiRes = gdInit.getNextBoolean();
 		this.splittingType = fusion.getSplittingType();
 		this.instantiate = new InstantiateViewSetupBigStitcher( splittingType );
-
-		// Check if HDF5 was selected
-		if ( storageType == StorageFormat.HDF5 )
-		{
-			IOFunctions.println( "HDF5 export is currently unavailable due to library incompatibilities with n5 4.0.0-alpha-6." );
-			IOFunctions.println( "Please use N5 or ZARR format instead." );
-			return false;
-		}
 
 		final String name = storageType.name();
 		final String ext;
@@ -1016,7 +1024,7 @@ public class ExportN5Api implements ImgExport, Calibrateable
 			}
 		}
 
-		if ( useSharding )
+		if ( storageType == StorageFormat.ZARR && useSharding ) // v3
 		{
 			this.shardSize = new int[] { bsX * bsFactorX, bsY * bsFactorY, bsZ * bsFactorZ };
 			IOFunctions.println( "ZARR v3 shard size: " + Arrays.toString( this.shardSize ));
