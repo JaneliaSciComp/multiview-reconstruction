@@ -467,6 +467,17 @@ public class ActionToSparkCli
 					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
 					+ "before running the command below." );
 
+		// the GUI's "Map_back_views" anchors the solve onto a reference view; Solver's
+		// --enableMapbackViews/--mapbackViews/--mapbackModel are commented out in BigStitcher-Spark,
+		// so nothing in the solver command below reproduces it (see Interest_Point_Registration,
+		// which records these two keys for exactly this warning).
+		final String mapBackModel = params.get( "mapBackModel" );
+		if ( mapBackModel != null )
+			warnUntranslated( out, "WARNING: mvrecon mapped the registration back onto view(s) "
+					+ params.get( "mapBackViews" ) + " using a " + mapBackModel + " model — BigStitcher-Spark's Solver "
+					+ "has no mapback flags (they are commented out there), so the solve below is NOT anchored that "
+					+ "way; combined with --disableFixedViews the views will float in space." );
+
 		// every UNSUPPORTED_VALUES entry that fired for this action: whole-command ones already made
 		// their recipe skip itself (see matchRecipe/solverRecipe.skipWhen, both built from this same
 		// table); flag-only ones (e.g. GAUSS_FIT) are omitted below in renderOne(). Either way, say why.
