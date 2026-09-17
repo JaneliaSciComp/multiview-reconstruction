@@ -296,6 +296,8 @@ public class ActionToSparkCli
 				new String[]{ "icpUseRANSAC", "--icpUseRANSAC" },
 				new String[]{ "clearCorrespondences", "--clearCorrespondences" }
 		);
+		// same repeated-flag handling as the solver; matching has no --labelweights
+		matchRecipe.repeatKeys.add( "label" );
 		matchRecipe.skipWhen = p -> "true".equalsIgnoreCase( p.get( "skipMatching" ) )
 				|| isUnsupported( p, "matchingMethod", true );
 		registration.add( matchRecipe );
@@ -305,6 +307,7 @@ public class ActionToSparkCli
 				new FlagGroup[]{ SELECTABLE_VIEWS, REGISTRATION_GROUPING },
 				new String[]{ "sourcePoints", "-s" },
 				new String[]{ "label", "-l" },
+				new String[]{ "labelWeights", "-lw" },
 				new String[]{ "registrationType", "-rtp" },
 				new String[]{ "referenceTP", "--referenceTP" },
 				new String[]{ "rangeTP", "--rangeTP" },
@@ -327,6 +330,10 @@ public class ActionToSparkCli
 		solverRecipe.skipWhen = p -> isUnsupported( p, "globalOptMethod", true );
 		// -fv is also repeatable ('0,0' '0,1' ...); "viewIds" is already in repeatKeys via SELECTABLE_VIEWS
 		solverRecipe.repeatKeys.add( "fixedViews" );
+		// -l/-lw are ArrayList options without a picocli split, so multiple labels have to be emitted
+		// as repeated flags ('-l beads -l nuclei'); Solver pairs label[i] with labelweight[i].
+		solverRecipe.repeatKeys.add( "label" );
+		solverRecipe.repeatKeys.add( "labelWeights" );
 		// --mapbackViews takes one view id per registration subset, repeated like -fv
 		solverRecipe.repeatKeys.add( "mapBackViews" );
 		registration.add( solverRecipe );

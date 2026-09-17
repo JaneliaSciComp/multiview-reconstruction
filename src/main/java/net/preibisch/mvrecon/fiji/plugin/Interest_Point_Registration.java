@@ -83,6 +83,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -261,12 +262,20 @@ public class Interest_Point_Registration implements PlugIn
 		// record action history
 		{
 			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
-			// collapse the per-view label map to a comma-separated unique label list
-			final LinkedHashSet<String> labels = new LinkedHashSet<>();
+			// collapse the per-view label map to a unique label -> weight list. Both are rendered as
+			// repeated flags (-l/-lw) which Solver pairs up by index, so one ordered map drives both.
+			// The weights are what the GUI's per-label weight dialog set; omitting them would leave
+			// Spark's own default of 1.0 for every label.
+			final LinkedHashMap<String,Double> labelWeights = new LinkedHashMap<>();
 			if ( brp.labelMap != null )
 				for ( final HashMap<String,Double> m : brp.labelMap.values() )
-					if ( m != null ) labels.addAll( m.keySet() );
-			ActionHistoryRecorder.put( params, "label", String.join( ",", labels ) );
+					if ( m != null )
+						m.forEach( labelWeights::putIfAbsent );
+			final Set<String> labels = labelWeights.keySet();
+			ActionHistoryRecorder.put( params, "label", String.join( ActionToSparkCli.MULTI_VALUE_DELIM, labels ) );
+			final List<String> weights = new ArrayList<>();
+			labelWeights.values().forEach( w -> weights.add( Double.toString( w ) ) );
+			ActionHistoryRecorder.put( params, "labelWeights", String.join( ActionToSparkCli.MULTI_VALUE_DELIM, weights ) );
 			// which views this ran on -- record() below adds parsimonious --angleId/--tileId/
 			// --illuminationId/--channelId/--timepointId filters over spelling out every view id
 			// (see ActionHistoryRecorder.putViewSelection). SparkGeometricDescriptorMatching and Solver
@@ -298,6 +307,19 @@ public class Interest_Point_Registration implements PlugIn
 			{
 				ActionHistoryRecorder.put( params, "globalOptMethod", arp.globalOptParams.method );
 				ActionHistoryRecorder.put( params, "preAlign", arp.globalOptParams.preAlign ? "PREALIGN" : "NO_PREALIGN" );
+				// maxError only feeds the ONE_ROUND_SIMPLE ConvergenceStrategy -- the iterative and
+				// two-round paths hardcode Double.MAX_VALUE and use the thresholds below instead (both
+				// here and in Spark's Solver). NaN means "derive from the matcher" in the GUI, so
+				// resolve it; otherwise the command silently falls back to Spark's own 5.0 default.
+				if ( arp.globalOptParams.method == GlobalOptType.ONE_ROUND_SIMPLE )
+				{
+					final double maxError = Double.isNaN( arp.globalOptParams.maxError ) && brp.pwr != null
+							? brp.pwr.globalOptError() : arp.globalOptParams.maxError;
+					if ( Double.isFinite( maxError ) )
+						ActionHistoryRecorder.put( params, "maxError", maxError );
+				}
+				ActionHistoryRecorder.put( params, "maxIterations", arp.globalOptParams.maxIterations );
+				ActionHistoryRecorder.put( params, "maxPlateauwidth", arp.globalOptParams.maxPlateauWidth );
 				// thresholds are only meaningful for ITERATIVE strategies; SIMPLE/NO_OPTIMIZATION
 				// encode them as Double.MAX_VALUE, which would render as a garbage CLI value — skip those
 				final double relTh = arp.globalOptParams.relativeThreshold;
