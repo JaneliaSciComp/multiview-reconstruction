@@ -319,11 +319,16 @@ public class ActionToSparkCli
 				new String[]{ "maxIterations", "--maxIterations" },
 				new String[]{ "maxPlateauwidth", "--maxPlateauwidth" },
 				new String[]{ "fixedViews", "-fv" },
-				new String[]{ "disableFixedViews", "--disableFixedViews" }
+				new String[]{ "disableFixedViews", "--disableFixedViews" },
+				new String[]{ "enableMapbackViews", "--enableMapbackViews" },
+				new String[]{ "mapBackViews", "--mapbackViews" },
+				new String[]{ "mapBackModel", "--mapbackModel" }
 		);
 		solverRecipe.skipWhen = p -> isUnsupported( p, "globalOptMethod", true );
 		// -fv is also repeatable ('0,0' '0,1' ...); "viewIds" is already in repeatKeys via SELECTABLE_VIEWS
 		solverRecipe.repeatKeys.add( "fixedViews" );
+		// --mapbackViews takes one view id per registration subset, repeated like -fv
+		solverRecipe.repeatKeys.add( "mapBackViews" );
 		registration.add( solverRecipe );
 		r.put( ActionHistory.REGISTER_INTERESTPOINTS, registration );
 
@@ -467,16 +472,18 @@ public class ActionToSparkCli
 					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
 					+ "before running the command below." );
 
-		// the GUI's "Map_back_views" anchors the solve onto a reference view; Solver's
-		// --enableMapbackViews/--mapbackViews/--mapbackModel are commented out in BigStitcher-Spark,
-		// so nothing in the solver command below reproduces it (see Interest_Point_Registration,
-		// which records these two keys for exactly this warning).
-		final String mapBackModel = params.get( "mapBackModel" );
-		if ( mapBackModel != null )
-			warnUntranslated( out, "WARNING: mvrecon mapped the registration back onto view(s) "
-					+ params.get( "mapBackViews" ) + " using a " + mapBackModel + " model — BigStitcher-Spark's Solver "
-					+ "has no mapback flags (they are commented out there), so the solve below is NOT anchored that "
-					+ "way; combined with --disableFixedViews the views will float in space." );
+		// The GUI lets you fix views AND map back at the same time; Solver throws on
+		// --enableMapbackViews without --disableFixedViews (Solver.setupParameters()). Fixed views are
+		// the stronger anchor, so keep -fv and drop the mapback flags rather than emit a command that
+		// can only fail.
+		final String fixedViews = params.get( "fixedViews" );
+		if ( params.get( "mapBackModel" ) != null && fixedViews != null && !fixedViews.isEmpty() )
+		{
+			warnUntranslated( out, "WARNING: mvrecon both fixed view(s) " + fixedViews + " and mapped back onto view(s) "
+					+ params.get( "mapBackViews" ) + " — BigStitcher-Spark rejects --enableMapbackViews unless "
+					+ "--disableFixedViews is set, so the mapback flags are omitted below and the fixed views kept." );
+			params.keySet().removeAll( Arrays.asList( "enableMapbackViews", "mapBackViews", "mapBackModel" ) );
+		}
 
 		// every UNSUPPORTED_VALUES entry that fired for this action: whole-command ones already made
 		// their recipe skip itself (see matchRecipe/solverRecipe.skipWhen, both built from this same

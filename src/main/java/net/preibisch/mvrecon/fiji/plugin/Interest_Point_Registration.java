@@ -321,12 +321,13 @@ public class Interest_Point_Registration implements PlugIn
 				ActionHistoryRecorder.put( params, "disableFixedViews", "true" );
 			}
 			// map-back ("Map_back_views" in the dialog) anchors the solve onto a reference view
-			// instead of fixing views. BigStitcher-Spark's Solver has the machinery but its CLI flags
-			// are commented out (Solver.java: --enableMapbackViews/--mapbackViews/--mapbackModel), so
-			// this is recorded for the log only -- ActionToSparkCli warns that it isn't translated.
+			// instead of fixing views; maps onto Solver's --enableMapbackViews/--mapbackViews/
+			// --mapbackModel. Spark rejects those without --disableFixedViews, which the GUI does
+			// allow -- ActionToSparkCli warns and drops them in that case.
 			if ( fmbp.model != null && fmbp.mapBackViews != null && !fmbp.mapBackViews.isEmpty() )
 			{
-				// names match Spark's (commented-out) --mapbackModel enum
+				ActionHistoryRecorder.put( params, "enableMapbackViews", Boolean.TRUE );
+				// value names match Spark's --mapbackModel enum
 				ActionHistoryRecorder.put( params, "mapBackModel",
 						TranslationModel3D.class.isInstance( fmbp.model ) ? "TRANSLATION" : "RIGID" );
 				// one map-back view per registration subset, like Spark's repeatable --mapbackViews
