@@ -154,10 +154,31 @@ public class Show_Action_History
 			addWindowListener( new WindowAdapter()
 			{
 				@Override public void windowClosing( final WindowEvent e ) { confirmClose(); }
+				@Override public void windowActivated( final WindowEvent e ) { refresh(); }
 			} );
 
 			if ( model.getRowCount() > 0 )
 				table.setRowSelectionInterval( 0, 0 );
+		}
+
+		/**
+		 * Re-read the live history. Other GUI actions mutate it behind this window's back — the
+		 * recorder appends (detection, registration, fusion, resave) and data-tied removal prunes
+		 * (removing a transformation, deleting an interest point label) — so refresh whenever this
+		 * window comes to the front.
+		 */
+		private void refresh()
+		{
+			final int selected = selectedRow(); // model index; identity isn't tracked across refreshes
+			model.fireTableDataChanged(); // clears the selection
+			final int rows = model.getRowCount();
+			if ( rows == 0 )
+			{
+				detail.setText( "" );
+				return;
+			}
+			final int viewRow = table.convertRowIndexToView( selected >= 0 && selected < rows ? selected : 0 );
+			table.setRowSelectionInterval( viewRow, viewRow );
 		}
 
 		private void confirmClose()
