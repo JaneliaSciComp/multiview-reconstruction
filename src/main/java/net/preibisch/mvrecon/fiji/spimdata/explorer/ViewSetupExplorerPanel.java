@@ -95,6 +95,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.RemoveTransformationPo
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ReorientSamplePopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ResavePopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.Separator;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ShowActionHistoryPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.SimpleHyperlinkPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.SpecifyCalibrationPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.VisualizeDetectionsPopup;
@@ -726,7 +727,10 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		popups.add( new ResavePopup() );
 		popups.add( new FlatFieldCorrectionPopup() );
 		popups.add( new MissingViewsPopup() );
+		popups.add( new Separator() );
 
+		popups.add( new LabelPopUp( " Tools" ) );
+		popups.add( new ShowActionHistoryPopup() );
 		popups.add( new Separator() );
 
 		// add link to wiki

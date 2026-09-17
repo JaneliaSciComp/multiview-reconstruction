@@ -32,7 +32,6 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.io.File;
 import java.net.URI;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -41,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
@@ -54,74 +54,52 @@ import javax.swing.ListSelectionModel;
 import javax.swing.table.AbstractTableModel;
 
 import ij.IJ;
-import ij.plugin.PlugIn;
 import net.preibisch.legacy.io.IOFunctions;
-import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
-import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionRecord;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli;
-import util.URITools;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 
 /**
- * Plugin: shows the recorded action history of the loaded dataset and lets the
- * user copy each entry as the equivalent BigStitcher-Spark CLI invocation.
+ * Shows the recorded action history of a dataset and lets the user copy each entry as the
+ * equivalent BigStitcher-Spark CLI invocation. Opened from the multiview explorer's menu
+ * ({@code ShowActionHistoryPopup}) on the dataset that window has loaded.
  */
-public class Show_Action_History implements PlugIn
+public class Show_Action_History
 {
-	@Override
-	public void run( final String arg )
+	public static void open( final ExplorerWindow< ? > panel )
 	{
-		final LoadParseQueryXML q = new LoadParseQueryXML();
-		if ( !q.queryXML( "Show Action History", false, false, false, false, false ) )
-			return;
-
-		final SpimData2 data = q.getData();
-		open( data, q.getXMLURI() );
-	}
-
-	public static void open( final SpimData2 data, final URI xmlURI )
-	{
-		final ActionHistory history = data == null ? null : data.getActionHistory();
+		final ActionHistory history = panel.getSpimData() == null ? null : panel.getSpimData().getActionHistory();
 		if ( history == null || history.isEmpty() )
 		{
 			IJ.showMessage( "Action History", "No actions have been recorded for this dataset yet." );
 			return;
 		}
-		new Frame( data, history, xmlURI ).setVisible( true );
+		new Frame( panel, history ).setVisible( true );
 	}
 
 	private static class Frame extends JFrame
 	{
 		private static final long serialVersionUID = 1L;
 
-		private final SpimData2 data;
+		private final ExplorerWindow< ? > panel;
 		private final ActionHistory history;
-		private final URI xmlURI;
 		private final String xmlPath;
 		private final JTable table;
 		private final HistoryTableModel model;
 		private final JTextArea detail;
 		private final JButton save;
 		private boolean dirty = false;
-		/**
-		 * Last-modified time of the on-disk XML at the moment this window's (independently loaded,
-		 * see {@link Show_Action_History#run}) copy was taken, or -1 if unknown (remote URI, or file
-		 * not yet found). Used by {@link #saveDataset()} to detect that some other window/process
-		 * touched the file since — this window has no live connection to any other open editor on
-		 * the same dataset, so saving would otherwise silently overwrite those changes.
-		 */
-		private long loadedMTime;
+		/** set by the delete dialog's "Don't show this message again"; resets on restart */
+		private static boolean skipDeleteWarning = false;
 
-		Frame( final SpimData2 data, final ActionHistory history, final URI xmlURI )
+		Frame( final ExplorerWindow< ? > panel, final ActionHistory history )
 		{
 			super( "BigStitcher Action History" );
-			this.data = data;
+			this.panel = panel;
 			this.history = history;
-			this.xmlURI = xmlURI;
+			final URI xmlURI = panel.xml();
 			this.xmlPath = xmlURI == null ? "" : xmlURI.toString();
-			this.loadedMTime = fileLastModified( xmlURI );
 
 			this.model = new HistoryTableModel( history );
 			this.table = new JTable( model );
@@ -142,7 +120,7 @@ public class Show_Action_History implements PlugIn
 			copyAll.addActionListener( e -> copyAll() );
 
 			this.save = new JButton( "Save" );
-			this.save.setToolTipText( "Write the current action history back to the dataset" );
+			this.save.setToolTipText( "Save the dataset (same as the explorer's Save button)" );
 			this.save.setEnabled( false );
 			this.save.addActionListener( e -> saveDataset() );
 
@@ -233,7 +211,7 @@ public class Show_Action_History implements PlugIn
 		private void installDeletePopup()
 		{
 			final JPopupMenu popup = new JPopupMenu();
-			final JMenuItem delete = new JMenuItem( "Delete selected" );
+			final JMenuItem delete = new JMenuItem( "Remove from history (log only)" );
 			delete.addActionListener( e -> deleteSelectedRows() );
 			popup.add( delete );
 
@@ -250,7 +228,9 @@ public class Show_Action_History implements PlugIn
 					if ( viewRow >= 0 && !table.isRowSelected( viewRow ) )
 						table.setRowSelectionInterval( viewRow, viewRow );
 					final int selected = table.getSelectedRowCount();
-					delete.setText( selected > 1 ? "Delete " + selected + " selected entries" : "Delete selected entry" );
+					delete.setText( selected > 1
+							? "Remove " + selected + " entries from history (log only)"
+							: "Remove entry from history (log only)" );
 					delete.setEnabled( selected > 0 );
 					popup.show( e.getComponent(), e.getX(), e.getY() );
 				}
@@ -268,12 +248,24 @@ public class Show_Action_History implements PlugIn
 				toRemove.add( history.getRecords().get( table.convertRowIndexToModel( viewRow ) ) );
 
 			final int n = toRemove.size();
-			final int choice = JOptionPane.showConfirmDialog( this,
-					"Delete " + n + " action history " + ( n == 1 ? "entry" : "entries" ) + "?\n"
-							+ "The change stays in memory until you press Save.",
-					"Delete Action History", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE );
-			if ( choice != JOptionPane.OK_OPTION )
-				return;
+
+			if ( !skipDeleteWarning )
+			{
+				final JCheckBox dontAsk = new JCheckBox( "Don't show this message again" );
+				final int choice = JOptionPane.showConfirmDialog( this,
+						new Object[] {
+								"Remove " + n + " action history " + ( n == 1 ? "entry" : "entries" ) + "?\n\n"
+										+ "This only deletes the log " + ( n == 1 ? "entry" : "entries" ) + " — the dataset itself is not\n"
+										+ "reverted: registrations, transformations and interest points stay as they are.\n"
+										+ "(To undo a registration, remove the transformation in the explorer instead —\n"
+										+ "that prunes the matching history entry for you.)\n\n"
+										+ "The change stays in memory until you press Save.",
+								dontAsk },
+						"Remove From Action History", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE );
+				if ( choice != JOptionPane.OK_OPTION )
+					return;
+				skipDeleteWarning = dontAsk.isSelected();
+			}
 
 			final int removed = history.removeExact( toRemove );
 			model.fireTableDataChanged();
@@ -283,7 +275,7 @@ public class Show_Action_History implements PlugIn
 				detail.setText( "" );
 			if ( removed > 0 )
 				markDirty();
-			IOFunctions.println( "[ActionHistory] deleted " + removed + " " + ( removed == 1 ? "entry" : "entries" ) + "; press Save to persist." );
+			IOFunctions.println( "[ActionHistory] removed " + removed + " log " + ( removed == 1 ? "entry" : "entries" ) + " (dataset not reverted); press Save to persist." );
 		}
 
 		private void markDirty()
@@ -293,69 +285,18 @@ public class Show_Action_History implements PlugIn
 			setTitle( "BigStitcher Action History *" );
 		}
 
-		/**
-		 * Best-effort last-modified time for a local-file XML URI, or -1 if the URI isn't a local
-		 * file, doesn't exist, or its scheme can't be resolved (remote URIs are never checked).
-		 */
-		private static long fileLastModified( final URI uri )
-		{
-			try
-			{
-				if ( uri == null || !URITools.isFile( uri ) )
-					return -1L;
-				final File f = new File( URITools.fromURI( uri ) );
-				return f.exists() ? f.lastModified() : -1L;
-			}
-			catch ( final Throwable ignore )
-			{
-				return -1L;
-			}
-		}
-
 		private void saveDataset()
 		{
 			if ( !dirty )
 				return;
-			if ( data == null || xmlURI == null )
-			{
-				JOptionPane.showMessageDialog( this,
-						"Cannot save: this window was opened without a dataset location.",
-						"Save Action History", JOptionPane.ERROR_MESSAGE );
-				return;
-			}
 
-			// this window holds an independently loaded copy (see Show_Action_History.run()), not a
-			// live reference to whatever else might have the same XML open — if the file changed on
-			// disk since we loaded it, saving now would silently overwrite that other change with
-			// our (stale, save-history-changes-only) copy.
-			final long currentMTime = fileLastModified( xmlURI );
-			if ( loadedMTime > 0 && currentMTime > 0 && currentMTime != loadedMTime )
-			{
-				final int choice = JOptionPane.showConfirmDialog( this,
-						"The dataset file appears to have changed on disk since this window was opened\n"
-								+ "(e.g. edited by another BigStitcher window or process).\n\n"
-								+ "Saving now will overwrite the file with THIS window's copy, discarding those\n"
-								+ "other changes. Save anyway?",
-						"Dataset Changed On Disk", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE );
-				if ( choice != JOptionPane.YES_OPTION )
-					return;
-			}
-
-			final boolean ok = new XmlIoSpimData2().save( data, xmlURI );
-			if ( ok )
-			{
-				dirty = false;
-				save.setEnabled( false );
-				setTitle( "BigStitcher Action History" );
-				loadedMTime = fileLastModified( xmlURI ); // our own write is now the baseline
-				IOFunctions.println( "[ActionHistory] saved dataset to '" + xmlURI + "'." );
-			}
-			else
-			{
-				JOptionPane.showMessageDialog( this,
-						"Failed to save the dataset. See the log for details.",
-						"Save Action History", JOptionPane.ERROR_MESSAGE );
-			}
+			// the explorer owns the dataset we edited in place, so save through it — its saveXML()
+			// also notifies the listeners that flush other pending changes (e.g. interest points).
+			panel.saveXML();
+			dirty = false;
+			save.setEnabled( false );
+			setTitle( "BigStitcher Action History" );
+			IOFunctions.println( "[ActionHistory] saved dataset to '" + xmlPath + "'." );
 		}
 
 		private void copySelectedRow()
