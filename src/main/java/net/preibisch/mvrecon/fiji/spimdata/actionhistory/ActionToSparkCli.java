@@ -497,16 +497,14 @@ public class ActionToSparkCli
 	}
 
 	/**
-	 * Record a translation gap: adds a {@code #}-prefixed comment line to {@code out} (so it survives
-	 * into whatever copies the rendered script, e.g. Show_Action_History's clipboard actions) and
-	 * prints the same message to stderr (so it's visible immediately, without needing to inspect the
-	 * rendered script).
+	 * Record a translation gap: adds a {@code #}-prefixed comment line to {@code out}, so it shows up
+	 * in the Action History detail pane and survives into whatever copies the rendered script (e.g.
+	 * Show_Action_History's clipboard actions). Deliberately does not log — render() is called for
+	 * every repaint of the detail pane, so logging here spams the console once per selection change.
 	 */
 	private static void warnUntranslated( final List<String> out, final String msg )
 	{
-		final String line = "# " + msg;
-		out.add( line );
-		System.err.println( line );
+		out.add( "# " + msg );
 	}
 
 	private static String renderOne( final Recipe recipe, final Map<String,String> params, final String xmlPath )
