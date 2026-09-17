@@ -472,6 +472,13 @@ public class ActionToSparkCli
 					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
 					+ "before running the command below." );
 
+		// mvrecon only records regularizationModel/lambda when the user actually regularized (see
+		// PairwiseGUI.putModelParams), but BigStitcher-Spark's -rm defaults to RIGID with --lambda 0.1
+		// (AbstractRegistration) -- omitting the flag would silently add a rigid component to a solve
+		// the GUI ran unregularized. Say NONE explicitly instead.
+		if ( params.containsKey( "transformationModel" ) )
+			params.putIfAbsent( "regularizationModel", "NONE" );
+
 		// The GUI lets you fix views AND map back at the same time; Solver throws on
 		// --enableMapbackViews without --disableFixedViews (Solver.setupParameters()). Fixed views are
 		// the stronger anchor, so keep -fv and drop the mapback flags rather than emit a command that
