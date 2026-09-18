@@ -50,10 +50,36 @@ Multi-view reconstruction combines multiple images of the same specimen taken fr
 - `net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation` — pairwise setup, subsets
 - `net.preibisch.mvrecon.process.splitting` — oct-tree image splitting
 
-### Interest Point Storage
-- **N5 format** (`InterestPointsN5.java`): modern, scalable backend
-- Legacy text-file backend (`InterestPointsTextFileList.java`) was removed
-- Stored fields: ID, position (x, y, z), optionally correspondences to other views
+### Interest Point Storage (packed store, 2026-09)
+All interest points and correspondences of a dataset live in a few arrays inside `interestpoints.n5`, managed by
+`PackedInterestPointStore` (one instance per container, `PackedInterestPointStore.get(baseDir)`):
+
+```
+interestpoints.n5/attributes.json    "packed": "1.0.0", "generation": G, "pointsData", "corrData", "labels"
+  packed/index_G      INT64 [5,E]    (tp, setup, labelId, offset, count) per (view, label)
+  packed/viewIndex_G  INT64 [5,E]    (tp, setup, labelId, pairStart, pairCount) into pairIndex
+  packed/pairIndex_G  INT64 [6,P]    (tpB, setupB, labelIdB, offset, count, swapped) grouped by owner
+  packed/points/dk/{id,loc}          INT32 [1,N] ids (sparse for *_split labels!), FLOAT64 [3,N], blocks of 16K points
+  packed/corr/dk/data INT32 [3,M]    (detA, detB, consensusSetId) stored ONCE per pair (A = smaller key)
+  staging/tp_setup_label.{points,corr}   per-entry saves outside a batch (one raw file each)
+  tpId_X_viewSetupId_Y/label/...     legacy per-view groups: still readable, removed by conversion
+```
+
+- `InterestPointsN5` keeps its XML text (`tpId_X_viewSetupId_Y/label`) and API. Load order: staging blob → packed → legacy group.
+- **Write model**: the writer-variant saves (`saveInterestPoints(force, N5Writer)`) stage in memory; `XmlIoSpimData2.saveInterestPointsInParallel`
+  calls `store.commit()` once (this is the commit point of every XML save). The URI-variant saves (`saveInterestPoints(force)`) write a
+  durable staging blob (for per-entry saves from other JVMs, e.g. Spark executors in `SplitDatasets`); the next commit folds them in.
+  Deletes are staged too (`store.remove`) and committed with the next save.
+- **Commit** appends when ≥ 75 % of the arrays stay live, otherwise rewrites (compaction). Indices are written as generation G+1 and the
+  root attributes flipped last (atomic), then G is deleted. Never let two JVMs commit to the same container concurrently.
+- **Pair API**: `InterestPoints.getCorrespondingInterestPointsCopy(ViewId, label)` reads one range; `getCorrespondingViews()` lists partners.
+  `LoadCorrespondencesPairwise` and BigStitcher-Spark's `Solver` use them (the solver iterates actual partners instead of all i<j view pairs).
+- **Conversion** of a legacy dataset: `java ... net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore <dataset.xml>`
+  (`convertLegacy`). Datasets are never converted implicitly; mixed legacy + packed containers read fine.
+- Not packed: `--storeIntensities` of Spark detection still writes `tpId_.../label/interestpoints/intensities` per view.
+- Test: `TestPackedInterestPointStore` (legacy → convert → append → rewrite → blob → delete).
+- Benchmarks (split dataset, 1,678 views, /nrs, 24 threads): detection save 9.3 s → 0.8 s, correspondence save 8.4 s → 0.5 s,
+  TPS `getCoefficients` 6.0 s → 0.27 s per underlying view, Solver pair setup 38 s → 0.6 s, 65K files/73K dirs → ~1.1K files/15 dirs.
 
 ## InterestPointExplorer GUI
 
