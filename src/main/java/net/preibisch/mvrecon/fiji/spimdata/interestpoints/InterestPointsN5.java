@@ -59,6 +59,7 @@ public class InterestPointsN5 extends InterestPoints
 	public static final String baseN5 = "interestpoints.n5";
 
 	final String n5dataset;
+	final PackedInterestPointStore.Key key; // null if n5dataset is not of the form tpId_X_viewSetupId_Y/label
 
 	int[] ids = null;
 	double[][] locations = null;
@@ -69,7 +70,11 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		super(basePath);
 		this.n5dataset = n5dataset;
+		this.key = PackedInterestPointStore.Key.parse( n5dataset );
 	}
+
+	/** the shared packed store of this dataset (points + correspondences of all views in a few arrays), or null if this entry cannot be addressed by (tp, setup, label) */
+	PackedInterestPointStore store() { return key == null ? null : PackedInterestPointStore.get( basePath ); }
 
 	public String getN5dataset() { return n5dataset; }
 
@@ -160,7 +165,15 @@ public class InterestPointsN5 extends InterestPoints
 		if ( ids == null || locations == null )
 			return false;
 
-		final boolean success = saveInterestPointsStatic( basePath, n5dataset, ids, locations );
+		final PackedInterestPointStore store = store();
+		final boolean success;
+		if ( store != null )
+		{
+			store.writePointsBlob( key, ids, locations ); // one file; folded into the packed arrays by the next commit
+			success = true;
+		}
+		else
+			success = saveInterestPointsStatic( basePath, n5dataset, ids, locations );
 
 		if ( success )
 			modifiedInterestPoints = false;
@@ -177,7 +190,15 @@ public class InterestPointsN5 extends InterestPoints
 		if ( correspondingInterestPoints == null )
 			return false;
 
-		final boolean success = saveCorrespondencesStatic( basePath, n5dataset, correspondingInterestPoints );
+		final PackedInterestPointStore store = store();
+		final boolean success;
+		if ( store != null )
+		{
+			store.writeCorrespondencesBlob( key, correspondingInterestPoints );
+			success = true;
+		}
+		else
+			success = saveCorrespondencesStatic( basePath, n5dataset, correspondingInterestPoints );
 
 		if ( success )
 			modifiedCorrespondingInterestPoints = false;
@@ -197,7 +218,15 @@ public class InterestPointsN5 extends InterestPoints
 		if ( ids == null || locations == null )
 			return false;
 
-		final boolean success = saveInterestPointsStatic( n5Writer, n5dataset, ids, locations );
+		final PackedInterestPointStore store = store();
+		final boolean success;
+		if ( store != null )
+		{
+			store.stagePoints( key, ids, locations ); // in memory; the caller (e.g. XmlIoSpimData2.saveInterestPointsInParallel) commits once for all entries
+			success = true;
+		}
+		else
+			success = saveInterestPointsStatic( n5Writer, n5dataset, ids, locations );
 
 		if ( success )
 			modifiedInterestPoints = false;
@@ -217,7 +246,15 @@ public class InterestPointsN5 extends InterestPoints
 		if ( correspondingInterestPoints == null )
 			return false;
 
-		final boolean success = saveCorrespondencesStatic( n5Writer, n5dataset, correspondingInterestPoints );
+		final PackedInterestPointStore store = store();
+		final boolean success;
+		if ( store != null )
+		{
+			store.stageCorrespondences( key, correspondingInterestPoints );
+			success = true;
+		}
+		else
+			success = saveCorrespondencesStatic( n5Writer, n5dataset, correspondingInterestPoints );
 
 		if ( success )
 			modifiedCorrespondingInterestPoints = false;
@@ -227,6 +264,30 @@ public class InterestPointsN5 extends InterestPoints
 
 	@Override
 	protected boolean loadInterestPoints()
+	{
+		final PackedInterestPointStore store = store();
+		if ( store != null )
+		{
+			final PackedInterestPointStore.Points p = store.points( key );
+			if ( p != null )
+			{
+				this.ids = p.ids().clone();
+				this.locations = p.locations(); // ponytail: keep the double[][] layout of this class for now, flat arrays would halve memory
+				modifiedInterestPoints = false;
+				return true;
+			}
+		}
+		final boolean ok = loadLegacyInterestPoints();
+		if ( ids == null || locations == null ) // nothing anywhere (e.g. deleted): behave as empty instead of failing later
+		{
+			ids = new int[ 0 ];
+			locations = new double[ 0 ][ 0 ];
+		}
+		return ok;
+	}
+
+	/** reads the legacy per-view group {@code tpId_X_viewSetupId_Y/label/interestpoints} */
+	boolean loadLegacyInterestPoints()
 	{
 		try
 		{
@@ -323,6 +384,52 @@ public class InterestPointsN5 extends InterestPoints
 
 	@Override
 	protected boolean loadCorrespondences()
+	{
+		final PackedInterestPointStore store = store();
+		if ( store != null )
+		{
+			final List< CorrespondingInterestPoints > l = store.correspondences( key );
+			if ( l != null )
+			{
+				this.correspondingInterestPoints = new ArrayList<>( l );
+				modifiedCorrespondingInterestPoints = false;
+				return true;
+			}
+		}
+		final boolean ok = loadLegacyCorrespondences();
+		if ( correspondingInterestPoints == null )
+			correspondingInterestPoints = new ArrayList<>();
+		return ok;
+	}
+
+	@Override
+	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId correspondingViewId, final String correspondingLabel )
+	{
+		final PackedInterestPointStore store = store();
+		if ( store != null && correspondingInterestPoints == null ) // not loaded/modified in memory: read only the pair range
+		{
+			final List< CorrespondingInterestPoints > l = store.correspondences( key, correspondingViewId, correspondingLabel );
+			if ( l != null )
+				return l;
+		}
+		return super.getCorrespondingInterestPointsCopy( correspondingViewId, correspondingLabel );
+	}
+
+	@Override
+	public java.util.Set< Pair< ViewId, String > > getCorrespondingViews()
+	{
+		final PackedInterestPointStore store = store();
+		if ( store != null && correspondingInterestPoints == null )
+		{
+			final java.util.Set< Pair< ViewId, String > > s = store.correspondingViews( key );
+			if ( s != null )
+				return s;
+		}
+		return super.getCorrespondingViews();
+	}
+
+	/** reads the legacy per-view group {@code tpId_X_viewSetupId_Y/label/correspondences} */
+	boolean loadLegacyCorrespondences()
 	{
 		try
 		{
@@ -564,6 +671,10 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		try
 		{
+			final PackedInterestPointStore store = store();
+			if ( store != null )
+				store.remove( key ); // committed with the next save
+
 			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
 
 			if (n5Writer.exists(ipDataset()))
@@ -587,6 +698,10 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		try
 		{
+			final PackedInterestPointStore store = store();
+			if ( store != null )
+				store.remove( key ); // committed with the next save
+
 			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
 
 			if (n5Writer.exists(corrDataset()))

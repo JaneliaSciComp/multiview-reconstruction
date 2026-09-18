@@ -52,6 +52,7 @@ import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlIoIntensityAdjustm
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5.InterestPointData;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlIoViewInterestPoints;
@@ -381,6 +382,9 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 					}
 				})
 			).get();
+
+			// InterestPointsN5 entries were staged in memory by the loop above; write them into the packed arrays in one go
+			PackedInterestPointStore.get( baseDir ).commit();
 		}
 		catch ( final Exception e )
 		{

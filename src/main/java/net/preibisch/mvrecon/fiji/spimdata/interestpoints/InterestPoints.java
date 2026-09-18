@@ -109,6 +109,30 @@ public abstract class InterestPoints
 	 */
 	public abstract Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy();
 
+	/**
+	 * @return only the correspondences to one other (view, label); backends with a pair index override this so it
+	 * does not load or copy the whole list
+	 */
+	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId correspondingViewId, final String correspondingLabel )
+	{
+		final java.util.ArrayList< CorrespondingInterestPoints > out = new java.util.ArrayList<>();
+		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
+			if ( c.getCorrespodingLabel().equals( correspondingLabel ) && c.getCorrespondingViewId().equals( correspondingViewId ) )
+				out.add( c );
+		return out;
+	}
+
+	/**
+	 * @return the (view, label)s this list has correspondences with; lets callers iterate actual partners instead of all view pairs
+	 */
+	public java.util.Set< net.imglib2.util.Pair< ViewId, String > > getCorrespondingViews()
+	{
+		final java.util.Set< net.imglib2.util.Pair< ViewId, String > > out = new java.util.HashSet<>();
+		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
+			out.add( new net.imglib2.util.ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
+		return out;
+	}
+
 	public void setInterestPoints( final Collection< InterestPoint > list )
 	{
 		this.modifiedInterestPoints = true;
