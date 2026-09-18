@@ -46,18 +46,21 @@ import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 
+import org.janelia.saalfeldlab.n5.DataBlock;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.DoubleArrayDataBlock;
 import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
-import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.IntArrayDataBlock;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
 import org.janelia.saalfeldlab.n5.LockedChannel;
 import org.janelia.saalfeldlab.n5.LongArrayDataBlock;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
@@ -67,46 +70,54 @@ import net.preibisch.mvrecon.Threads;
 import util.URITools;
 
 /**
- * Packed storage of all interest points and correspondences of a dataset inside {@code interestpoints.n5}.
+ * Storage of all interest points and correspondences of a dataset in a few sharded Zarr v3 arrays
+ * ({@code interestpoints.zarr}), instead of one N5 group per (view, label).
  *
- * Instead of one N5 group per (view, label) (~13 files and 12 directories each), all points live in one flat
- * array addressed through a ragged index, and correspondences are stored once per pair of (view, label)s and
- * addressed through a pair index. Layout (G = generation, k = data generation):
+ * Points of all (view, label)s live in one flat array addressed through a ragged index; correspondences are stored once
+ * per pair of (view, label)s and addressed through a pair index. Layout (G = index generation, k = data generation):
  *
  * <pre>
- * interestpoints.n5/attributes.json      "packed": "1.0.0", "generation": G, "pointsData", "corrData", "labels"
- *   packed/index_G        INT64 [5, E]   (tp, setup, labelId, offset, count) per (view, label)
- *   packed/viewIndex_G    INT64 [5, E]   (tp, setup, labelId, pairStart, pairCount) into pairIndex
- *   packed/pairIndex_G    INT64 [6, P]   (tpB, setupB, labelIdB, offset, count, swapped) grouped by owner
- *   packed/points/dk/id   INT32 [1, N]   detection ids (sparse for *_split labels)
- *   packed/points/dk/loc  FLOAT64 [3, N]
- *   packed/corr/dk/data   INT32 [3, M]   (detA, detB, consensusSetId) once per pair, A = canonical smaller key
- *   staging/tp_setup_label.points|.corr  raw blobs from per-entry saves, folded into packed/ on the next commit
- *   tpId_X_viewSetupId_Y/label/...       legacy per-view groups, readable, removed by {@link #convertLegacy(URI)}
+ * interestpoints.zarr/zarr.json      root attributes: "interestpoints": "1.0.0", "generation": G, "pointsData", "corrData", "labels", "chunkPoints", "shardPoints"
+ *   index/gG/entries    INT64 [5, E]   (tp, setup, labelId, offset, count) per (view, label)
+ *   index/gG/views      INT64 [5, E]   (tp, setup, labelId, pairStart, pairCount) into pairs
+ *   index/gG/pairs      INT64 [6, P]   (tpB, setupB, labelIdB, offset, count, swapped), grouped by owner
+ *   points/gk/loc       FLOAT64 [3, N] shard [3, shardPoints], chunk [3, chunkPoints], zstd, crc32c shard index
+ *   points/gk/id        INT32 [1, N]   detection ids (sparse for *_split labels), same grid
+ *   correspondences/gk/data INT32 [3, M] (detA, detB, consensusSetId) once per pair, A = smaller key, same grid
+ * interestpoints.n5/staging/tp_setup_label.points|.corr   raw blobs from per-entry saves, folded in at the next commit
+ * interestpoints.n5/tpId_X_viewSetupId_Y/label/...         legacy per-view groups, readable, removed by {@link #convertLegacy(URI)}
  * </pre>
  *
- * Writes are staged in memory ({@link #stagePoints}, {@link #stageCorrespondences}, {@link #remove}) and made
- * durable by one {@link #commit()} (called from {@code XmlIoSpimData2.saveInterestPointsInParallel}). A commit
- * appends when the data that stays live is at least {@link #minLiveFractionForAppend} of the array, otherwise it
- * rewrites the arrays (compaction). New index datasets are written first and the root attributes are flipped
- * last, so a crash leaves the previous generation intact.
+ * Writes are staged in memory ({@link #stagePoints}, {@link #stageCorrespondences}, {@link #remove}) and made durable by
+ * one {@link #commit()} (called from {@code XmlIoSpimData2.saveInterestPointsInParallel}). A commit appends when at least
+ * {@link #minLiveFractionForAppend} of the arrays stays live, otherwise it rewrites them (compaction). New index arrays
+ * are written first and the root attributes are flipped last, so a crash leaves the previous generation intact.
+ * Per-entry saves outside a batch ({@link #writePointsBlob}, {@link #writeCorrespondencesBlob}) write one raw file each
+ * (durable immediately, also from other JVMs); readers prefer these blobs until the next commit folds them in.
  *
- * Per-entry saves outside a batch ({@link #writePointsBlob}, {@link #writeCorrespondencesBlob}) write one raw
- * file each and are durable immediately; readers prefer these blobs over packed data until the next commit
- * folds them in.
- *
- * One store instance exists per container URI ({@link #get(URI)}); all {@code InterestPointsN5} of a dataset
- * share it, its open reader, its index and its block cache.
+ * One store instance exists per dataset directory ({@link #get(URI)}); all {@code InterestPointsN5} of a dataset share
+ * it, its open readers, its index and its chunk cache.
  */
 public class PackedInterestPointStore
 {
 	public static final String VERSION = "1.0.0";
-	public static int defaultBlockSize = 16384; // points / correspondences per block
-	public static double minLiveFractionForAppend = 0.75;
-	public static int blockCacheSize = 256; // blocks (16K points * 24 B = ~400 KB each)
+	public static final String ZARR_CONTAINER = "interestpoints.zarr";
 
-	static final String PACKED = "packed", STAGING = "staging";
-	static final String ATTR_VERSION = "packed", ATTR_GEN = "generation", ATTR_POINTS = "pointsData", ATTR_CORR = "corrData", ATTR_LABELS = "labels";
+	/**
+	 * inner chunk = read unit (points or correspondences per chunk); used when arrays are created. 64K points (1.5 MB of
+	 * coordinates) was the best of 1K..64K in the /nrs sweep of 2026-09-18: on a network file system the per-request cost
+	 * dominates, so few large chunk reads beat many small ones (read-all 10x, TPS 3x faster than 16K).
+	 */
+	public static int defaultChunkPoints = 65536;
+	/** shard = file (points or correspondences per shard); rounded up to a multiple of the chunk size */
+	public static int defaultShardPoints = 1 << 20;
+	public static int zstdLevel = 3;
+	public static double minLiveFractionForAppend = 0.75;
+	public static int chunkCacheSize = 256;
+
+	static final String STAGING = "staging";
+	static final String ATTR_VERSION = "interestpoints", ATTR_GEN = "generation", ATTR_POINTS = "pointsData", ATTR_CORR = "corrData", ATTR_LABELS = "labels",
+			ATTR_CHUNK = "chunkPoints", ATTR_SHARD = "shardPoints";
 
 	/** identifies one (timepoint, setup, label) entry */
 	public record Key( int tp, int setup, String label ) implements Comparable< Key >
@@ -173,23 +184,22 @@ public class PackedInterestPointStore
 		}
 
 		static Index empty() { return new Index( -1, List.of(), null, null, Map.of(), Map.of(), 0, 0, null, null, null ); }
-		boolean isPacked() { return generation >= 0; }
+		boolean exists() { return generation >= 0; }
 	}
 
-	// ponytail: one store per container URI for the whole JVM; fine as long as all SpimData2 of a base path see the same files
+	// ponytail: one store per dataset directory for the whole JVM; fine as long as all SpimData2 of a base path see the same files
 	private static final ConcurrentHashMap< String, PackedInterestPointStore > stores = new ConcurrentHashMap<>();
 
-	/** @param baseDir the dataset directory (containing interestpoints.n5), i.e. {@code SpimData2.getBasePathURI()} */
+	/** @param baseDir the dataset directory (containing interestpoints.zarr / interestpoints.n5), i.e. {@code SpimData2.getBasePathURI()} */
 	public static PackedInterestPointStore get( final URI baseDir )
 	{
-		final URI container = URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) );
-		return stores.computeIfAbsent( container.toString(), k -> new PackedInterestPointStore( container ) );
+		return stores.computeIfAbsent( baseDir.toString(), k -> new PackedInterestPointStore( baseDir ) );
 	}
 
-	final URI containerURI;
-	private N5Writer writer = null;
-	private N5Reader reader = null;
-	private boolean readerTried = false;
+	final URI baseDir, zarrURI, n5URI;
+	private N5Writer zarrWriter = null, n5Writer = null;
+	private N5Reader zarrReader = null, n5Reader = null;
+	private boolean zarrReaderTried = false, n5ReaderTried = false;
 	private volatile Index index = null;
 
 	private final Object lock = new Object();
@@ -199,44 +209,72 @@ public class PackedInterestPointStore
 	private volatile Set< Key > blobPoints = Set.of(), blobCorr = Set.of();
 	private boolean blobsListed = false;
 
-	private final LinkedHashMap< String, Object > blockCache = new LinkedHashMap<>( 64, 0.75f, true )
+	private final LinkedHashMap< String, Object > chunkCache = new LinkedHashMap<>( 64, 0.75f, true )
 	{
 		private static final long serialVersionUID = 1L;
-		@Override protected boolean removeEldestEntry( final Map.Entry< String, Object > e ) { return size() > blockCacheSize; }
+		@Override protected boolean removeEldestEntry( final Map.Entry< String, Object > e ) { return size() > chunkCacheSize; }
 	};
 
 	/** prefer {@link #get(URI)}; a private instance does not share index and cache with the rest of the JVM */
-	public PackedInterestPointStore( final URI containerURI ) { this.containerURI = containerURI; }
-
-	// ------------------------------------------------------------------------------------------------
-	// opening
-	// ------------------------------------------------------------------------------------------------
-
-	private synchronized N5Reader reader()
+	public PackedInterestPointStore( final URI baseDir )
 	{
-		if ( writer != null ) return writer;
-		if ( !readerTried )
-		{
-			readerTried = true;
-			try { reader = URITools.instantiateN5Reader( StorageFormat.N5, containerURI ); }
-			catch ( final Exception e ) { reader = null; } // no container yet
-		}
-		return reader;
+		this.baseDir = baseDir;
+		this.zarrURI = URITools.toURI( URITools.appendName( baseDir, ZARR_CONTAINER ) );
+		this.n5URI = URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) );
 	}
 
-	private synchronized N5Writer writer()
+	// ------------------------------------------------------------------------------------------------
+	// containers
+	// ------------------------------------------------------------------------------------------------
+
+	private synchronized N5Reader zarrReader()
 	{
-		if ( writer == null )
+		if ( zarrWriter != null ) return zarrWriter;
+		if ( !zarrReaderTried )
 		{
-			writer = URITools.instantiateN5Writer( StorageFormat.N5, containerURI );
-			reader = null;
+			zarrReaderTried = true;
+			try { zarrReader = URITools.instantiateN5Reader( StorageFormat.ZARR, zarrURI ); }
+			catch ( final Exception e ) { zarrReader = null; } // no store yet
 		}
-		return writer;
+		return zarrReader;
 	}
 
-	private KeyValueAccess kva( final N5Reader n5 ) { return ( (GsonKeyValueN5Reader) n5 ).getKeyValueAccess(); }
+	private synchronized N5Writer zarrWriter()
+	{
+		if ( zarrWriter == null )
+		{
+			zarrWriter = URITools.instantiateN5Writer( StorageFormat.ZARR, zarrURI );
+			zarrReader = null;
+		}
+		return zarrWriter;
+	}
 
-	public boolean isPacked() { return index().isPacked(); }
+	private synchronized N5Reader n5Reader()
+	{
+		if ( n5Writer != null ) return n5Writer;
+		if ( !n5ReaderTried )
+		{
+			n5ReaderTried = true;
+			try { n5Reader = URITools.instantiateN5Reader( StorageFormat.N5, n5URI ); }
+			catch ( final Exception e ) { n5Reader = null; }
+		}
+		return n5Reader;
+	}
+
+	private synchronized N5Writer n5Writer()
+	{
+		if ( n5Writer == null )
+		{
+			n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, n5URI );
+			n5Reader = null;
+		}
+		return n5Writer;
+	}
+
+	private static KeyValueAccess kva( final N5Reader n5 ) { return ( (GsonKeyValueN5Reader) n5 ).getKeyValueAccess(); }
+
+	/** @return true if the Zarr store exists (a dataset that was detected/converted with this version) */
+	public boolean exists() { return index().exists(); }
 
 	Index index()
 	{
@@ -254,24 +292,24 @@ public class PackedInterestPointStore
 
 	private Index loadIndex()
 	{
-		final N5Reader n5 = reader();
-		listBlobs( n5 );
-		if ( n5 == null || n5.getAttribute( "/", ATTR_VERSION, String.class ) == null )
+		listBlobs();
+		final N5Reader z = zarrReader();
+		if ( z == null || z.getAttribute( "/", ATTR_VERSION, String.class ) == null )
 			return Index.empty();
 
-		final int gen = n5.getAttribute( "/", ATTR_GEN, Integer.class );
+		final int gen = z.getAttribute( "/", ATTR_GEN, Integer.class );
 		@SuppressWarnings( "unchecked" )
-		final List< String > labels = new ArrayList<>( n5.getAttribute( "/", ATTR_LABELS, List.class ) );
-		final String pointsData = n5.getAttribute( "/", ATTR_POINTS, String.class );
-		final String corrData = n5.getAttribute( "/", ATTR_CORR, String.class );
+		final List< String > labels = new ArrayList<>( z.getAttribute( "/", ATTR_LABELS, List.class ) );
+		final String pointsData = z.getAttribute( "/", ATTR_POINTS, String.class );
+		final String corrData = z.getAttribute( "/", ATTR_CORR, String.class );
 
-		final long[] idx = readLongs( n5, PACKED + "/index_" + gen, 5 );
+		final long[] idx = readLongs( z, indexGroup( gen ) + "/entries", 5 );
 		final Map< Key, long[] > points = new HashMap<>();
 		for ( int r = 0; r < idx.length / 5; ++r )
 			points.put( new Key( (int) idx[ 5 * r ], (int) idx[ 5 * r + 1 ], labels.get( (int) idx[ 5 * r + 2 ] ) ), new long[] { idx[ 5 * r + 3 ], idx[ 5 * r + 4 ] } );
 
-		final long[] vidx = readLongs( n5, PACKED + "/viewIndex_" + gen, 5 );
-		final long[] pidx = readLongs( n5, PACKED + "/pairIndex_" + gen, 6 );
+		final long[] vidx = readLongs( z, indexGroup( gen ) + "/views", 5 );
+		final long[] pidx = readLongs( z, indexGroup( gen ) + "/pairs", 6 );
 		final Map< Key, List< PairRow > > pairs = new HashMap<>();
 		for ( int r = 0; r < vidx.length / 5; ++r )
 		{
@@ -284,19 +322,22 @@ public class PackedInterestPointStore
 			pairs.put( new Key( (int) vidx[ 5 * r ], (int) vidx[ 5 * r + 1 ], labels.get( (int) vidx[ 5 * r + 2 ] ) ), rows );
 		}
 
-		final DatasetAttributes loc = n5.getDatasetAttributes( pointsData + "/loc" ), id = n5.getDatasetAttributes( pointsData + "/id" ), corr = n5.getDatasetAttributes( corrData + "/data" );
+		final DatasetAttributes loc = z.getDatasetAttributes( pointsData + "/loc" ), id = z.getDatasetAttributes( pointsData + "/id" ), corr = z.getDatasetAttributes( corrData + "/data" );
 		return new Index( gen, labels, pointsData, corrData, points, pairs, loc.getDimensions()[ 1 ], corr.getDimensions()[ 1 ], loc, id, corr );
 	}
 
-	private void listBlobs( final N5Reader n5 )
+	static String indexGroup( final int gen ) { return "index/g" + gen; }
+
+	private void listBlobs()
 	{
 		if ( blobsListed ) return;
 		blobsListed = true;
 		final Set< Key > p = new HashSet<>(), c = new HashSet<>();
+		final N5Reader n5 = n5Reader();
 		if ( n5 != null )
 		{
 			final KeyValueAccess kva = kva( n5 );
-			final String dir = kva.compose( containerURI, STAGING );
+			final String dir = kva.compose( n5URI, STAGING );
 			if ( kva.exists( dir ) )
 			{
 				for ( final String name : kva.list( dir ) )
@@ -328,7 +369,7 @@ public class PackedInterestPointStore
 	// reading
 	// ------------------------------------------------------------------------------------------------
 
-	/** @return true if this store knows the entry (staged, staging blob or packed); false means: try the legacy group */
+	/** @return true if this store knows the entry (staged, staging blob or stored); false means: try the legacy group */
 	public boolean hasPoints( final Key k )
 	{
 		synchronized ( lock )
@@ -441,52 +482,53 @@ public class PackedInterestPointStore
 	{
 		final int[] ids = new int[ n ];
 		final double[] loc = new double[ n * 3 ];
-		final int B = idx.locAttrs.getBlockSize()[ 1 ];
-		for ( long b = off / B; b * B < off + n; ++b )
+		final int C = idx.locAttrs.getChunkSize()[ 1 ];
+		for ( long c = off / C; c * C < off + n; ++c )
 		{
-			final double[] lblk = (double[]) block( idx.pointsData + "/loc", idx.locAttrs, b );
-			final int[] iblk = (int[]) block( idx.pointsData + "/id", idx.idAttrs, b );
-			final long bs = b * B, cs = Math.max( bs, off ), ce = Math.min( bs + iblk.length, off + n );
-			System.arraycopy( lblk, (int) ( cs - bs ) * 3, loc, (int) ( cs - off ) * 3, (int) ( ce - cs ) * 3 );
-			System.arraycopy( iblk, (int) ( cs - bs ), ids, (int) ( cs - off ), (int) ( ce - cs ) );
+			final double[] lchunk = (double[]) chunk( idx.pointsData + "/loc", idx.locAttrs, c );
+			final int[] ichunk = (int[]) chunk( idx.pointsData + "/id", idx.idAttrs, c );
+			final long cs0 = c * C, cs = Math.max( cs0, off ), ce = Math.min( Math.min( cs0 + C, idx.nPoints ), off + n );
+			System.arraycopy( lchunk, (int) ( cs - cs0 ) * 3, loc, (int) ( cs - off ) * 3, (int) ( ce - cs ) * 3 );
+			System.arraycopy( ichunk, (int) ( cs - cs0 ), ids, (int) ( cs - off ), (int) ( ce - cs ) );
 		}
 		return new Points( ids, loc );
 	}
 
 	private void appendRange( final Index idx, final PairRow row, final List< CorrespondingInterestPoints > out )
 	{
-		final int B = idx.corrAttrs.getBlockSize()[ 1 ];
+		final int C = idx.corrAttrs.getChunkSize()[ 1 ];
 		final long off = row.offset;
 		final ViewId partner = row.partner.viewId();
-		for ( long b = off / B; b * B < off + row.count; ++b )
+		for ( long c = off / C; c * C < off + row.count; ++c )
 		{
-			final int[] blk = (int[]) block( idx.corrData + "/data", idx.corrAttrs, b );
-			final long bs = b * B, cs = Math.max( bs, off ), ce = Math.min( bs + blk.length / 3, off + row.count );
+			final int[] chunk = (int[]) chunk( idx.corrData + "/data", idx.corrAttrs, c );
+			final long cs0 = c * C, cs = Math.max( cs0, off ), ce = Math.min( Math.min( cs0 + C, idx.nCorr ), off + row.count );
 			for ( long j = cs; j < ce; ++j )
 			{
-				final int o = (int) ( j - bs ) * 3;
-				final int a = blk[ o ], bb = blk[ o + 1 ], set = blk[ o + 2 ];
+				final int o = (int) ( j - cs0 ) * 3;
+				final int a = chunk[ o ], b = chunk[ o + 1 ], set = chunk[ o + 2 ];
 				out.add( row.swapped
-						? new CorrespondingInterestPoints( bb, partner, row.partner.label, a, set )
-						: new CorrespondingInterestPoints( a, partner, row.partner.label, bb, set ) );
+						? new CorrespondingInterestPoints( b, partner, row.partner.label, a, set )
+						: new CorrespondingInterestPoints( a, partner, row.partner.label, b, set ) );
 			}
 		}
 	}
 
-	private Object block( final String dataset, final DatasetAttributes attrs, final long b )
+	/** one inner chunk (read through the shard index), cached */
+	private Object chunk( final String dataset, final DatasetAttributes attrs, final long c )
 	{
-		final String key = dataset + "#" + b;
-		synchronized ( blockCache )
+		final String key = dataset + "#" + c;
+		synchronized ( chunkCache )
 		{
-			final Object o = blockCache.get( key );
+			final Object o = chunkCache.get( key );
 			if ( o != null ) return o;
 		}
-		final Object data = reader().readBlock( dataset, attrs, 0, b ).getData();
-		synchronized ( blockCache ) { blockCache.put( key, data ); }
+		final Object data = zarrReader().readChunk( dataset, attrs, 0, c ).getData();
+		synchronized ( chunkCache ) { chunkCache.put( key, data ); }
 		return data;
 	}
 
-	private void clearCache() { synchronized ( blockCache ) { blockCache.clear(); } }
+	private void clearCache() { synchronized ( chunkCache ) { chunkCache.clear(); } }
 
 	// ------------------------------------------------------------------------------------------------
 	// staging (in memory) and per-entry blobs (durable)
@@ -520,14 +562,15 @@ public class PackedInterestPointStore
 		synchronized ( lock ) { return !stagedPoints.isEmpty() || !stagedCorr.isEmpty() || !removedPoints.isEmpty() || !removedCorr.isEmpty(); }
 	}
 
-	/** durable per-entry save: one raw file under staging/, folded into the packed arrays by the next commit */
+	private String blobPath( final KeyValueAccess kva, final Key k, final String ext ) { return kva.compose( n5URI, STAGING, blobName( k ) + ext ); }
+
+	/** durable per-entry save: one raw file under interestpoints.n5/staging/, folded into the arrays by the next commit */
 	public void writePointsBlob( final Key k, final int[] ids, final double[][] locations )
 	{
 		final Points p = Points.of( ids, locations );
-		final N5Writer w = writer();
-		final KeyValueAccess kva = kva( w );
-		kva.createDirectories( kva.compose( containerURI, STAGING ) );
-		try ( final LockedChannel ch = kva.lockForWriting( kva.compose( containerURI, STAGING, blobName( k ) + ".points" ) );
+		final KeyValueAccess kva = kva( n5Writer() );
+		kva.createDirectories( kva.compose( n5URI, STAGING ) );
+		try ( final LockedChannel ch = kva.lockForWriting( blobPath( kva, k, ".points" ) );
 				final DataOutputStream out = new DataOutputStream( ch.newOutputStream() ) )
 		{
 			out.writeInt( p.size() );
@@ -544,10 +587,9 @@ public class PackedInterestPointStore
 
 	public void writeCorrespondencesBlob( final Key k, final Collection< CorrespondingInterestPoints > list )
 	{
-		final N5Writer w = writer();
-		final KeyValueAccess kva = kva( w );
-		kva.createDirectories( kva.compose( containerURI, STAGING ) );
-		try ( final LockedChannel ch = kva.lockForWriting( kva.compose( containerURI, STAGING, blobName( k ) + ".corr" ) );
+		final KeyValueAccess kva = kva( n5Writer() );
+		kva.createDirectories( kva.compose( n5URI, STAGING ) );
+		try ( final LockedChannel ch = kva.lockForWriting( blobPath( kva, k, ".corr" ) );
 				final DataOutputStream out = new DataOutputStream( ch.newOutputStream() ) )
 		{
 			final List< String > labels = new ArrayList<>();
@@ -575,8 +617,8 @@ public class PackedInterestPointStore
 
 	private Points readPointsBlob( final Key k )
 	{
-		final KeyValueAccess kva = kva( reader() );
-		try ( final LockedChannel ch = kva.lockForReading( kva.compose( containerURI, STAGING, blobName( k ) + ".points" ) );
+		final KeyValueAccess kva = kva( n5Reader() );
+		try ( final LockedChannel ch = kva.lockForReading( blobPath( kva, k, ".points" ) );
 				final DataInputStream in = new DataInputStream( ch.newInputStream() ) )
 		{
 			final int n = in.readInt();
@@ -591,8 +633,8 @@ public class PackedInterestPointStore
 
 	private List< CorrespondingInterestPoints > readCorrBlob( final Key k )
 	{
-		final KeyValueAccess kva = kva( reader() );
-		try ( final LockedChannel ch = kva.lockForReading( kva.compose( containerURI, STAGING, blobName( k ) + ".corr" ) );
+		final KeyValueAccess kva = kva( n5Reader() );
+		try ( final LockedChannel ch = kva.lockForReading( blobPath( kva, k, ".corr" ) );
 				final DataInputStream in = new DataInputStream( ch.newInputStream() ) )
 		{
 			final String[] labels = new String[ in.readInt() ];
@@ -614,8 +656,8 @@ public class PackedInterestPointStore
 	// ------------------------------------------------------------------------------------------------
 
 	/**
-	 * Makes all staged changes and staging blobs durable in the packed arrays: appends if enough of the current
-	 * arrays stays live, otherwise rewrites them; writes the next-generation indices; flips the root attributes.
+	 * Makes all staged changes and staging blobs durable: appends if enough of the current arrays stays live, otherwise
+	 * rewrites them; writes the next-generation indices; flips the root attributes.
 	 */
 	public void commit()
 	{
@@ -631,13 +673,16 @@ public class PackedInterestPointStore
 				return;
 
 			final long t0 = System.currentTimeMillis();
-			final N5Writer w = writer();
+			final N5Writer w = zarrWriter();
 			final List< String > labels = new ArrayList<>( old.labels );
 			final Map< String, Integer > labelId = new HashMap<>();
 			for ( int i = 0; i < labels.size(); ++i ) labelId.put( labels.get( i ), i );
+			// grid of existing arrays, or the defaults for a new store
+			final int chunk = old.exists() ? old.locAttrs.getChunkSize()[ 1 ] : Math.max( 1, defaultChunkPoints );
+			final int shard = old.exists() ? old.locAttrs.getBlockSize()[ 1 ] : roundUp( Math.max( chunk, defaultShardPoints ), chunk );
 
 			// ---------------- points ----------------
-			final TreeMap< Key, long[] > newPoints = new TreeMap<>(); // final index
+			final TreeMap< Key, long[] > newPoints = new TreeMap<>();
 			final List< Key > kept = new ArrayList<>();
 			long keptCount = 0, newCount = 0;
 			for ( final Map.Entry< Key, long[] > e : old.points.entrySet() )
@@ -658,16 +703,13 @@ public class PackedInterestPointStore
 			}
 			else
 			{
-				pointsData = PACKED + "/points/d" + ( old.generation + 1 );
+				pointsData = "points/g" + ( old.generation + 1 );
 				ptsStart = 0;
 				Collections.sort( kept );
 				toWrite.addAll( 0, kept ); // kept first, then new
 			}
 			for ( final Key k : toWrite )
-			{
-				final Points p = stagedPoints.containsKey( k ) ? stagedPoints.get( k ) : readPoints( old, old.points.get( k )[ 0 ], (int) old.points.get( k )[ 1 ] );
-				toWriteData.add( p );
-			}
+				toWriteData.add( stagedPoints.containsKey( k ) ? stagedPoints.get( k ) : readPoints( old, old.points.get( k )[ 0 ], (int) old.points.get( k )[ 1 ] ) );
 			long off = ptsStart;
 			for ( int i = 0; i < toWrite.size(); ++i )
 			{
@@ -675,21 +717,19 @@ public class PackedInterestPointStore
 				off += toWriteData.get( i ).size();
 			}
 			final long nPointsNew = off;
-			writePoints( w, pointsData, appendPts ? old.locAttrs : null, appendPts ? old.idAttrs : null, ptsStart, toWriteData, nPointsNew );
+			writePoints( w, pointsData, appendPts ? old : null, ptsStart, toWriteData, nPointsNew, shard, chunk );
 
 			// ---------------- correspondences ----------------
 			// pair data keyed by canonical (a < b); rows oriented so column 0 = a's detection
-			final TreeMap< Key, TreeMap< Key, int[][] > > pairData = new TreeMap<>(); // a -> b -> data (new or copied)
+			final TreeMap< Key, TreeMap< Key, int[][] > > pairData = new TreeMap<>();
 			final Set< Key > authoritative = new HashSet<>( stagedCorr.keySet() );
 			authoritative.addAll( removedCorr );
-			// old pairs where neither side changed: keep (copied out of the old data if rewriting)
 			long keptCorr = 0;
 			final List< Object[] > keptRows = new ArrayList<>(); // {a, b, PairRow}
 			for ( final Map.Entry< Key, List< PairRow > > e : old.pairs.entrySet() )
 				for ( final PairRow row : e.getValue() )
 					if ( !row.swapped && !authoritative.contains( e.getKey() ) && !authoritative.contains( row.partner ) )
 					{ keptRows.add( new Object[] { e.getKey(), row.partner, row } ); keptCorr += row.count; }
-			// staged sides
 			long newCorr = 0;
 			final Map< Key, Map< Key, List< CorrespondingInterestPoints > > > stagedByPartner = new HashMap<>();
 			for ( final Map.Entry< Key, List< CorrespondingInterestPoints > > e : stagedCorr.entrySet() )
@@ -724,8 +764,7 @@ public class PackedInterestPointStore
 				}
 			}
 			final boolean appendCorr = old.corrData != null && ( keptCorr + newCorr ) >= minLiveFractionForAppend * ( old.nCorr + newCorr );
-			final String corrData = appendCorr ? old.corrData : PACKED + "/corr/d" + ( old.generation + 1 );
-			// rows of the new pair index: owner -> rows
+			final String corrData = appendCorr ? old.corrData : "correspondences/g" + ( old.generation + 1 );
 			final Map< Key, List< PairRow > > newPairs = new HashMap<>();
 			final List< int[][] > corrToWrite = new ArrayList<>();
 			long coff = appendCorr ? old.nCorr : 0;
@@ -752,9 +791,9 @@ public class PackedInterestPointStore
 					coff += pe.getValue()[ 0 ].length;
 				}
 			final long nCorrNew = coff;
-			writeCorr( w, corrData, appendCorr ? old.corrAttrs : null, appendCorr ? old.nCorr : 0, corrToWrite, nCorrNew );
+			writeCorr( w, corrData, appendCorr ? old : null, appendCorr ? old.nCorr : 0, corrToWrite, nCorrNew, shard, chunk );
 
-			// every entry with points (or staged correspondences) gets a viewIndex row, even with 0 pairs
+			// every entry with points (or staged correspondences) gets a views row, even with 0 pairs
 			for ( final Key k : newPoints.keySet() ) newPairs.putIfAbsent( k, new ArrayList<>() );
 			for ( final Key k : stagedCorr.keySet() ) if ( !removedCorr.contains( k ) ) newPairs.putIfAbsent( k, new ArrayList<>() );
 			for ( final Key k : removedCorr ) newPairs.remove( k );
@@ -788,26 +827,29 @@ public class PackedInterestPointStore
 			final long[] pidx = new long[ pidxList.size() ];
 			for ( int i = 0; i < pidx.length; ++i ) pidx[ i ] = pidxList.get( i );
 
-			writeLongs( w, PACKED + "/index_" + gen, 5, idx );
-			writeLongs( w, PACKED + "/viewIndex_" + gen, 5, vidx );
-			writeLongs( w, PACKED + "/pairIndex_" + gen, 6, pidx );
+			writeLongs( w, indexGroup( gen ) + "/entries", 5, idx );
+			writeLongs( w, indexGroup( gen ) + "/views", 5, vidx );
+			writeLongs( w, indexGroup( gen ) + "/pairs", 6, pidx );
 
 			final Map< String, Object > attrs = new HashMap<>();
 			attrs.put( ATTR_VERSION, VERSION ); attrs.put( ATTR_GEN, gen ); attrs.put( ATTR_POINTS, pointsData ); attrs.put( ATTR_CORR, corrData ); attrs.put( ATTR_LABELS, labels );
+			attrs.put( ATTR_CHUNK, chunk ); attrs.put( ATTR_SHARD, shard );
 			w.setAttributes( "/", attrs ); // the commit point
 
 			// ---------------- cleanup of the previous generation ----------------
-			if ( old.isPacked() )
+			if ( old.exists() )
 			{
-				for ( final String ds : new String[] { PACKED + "/index_" + old.generation, PACKED + "/viewIndex_" + old.generation, PACKED + "/pairIndex_" + old.generation } )
-					if ( w.exists( ds ) ) w.remove( ds );
+				if ( w.exists( indexGroup( old.generation ) ) ) w.remove( indexGroup( old.generation ) );
 				if ( !appendPts && w.exists( old.pointsData ) ) w.remove( old.pointsData );
 				if ( !appendCorr && w.exists( old.corrData ) ) w.remove( old.corrData );
 			}
-			final KeyValueAccess kva = kva( w );
-			for ( final Key k : blobPoints ) { final String p = kva.compose( containerURI, STAGING, blobName( k ) + ".points" ); if ( kva.exists( p ) ) kva.delete( p ); }
-			for ( final Key k : blobCorr ) { final String p = kva.compose( containerURI, STAGING, blobName( k ) + ".corr" ); if ( kva.exists( p ) ) kva.delete( p ); }
-			blobPoints = Set.of(); blobCorr = Set.of();
+			if ( !blobPoints.isEmpty() || !blobCorr.isEmpty() )
+			{
+				final KeyValueAccess kva = kva( n5Writer() );
+				for ( final Key k : blobPoints ) { final String p = blobPath( kva, k, ".points" ); if ( kva.exists( p ) ) kva.delete( p ); }
+				for ( final Key k : blobCorr ) { final String p = blobPath( kva, k, ".corr" ); if ( kva.exists( p ) ) kva.delete( p ); }
+				blobPoints = Set.of(); blobCorr = Set.of();
+			}
 
 			final int nStaged = stagedPoints.size(), nStagedCorr = stagedCorr.size();
 			stagedPoints.clear(); stagedCorr.clear(); removedPoints.clear(); removedCorr.clear();
@@ -817,9 +859,11 @@ public class PackedInterestPointStore
 
 			IOFunctions.println( "PackedInterestPointStore: committed generation " + gen + " (" + nStaged + " point entries, " + nStagedCorr + " correspondence entries, points "
 					+ ( appendPts ? "appended" : "rewritten" ) + ", correspondences " + ( appendCorr ? "appended" : "rewritten" ) + ", " + newPoints.size() + " entries / " + nPointsNew
-					+ " points / " + nCorrNew + " correspondences total) in " + ( System.currentTimeMillis() - t0 ) + " ms" );
+					+ " points / " + nCorrNew + " correspondences total, chunk " + chunk + " / shard " + shard + ") in " + ( System.currentTimeMillis() - t0 ) + " ms" );
 		}
 	}
+
+	private static int roundUp( final int v, final int multiple ) { return ( ( v + multiple - 1 ) / multiple ) * multiple; }
 
 	private static void addPair( final Map< Key, List< PairRow > > pairs, final Key a, final Key b, final long offset, final int count )
 	{
@@ -827,133 +871,158 @@ public class PackedInterestPointStore
 		if ( !a.equals( b ) ) pairs.computeIfAbsent( b, x -> new ArrayList<>() ).add( new PairRow( a, offset, count, true ) );
 	}
 
-	/** writes entries consecutively from {@code start}; creates the datasets if {@code oldLoc == null}, else appends (read-modify-write of the first partial block) */
-	private void writePoints( final N5Writer w, final String group, final DatasetAttributes oldLoc, final DatasetAttributes oldId, final long start, final List< Points > entries, final long total )
+	// ------------------------------------------------------------------------------------------------
+	// Zarr v3 arrays
+	// ------------------------------------------------------------------------------------------------
+
+	/** sharded array [cols, n]: shard [cols, shard], inner chunk [cols, chunk], zstd, crc32c shard index */
+	static DatasetAttributes arrayAttrs( final int cols, final long n, final DataType type, final int shard, final int chunk )
 	{
-		final int B = oldLoc != null ? oldLoc.getBlockSize()[ 1 ] : defaultBlockSize;
-		final DatasetAttributes loc = new DatasetAttributes( new long[] { 3, total }, new int[] { 3, B }, DataType.FLOAT64, new GzipCompression() );
-		final DatasetAttributes id = new DatasetAttributes( new long[] { 1, total }, new int[] { 1, B }, DataType.INT32, new GzipCompression() );
-		if ( oldLoc == null )
+		return ZarrV3DatasetAttributes.builder( new long[] { cols, n }, type )
+				.blockSize( new int[] { cols, shard } )
+				.chunkSize( new int[] { cols, chunk } )
+				.compression( new ZstandardCompression( zstdLevel ) )
+				.shardIndexDataCodecInfos( new Crc32cChecksumCodec() )
+				.build();
+	}
+
+	interface ChunkFiller< T > { DataBlock< T > chunk( long cs, int n ); }
+
+	/**
+	 * Writes the range [start, end) of a sharded array shard by shard (the inner chunks of one shard in one writeChunks
+	 * call; the library merges into an existing partial shard). {@code filler} produces the complete chunk [cs, cs + n);
+	 * for a first chunk that also holds old data ({@code cs < start}) the caller includes that data.
+	 */
+	private static < T > void writeRange( final N5Writer w, final String ds, final DatasetAttributes attrs, final long start, final long end, final ChunkFiller< T > filler )
+	{
+		if ( end <= start ) return;
+		final int shard = attrs.getBlockSize()[ 1 ], chunk = attrs.getChunkSize()[ 1 ];
+		final long total = attrs.getDimensions()[ 1 ];
+		final long s0 = start / shard, s1 = ( end - 1 ) / shard;
+		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+		try
+		{
+			pool.submit( () -> LongStream.rangeClosed( s0, s1 ).parallel().forEach( s -> {
+				final List< DataBlock< T > > chunks = new ArrayList<>();
+				final long shardStart = s * shard, shardEnd = Math.min( total, shardStart + shard );
+				for ( long c = Math.max( shardStart, ( start / chunk ) * chunk ); c < Math.min( shardEnd, end ); c += chunk )
+					chunks.add( filler.chunk( c, (int) ( Math.min( c + chunk, shardEnd ) - c ) ) );
+				@SuppressWarnings( "unchecked" )
+				final DataBlock< T >[] arr = chunks.toArray( new DataBlock[ 0 ] );
+				w.writeChunks( ds, attrs, arr );
+			}) ).get();
+		}
+		catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "writing " + ds + " failed", e ); }
+		finally { pool.shutdown(); }
+	}
+
+	/** writes entries consecutively from {@code start}; creates the arrays if {@code old == null}, else appends */
+	private void writePoints( final N5Writer w, final String group, final Index old, final long start, final List< Points > entries, final long total, final int shard, final int chunk )
+	{
+		final DatasetAttributes loc = arrayAttrs( 3, total, DataType.FLOAT64, shard, chunk ), id = arrayAttrs( 1, total, DataType.INT32, shard, chunk );
+		if ( old == null )
 		{
 			if ( w.exists( group ) ) w.remove( group );
 			w.createDataset( group + "/loc", loc );
 			w.createDataset( group + "/id", id );
 		}
+		else
+		{
+			w.setDatasetAttributes( group + "/loc", loc );
+			w.setDatasetAttributes( group + "/id", id );
+		}
 		final long[] offsets = new long[ entries.size() ];
 		long o = start;
 		for ( int i = 0; i < entries.size(); ++i ) { offsets[ i ] = o; o += entries.get( i ).size(); }
 		final long end = o;
-		if ( end > start )
-		{
-			final long b0 = start / B, b1 = ( end - 1 ) / B;
-			final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
-			try
-			{
-				pool.submit( () -> LongStream.rangeClosed( b0, b1 ).parallel().forEach( b -> {
-					final long bs = b * B, be = Math.min( total, bs + B );
-					final double[] lbuf = new double[ (int) ( be - bs ) * 3 ];
-					final int[] ibuf = new int[ (int) ( be - bs ) ];
-					if ( bs < start ) // first block is partial: keep its existing content
-					{
-						final double[] ol = (double[]) w.readBlock( group + "/loc", oldLoc, 0, b ).getData();
-						final int[] oi = (int[]) w.readBlock( group + "/id", oldId, 0, b ).getData();
-						System.arraycopy( ol, 0, lbuf, 0, Math.min( ol.length, lbuf.length ) );
-						System.arraycopy( oi, 0, ibuf, 0, Math.min( oi.length, ibuf.length ) );
-					}
-					int e = Arrays.binarySearch( offsets, bs );
-					if ( e < 0 ) e = Math.max( 0, -e - 2 );
-					for ( ; e < entries.size() && offsets[ e ] < be; ++e )
-					{
-						final Points p = entries.get( e );
-						final long es = offsets[ e ], ee = es + p.size();
-						final long cs = Math.max( es, bs ), ce = Math.min( ee, be );
-						if ( ce > cs )
-						{
-							System.arraycopy( p.loc, (int) ( cs - es ) * 3, lbuf, (int) ( cs - bs ) * 3, (int) ( ce - cs ) * 3 );
-							System.arraycopy( p.ids, (int) ( cs - es ), ibuf, (int) ( cs - bs ), (int) ( ce - cs ) );
-						}
-					}
-					w.writeBlock( group + "/loc", loc, new DoubleArrayDataBlock( new int[] { 3, (int) ( be - bs ) }, new long[] { 0, b }, lbuf ) );
-					w.writeBlock( group + "/id", id, new IntArrayDataBlock( new int[] { 1, (int) ( be - bs ) }, new long[] { 0, b }, ibuf ) );
-				}) ).get();
-			}
-			catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "writing packed points failed", e ); }
-			finally { pool.shutdown(); }
-		}
-		w.setDatasetAttributes( group + "/loc", loc );
-		w.setDatasetAttributes( group + "/id", id );
+		// old content of the first (partial) chunk
+		final long firstChunk = ( start / chunk ) * chunk;
+		final boolean partial = old != null && firstChunk < start;
+		final double[] oldLoc = partial ? (double[]) chunk( old.pointsData + "/loc", old.locAttrs, firstChunk / chunk ) : null;
+		final int[] oldId = partial ? (int[]) chunk( old.pointsData + "/id", old.idAttrs, firstChunk / chunk ) : null;
+
+		writeRange( w, group + "/loc", loc, start, end, ( cs, n ) -> {
+			final double[] buf = new double[ n * 3 ];
+			if ( cs < start ) System.arraycopy( oldLoc, 0, buf, 0, (int) ( start - cs ) * 3 );
+			forEntries( entries, offsets, cs, n, ( e, es, from, to ) -> System.arraycopy( e.loc, (int) ( from - es ) * 3, buf, (int) ( from - cs ) * 3, (int) ( to - from ) * 3 ) );
+			return new DoubleArrayDataBlock( new int[] { 3, n }, new long[] { 0, cs / chunk }, buf );
+		} );
+		writeRange( w, group + "/id", id, start, end, ( cs, n ) -> {
+			final int[] buf = new int[ n ];
+			if ( cs < start ) System.arraycopy( oldId, 0, buf, 0, (int) ( start - cs ) );
+			forEntries( entries, offsets, cs, n, ( e, es, from, to ) -> System.arraycopy( e.ids, (int) ( from - es ), buf, (int) ( from - cs ), (int) ( to - from ) ) );
+			return new IntArrayDataBlock( new int[] { 1, n }, new long[] { 0, cs / chunk }, buf );
+		} );
 	}
 
-	private void writeCorr( final N5Writer w, final String group, final DatasetAttributes oldAttrs, final long start, final List< int[][] > entries, final long total )
+	interface EntryVisitor { void visit( Points e, long entryStart, long from, long to ); }
+
+	/** calls the visitor for every entry overlapping the chunk [cs, cs + n) */
+	private static void forEntries( final List< Points > entries, final long[] offsets, final long cs, final int n, final EntryVisitor v )
 	{
-		final int B = oldAttrs != null ? oldAttrs.getBlockSize()[ 1 ] : defaultBlockSize;
-		final DatasetAttributes attrs = new DatasetAttributes( new long[] { 3, total }, new int[] { 3, B }, DataType.INT32, new GzipCompression() );
-		if ( oldAttrs == null )
+		int e = Arrays.binarySearch( offsets, cs );
+		if ( e < 0 ) e = Math.max( 0, -e - 2 );
+		for ( ; e < entries.size() && offsets[ e ] < cs + n; ++e )
+		{
+			final long es = offsets[ e ], ee = es + entries.get( e ).size();
+			final long from = Math.max( es, cs ), to = Math.min( ee, cs + n );
+			if ( to > from ) v.visit( entries.get( e ), es, from, to );
+		}
+	}
+
+	private void writeCorr( final N5Writer w, final String group, final Index old, final long start, final List< int[][] > entries, final long total, final int shard, final int chunk )
+	{
+		final DatasetAttributes attrs = arrayAttrs( 3, total, DataType.INT32, shard, chunk );
+		if ( old == null )
 		{
 			if ( w.exists( group ) ) w.remove( group );
 			w.createDataset( group + "/data", attrs );
 		}
+		else
+			w.setDatasetAttributes( group + "/data", attrs );
 		final long[] offsets = new long[ entries.size() ];
 		long o = start;
 		for ( int i = 0; i < entries.size(); ++i ) { offsets[ i ] = o; o += entries.get( i )[ 0 ].length; }
 		final long end = o;
-		if ( end > start )
-		{
-			final long b0 = start / B, b1 = ( end - 1 ) / B;
-			final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
-			try
+		final long firstChunk = ( start / chunk ) * chunk;
+		final int[] oldData = ( old != null && firstChunk < start ) ? (int[]) chunk( old.corrData + "/data", old.corrAttrs, firstChunk / chunk ) : null;
+
+		writeRange( w, group + "/data", attrs, start, end, ( cs, n ) -> {
+			final int[] buf = new int[ n * 3 ];
+			if ( cs < start ) System.arraycopy( oldData, 0, buf, 0, (int) ( start - cs ) * 3 );
+			int e = Arrays.binarySearch( offsets, cs );
+			if ( e < 0 ) e = Math.max( 0, -e - 2 );
+			for ( ; e < entries.size() && offsets[ e ] < cs + n; ++e )
 			{
-				pool.submit( () -> LongStream.rangeClosed( b0, b1 ).parallel().forEach( b -> {
-					final long bs = b * B, be = Math.min( total, bs + B );
-					final int[] buf = new int[ (int) ( be - bs ) * 3 ];
-					if ( bs < start )
-					{
-						final int[] old = (int[]) w.readBlock( group + "/data", oldAttrs, 0, b ).getData();
-						System.arraycopy( old, 0, buf, 0, Math.min( old.length, buf.length ) );
-					}
-					int e = Arrays.binarySearch( offsets, bs );
-					if ( e < 0 ) e = Math.max( 0, -e - 2 );
-					for ( ; e < entries.size() && offsets[ e ] < be; ++e )
-					{
-						final int[][] d = entries.get( e );
-						final long es = offsets[ e ], ee = es + d[ 0 ].length;
-						for ( long j = Math.max( es, bs ); j < Math.min( ee, be ); ++j )
-							for ( int c = 0; c < 3; ++c ) buf[ (int) ( j - bs ) * 3 + c ] = d[ c ][ (int) ( j - es ) ];
-					}
-					w.writeBlock( group + "/data", attrs, new IntArrayDataBlock( new int[] { 3, (int) ( be - bs ) }, new long[] { 0, b }, buf ) );
-				}) ).get();
+				final int[][] d = entries.get( e );
+				final long es = offsets[ e ], ee = es + d[ 0 ].length;
+				for ( long j = Math.max( es, cs ); j < Math.min( ee, cs + n ); ++j )
+					for ( int c = 0; c < 3; ++c ) buf[ (int) ( j - cs ) * 3 + c ] = d[ c ][ (int) ( j - es ) ];
 			}
-			catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "writing packed correspondences failed", e ); }
-			finally { pool.shutdown(); }
-		}
-		w.setDatasetAttributes( group + "/data", attrs );
+			return new IntArrayDataBlock( new int[] { 3, n }, new long[] { 0, cs / chunk }, buf );
+		} );
 	}
 
+	/** small unsharded index array [cols, rows] in one chunk */
 	private static void writeLongs( final N5Writer w, final String ds, final int cols, final long[] v )
 	{
 		final int rows = v.length / cols;
-		final int rowsBlock = Math.max( 1, Math.min( rows, 1 << 20 ) );
-		final DatasetAttributes a = new DatasetAttributes( new long[] { cols, rows }, new int[] { cols, rowsBlock }, DataType.INT64, new GzipCompression() );
+		final DatasetAttributes a = ZarrV3DatasetAttributes.builder( new long[] { cols, rows }, DataType.INT64 )
+				.blockSize( new int[] { cols, Math.max( 1, rows ) } ).compression( new ZstandardCompression( zstdLevel ) ).build();
 		if ( w.exists( ds ) ) w.remove( ds );
 		w.createDataset( ds, a );
-		for ( long b = 0; b * rowsBlock < rows; ++b )
-		{
-			final int r0 = (int) ( b * rowsBlock ), r1 = (int) Math.min( rows, r0 + rowsBlock );
-			w.writeBlock( ds, a, new LongArrayDataBlock( new int[] { cols, r1 - r0 }, new long[] { 0, b }, Arrays.copyOfRange( v, r0 * cols, r1 * cols ) ) );
-		}
+		if ( rows > 0 )
+			w.writeBlock( ds, a, new LongArrayDataBlock( new int[] { cols, rows }, new long[] { 0, 0 }, v ) );
 	}
 
 	private static long[] readLongs( final N5Reader n5, final String ds, final int cols )
 	{
 		final DatasetAttributes a = n5.getDatasetAttributes( ds );
 		final long rows = a.getDimensions()[ 1 ];
+		if ( rows == 0 ) return new long[ 0 ];
 		final long[] out = new long[ (int) ( cols * rows ) ];
-		final int rowsBlock = a.getBlockSize()[ 1 ];
-		for ( long b = 0; b * rowsBlock < rows; ++b )
-		{
-			final long[] blk = (long[]) n5.readBlock( ds, a, 0, b ).getData();
-			System.arraycopy( blk, 0, out, (int) ( b * rowsBlock * cols ), blk.length );
-		}
+		final long[] blk = (long[]) n5.readBlock( ds, a, 0, 0 ).getData();
+		System.arraycopy( blk, 0, out, 0, out.length );
 		return out;
 	}
 
@@ -962,24 +1031,25 @@ public class PackedInterestPointStore
 	// ------------------------------------------------------------------------------------------------
 
 	/**
-	 * Packs every legacy per-view group ({@code tpId_X_viewSetupId_Y/label}) of the container into the packed
-	 * arrays and deletes the groups. Safe to run again on a partially converted container.
+	 * Packs every legacy per-view group ({@code interestpoints.n5/tpId_X_viewSetupId_Y/label}) into the store and deletes
+	 * the groups. Safe to run again on a partially converted dataset.
 	 *
-	 * @param baseDir the dataset directory containing interestpoints.n5
+	 * @param baseDir the dataset directory
 	 * @return number of converted entries
 	 */
 	public static int convertLegacy( final URI baseDir )
 	{
 		final PackedInterestPointStore store = get( baseDir );
-		final N5Writer w = store.writer();
+		final N5Reader n5 = store.n5Reader();
+		if ( n5 == null ) return 0;
 		final List< String > groups = new ArrayList<>();
-		for ( final String g : w.list( "/" ) )
+		for ( final String g : n5.list( "/" ) )
 			if ( g.startsWith( "tpId_" ) && g.contains( "_viewSetupId_" ) )
-				for ( final String label : w.list( g ) )
+				for ( final String label : n5.list( g ) )
 					groups.add( g + "/" + label );
 		Collections.sort( groups );
 		if ( groups.isEmpty() ) return 0;
-		IOFunctions.println( "PackedInterestPointStore: converting " + groups.size() + " legacy interest point groups in " + store.containerURI );
+		IOFunctions.println( "PackedInterestPointStore: converting " + groups.size() + " legacy interest point groups of " + store.n5URI + " into " + store.zarrURI );
 
 		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
 		try
@@ -989,9 +1059,9 @@ public class PackedInterestPointStore
 				final Key k = Key.parse( path );
 				if ( k == null ) return;
 				final InterestPointsN5 ip = new InterestPointsN5( baseDir, path );
-				if ( w.exists( InterestPointsN5.ipDataset( path ) ) && ip.loadLegacyInterestPoints() )
+				if ( n5.exists( InterestPointsN5.ipDataset( path ) ) && ip.loadLegacyInterestPoints() )
 					store.stagePoints( k, ip.ids, ip.locations );
-				if ( w.exists( InterestPointsN5.corrDataset( path ) ) && ip.loadLegacyCorrespondences() )
+				if ( n5.exists( InterestPointsN5.corrDataset( path ) ) && ip.loadLegacyCorrespondences() )
 					store.stageCorrespondences( k, ip.correspondingInterestPoints );
 			}) ).get();
 		}
@@ -1000,6 +1070,7 @@ public class PackedInterestPointStore
 
 		store.commit();
 
+		final N5Writer w = store.n5Writer();
 		final Set< String > viewGroups = new HashSet<>();
 		for ( final String g : groups ) viewGroups.add( g.substring( 0, g.indexOf( '/' ) ) );
 		final ForkJoinPool pool2 = new ForkJoinPool( Threads.numThreads() );
@@ -1010,11 +1081,12 @@ public class PackedInterestPointStore
 		return groups.size();
 	}
 
-	/** java ... PackedInterestPointStore &lt;dataset.xml | dataset directory&gt; */
+	/** java ... PackedInterestPointStore &lt;dataset.xml | dataset directory&gt; [chunkPoints shardPoints] */
 	public static void main( final String[] args )
 	{
 		File dir = new File( args[ 0 ] );
 		if ( dir.isFile() ) dir = dir.getParentFile();
+		if ( args.length > 2 ) { defaultChunkPoints = Integer.parseInt( args[ 1 ] ); defaultShardPoints = Integer.parseInt( args[ 2 ] ); }
 		final long t0 = System.currentTimeMillis();
 		final int n = convertLegacy( dir.toURI() );
 		System.out.println( "converted " + n + " entries in " + ( System.currentTimeMillis() - t0 ) + " ms" );

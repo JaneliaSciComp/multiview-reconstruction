@@ -100,6 +100,9 @@ public class TestPackedInterestPointStore
 		final File base = tmp.resolve( "dataset" ).toFile();
 		base.mkdirs();
 		final URI baseURI = base.toURI();
+		PackedInterestPointStore.defaultChunkPoints = 16; // tiny grid: entries (5..45 points) span chunk and shard borders
+		PackedInterestPointStore.defaultShardPoints = 64;
+		final File zarr = new File( base, PackedInterestPointStore.ZARR_CONTAINER );
 
 		// ---- 1. legacy per-view groups, written with the legacy static writers ----
 		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
@@ -116,7 +119,7 @@ public class TestPackedInterestPointStore
 				}
 		}
 		final long[] legacyCount = count( new File( base, InterestPointsN5.baseN5 ).toPath() );
-		assertFalse( PackedInterestPointStore.get( baseURI ).isPacked() );
+		assertFalse( PackedInterestPointStore.get( baseURI ).exists() );
 
 		// legacy read path still works
 		for ( int v = 0; v < N_VIEWS; ++v )
@@ -130,10 +133,16 @@ public class TestPackedInterestPointStore
 		// ---- 2. convert ----
 		assertEquals( N_VIEWS * LABELS.length, PackedInterestPointStore.convertLegacy( baseURI ) );
 		final PackedInterestPointStore store = PackedInterestPointStore.get( baseURI );
-		assertTrue( store.isPacked() );
-		final long[] packedCount = count( new File( base, InterestPointsN5.baseN5 ).toPath() );
-		assertTrue( packedCount[ 0 ] < legacyCount[ 0 ] / 3, "files " + packedCount[ 0 ] + " vs legacy " + legacyCount[ 0 ] );
-		assertTrue( packedCount[ 1 ] < 30, "dirs " + packedCount[ 1 ] ); // a handful of groups/datasets plus one block dir each
+		assertTrue( store.exists() );
+		final long[] packedCount = count( zarr.toPath() );
+		final long[] n5Count = count( new File( base, InterestPointsN5.baseN5 ).toPath() );
+		assertTrue( packedCount[ 0 ] + n5Count[ 0 ] < legacyCount[ 0 ] / 3, "files " + packedCount[ 0 ] + "+" + n5Count[ 0 ] + " vs legacy " + legacyCount[ 0 ] );
+		// 187 points / 64 per shard = 3 shards for loc and id, 1 for correspondences, 3 index arrays, zarr.json per group/array
+		assertTrue( packedCount[ 0 ] < 30, "files in zarr " + packedCount[ 0 ] );
+		final String locJson = Files.readString( zarr.toPath().resolve( "points/g0/loc/zarr.json" ) ).replaceAll( "\\s+", "" );
+		assertTrue( locJson.contains( "\"shape\":[187,3]" ), locJson ); // standard zarr order: n5 [3, N] appears as [N, 3]
+		assertTrue( locJson.contains( "\"chunk_shape\":[64,3]" ) && locJson.contains( "\"sharding_indexed\"" ) && locJson.contains( "\"chunk_shape\":[16,3]" ), locJson );
+		assertTrue( locJson.contains( "\"name\":\"zstd\",\"configuration\":{\"level\":3" ), locJson );
 		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
 		{
 			assertFalse( w.exists( InterestPointsN5.createN5datasetPath( 0, 0, "beads" ) ) );
@@ -181,7 +190,7 @@ public class TestPackedInterestPointStore
 		assertEquals( sig( corrs( 1, "beads" ) ), sig( new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 1, "beads" ) ).getCorrespondingInterestPointsCopy() ) );
 
 		// ---- 4. rewrite path: replace every entry's points (live fraction of the old array drops to 0) ----
-		final long[] before = count( new File( base, InterestPointsN5.baseN5 ).toPath() );
+		final long[] before = count( zarr.toPath() );
 		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
 		{
 			for ( int v = 0; v < N_VIEWS; ++v )
@@ -193,7 +202,7 @@ public class TestPackedInterestPointStore
 				}
 		}
 		store.commit();
-		final long[] after = count( new File( base, InterestPointsN5.baseN5 ).toPath() );
+		final long[] after = count( zarr.toPath() );
 		assertTrue( after[ 0 ] <= before[ 0 ], "rewrite must not grow the store: " + after[ 0 ] + " vs " + before[ 0 ] );
 		for ( int v = 0; v < N_VIEWS; ++v )
 			for ( final String label : LABELS )
@@ -229,8 +238,8 @@ public class TestPackedInterestPointStore
 		assertSame( points( 5, "beads_split" ), new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 5, "beads_split" ) ).getInterestPointsCopy() );
 
 		// re-open from disk in a fresh store instance (bypass the registry) and check the final state once more
-		final PackedInterestPointStore fresh = new PackedInterestPointStore( new File( base, InterestPointsN5.baseN5 ).toURI() );
-		assertTrue( fresh.isPacked() );
+		final PackedInterestPointStore fresh = new PackedInterestPointStore( baseURI );
+		assertTrue( fresh.exists() );
 		assertArrayEquals( store.points( new Key( 0, 0, "beads" ) ).loc(), fresh.points( new Key( 0, 0, "beads" ) ).loc(), 0.0 );
 		assertFalse( fresh.hasPoints( new Key( 0, 5, "beads" ) ) );
 	}

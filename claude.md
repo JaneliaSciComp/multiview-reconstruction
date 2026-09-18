@@ -50,36 +50,43 @@ Multi-view reconstruction combines multiple images of the same specimen taken fr
 - `net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation` — pairwise setup, subsets
 - `net.preibisch.mvrecon.process.splitting` — oct-tree image splitting
 
-### Interest Point Storage (packed store, 2026-09)
-All interest points and correspondences of a dataset live in a few arrays inside `interestpoints.n5`, managed by
-`PackedInterestPointStore` (one instance per container, `PackedInterestPointStore.get(baseDir)`):
+### Interest Point Storage (Zarr v3 store, 2026-09)
+All interest points and correspondences of a dataset live in a few sharded Zarr v3 arrays in `interestpoints.zarr`, managed
+by `PackedInterestPointStore` (one instance per dataset dir, `PackedInterestPointStore.get(baseDir)`):
 
 ```
-interestpoints.n5/attributes.json    "packed": "1.0.0", "generation": G, "pointsData", "corrData", "labels"
-  packed/index_G      INT64 [5,E]    (tp, setup, labelId, offset, count) per (view, label)
-  packed/viewIndex_G  INT64 [5,E]    (tp, setup, labelId, pairStart, pairCount) into pairIndex
-  packed/pairIndex_G  INT64 [6,P]    (tpB, setupB, labelIdB, offset, count, swapped) grouped by owner
-  packed/points/dk/{id,loc}          INT32 [1,N] ids (sparse for *_split labels!), FLOAT64 [3,N], blocks of 16K points
-  packed/corr/dk/data INT32 [3,M]    (detA, detB, consensusSetId) stored ONCE per pair (A = smaller key)
-  staging/tp_setup_label.{points,corr}   per-entry saves outside a batch (one raw file each)
-  tpId_X_viewSetupId_Y/label/...     legacy per-view groups: still readable, removed by conversion
+interestpoints.zarr/zarr.json       root attrs: "interestpoints": "1.0.0", "generation": G, "pointsData", "corrData", "labels", "chunkPoints", "shardPoints"
+  index/gG/{entries,views,pairs}    INT64 [5|5|6, N]: (tp,setup,labelId,offset,count) / (tp,setup,labelId,pairStart,pairCount) / (tpB,setupB,labelIdB,offset,count,swapped)
+  points/gk/{loc,id}                FLOAT64 [3,N] + INT32 [1,N] (ids are sparse for *_split labels!), shard [·,shardPoints], chunk [·,chunkPoints], zstd 3, crc32c
+  correspondences/gk/data           INT32 [3,M] (detA, detB, consensusSetId) stored ONCE per pair (A = smaller key), same grid
+interestpoints.n5/staging/tp_setup_label.{points,corr}   per-entry saves from other JVMs (one raw file each), folded in at the next commit
+interestpoints.n5/tpId_X_viewSetupId_Y/label/...          legacy per-view groups: still readable, removed by conversion
 ```
+Standard zarr C order: our n5 dims `[3, N]` appear as zarr shape `[N, 3]`. Defaults `defaultChunkPoints = 65536`,
+`defaultShardPoints = 1<<20` (statics, recorded in the root attrs; existing arrays keep their grid). A 1M-point shard file
+is 23.5 MB of coordinates (zstd gains ~2 % on doubles), 2 MB of ids, ~3 MB per 1M correspondences. The never-released
+packed-N5 layout is not supported.
 
-- `InterestPointsN5` keeps its XML text (`tpId_X_viewSetupId_Y/label`) and API. Load order: staging blob → packed → legacy group.
-- **Write model**: the writer-variant saves (`saveInterestPoints(force, N5Writer)`) stage in memory; `XmlIoSpimData2.saveInterestPointsInParallel`
-  calls `store.commit()` once (this is the commit point of every XML save). The URI-variant saves (`saveInterestPoints(force)`) write a
-  durable staging blob (for per-entry saves from other JVMs, e.g. Spark executors in `SplitDatasets`); the next commit folds them in.
-  Deletes are staged too (`store.remove`) and committed with the next save.
-- **Commit** appends when ≥ 75 % of the arrays stay live, otherwise rewrites (compaction). Indices are written as generation G+1 and the
-  root attributes flipped last (atomic), then G is deleted. Never let two JVMs commit to the same container concurrently.
-- **Pair API**: `InterestPoints.getCorrespondingInterestPointsCopy(ViewId, label)` reads one range; `getCorrespondingViews()` lists partners.
-  `LoadCorrespondencesPairwise` and BigStitcher-Spark's `Solver` use them (the solver iterates actual partners instead of all i<j view pairs).
-- **Conversion** of a legacy dataset: `java ... net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore <dataset.xml>`
-  (`convertLegacy`). Datasets are never converted implicitly; mixed legacy + packed containers read fine.
-- Not packed: `--storeIntensities` of Spark detection still writes `tpId_.../label/interestpoints/intensities` per view.
-- Test: `TestPackedInterestPointStore` (legacy → convert → append → rewrite → blob → delete).
-- Benchmarks (split dataset, 1,678 views, /nrs, 24 threads): detection save 9.3 s → 0.8 s, correspondence save 8.4 s → 0.5 s,
-  TPS `getCoefficients` 6.0 s → 0.27 s per underlying view, Solver pair setup 38 s → 0.6 s, 65K files/73K dirs → ~1.1K files/15 dirs.
+- `InterestPointsN5` keeps its XML text (`tpId_X_viewSetupId_Y/label`) and API. Load order: staging blob → Zarr store → legacy group.
+- **Write model**: writer-variant saves (`saveInterestPoints(force, N5Writer)`) stage in memory; `XmlIoSpimData2.saveInterestPointsInParallel`
+  calls `store.commit()` once (the commit point of every XML save). URI-variant saves (`saveInterestPoints(force)`) write a durable
+  staging blob (used by Spark executors: `SplitDatasets`, and `SparkInterestPointDetection`'s per-view combine stage, whose blobs
+  the driver's XML save folds in without loading anything). Deletes are staged (`store.remove`) and committed with the next save.
+- **Commit** appends when ≥ 75 % of the arrays stay live, else rewrites (compaction). Indices go to `index/g(G+1)`, root attrs are
+  flipped last (atomic), then `gG` is deleted. Never let two JVMs commit to the same dataset concurrently.
+- **Sharding gotcha (n5 4.0.1)**: write inner chunks per shard with `writeChunks` (the library merges into a partial shard); never
+  `writeBlock` a truncated last shard — that corrupts `readChunk`. Reads use `readChunk` (partial shard read via the shard index).
+- **Pair API**: `InterestPoints.getCorrespondingInterestPointsCopy(ViewId, label)` reads one range; `getCorrespondingViews()` lists
+  partners. Used by `LoadCorrespondencesPairwise` and BigStitcher-Spark's `Solver` (iterates actual partners, not all i<j pairs).
+- **Conversion**: `java -cp <fat jar> net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore <dataset.xml> [chunk shard]`.
+  Never implicit; mixed legacy + zarr datasets read fine.
+- Not packed: `--storeIntensities` of Spark detection keeps the in-memory path and per-view intensities datasets.
+- Test: `TestPackedInterestPointStore` (chunk 16 / shard 64: legacy → convert → append → rewrite → blob → delete, zarr.json checks).
+- Benchmarks (split dataset, 1,678 views, /nrs, 24 threads, production code paths): legacy N5 vs packed N5: solver setup 2.7 s → 0.24 s,
+  read-all 2.5 s → 0.35 s, TPS `getCoefficients` 6.4 s → 0.36 s per underlying view, 65K files/73K dirs → 1.1K files. Zarr v3 store of
+  the same data: 26 files. Chunk x shard sweep on /nrs (chunks 1K..64K x shards 256K..4M): chunk size decides read speed and
+  bigger is better across the range (64K: read-all 34 ms vs 260-370 ms, TPS 60-116 ms vs 120-2150 ms per view); shard size barely
+  affects reads but 4M shards slow writes (few shards = little write parallelism). Hence 64K / 1M. 64K was the largest tested.
 
 ## InterestPointExplorer GUI
 
