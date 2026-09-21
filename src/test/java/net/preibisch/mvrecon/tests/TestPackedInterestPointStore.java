@@ -143,7 +143,7 @@ public class TestPackedInterestPointStore
 		final String locJson = Files.readString( zarr.toPath().resolve( "points/g0/loc/zarr.json" ) ).replaceAll( "\\s+", "" );
 		assertTrue( locJson.contains( "\"shape\":[187,3]" ), locJson ); // standard zarr order: n5 [3, N] appears as [N, 3]
 		assertTrue( locJson.contains( "\"chunk_shape\":[64,3]" ) && locJson.contains( "\"sharding_indexed\"" ) && locJson.contains( "\"chunk_shape\":[16,3]" ), locJson );
-		assertTrue( locJson.contains( "\"name\":\"zstd\",\"configuration\":{\"level\":3" ), locJson );
+		assertTrue( locJson.contains( "\"name\":\"crc32c\"" ) && !locJson.contains( "zstd" ), locJson );
 		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
 		{
 			assertFalse( w.exists( InterestPointsN5.createN5datasetPath( 0, 0, "beads" ) ) );

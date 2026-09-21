@@ -41,11 +41,6 @@ import java.io.BufferedOutputStream;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.Paths;
-import java.nio.file.Path;
-import java.nio.file.Files;
-import java.nio.channels.FileChannel;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -70,8 +65,8 @@ import org.janelia.saalfeldlab.n5.DoubleArrayDataBlock;
 import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
 import org.janelia.saalfeldlab.n5.IntArrayDataBlock;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
+import org.janelia.saalfeldlab.n5.RawCompression;
 import org.janelia.saalfeldlab.n5.N5Exception;
-import org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess;
 import org.janelia.saalfeldlab.n5.LockedChannel;
 import org.janelia.saalfeldlab.n5.LongArrayDataBlock;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -79,7 +74,6 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
-import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
@@ -100,7 +94,7 @@ import util.URITools;
  *   index/gG/entries    INT64 [5, E]   (tp, setup, labelId, offset, count) per (view, label)
  *   index/gG/views      INT64 [5, E]   (tp, setup, labelId, pairStart, pairCount) into pairs
  *   index/gG/pairs      INT64 [6, P]   (tpB, setupB, labelIdB, offset, count, swapped), grouped by owner
- *   points/gk/loc       FLOAT64 [3, N] shard [3, shardPoints], chunk [3, chunkPoints], zstd, crc32c shard index
+ *   points/gk/loc       FLOAT64 [3, N] shard [3, shardPoints], chunk [3, chunkPoints], raw + crc32c per chunk and shard index
  *   points/gk/id        INT32 [1, N]   detection ids (sparse for *_split labels), same grid
  *   correspondences/gk/data INT32 [3, M] (detA, detB, consensusSetId) once per pair, A = smaller key, same grid
  *   staging/tp_setup_label.points|.corr   raw blobs from per-entry saves (durable, JVM-independent), folded in at the next commit
@@ -131,7 +125,6 @@ public class PackedInterestPointStore
 	public static int defaultChunkPoints = 65536;
 	/** shard = file (points or correspondences per shard); rounded up to a multiple of the chunk size */
 	public static int defaultShardPoints = 1 << 20;
-	public static int zstdLevel = 3;
 	public static double minLiveFractionForAppend = 0.75;
 	public static int chunkCacheSize = 256;
 
@@ -1131,13 +1124,14 @@ public class PackedInterestPointStore
 	// Zarr v3 arrays
 	// ------------------------------------------------------------------------------------------------
 
-	/** sharded array [cols, n]: shard [cols, shard], inner chunk [cols, chunk], zstd, crc32c shard index */
+	/** sharded array [cols, n]: shard [cols, shard], inner chunk [cols, chunk], raw bytes, crc32c on every chunk and on the shard index */
 	static DatasetAttributes arrayAttrs( final int cols, final long n, final DataType type, final int shard, final int chunk )
 	{
 		return ZarrV3DatasetAttributes.builder( new long[] { cols, n }, type )
 				.blockSize( new int[] { cols, shard } )
 				.chunkSize( new int[] { cols, chunk } )
-				.compression( new ZstandardCompression( zstdLevel ) )
+				.compression( new RawCompression() ) // compression gained ~2 % on coordinates and cost a JNI decoder on every read
+				.dataCodecInfos( new Crc32cChecksumCodec() ) // a damaged or zero-filled chunk fails loudly instead of decoding to garbage
 				.shardIndexDataCodecInfos( new Crc32cChecksumCodec() )
 				.build();
 	}
@@ -1149,71 +1143,24 @@ public class PackedInterestPointStore
 	 * call; the library merges into an existing partial shard). {@code filler} produces the complete chunk [cs, cs + n);
 	 * for a first chunk that also holds old data ({@code cs < start}) the caller includes that data.
 	 */
-	private < T > void writeRange( final N5Writer w, final String ds, final DatasetAttributes attrs, final long start, final long end, final ChunkFiller< T > filler )
+	private static < T > void writeRange( final N5Writer w, final String ds, final DatasetAttributes attrs, final long start, final long end, final ChunkFiller< T > filler )
 	{
 		if ( end <= start ) return;
 		final int shard = attrs.getBlockSize()[ 1 ], chunk = attrs.getChunkSize()[ 1 ];
 		final long total = attrs.getDimensions()[ 1 ];
 		final long s0 = start / shard, s1 = ( end - 1 ) / shard;
-		// one fresh reader for the read-back verification (the writer caches; we want the bytes that are on disk)
-		final N5Reader verify = URITools.instantiateN5Reader( StorageFormat.ZARR, n5URI );
-		try
-		{
-			parallel( "writing " + ds, () -> LongStream.rangeClosed( s0, s1 ).parallel().forEach( s -> {
-				final List< DataBlock< T > > chunks = new ArrayList<>();
-				final long shardStart = s * shard, shardEnd = Math.min( total, shardStart + shard );
-				for ( long c = Math.max( shardStart, ( start / chunk ) * chunk ); c < Math.min( shardEnd, end ); c += chunk )
-					chunks.add( filler.chunk( c, (int) ( Math.min( c + chunk, shardEnd ) - c ) ) );
-				@SuppressWarnings( "unchecked" )
-				final DataBlock< T >[] arr = chunks.toArray( new DataBlock[ 0 ] );
-				for ( int attempt = 1; ; ++attempt )
-				{
-					w.writeChunks( ds, attrs, arr );
-					syncShard( w, ds, s );
-					final String bad = verifyChunks( verify, ds, attrs, arr );
-					if ( bad == null ) break;
-					IOFunctions.println( "PackedInterestPointStore: WARNING read-back of " + ds + " shard " + s + " failed (" + bad + "), attempt " + attempt );
-					if ( attempt == 2 ) throw new RuntimeException( "PackedInterestPointStore: " + ds + " shard " + s + " does not read back what was written (" + bad + "); commit aborted, previous generation stays valid" );
-				}
-			}) );
-		}
-		finally { verify.close(); }
+		parallel( "writing " + ds, () -> LongStream.rangeClosed( s0, s1 ).parallel().forEach( s -> {
+			final List< DataBlock< T > > chunks = new ArrayList<>();
+			final long shardStart = s * shard, shardEnd = Math.min( total, shardStart + shard );
+			for ( long c = Math.max( shardStart, ( start / chunk ) * chunk ); c < Math.min( shardEnd, end ); c += chunk )
+				chunks.add( filler.chunk( c, (int) ( Math.min( c + chunk, shardEnd ) - c ) ) );
+			@SuppressWarnings( "unchecked" )
+			final DataBlock< T >[] arr = chunks.toArray( new DataBlock[ 0 ] );
+			w.writeChunks( ds, attrs, arr );
+		}) );
 	}
 
-	/**
-	 * fsync of one shard file (filesystem containers only). Seen 2026-09-21 on /nrs: a shard written by the split driver
-	 * and read 6 s later on another node had a 4.9 MB page-aligned hole of zeros (4 of 6 shards, identical offsets); the
-	 * data never arrived on the server although the JVM had closed the file without error. Force the flush before the
-	 * root attributes are flipped.
-	 */
-	private void syncShard( final N5Writer w, final String ds, final long s )
-	{
-		final KeyValueAccess kva = kva( w );
-		if ( !( kva instanceof FileSystemKeyValueAccess ) ) return;
-		final Path p = Paths.get( kva.compose( n5URI, ds, "c", Long.toString( s ), "0" ) );
-		if ( !Files.exists( p ) ) { IOFunctions.println( "PackedInterestPointStore: WARNING expected shard file " + p + " not found, skipping fsync" ); return; }
-		try ( final FileChannel ch = FileChannel.open( p, StandardOpenOption.WRITE ) ) { ch.force( true ); }
-		catch ( final IOException e ) { throw new RuntimeException( "fsync of " + p + " failed", e ); }
-	}
 
-	/** reads every block back and compares it to what was written; @return null if identical, else a description */
-	private static < T > String verifyChunks( final N5Reader r, final String ds, final DatasetAttributes attrs, final DataBlock< T >[] written )
-	{
-		for ( final DataBlock< T > b : written )
-		{
-			final DataBlock< ? > back;
-			try { back = r.readChunk( ds, attrs, b.getGridPosition() ); }
-			catch ( final Exception e ) { return "chunk " + b.getGridPosition()[ 1 ] + ": " + e.getMessage(); }
-			if ( back == null ) return "chunk " + b.getGridPosition()[ 1 ] + " missing";
-			final Object a = b.getData(), c = back.getData();
-			final boolean same;
-			if ( a instanceof double[] ) same = c instanceof double[] && ( (double[]) c ).length >= ( (double[]) a ).length && Arrays.equals( (double[]) a, 0, ( (double[]) a ).length, (double[]) c, 0, ( (double[]) a ).length );
-			else if ( a instanceof int[] ) same = c instanceof int[] && ( (int[]) c ).length >= ( (int[]) a ).length && Arrays.equals( (int[]) a, 0, ( (int[]) a ).length, (int[]) c, 0, ( (int[]) a ).length );
-			else same = true;
-			if ( !same ) return "chunk " + b.getGridPosition()[ 1 ] + " differs";
-		}
-		return null;
-	}
 
 	/** writes entries consecutively from {@code start}; creates the arrays if {@code old == null}, else appends */
 	private void writePoints( final N5Writer w, final String group, final Index old, final long start, final List< Points > entries, final long total, final int shard, final int chunk )
@@ -1302,7 +1249,7 @@ public class PackedInterestPointStore
 	{
 		final int rows = v.length / cols;
 		final DatasetAttributes a = ZarrV3DatasetAttributes.builder( new long[] { cols, rows }, DataType.INT64 )
-				.blockSize( new int[] { cols, Math.max( 1, rows ) } ).compression( new ZstandardCompression( zstdLevel ) ).build();
+				.blockSize( new int[] { cols, Math.max( 1, rows ) } ).compression( new RawCompression() ).dataCodecInfos( new Crc32cChecksumCodec() ).build();
 		if ( w.exists( ds ) ) w.remove( ds );
 		w.createDataset( ds, a );
 		if ( rows > 0 )
