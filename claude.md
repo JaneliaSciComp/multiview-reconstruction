@@ -59,27 +59,61 @@ interestpoints.zarr/zarr.json       root attrs: "interestpoints": "1.0.0", "gene
   index/gG/{entries,views,pairs}    INT64 [5|5|6, N]: (tp,setup,labelId,offset,count) / (tp,setup,labelId,pairStart,pairCount) / (tpB,setupB,labelIdB,offset,count,swapped)
   points/gk/{loc,id}                FLOAT64 [3,N] + INT32 [1,N] (ids are sparse for *_split labels!), shard [·,shardPoints], chunk [·,chunkPoints], zstd 3, crc32c
   correspondences/gk/data           INT32 [3,M] (detA, detB, consensusSetId) stored ONCE per pair (A = smaller key), same grid
-interestpoints.n5/staging/tp_setup_label.{points,corr}   per-entry saves from other JVMs (one raw file each), folded in at the next commit
-interestpoints.n5/tpId_X_viewSetupId_Y/label/...          legacy per-view groups: still readable, removed by conversion
+  staging/<millis>_<nanos>_<rnd>.stage   saves from other JVMs: one raw file per Spark task (entry table + payloads), folded in at the next commit
+interestpoints.n5/tpId_X_viewSetupId_Y/label/...   legacy per-view groups only: still readable, removed by conversion
 ```
 Standard zarr C order: our n5 dims `[3, N]` appear as zarr shape `[N, 3]`. Defaults `defaultChunkPoints = 65536`,
 `defaultShardPoints = 1<<20` (statics, recorded in the root attrs; existing arrays keep their grid). A 1M-point shard file
 is 23.5 MB of coordinates (zstd gains ~2 % on doubles), 2 MB of ids, ~3 MB per 1M correspondences. The never-released
 packed-N5 layout is not supported.
 
-- `InterestPointsN5` keeps its XML text (`tpId_X_viewSetupId_Y/label`) and API. Load order: staging blob → Zarr store → legacy group.
-- **Write model**: writer-variant saves (`saveInterestPoints(force, N5Writer)`) stage in memory; `XmlIoSpimData2.saveInterestPointsInParallel`
-  calls `store.commit()` once (the commit point of every XML save). URI-variant saves (`saveInterestPoints(force)`) write a durable
-  staging blob (used by Spark executors: `SplitDatasets`, and `SparkInterestPointDetection`'s per-view combine stage, whose blobs
-  the driver's XML save folds in without loading anything). Deletes are staged (`store.remove`) and committed with the next save.
+- `InterestPointsN5` keeps its XML text (`tpId_X_viewSetupId_Y/label`) and API. Load order: staging file → Zarr store → legacy group.
+- **Write model**: `XmlIoSpimData2.saveInterestPointsInParallel` calls `store.beginBatch()`, runs the per-entry writer-variant saves
+  (`saveInterestPoints(force, N5Writer)`, which stage in memory only while a batch is open) and then `store.commit()` once (the commit
+  point of every XML save). Outside a batch, *every* save writes a durable staging file (`interestpoints.zarr/staging/`), so Spark
+  executors (`SplitDatasets` phases 2+3, `SparkInterestPointDetection`'s combine stage) can never lose data by staging in a JVM that
+  never commits; the driver's XML save folds the blobs in. Deletes are staged (`store.remove`) and committed with the next save.
+- **Lesson (2026-09-21)**: the split's phase-3 correspondence saver used the writer variant on executors → staged in executor memory,
+  never committed, all `beads_split` correspondences silently lost (solve1 saw 1,922 instead of 3,566 connected pairs). Hence the
+  batch flag: in-memory staging is opt-in for the one caller that commits.
 - **Commit** appends when ≥ 75 % of the arrays stay live, else rewrites (compaction). Indices go to `index/g(G+1)`, root attrs are
   flipped last (atomic), then `gG` is deleted. Never let two JVMs commit to the same dataset concurrently.
+- **Multi-JVM staleness (bug found in the ExpID99 pipeline comparison, 2026-09-21)**: a store instance lists staging files and
+  reads the index once. Spark executors live across stages, so `SplitDatasets` phase 3 read partner views written by other
+  executors in phase 2 and got empty lists (correspondences silently dropped: 1,922 instead of 3,566 connected pairs). Fix: on
+  every miss the store stats the blob file and re-reads the root `generation` with a *fresh* reader (readers cache root
+  attributes), reloading the index if it changed; `commit()` re-lists blobs and folds them in parallel. Test: two-instance
+  scenario in `TestPackedInterestPointStore`. Rule: never cache "does not exist" for something another JVM may create.
 - **Sharding gotcha (n5 4.0.1)**: write inner chunks per shard with `writeChunks` (the library merges into a partial shard); never
   `writeBlock` a truncated last shard — that corrupts `readChunk`. Reads use `readChunk` (partial shard read via the shard index).
 - **Pair API**: `InterestPoints.getCorrespondingInterestPointsCopy(ViewId, label)` reads one range; `getCorrespondingViews()` lists
   partners. Used by `LoadCorrespondencesPairwise` and BigStitcher-Spark's `Solver` (iterates actual partners, not all i<j pairs).
 - **Conversion**: `java -cp <fat jar> net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore <dataset.xml> [chunk shard]`.
   Never implicit; mixed legacy + zarr datasets read fine.
+- **Shard writes are fsynced and read back (2026-09-21)**: a rerun of the ExpID99 pipeline on a reused dataset dir failed in
+  solve1 with an NPE (correspondence detection id not among the view's points). Cause: 4 of the 6 full `points/g6/loc` shards
+  (23 MB each) written by the split driver on /nrs had an identical page-aligned hole of zeros (offset 8,470,528, length
+  4,915,200) although the JVM closed the files without error; ids/correspondences/small shards were intact, the same commit
+  reproduced locally is clean, and the solver on another node 6 s later read yet another state. Not reproducible in Java,
+  so treated as a filesystem write-back problem: `writeRange` now fsyncs every shard file (`FileChannel.force`, filesystem
+  containers only) and reads every written chunk back through a fresh reader, retrying the shard once and aborting the commit
+  (root attrs untouched) if it still differs. Diagnostic tools: `scratchpad/bench/check/{ScanChunks,CheckCorr}.java`
+  (decode every chunk / check correspondence ids against points); `python3` zero-run scan of shard files.
+- **Staging files are per task, not per entry (2026-09-21)**: deleting 1,780 per-entry files took 9-10 s on /nrs even in
+  parallel (unlinks serialize on the directory). Now `InterestPointsN5.saveStaged(lists)` writes ONE file per Spark task
+  (`PackedInterestPointStore.writeStagingFile`: magic/version, entry table {tp, setup, label, points offset/count, corr
+  offset/count}, then payloads). Listing parses the headers of new files in parallel; when a key is in several files the
+  lexically newest (millisecond-prefixed) wins, so split phase 3 overrides phase 2. The fold reads each file once; the commit
+  deletes the listed files in parallel and logs `indices+flip / old generation / delete N staging files`. A file that another
+  JVM's commit deleted under a reader (`stagingFileGone`) triggers a re-list + generation refresh, then the arrays answer.
+  ExpID99 (15:27 run): split 60 files instead of 2,670, commit 12.6 s → 2.4 s (fold 0.6 s, delete 0.3 s), split stage 31 s → 19 s;
+  detection 30 files instead of 60.
+- **ExpID99 pipeline comparison (2026-09-21, base jar = Spark-side combine + legacy N5 vs Zarr v3, identical resources)**:
+  interest point work per stage old → new: detect 3 s → 1.2 s, match 4 s → 2 s, split executor writes 8 s → 2 s (+ 2.4 s
+  commit with per-task staging files), solve1 XML+pair setup 26 s → 4 s, match_split driver save 26 s → 1 s,
+  solve2 setup 37 s → 5 s (15:27 run, fresh dir, read-back verification on, per-task staging files). Results equal within RANSAC noise (444 vs 442 split tiles, 6,410,781 vs 6,409,386 points,
+  1,387,726 vs 1,387,455 correspondences, avg error 1.909 vs 1.912 px). Legacy per-view N5 stores each correspondence in
+  both views, so legacy row counts / 2 = store count.
 - Not packed: `--storeIntensities` of Spark detection keeps the in-memory path and per-view intensities datasets.
 - Test: `TestPackedInterestPointStore` (chunk 16 / shard 64: legacy → convert → append → rewrite → blob → delete, zarr.json checks).
 - Benchmarks (split dataset, 1,678 views, /nrs, 24 threads, production code paths): legacy N5 vs packed N5: solver setup 2.7 s → 0.24 s,
@@ -471,3 +505,5 @@ Detected via `isSplitDataset()` checking for `SplitViewerImgLoader` / `SplitMult
 - **Never commit without explicit user consent.**
 - Branch state: read `git status` / `git log` — don't rely on stale notes here.
 - Build: `mvn compile`. Java 21 (`maven-enforcer-plugin` requires JDK 21+).
+- BigStitcher-Spark fat jar: always `mvn clean package -Pfatjar ...`. Without `clean`, shade takes the previous fat jar as its input
+  and existing entries win, so a re-installed multiview-reconstruction snapshot is silently *not* picked up (2026-09-21).
