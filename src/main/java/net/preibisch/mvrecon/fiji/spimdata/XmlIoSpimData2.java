@@ -355,6 +355,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 			return;
 
 		final ForkJoinPool pool = new ForkJoinPool( numThreads );
+		PackedInterestPointStore.get( baseDir ).beginBatch(); // writer-variant saves below stage in memory; commit() at the end
 		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) )
 		{
 			pool.submit( () ->

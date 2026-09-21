@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.util.Arrays;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
@@ -173,6 +174,7 @@ public class TestPackedInterestPointStore
 		final InterestPointsN5 newLabel = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 2, "nuclei" ) );
 		newLabel.setInterestPoints( points( 2, "beads_split" ) );
 		newLabel.setCorrespondingInterestPoints( new ArrayList<>() );
+		store.beginBatch(); // like XmlIoSpimData2.saveInterestPointsInParallel: writer-variant saves stage in memory until commit()
 		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
 		{
 			assertTrue( v1.saveInterestPoints( false, w ) );
@@ -191,6 +193,7 @@ public class TestPackedInterestPointStore
 
 		// ---- 4. rewrite path: replace every entry's points (live fraction of the old array drops to 0) ----
 		final long[] before = count( zarr.toPath() );
+		store.beginBatch();
 		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
 		{
 			for ( int v = 0; v < N_VIEWS; ++v )
@@ -217,10 +220,11 @@ public class TestPackedInterestPointStore
 		final List< CorrespondingInterestPoints > fewer = new ArrayList<>( corrs( 4, "beads" ).subList( 0, 3 ) );
 		v4.setCorrespondingInterestPoints( fewer );
 		assertTrue( v4.saveCorrespondingInterestPoints( true ) );
-		assertTrue( new File( base, InterestPointsN5.baseN5 + "/staging" ).isDirectory() );
+		assertTrue( new File( zarr, "staging" ).isDirectory() );
 		assertEquals( sig( fewer ), sig( new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) ).getCorrespondingInterestPointsCopy() ) );
 		store.commit();
-		assertEquals( 0, new File( base, InterestPointsN5.baseN5 + "/staging" ).list().length );
+		final String[] leftover = new File( zarr, "staging" ).list();
+		assertTrue( leftover == null || leftover.length == 0, "staging files left after commit: " + Arrays.toString( leftover ) );
 		assertEquals( sig( fewer ), sig( new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) ).getCorrespondingInterestPointsCopy() ) );
 		// the partner side (view 3/5) was not staged, so view 4 is authoritative for those pairs: partners now see only what view 4 lists
 		final List< CorrespondingInterestPoints > seenBy3 = new ArrayList<>( new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 3, "beads" ) ).getCorrespondingInterestPointsCopy( new ViewId( 0, 4 ), "beads" ) );
@@ -236,6 +240,28 @@ public class TestPackedInterestPointStore
 		assertEquals( 0, new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 5, "beads" ) ).getInterestPointsCopy().size() );
 		assertEquals( 0, new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) ).getCorrespondingInterestPointsCopy( new ViewId( 0, 5 ), "beads" ).size() );
 		assertSame( points( 5, "beads_split" ), new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 5, "beads_split" ) ).getInterestPointsCopy() );
+
+		// ---- 7. two JVMs: instance B lists the store, then instance A writes a blob and later commits; B must see both ----
+		final PackedInterestPointStore b = new PackedInterestPointStore( baseURI );
+		assertFalse( b.hasPoints( new Key( 0, 9, "late" ) ) ); // B has listed now: no such entry
+		final InterestPointsN5 late = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 9, "late" ) );
+		late.setInterestPoints( points( 2, "beads" ) );
+		late.setCorrespondingInterestPoints( new ArrayList<>() );
+		final InterestPointsN5 late2 = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 10, "late" ) );
+		late2.setInterestPoints( points( 3, "beads" ) );
+		late2.setCorrespondingInterestPoints( new ArrayList<>( corrs( 3, "beads" ) ) );
+		InterestPointsN5.saveStaged( Arrays.asList( late, late2 ) ); // ONE staging file for both entries, via the registry instance (A)
+		assertEquals( 1, new File( zarr, "staging" ).list().length, "one staging file per saveStaged call" );
+		assertTrue( b.hasPoints( new Key( 0, 9, "late" ) ), "second instance must find a staging file written after its listing" );
+		assertEquals( sig( corrs( 3, "beads" ) ), sig( b.correspondences( new Key( 0, 10, "late" ) ) ) );
+		assertArrayEquals( PackedInterestPointStore.Points.of( points( 2, "beads" ).stream().mapToInt( InterestPoint::getId ).toArray(), points( 2, "beads" ).stream().map( InterestPoint::getL ).toArray( double[][]::new ) ).loc(),
+				b.points( new Key( 0, 9, "late" ) ).loc(), 0.0 );
+		store.commit(); // A folds the staging file into a new generation and deletes it
+		assertEquals( 0, new File( zarr, "staging" ).list().length );
+		assertArrayEquals( points( 3, "beads" ).stream().mapToInt( InterestPoint::getId ).toArray(), new PackedInterestPointStore( baseURI ).points( new Key( 0, 10, "late" ) ).ids() );
+		final PackedInterestPointStore c = new PackedInterestPointStore( baseURI ); // fresh instance sees the new generation
+		assertNotNull( c.points( new Key( 0, 9, "late" ) ) );
+		assertEquals( 0, b.correspondences( new Key( 0, 9, "late" ) ).size(), "B must reload the index after the generation changed" );
 
 		// re-open from disk in a fresh store instance (bypass the registry) and check the final state once more
 		final PackedInterestPointStore fresh = new PackedInterestPointStore( baseURI );
