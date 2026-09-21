@@ -181,13 +181,28 @@ public class InterestPointTools
 	 */
 	public static boolean addInterestPoints( final SpimData2 data, final String label, final HashMap< ViewId, List< InterestPoint > > points, final String parameters )
 	{
-		addInterestPointEntries( data, label, points.keySet(), parameters );
 		for ( final ViewId viewId : points.keySet() )
 		{
-			final InterestPoints list = data.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
+			final InterestPoints list = InterestPoints.newInstance( data.getBasePathURI(), viewId, label );
+			/*final InterestPointList list =
+					new InterestPointList(
+							data.getBasePath(),
+							new File(
+									"interestpoints", "tpId_" + viewId.getTimePointId() +
+									"_viewSetupId_" + viewId.getViewSetupId() + "." + label ) );*/
+
+			if ( parameters != null )
+				list.setParameters( parameters );
+			else
+				list.setParameters( "" );
+
 			list.setInterestPoints( points.get( viewId ) );
 			list.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
+
+			final ViewInterestPointLists vipl = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+			vipl.addInterestPointList( label, list );
 		}
+
 		return true;
 	}
 

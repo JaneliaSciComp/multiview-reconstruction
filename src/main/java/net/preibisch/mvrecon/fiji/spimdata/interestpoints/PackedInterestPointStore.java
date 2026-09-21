@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.function.ToLongFunction;
 import java.util.Comparator;
 import java.io.EOFException;
 import java.nio.ByteBuffer;
@@ -182,24 +183,10 @@ public class PackedInterestPointStore
 
 	record PairRow( Key partner, long offset, int count, boolean swapped ) {}
 
-	/** immutable snapshot of one generation */
-	static final class Index
+	/** immutable snapshot of one generation; points = offset/count per entry, pairs = owner -> rows (every key with points has an entry) */
+	record Index( int generation, List< String > labels, String pointsData, String corrData, Map< Key, long[] > points, Map< Key, List< PairRow > > pairs,
+			long nPoints, long nCorr, DatasetAttributes locAttrs, DatasetAttributes idAttrs, DatasetAttributes corrAttrs )
 	{
-		final int generation;
-		final List< String > labels;
-		final String pointsData, corrData;
-		final Map< Key, long[] > points; // offset, count
-		final Map< Key, List< PairRow > > pairs; // owner -> rows (every key with points has an entry)
-		final long nPoints, nCorr;
-		final DatasetAttributes locAttrs, idAttrs, corrAttrs;
-
-		Index( final int generation, final List< String > labels, final String pointsData, final String corrData, final Map< Key, long[] > points,
-				final Map< Key, List< PairRow > > pairs, final long nPoints, final long nCorr, final DatasetAttributes locAttrs, final DatasetAttributes idAttrs, final DatasetAttributes corrAttrs )
-		{
-			this.generation = generation; this.labels = labels; this.pointsData = pointsData; this.corrData = corrData; this.points = points; this.pairs = pairs;
-			this.nPoints = nPoints; this.nCorr = nCorr; this.locAttrs = locAttrs; this.idAttrs = idAttrs; this.corrAttrs = corrAttrs;
-		}
-
 		static Index empty() { return new Index( -1, List.of(), null, null, Map.of(), Map.of(), 0, 0, null, null, null ); }
 		boolean exists() { return generation >= 0; }
 	}
@@ -436,29 +423,87 @@ public class PackedInterestPointStore
 	// reading
 	// ------------------------------------------------------------------------------------------------
 
-	/** @return true if this store knows the entry (staged, staging blob or stored); false means: try the legacy group */
-	public boolean hasPoints( final Key k )
+	/** where an entry's data lives: at most one field is set; all null = unknown to this store (the caller tries the legacy group) */
+	private record Where( Object staged, BlobRef blob, Index idx )
 	{
-		synchronized ( lock )
-		{
-			if ( removedPoints.contains( k ) ) return false;
-			if ( stagedPoints.containsKey( k ) ) return true;
-		}
-		return blobPointsMap().containsKey( k ) || index().points.containsKey( k ) || refreshOnMiss( k, true ) || index().points.containsKey( k );
+		static final Where NONE = new Where( null, null, null );
 	}
 
-	public boolean hasCorrespondences( final Key k )
+	/** staged in this JVM, in a staging file, or in the arrays; refreshes the listing and the index once on a miss (other JVMs) */
+	private Where where( final Key k, final boolean points )
 	{
 		synchronized ( lock )
 		{
-			if ( removedCorr.contains( k ) ) return false;
-			if ( stagedCorr.containsKey( k ) ) return true;
+			if ( ( points ? removedPoints : removedCorr ).contains( k ) ) return Where.NONE;
+			final Object staged = ( points ? stagedPoints : stagedCorr ).get( k );
+			if ( staged != null ) return new Where( points ? staged : new ArrayList<>( (List< ? >) staged ), null, null );
 		}
-		return blobCorrMap().containsKey( k ) || index().pairs.containsKey( k ) || refreshOnMiss( k, false ) || index().pairs.containsKey( k );
+		Index idx = index();
+		BlobRef blob = ( points ? blobPoints : blobCorr ).get( k );
+		if ( blob != null ) return new Where( null, blob, null );
+		if ( ( points ? idx.points : idx.pairs ).containsKey( k ) ) return new Where( null, null, idx );
+		if ( refreshOnMiss( k, points ) ) return new Where( null, ( points ? blobPoints : blobCorr ).get( k ), null );
+		idx = index();
+		return ( points ? idx.points : idx.pairs ).containsKey( k ) ? new Where( null, null, idx ) : Where.NONE;
 	}
+
+	/** @return true if this store knows the entry (staged, staging file or stored); false means: try the legacy group */
+	public boolean hasPoints( final Key k ) { return where( k, true ) != Where.NONE; }
 
 	private Map< Key, BlobRef > blobPointsMap() { index(); return blobPoints; }
 	private Map< Key, BlobRef > blobCorrMap() { index(); return blobCorr; }
+
+	/** @return the points of an entry, or null if unknown to this store */
+	public Points points( final Key k )
+	{
+		final Where w = where( k, true );
+		if ( w.staged != null ) return (Points) w.staged;
+		if ( w.blob != null ) return readPointsBlob( w.blob, k );
+		if ( w.idx == null ) return null;
+		final long[] r = w.idx.points.get( k );
+		return readPoints( w.idx, r[ 0 ], (int) r[ 1 ] );
+	}
+
+	/** @return all correspondences of an entry (both directions, like the legacy per-view list), or null if unknown */
+	public List< CorrespondingInterestPoints > correspondences( final Key k ) { return correspondences( k, null ); }
+
+	/** @return the correspondences of an entry to one partner (view, label) only; null if the entry is unknown */
+	public List< CorrespondingInterestPoints > correspondences( final Key k, final ViewId partner, final String partnerLabel ) { return correspondences( k, Key.of( partner, partnerLabel ) ); }
+
+	@SuppressWarnings( "unchecked" )
+	private List< CorrespondingInterestPoints > correspondences( final Key k, final Key partner )
+	{
+		final Where w = where( k, false );
+		if ( w.idx != null ) // one range read per pair row
+		{
+			final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
+			for ( final PairRow row : w.idx.pairs.get( k ) )
+				if ( partner == null || row.partner.equals( partner ) ) appendRange( w.idx, row, out );
+			return out;
+		}
+		final List< CorrespondingInterestPoints > l = w.staged != null ? (List< CorrespondingInterestPoints >) w.staged : w.blob != null ? readCorrBlob( w.blob, k ) : null;
+		if ( l == null || partner == null ) return l;
+		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
+		for ( final CorrespondingInterestPoints c : l )
+			if ( Key.of( c.getCorrespondingViewId(), c.getCorrespodingLabel() ).equals( partner ) ) out.add( c );
+		return out;
+	}
+
+	/** @return the (view, label)s this entry has correspondences with; null if the entry is unknown */
+	public Set< Pair< ViewId, String > > correspondingViews( final Key k )
+	{
+		final Where w = where( k, false );
+		final Set< Pair< ViewId, String > > out = new HashSet<>();
+		if ( w.idx != null )
+		{
+			for ( final PairRow row : w.idx.pairs.get( k ) ) out.add( new ValuePair<>( row.partner.viewId(), row.partner.label ) );
+			return out;
+		}
+		final List< CorrespondingInterestPoints > l = correspondences( k, (Key) null );
+		if ( l == null ) return null;
+		for ( final CorrespondingInterestPoints c : l ) out.add( new ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
+		return out;
+	}
 
 	/**
 	 * Called when an entry is not known from staging, the cached blob listing or the cached index. Other JVMs (Spark
@@ -521,110 +566,6 @@ public class PackedInterestPointStore
 		for ( Throwable t = e; t != null; t = t.getCause() )
 			if ( t instanceof java.nio.file.NoSuchFileException || t instanceof N5Exception.N5NoSuchKeyException ) return true;
 		return false;
-	}
-
-	/** @return the points of an entry, or null if unknown to this store */
-	public Points points( final Key k )
-	{
-		synchronized ( lock )
-		{
-			if ( removedPoints.contains( k ) ) return null;
-			final Points s = stagedPoints.get( k );
-			if ( s != null ) return s;
-		}
-		if ( blobPointsMap().containsKey( k ) ) return readPointsBlob( k );
-		Index idx = index();
-		long[] r = idx.points.get( k );
-		if ( r == null )
-		{
-			if ( refreshOnMiss( k, true ) ) return readPointsBlob( k );
-			idx = index();
-			r = idx.points.get( k );
-			if ( r == null ) return null;
-		}
-		return readPoints( idx, r[ 0 ], (int) r[ 1 ] );
-	}
-
-	/** @return all correspondences of an entry (both directions, like the legacy per-view list), or null if unknown */
-	public List< CorrespondingInterestPoints > correspondences( final Key k )
-	{
-		synchronized ( lock )
-		{
-			if ( removedCorr.contains( k ) ) return null;
-			final List< CorrespondingInterestPoints > s = stagedCorr.get( k );
-			if ( s != null ) return new ArrayList<>( s );
-		}
-		if ( blobCorrMap().containsKey( k ) ) return readCorrBlob( k );
-		Index idx = index();
-		List< PairRow > rows = idx.pairs.get( k );
-		if ( rows == null )
-		{
-			if ( refreshOnMiss( k, false ) ) return readCorrBlob( k );
-			idx = index();
-			rows = idx.pairs.get( k );
-			if ( rows == null ) return null;
-		}
-		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
-		for ( final PairRow row : rows ) appendRange( idx, row, out );
-		return out;
-	}
-
-	/** @return the correspondences of an entry to one partner (view, label) only; null if the entry is unknown */
-	public List< CorrespondingInterestPoints > correspondences( final Key k, final ViewId partner, final String partnerLabel )
-	{
-		final Key p = Key.of( partner, partnerLabel );
-		synchronized ( lock )
-		{
-			if ( removedCorr.contains( k ) ) return null;
-			final List< CorrespondingInterestPoints > s = stagedCorr.get( k );
-			if ( s != null ) return filter( s, p );
-		}
-		if ( blobCorrMap().containsKey( k ) ) return filter( readCorrBlob( k ), p );
-		Index idx = index();
-		List< PairRow > rows = idx.pairs.get( k );
-		if ( rows == null )
-		{
-			if ( refreshOnMiss( k, false ) ) return filter( readCorrBlob( k ), p );
-			idx = index();
-			rows = idx.pairs.get( k );
-			if ( rows == null ) return null;
-		}
-		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
-		for ( final PairRow row : rows )
-			if ( row.partner.equals( p ) ) appendRange( idx, row, out );
-		return out;
-	}
-
-	/** @return the (view, label)s this entry has correspondences with; null if the entry is unknown */
-	public Set< Pair< ViewId, String > > correspondingViews( final Key k )
-	{
-		List< CorrespondingInterestPoints > full = null;
-		synchronized ( lock )
-		{
-			if ( removedCorr.contains( k ) ) return null;
-			full = stagedCorr.get( k );
-		}
-		if ( full == null && blobCorrMap().containsKey( k ) ) full = readCorrBlob( k );
-		if ( full == null && !index().pairs.containsKey( k ) && refreshOnMiss( k, false ) ) full = readCorrBlob( k );
-		final Set< Pair< ViewId, String > > out = new HashSet<>();
-		if ( full != null )
-		{
-			for ( final CorrespondingInterestPoints c : full ) out.add( new ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
-			return out;
-		}
-		final List< PairRow > rows = index().pairs.get( k );
-		if ( rows == null ) return null;
-		for ( final PairRow row : rows ) out.add( new ValuePair<>( row.partner.viewId(), row.partner.label ) );
-		return out;
-	}
-
-	private static List< CorrespondingInterestPoints > filter( final List< CorrespondingInterestPoints > l, final Key partner )
-	{
-		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
-		for ( final CorrespondingInterestPoints c : l )
-			if ( c.getCorrespondingViewId().getTimePointId() == partner.tp && c.getCorrespondingViewId().getViewSetupId() == partner.setup && c.getCorrespodingLabel().equals( partner.label ) )
-				out.add( c );
-		return out;
 	}
 
 	private Points readPoints( final Index idx, final long off, final int n )
@@ -716,11 +657,6 @@ public class PackedInterestPointStore
 			stagedPoints.remove( k ); stagedCorr.remove( k );
 			removedPoints.add( k ); removedCorr.add( k );
 		}
-	}
-
-	public boolean hasPendingChanges()
-	{
-		synchronized ( lock ) { return !stagedPoints.isEmpty() || !stagedCorr.isEmpty() || !removedPoints.isEmpty() || !removedCorr.isEmpty(); }
 	}
 
 	/**
@@ -875,9 +811,8 @@ public class PackedInterestPointStore
 		return in;
 	}
 
-	private Points readPointsBlob( final Key k )
+	private Points readPointsBlob( final BlobRef r, final Key k )
 	{
-		final BlobRef r = blobPoints.get( k );
 		try ( final DataInputStream in = openPayload( r ) ) { return decodePoints( in, r.count ); }
 		catch ( final IOException | N5Exception e )
 		{
@@ -887,9 +822,8 @@ public class PackedInterestPointStore
 		}
 	}
 
-	private List< CorrespondingInterestPoints > readCorrBlob( final Key k )
+	private List< CorrespondingInterestPoints > readCorrBlob( final BlobRef r, final Key k )
 	{
-		final BlobRef r = blobCorr.get( k );
 		try ( final DataInputStream in = openPayload( r ) ) { return decodeCorr( in, r.count ); }
 		catch ( final IOException | N5Exception e )
 		{
@@ -1275,7 +1209,6 @@ public class PackedInterestPointStore
 			final boolean same;
 			if ( a instanceof double[] ) same = c instanceof double[] && ( (double[]) c ).length >= ( (double[]) a ).length && Arrays.equals( (double[]) a, 0, ( (double[]) a ).length, (double[]) c, 0, ( (double[]) a ).length );
 			else if ( a instanceof int[] ) same = c instanceof int[] && ( (int[]) c ).length >= ( (int[]) a ).length && Arrays.equals( (int[]) a, 0, ( (int[]) a ).length, (int[]) c, 0, ( (int[]) a ).length );
-			else if ( a instanceof long[] ) same = c instanceof long[] && ( (long[]) c ).length >= ( (long[]) a ).length && Arrays.equals( (long[]) a, 0, ( (long[]) a ).length, (long[]) c, 0, ( (long[]) a ).length );
 			else same = true;
 			if ( !same ) return "chunk " + b.getGridPosition()[ 1 ] + " differs";
 		}
@@ -1310,27 +1243,27 @@ public class PackedInterestPointStore
 		writeRange( w, group + "/loc", loc, start, end, ( cs, n ) -> {
 			final double[] buf = new double[ n * 3 ];
 			if ( cs < start ) System.arraycopy( oldLoc, 0, buf, 0, (int) ( start - cs ) * 3 );
-			forEntries( entries, offsets, cs, n, ( e, es, from, to ) -> System.arraycopy( e.loc, (int) ( from - es ) * 3, buf, (int) ( from - cs ) * 3, (int) ( to - from ) * 3 ) );
+			forEntries( entries, offsets, cs, n, Points::size, ( e, es, from, to ) -> System.arraycopy( e.loc, (int) ( from - es ) * 3, buf, (int) ( from - cs ) * 3, (int) ( to - from ) * 3 ) );
 			return new DoubleArrayDataBlock( new int[] { 3, n }, new long[] { 0, cs / chunk }, buf );
 		} );
 		writeRange( w, group + "/id", id, start, end, ( cs, n ) -> {
 			final int[] buf = new int[ n ];
 			if ( cs < start ) System.arraycopy( oldId, 0, buf, 0, (int) ( start - cs ) );
-			forEntries( entries, offsets, cs, n, ( e, es, from, to ) -> System.arraycopy( e.ids, (int) ( from - es ), buf, (int) ( from - cs ), (int) ( to - from ) ) );
+			forEntries( entries, offsets, cs, n, Points::size, ( e, es, from, to ) -> System.arraycopy( e.ids, (int) ( from - es ), buf, (int) ( from - cs ), (int) ( to - from ) ) );
 			return new IntArrayDataBlock( new int[] { 1, n }, new long[] { 0, cs / chunk }, buf );
 		} );
 	}
 
-	interface EntryVisitor { void visit( Points e, long entryStart, long from, long to ); }
+	interface EntryVisitor< E > { void visit( E e, long entryStart, long from, long to ); }
 
 	/** calls the visitor for every entry overlapping the chunk [cs, cs + n) */
-	private static void forEntries( final List< Points > entries, final long[] offsets, final long cs, final int n, final EntryVisitor v )
+	private static < E > void forEntries( final List< E > entries, final long[] offsets, final long cs, final int n, final ToLongFunction< E > size, final EntryVisitor< E > v )
 	{
 		int e = Arrays.binarySearch( offsets, cs );
 		if ( e < 0 ) e = Math.max( 0, -e - 2 );
 		for ( ; e < entries.size() && offsets[ e ] < cs + n; ++e )
 		{
-			final long es = offsets[ e ], ee = es + entries.get( e ).size();
+			final long es = offsets[ e ], ee = es + size.applyAsLong( entries.get( e ) );
 			final long from = Math.max( es, cs ), to = Math.min( ee, cs + n );
 			if ( to > from ) v.visit( entries.get( e ), es, from, to );
 		}
@@ -1356,15 +1289,10 @@ public class PackedInterestPointStore
 		writeRange( w, group + "/data", attrs, start, end, ( cs, n ) -> {
 			final int[] buf = new int[ n * 3 ];
 			if ( cs < start ) System.arraycopy( oldData, 0, buf, 0, (int) ( start - cs ) * 3 );
-			int e = Arrays.binarySearch( offsets, cs );
-			if ( e < 0 ) e = Math.max( 0, -e - 2 );
-			for ( ; e < entries.size() && offsets[ e ] < cs + n; ++e )
-			{
-				final int[][] d = entries.get( e );
-				final long es = offsets[ e ], ee = es + d[ 0 ].length;
-				for ( long j = Math.max( es, cs ); j < Math.min( ee, cs + n ); ++j )
+			forEntries( entries, offsets, cs, n, d -> d[ 0 ].length, ( d, es, from, to ) -> {
+				for ( long j = from; j < to; ++j )
 					for ( int c = 0; c < 3; ++c ) buf[ (int) ( j - cs ) * 3 + c ] = d[ c ][ (int) ( j - es ) ];
-			}
+			} );
 			return new IntArrayDataBlock( new int[] { 3, n }, new long[] { 0, cs / chunk }, buf );
 		} );
 	}

@@ -157,14 +157,14 @@ public class InterestPointsN5 extends InterestPoints
 	public static String ipDataset( final String n5dataset ) { return n5dataset + "/interestpoints"; }
 	public static String corrDataset( final String n5dataset  ) { return n5dataset + "/correspondences"; }
 
+	/** @return true if this list is backed by the interest point store (dataset name of the form tpId_X_viewSetupId_Y/label) */
+	public boolean usesStore() { return store() != null; }
+
 	/**
 	 * Saves the modified points and correspondences of many lists into ONE staging file per store (one file per Spark task
 	 * instead of one per entry; see PackedInterestPointStore.writeStagingFile). Lists of datasets without a store fall back
 	 * to the per-entry legacy save. Nothing is committed: the next XML save folds the file in.
 	 */
-	/** @return true if this list is backed by the interest point store (dataset name of the form tpId_X_viewSetupId_Y/label) */
-	public boolean usesStore() { return store() != null; }
-
 	public static void saveStaged( final Collection< ? extends InterestPoints > lists )
 	{
 		final Map< PackedInterestPointStore, Map< PackedInterestPointStore.Key, PackedInterestPointStore.Points > > pts = new HashMap<>();
@@ -200,35 +200,25 @@ public class InterestPointsN5 extends InterestPoints
 	public boolean saveCorrespondingInterestPoints( final boolean forceWrite ) { return saveCorrespondingInterestPoints( forceWrite, null ); }
 
 	/**
-	 * Saves the points: with a store, in memory inside a batch (XmlIoSpimData2.saveInterestPointsInParallel commits right
-	 * after its loop) or as a durable staging file otherwise (no commit will follow in this JVM, e.g. a Spark executor).
-	 * Without a store (legacy dataset name) the per-view N5 group is written, through {@code n5Writer} if given.
+	 * With a store: in memory while a batch is open (XmlIoSpimData2.saveInterestPointsInParallel commits right after its
+	 * loop), else one durable staging file (no commit will follow in this JVM, e.g. a Spark executor). Without a store
+	 * (legacy dataset name): the per-view N5 group, through {@code n5Writer} if given (avoids one open/close per view).
 	 */
 	public boolean saveInterestPoints( final boolean forceWrite, final N5Writer n5Writer )
 	{
 		if ( !modifiedInterestPoints && !forceWrite )
 			return true;
-
 		if ( ids == null || locations == null )
 			return false;
-
 		final PackedInterestPointStore store = store();
-		final boolean success;
 		if ( store != null )
 		{
-			if ( store.inBatch() )
-				store.stagePoints( key, ids, locations );
-			else
-				store.writePointsBlob( key, ids, locations );
-			success = true;
+			if ( store.inBatch() ) store.stagePoints( key, ids, locations ); else store.writePointsBlob( key, ids, locations );
 		}
-		else
-			success = n5Writer == null ? saveInterestPointsStatic( basePath, n5dataset, ids, locations ) : saveInterestPointsStatic( n5Writer, n5dataset, ids, locations );
-
-		if ( success )
-			modifiedInterestPoints = false;
-
-		return success;
+		else if ( !( n5Writer == null ? saveInterestPointsStatic( basePath, n5dataset, ids, locations ) : saveInterestPointsStatic( n5Writer, n5dataset, ids, locations ) ) )
+			return false;
+		modifiedInterestPoints = false;
+		return true;
 	}
 
 	/** correspondences; same dispatch as {@link #saveInterestPoints(boolean, N5Writer)} */
@@ -236,27 +226,17 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		if ( !modifiedCorrespondingInterestPoints && !forceWrite )
 			return true;
-
 		if ( correspondingInterestPoints == null )
 			return false;
-
 		final PackedInterestPointStore store = store();
-		final boolean success;
 		if ( store != null )
 		{
-			if ( store.inBatch() )
-				store.stageCorrespondences( key, correspondingInterestPoints );
-			else
-				store.writeCorrespondencesBlob( key, correspondingInterestPoints );
-			success = true;
+			if ( store.inBatch() ) store.stageCorrespondences( key, correspondingInterestPoints ); else store.writeCorrespondencesBlob( key, correspondingInterestPoints );
 		}
-		else
-			success = n5Writer == null ? saveCorrespondencesStatic( basePath, n5dataset, correspondingInterestPoints ) : saveCorrespondencesStatic( n5Writer, n5dataset, correspondingInterestPoints );
-
-		if ( success )
-			modifiedCorrespondingInterestPoints = false;
-
-		return success;
+		else if ( !( n5Writer == null ? saveCorrespondencesStatic( basePath, n5dataset, correspondingInterestPoints ) : saveCorrespondencesStatic( n5Writer, n5dataset, correspondingInterestPoints ) ) )
+			return false;
+		modifiedCorrespondingInterestPoints = false;
+		return true;
 	}
 
 	@Override
@@ -399,42 +379,19 @@ public class InterestPointsN5 extends InterestPoints
 		return ok;
 	}
 
+	/** not loaded in memory: one range read of the pair from the store instead of copying the whole list */
 	@Override
-	public synchronized Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId correspondingViewId, final String correspondingLabel )
+	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId correspondingViewId, final String correspondingLabel )
 	{
-		final PackedInterestPointStore store = store();
-		if ( store != null && correspondingInterestPoints == null ) // not loaded/modified in memory: read only the pair range
-		{
-			final List< CorrespondingInterestPoints > l = store.correspondences( key, correspondingViewId, correspondingLabel );
-			if ( l != null )
-				return l;
-		}
-		if ( correspondingInterestPoints == null )
-			loadCorrespondences();
-		// in memory: copy only the matching ones (the default implementation would deep-copy the whole list first)
-		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
-		for ( final CorrespondingInterestPoints c : correspondingInterestPoints )
-			if ( c.getCorrespodingLabel().equals( correspondingLabel ) && c.getCorrespondingViewId().equals( correspondingViewId ) )
-				out.add( new CorrespondingInterestPoints( c ) );
-		return out;
+		final List< CorrespondingInterestPoints > l = store() != null && correspondingInterestPoints == null ? store().correspondences( key, correspondingViewId, correspondingLabel ) : null;
+		return l != null ? l : super.getCorrespondingInterestPointsCopy( correspondingViewId, correspondingLabel );
 	}
 
 	@Override
-	public synchronized Set< Pair< ViewId, String > > getCorrespondingViews()
+	public Set< Pair< ViewId, String > > getCorrespondingViews()
 	{
-		final PackedInterestPointStore store = store();
-		if ( store != null && correspondingInterestPoints == null )
-		{
-			final Set< Pair< ViewId, String > > s = store.correspondingViews( key );
-			if ( s != null )
-				return s;
-		}
-		if ( correspondingInterestPoints == null )
-			loadCorrespondences();
-		final Set< Pair< ViewId, String > > out = new HashSet<>();
-		for ( final CorrespondingInterestPoints c : correspondingInterestPoints )
-			out.add( new ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
-		return out;
+		final Set< Pair< ViewId, String > > s = store() != null && correspondingInterestPoints == null ? store().correspondingViews( key ) : null;
+		return s != null ? s : super.getCorrespondingViews();
 	}
 
 	/** reads the legacy per-view group {@code tpId_X_viewSetupId_Y/label/correspondences} */
@@ -675,7 +632,7 @@ public class InterestPointsN5 extends InterestPoints
 		}
 	}
 
-	/** with a store: points AND correspondences of the entry are removed at the next commit (they are one entry there) */
+	/** with a store: points AND correspondences of the entry go at the next commit (they are one entry there) */
 	@Override
 	public boolean deleteInterestPoints() { return delete( ipDataset() ); }
 

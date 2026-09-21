@@ -181,9 +181,7 @@ public class TestPackedInterestPointStore
 			assertTrue( newLabel.saveInterestPoints( false, w ) );
 			assertTrue( newLabel.saveCorrespondingInterestPoints( false, w ) );
 		}
-		assertTrue( store.hasPendingChanges() );
 		store.commit();
-		assertFalse( store.hasPendingChanges() );
 		assertSame( bigger, new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 1, "beads" ) ).getInterestPointsCopy() );
 		assertSame( points( 2, "beads_split" ), new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 2, "nuclei" ) ).getInterestPointsCopy() );
 		assertEquals( 0, new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 2, "nuclei" ) ).getCorrespondingInterestPointsCopy().size() );
