@@ -356,7 +356,9 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 
 		final ForkJoinPool pool = new ForkJoinPool( numThreads );
 		PackedInterestPointStore.get( baseDir ).beginBatch(); // writer-variant saves below stage in memory; commit() at the end
-		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) )
+		// the shared legacy writer is only needed for lists the store cannot hold (do not create interestpoints.n5 otherwise)
+		final boolean needLegacyWriter = allIPs.stream().anyMatch( ipl -> ipl instanceof InterestPointsN5 && !( (InterestPointsN5) ipl ).usesStore() );
+		try ( final N5Writer n5Writer = needLegacyWriter ? URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) : null )
 		{
 			pool.submit( () ->
 				allIPs.parallelStream().forEach( ipl ->

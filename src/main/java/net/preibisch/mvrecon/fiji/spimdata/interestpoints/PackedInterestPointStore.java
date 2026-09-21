@@ -29,6 +29,9 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.io.EOFException;
+import java.nio.ByteBuffer;
 import java.util.TreeSet;
 import java.util.Random;
 import java.io.OutputStream;
@@ -153,14 +156,10 @@ public class PackedInterestPointStore
 
 		public ViewId viewId() { return new ViewId( tp, setup ); }
 
+		private static final Comparator< Key > ORDER = Comparator.comparingInt( ( Key k ) -> k.tp ).thenComparingInt( k -> k.setup ).thenComparing( k -> k.label );
+
 		@Override
-		public int compareTo( final Key o )
-		{
-			int c = Integer.compare( tp, o.tp );
-			if ( c != 0 ) return c;
-			c = Integer.compare( setup, o.setup );
-			return c != 0 ? c : label.compareTo( o.label );
-		}
+		public int compareTo( final Key o ) { return ORDER.compare( this, o ); }
 	}
 
 	/** points of one entry: ids and flat xyz coordinates */
@@ -228,6 +227,12 @@ public class PackedInterestPointStore
 	/** location of one entry's payload inside a staging file */
 	record BlobRef( String file, long offset, int count ) {}
 	record BlobEntry( Key key, BlobRef points, BlobRef corr ) {}
+	/** one row of a staging file's entry table while it is being written (payload indices into the payload list, -1 = none) */
+	private record StagingRow( Key key, int pointsIdx, int pointsCount, int corrIdx, int corrCount ) {}
+	/** one payload to fold from a staging file */
+	private record FoldRef( Key key, BlobRef ref, boolean points ) {}
+	/** an existing pair (a < b) that survives a commit untouched */
+	private record KeptPair( Key a, Key b, PairRow row ) {}
 	private volatile Map< Key, BlobRef > blobPoints = Map.of(), blobCorr = Map.of();
 	private final Map< String, List< BlobEntry > > parsedFiles = new HashMap<>(); // staging file name -> its entry table
 	private boolean blobsListed = false;
@@ -378,10 +383,7 @@ public class PackedInterestPointStore
 		if ( !fresh.isEmpty() )
 		{
 			final Map< String, List< BlobEntry > > parsed = new ConcurrentHashMap<>();
-			final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
-			try { pool.submit( () -> fresh.parallelStream().forEach( n -> { final List< BlobEntry > e = readHeader( kva, n ); if ( e != null ) parsed.put( n, e ); } ) ).get(); }
-			catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "reading staging file headers failed", e ); }
-			finally { pool.shutdown(); }
+			parallel( "reading staging file headers", () -> fresh.parallelStream().forEach( n -> { final List< BlobEntry > e = readHeader( kva, n ); if ( e != null ) parsed.put( n, e ); } ) );
 			synchronized ( lock ) { parsedFiles.putAll( parsed ); }
 		}
 		synchronized ( lock ) { rebuildBlobMaps(); }
@@ -442,7 +444,7 @@ public class PackedInterestPointStore
 			if ( removedPoints.contains( k ) ) return false;
 			if ( stagedPoints.containsKey( k ) ) return true;
 		}
-		return blobPointsMap().containsKey( k ) || index().points.containsKey( k ) || refreshOnMiss( k, ".points" ) || index().points.containsKey( k );
+		return blobPointsMap().containsKey( k ) || index().points.containsKey( k ) || refreshOnMiss( k, true ) || index().points.containsKey( k );
 	}
 
 	public boolean hasCorrespondences( final Key k )
@@ -452,7 +454,7 @@ public class PackedInterestPointStore
 			if ( removedCorr.contains( k ) ) return false;
 			if ( stagedCorr.containsKey( k ) ) return true;
 		}
-		return blobCorrMap().containsKey( k ) || index().pairs.containsKey( k ) || refreshOnMiss( k, ".corr" ) || index().pairs.containsKey( k );
+		return blobCorrMap().containsKey( k ) || index().pairs.containsKey( k ) || refreshOnMiss( k, false ) || index().pairs.containsKey( k );
 	}
 
 	private Map< Key, BlobRef > blobPointsMap() { index(); return blobPoints; }
@@ -464,7 +466,7 @@ public class PackedInterestPointStore
 	 * looked: check the blob file directly and reload the index if the root generation changed. Cheap (one stat, one
 	 * small attribute read), and datasets that never had a store only pay it on the legacy path.
 	 */
-	private boolean refreshOnMiss( final Key k, final String ext )
+	private boolean refreshOnMiss( final Key k, final boolean points )
 	{
 		retryContainers();
 		final N5Reader z = n5Reader();
@@ -472,7 +474,7 @@ public class PackedInterestPointStore
 		// re-list the staging dir: another JVM may have written a file since this instance listed (only new files are parsed)
 		blobsListed = false;
 		listBlobs();
-		if ( ( ext.equals( ".points" ) ? blobPoints : blobCorr ).containsKey( k ) ) return true;
+		if ( ( points ? blobPoints : blobCorr ).containsKey( k ) ) return true;
 		refreshGeneration();
 		return false;
 	}
@@ -535,7 +537,7 @@ public class PackedInterestPointStore
 		long[] r = idx.points.get( k );
 		if ( r == null )
 		{
-			if ( refreshOnMiss( k, ".points" ) ) return readPointsBlob( k );
+			if ( refreshOnMiss( k, true ) ) return readPointsBlob( k );
 			idx = index();
 			r = idx.points.get( k );
 			if ( r == null ) return null;
@@ -557,7 +559,7 @@ public class PackedInterestPointStore
 		List< PairRow > rows = idx.pairs.get( k );
 		if ( rows == null )
 		{
-			if ( refreshOnMiss( k, ".corr" ) ) return readCorrBlob( k );
+			if ( refreshOnMiss( k, false ) ) return readCorrBlob( k );
 			idx = index();
 			rows = idx.pairs.get( k );
 			if ( rows == null ) return null;
@@ -582,7 +584,7 @@ public class PackedInterestPointStore
 		List< PairRow > rows = idx.pairs.get( k );
 		if ( rows == null )
 		{
-			if ( refreshOnMiss( k, ".corr" ) ) return filter( readCorrBlob( k ), p );
+			if ( refreshOnMiss( k, false ) ) return filter( readCorrBlob( k ), p );
 			idx = index();
 			rows = idx.pairs.get( k );
 			if ( rows == null ) return null;
@@ -603,7 +605,7 @@ public class PackedInterestPointStore
 			full = stagedCorr.get( k );
 		}
 		if ( full == null && blobCorrMap().containsKey( k ) ) full = readCorrBlob( k );
-		if ( full == null && !index().pairs.containsKey( k ) && refreshOnMiss( k, ".corr" ) ) full = readCorrBlob( k );
+		if ( full == null && !index().pairs.containsKey( k ) && refreshOnMiss( k, false ) ) full = readCorrBlob( k );
 		final Set< Pair< ViewId, String > > out = new HashSet<>();
 		if ( full != null )
 		{
@@ -694,6 +696,18 @@ public class PackedInterestPointStore
 		synchronized ( lock ) { stagedCorr.put( k, l ); removedCorr.remove( k ); }
 	}
 
+	/**
+	 * Removes a legacy per-view group (e.g. tpId_0_viewSetupId_3/beads/interestpoints) if the legacy container has it;
+	 * uses the cached legacy reader/writer instead of opening one per call. @return true if something was removed
+	 */
+	public boolean removeLegacyGroup( final String dataset )
+	{
+		final N5Reader r = n5Reader_legacy();
+		if ( r == null || !r.exists( dataset ) ) return false;
+		n5Writer_legacy().remove( dataset );
+		return true;
+	}
+
 	/** marks points and correspondences of an entry for removal at the next commit */
 	public void remove( final Key k )
 	{
@@ -738,7 +752,7 @@ public class PackedInterestPointStore
 		try
 		{
 			final List< byte[] > payloads = new ArrayList<>();
-			final List< Object[] > rows = new ArrayList<>(); // { Key, pointsPayloadIdx | -1, pointsCount, corrPayloadIdx | -1, corrCount }
+			final List< StagingRow > rows = new ArrayList<>();
 			for ( final Key k : keys )
 			{
 				final Points p = pts.get( k );
@@ -746,7 +760,7 @@ public class PackedInterestPointStore
 				int pi = -1, ci = -1;
 				if ( p != null ) { pi = payloads.size(); payloads.add( encodePoints( p ) ); }
 				if ( c != null ) { ci = payloads.size(); payloads.add( encodeCorr( c ) ); }
-				rows.add( new Object[] { k, pi, p == null ? 0 : p.size(), ci, c == null ? 0 : c.size() } );
+				rows.add( new StagingRow( k, pi, p == null ? 0 : p.size(), ci, c == null ? 0 : c.size() ) );
 			}
 			final long[] offsets = new long[ payloads.size() ];
 			long off = encodeHeader( rows, offsets ).length; // header length does not depend on the offset values
@@ -777,39 +791,41 @@ public class PackedInterestPointStore
 		catch ( final IOException e ) { throw new RuntimeException( "could not write staging file", e ); }
 	}
 
-	private static byte[] encodeHeader( final List< Object[] > rows, final long[] offsets ) throws IOException
+	private static byte[] encodeHeader( final List< StagingRow > rows, final long[] offsets ) throws IOException
 	{
 		final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
 		final DataOutputStream out = new DataOutputStream( bytes );
 		out.writeInt( STAGING_MAGIC ); out.writeInt( STAGING_VERSION ); out.writeInt( rows.size() );
-		for ( final Object[] r : rows )
+		for ( final StagingRow r : rows )
 		{
-			final Key k = (Key) r[ 0 ];
-			final int pi = (Integer) r[ 1 ], ci = (Integer) r[ 3 ];
-			out.writeInt( k.tp ); out.writeInt( k.setup ); out.writeUTF( k.label );
-			out.writeBoolean( pi >= 0 ); out.writeLong( pi >= 0 ? offsets[ pi ] : 0L ); out.writeInt( (Integer) r[ 2 ] );
-			out.writeBoolean( ci >= 0 ); out.writeLong( ci >= 0 ? offsets[ ci ] : 0L ); out.writeInt( (Integer) r[ 4 ] );
+			out.writeInt( r.key.tp ); out.writeInt( r.key.setup ); out.writeUTF( r.key.label );
+			out.writeBoolean( r.pointsIdx >= 0 ); out.writeLong( r.pointsIdx >= 0 ? offsets[ r.pointsIdx ] : 0L ); out.writeInt( r.pointsCount );
+			out.writeBoolean( r.corrIdx >= 0 ); out.writeLong( r.corrIdx >= 0 ? offsets[ r.corrIdx ] : 0L ); out.writeInt( r.corrCount );
 		}
 		out.flush();
 		return bytes.toByteArray();
 	}
 
-	private static byte[] encodePoints( final Points p ) throws IOException
+	/** ids as int32, then locations as float64, big-endian (bulk copies; same byte layout as DataOutputStream) */
+	private static byte[] encodePoints( final Points p )
 	{
-		final ByteArrayOutputStream bytes = new ByteArrayOutputStream( p.size() * 28 );
-		final DataOutputStream out = new DataOutputStream( bytes );
-		for ( final int id : p.ids ) out.writeInt( id );
-		for ( final double v : p.loc ) out.writeDouble( v );
-		out.flush();
-		return bytes.toByteArray();
+		final ByteBuffer b = ByteBuffer.allocate( p.size() * 28 );
+		b.asIntBuffer().put( p.ids );
+		b.position( p.size() * 4 );
+		b.asDoubleBuffer().put( p.loc );
+		return b.array();
 	}
 
 	private static Points decodePoints( final DataInputStream in, final int n ) throws IOException
 	{
+		final byte[] bytes = in.readNBytes( n * 28 );
+		if ( bytes.length < n * 28 ) throw new EOFException( "truncated points payload (" + bytes.length + " of " + n * 28 + " bytes)" );
+		final ByteBuffer b = ByteBuffer.wrap( bytes );
 		final int[] ids = new int[ n ];
 		final double[] loc = new double[ n * 3 ];
-		for ( int i = 0; i < n; ++i ) ids[ i ] = in.readInt();
-		for ( int i = 0; i < loc.length; ++i ) loc[ i ] = in.readDouble();
+		b.asIntBuffer().get( ids );
+		b.position( n * 4 );
+		b.asDoubleBuffer().get( loc );
 		return new Points( ids, loc );
 	}
 
@@ -884,21 +900,21 @@ public class PackedInterestPointStore
 	}
 
 	/** reads one whole staging file and decodes the wanted payloads from memory (the fold reads every file exactly once) */
-	private void foldFile( final String file, final List< Object[] > refs, final Map< Key, Points > fp, final Map< Key, List< CorrespondingInterestPoints > > fc )
+	private void foldFile( final String file, final List< FoldRef > refs, final Map< Key, Points > fp, final Map< Key, List< CorrespondingInterestPoints > > fc )
 	{
 		final KeyValueAccess kva = kva( n5Reader() );
 		final byte[] bytes;
 		try ( final LockedChannel ch = kva.lockForReading( stagingPath( kva, file ) ); final InputStream in = ch.newInputStream() ) { bytes = in.readAllBytes(); }
 		catch ( final IOException e ) { throw new RuntimeException( "could not read staging file " + file, e ); }
-		for ( final Object[] ref : refs )
+		for ( final FoldRef f : refs )
 		{
-			final Key k = (Key) ref[ 0 ]; final BlobRef r = (BlobRef) ref[ 1 ]; final boolean isPoints = (Boolean) ref[ 2 ];
-			if ( r.offset > bytes.length ) throw new RuntimeException( "staging file " + file + " is truncated (" + bytes.length + " bytes, entry " + k + " at " + r.offset + ")" );
+			final BlobRef r = f.ref;
+			if ( r.offset > bytes.length ) throw new RuntimeException( "staging file " + file + " is truncated (" + bytes.length + " bytes, entry " + f.key + " at " + r.offset + ")" );
 			try ( final DataInputStream in = new DataInputStream( new ByteArrayInputStream( bytes, (int) r.offset, bytes.length - (int) r.offset ) ) )
 			{
-				if ( isPoints ) fp.put( k, decodePoints( in, r.count ) ); else fc.put( k, decodeCorr( in, r.count ) );
+				if ( f.points ) fp.put( f.key, decodePoints( in, r.count ) ); else fc.put( f.key, decodeCorr( in, r.count ) );
 			}
-			catch ( final IOException e ) { throw new RuntimeException( "could not decode " + k + " from staging file " + file, e ); }
+			catch ( final IOException e ) { throw new RuntimeException( "could not decode " + f.key + " from staging file " + file, e ); }
 		}
 	}
 
@@ -912,6 +928,12 @@ public class PackedInterestPointStore
 	 */
 	public void commit()
 	{
+		try { commitImpl(); }
+		finally { batch = false; } // a failed commit must not leave this JVM in batch mode (saves would stage in memory forever)
+	}
+
+	private void commitImpl()
+	{
 		synchronized ( lock )
 		{
 			final long tStart = System.currentTimeMillis();
@@ -924,20 +946,17 @@ public class PackedInterestPointStore
 
 			// fold the staging files into the staged maps (every file is read once); in-memory staging wins if both exist
 			final long tFoldStart = System.currentTimeMillis();
-			final Map< String, List< Object[] > > byFile = new HashMap<>(); // file -> { Key, BlobRef, isPoints }
+			final Map< String, List< FoldRef > > byFile = new HashMap<>();
 			int nFolded = 0;
 			for ( final Map.Entry< Key, BlobRef > e : blobPointsMap().entrySet() )
-				if ( !stagedPoints.containsKey( e.getKey() ) && !removedPoints.contains( e.getKey() ) ) { byFile.computeIfAbsent( e.getValue().file, x -> new ArrayList<>() ).add( new Object[] { e.getKey(), e.getValue(), true } ); ++nFolded; }
+				if ( !stagedPoints.containsKey( e.getKey() ) && !removedPoints.contains( e.getKey() ) ) { byFile.computeIfAbsent( e.getValue().file, x -> new ArrayList<>() ).add( new FoldRef( e.getKey(), e.getValue(), true ) ); ++nFolded; }
 			for ( final Map.Entry< Key, BlobRef > e : blobCorrMap().entrySet() )
-				if ( !stagedCorr.containsKey( e.getKey() ) && !removedCorr.contains( e.getKey() ) ) { byFile.computeIfAbsent( e.getValue().file, x -> new ArrayList<>() ).add( new Object[] { e.getKey(), e.getValue(), false } ); ++nFolded; }
+				if ( !stagedCorr.containsKey( e.getKey() ) && !removedCorr.contains( e.getKey() ) ) { byFile.computeIfAbsent( e.getValue().file, x -> new ArrayList<>() ).add( new FoldRef( e.getKey(), e.getValue(), false ) ); ++nFolded; }
 			if ( !byFile.isEmpty() )
 			{
 				final Map< Key, Points > fp = new ConcurrentHashMap<>();
 				final Map< Key, List< CorrespondingInterestPoints > > fc = new ConcurrentHashMap<>();
-				final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
-				try { pool.submit( () -> byFile.entrySet().parallelStream().forEach( e -> foldFile( e.getKey(), e.getValue(), fp, fc ) ) ).get(); }
-				catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "reading staging files failed", e ); }
-				finally { pool.shutdown(); }
+				parallel( "reading staging files", () -> byFile.entrySet().parallelStream().forEach( e -> foldFile( e.getKey(), e.getValue(), fp, fc ) ) );
 				stagedPoints.putAll( fp );
 				stagedCorr.putAll( fc );
 			}
@@ -1004,11 +1023,11 @@ public class PackedInterestPointStore
 			final Set< Key > authoritative = new HashSet<>( stagedCorr.keySet() );
 			authoritative.addAll( removedCorr );
 			long keptCorr = 0;
-			final List< Object[] > keptRows = new ArrayList<>(); // {a, b, PairRow}
+			final List< KeptPair > keptRows = new ArrayList<>();
 			for ( final Map.Entry< Key, List< PairRow > > e : old.pairs.entrySet() )
 				for ( final PairRow row : e.getValue() )
 					if ( !row.swapped && !authoritative.contains( e.getKey() ) && !authoritative.contains( row.partner ) )
-					{ keptRows.add( new Object[] { e.getKey(), row.partner, row } ); keptCorr += row.count; }
+					{ keptRows.add( new KeptPair( e.getKey(), row.partner, row ) ); keptCorr += row.count; }
 			long newCorr = 0;
 			final Map< Key, Map< Key, List< CorrespondingInterestPoints > > > stagedByPartner = new HashMap<>();
 			for ( final Map.Entry< Key, List< CorrespondingInterestPoints > > e : stagedCorr.entrySet() )
@@ -1038,8 +1057,8 @@ public class PackedInterestPointStore
 					}
 					pairData.computeIfAbsent( a, x -> new TreeMap<>() ).put( b, d );
 					newCorr += l.size();
-					if ( !labelId.containsKey( a.label ) ) { labelId.put( a.label, labels.size() ); labels.add( a.label ); }
-					if ( !labelId.containsKey( b.label ) ) { labelId.put( b.label, labels.size() ); labels.add( b.label ); }
+					intern( labels, labelId, a.label );
+					intern( labels, labelId, b.label );
 				}
 			}
 			final boolean appendCorr = old.corrData != null && ( keptCorr + newCorr ) >= minLiveFractionForAppend * ( old.nCorr + newCorr );
@@ -1048,20 +1067,20 @@ public class PackedInterestPointStore
 			final List< int[][] > corrToWrite = new ArrayList<>();
 			long coff = appendCorr ? old.nCorr : 0;
 			if ( !appendCorr )
-				for ( final Object[] kr : keptRows )
+				for ( final KeptPair kr : keptRows )
 				{
-					final PairRow row = (PairRow) kr[ 2 ];
+					final PairRow row = kr.row;
 					final ArrayList< CorrespondingInterestPoints > tmp = new ArrayList<>( row.count );
 					appendRange( old, row, tmp );
 					final int[][] d = new int[ 3 ][ row.count ];
 					for ( int i = 0; i < row.count; ++i ) { d[ 0 ][ i ] = tmp.get( i ).getDetectionId(); d[ 1 ][ i ] = tmp.get( i ).getCorrespondingDetectionId(); d[ 2 ][ i ] = tmp.get( i ).getConsensusSetId(); }
 					corrToWrite.add( d );
-					addPair( newPairs, (Key) kr[ 0 ], (Key) kr[ 1 ], coff, row.count );
+					addPair( newPairs, kr.a, kr.b, coff, row.count );
 					coff += row.count;
 				}
 			else
-				for ( final Object[] kr : keptRows )
-					addPair( newPairs, (Key) kr[ 0 ], (Key) kr[ 1 ], ( (PairRow) kr[ 2 ] ).offset, ( (PairRow) kr[ 2 ] ).count );
+				for ( final KeptPair kr : keptRows )
+					addPair( newPairs, kr.a, kr.b, kr.row.offset, kr.row.count );
 			for ( final Map.Entry< Key, TreeMap< Key, int[][] > > e : pairData.entrySet() )
 				for ( final Map.Entry< Key, int[][] > pe : e.getValue().entrySet() )
 				{
@@ -1079,7 +1098,7 @@ public class PackedInterestPointStore
 			for ( final Key k : newPoints.keySet() ) newPairs.putIfAbsent( k, new ArrayList<>() );
 			for ( final Key k : stagedCorr.keySet() ) if ( !removedCorr.contains( k ) ) newPairs.putIfAbsent( k, new ArrayList<>() );
 			for ( final Key k : removedCorr ) newPairs.remove( k );
-			for ( final Key k : newPairs.keySet() ) if ( !labelId.containsKey( k.label ) ) { labelId.put( k.label, labels.size() ); labels.add( k.label ); }
+			for ( final Key k : newPairs.keySet() ) intern( labels, labelId, k.label );
 
 			// ---------------- indices + flip ----------------
 			final int gen = old.generation + 1;
@@ -1093,21 +1112,22 @@ public class PackedInterestPointStore
 			}
 			final TreeMap< Key, List< PairRow > > sortedPairs = new TreeMap<>( newPairs );
 			final long[] vidx = new long[ 5 * sortedPairs.size() ];
-			final ArrayList< Long > pidxList = new ArrayList<>();
+			int nRows = 0;
+			for ( final List< PairRow > rows : sortedPairs.values() ) nRows += rows.size();
+			final long[] pidx = new long[ 6 * nRows ];
+			int pi = 0;
 			r = 0;
 			for ( final Map.Entry< Key, List< PairRow > > e : sortedPairs.entrySet() )
 			{
 				vidx[ 5 * r ] = e.getKey().tp; vidx[ 5 * r + 1 ] = e.getKey().setup; vidx[ 5 * r + 2 ] = labelId.get( e.getKey().label );
-				vidx[ 5 * r + 3 ] = pidxList.size() / 6; vidx[ 5 * r + 4 ] = e.getValue().size();
+				vidx[ 5 * r + 3 ] = pi / 6; vidx[ 5 * r + 4 ] = e.getValue().size();
 				for ( final PairRow row : e.getValue() )
 				{
-					pidxList.add( (long) row.partner.tp ); pidxList.add( (long) row.partner.setup ); pidxList.add( (long) labelId.get( row.partner.label ) );
-					pidxList.add( row.offset ); pidxList.add( (long) row.count ); pidxList.add( row.swapped ? 1L : 0L );
+					pidx[ pi++ ] = row.partner.tp; pidx[ pi++ ] = row.partner.setup; pidx[ pi++ ] = labelId.get( row.partner.label );
+					pidx[ pi++ ] = row.offset; pidx[ pi++ ] = row.count; pidx[ pi++ ] = row.swapped ? 1L : 0L;
 				}
 				++r;
 			}
-			final long[] pidx = new long[ pidxList.size() ];
-			for ( int i = 0; i < pidx.length; ++i ) pidx[ i ] = pidxList.get( i );
 
 			writeLongs( w, indexGroup( gen ) + "/entries", 5, idx );
 			writeLongs( w, indexGroup( gen ) + "/views", 5, vidx );
@@ -1131,10 +1151,7 @@ public class PackedInterestPointStore
 			{
 				// every staging file listed at the start of this commit is folded or superseded now: delete them (parallel)
 				final KeyValueAccess kva = kva( w );
-				final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
-				try { pool.submit( () -> stagingFiles.parallelStream().forEach( f -> { final String p = stagingPath( kva, f ); if ( kva.exists( p ) ) kva.delete( p ); } ) ).get(); }
-				catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "deleting staging files failed", e ); }
-				finally { pool.shutdown(); }
+				parallel( "deleting staging files", () -> stagingFiles.parallelStream().forEach( f -> { final String p = stagingPath( kva, f ); if ( kva.exists( p ) ) kva.delete( p ); } ) );
 				parsedFiles.keySet().removeAll( stagingFiles );
 				rebuildBlobMaps();
 			}
@@ -1152,6 +1169,20 @@ public class PackedInterestPointStore
 					+ " points / " + nCorrNew + " correspondences total, chunk " + chunk + " / shard " + shard + ") in " + ( System.currentTimeMillis() - t0 ) + " ms"
 					+ " [fold " + nFolded + " entries from " + byFile.size() + " staging files " + foldMs + " ms, points " + ptsMs + " ms, correspondences " + corrMs + " ms, indices+flip " + ( tFlip - tIdx ) + " ms, old generation " + ( tOld - tFlip ) + " ms, delete " + stagingFiles.size() + " staging files " + ( tBlobs - tOld ) + " ms]" );
 		}
+	}
+
+	/** runs body (which uses parallel streams) in a pool of Threads.numThreads() threads and waits for it */
+	private static void parallel( final String what, final Runnable body )
+	{
+		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+		try { pool.submit( body ).get(); }
+		catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( what + " failed", e ); }
+		finally { pool.shutdown(); }
+	}
+
+	private static void intern( final List< String > labels, final Map< String, Integer > labelId, final String label )
+	{
+		if ( !labelId.containsKey( label ) ) { labelId.put( label, labels.size() ); labels.add( label ); }
 	}
 
 	private static int roundUp( final int v, final int multiple ) { return ( ( v + multiple - 1 ) / multiple ) * multiple; }
@@ -1190,12 +1221,11 @@ public class PackedInterestPointStore
 		final int shard = attrs.getBlockSize()[ 1 ], chunk = attrs.getChunkSize()[ 1 ];
 		final long total = attrs.getDimensions()[ 1 ];
 		final long s0 = start / shard, s1 = ( end - 1 ) / shard;
-		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
 		// one fresh reader for the read-back verification (the writer caches; we want the bytes that are on disk)
 		final N5Reader verify = URITools.instantiateN5Reader( StorageFormat.ZARR, n5URI );
 		try
 		{
-			pool.submit( () -> LongStream.rangeClosed( s0, s1 ).parallel().forEach( s -> {
+			parallel( "writing " + ds, () -> LongStream.rangeClosed( s0, s1 ).parallel().forEach( s -> {
 				final List< DataBlock< T > > chunks = new ArrayList<>();
 				final long shardStart = s * shard, shardEnd = Math.min( total, shardStart + shard );
 				for ( long c = Math.max( shardStart, ( start / chunk ) * chunk ); c < Math.min( shardEnd, end ); c += chunk )
@@ -1211,10 +1241,9 @@ public class PackedInterestPointStore
 					IOFunctions.println( "PackedInterestPointStore: WARNING read-back of " + ds + " shard " + s + " failed (" + bad + "), attempt " + attempt );
 					if ( attempt == 2 ) throw new RuntimeException( "PackedInterestPointStore: " + ds + " shard " + s + " does not read back what was written (" + bad + "); commit aborted, previous generation stays valid" );
 				}
-			}) ).get();
+			}) );
 		}
-		catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "writing " + ds + " failed", e ); }
-		finally { pool.shutdown(); verify.close(); }
+		finally { verify.close(); }
 	}
 
 	/**
@@ -1388,10 +1417,7 @@ public class PackedInterestPointStore
 		if ( groups.isEmpty() ) return 0;
 		IOFunctions.println( "PackedInterestPointStore: converting " + groups.size() + " legacy interest point groups of " + store.n5URI_legacy + " into " + store.n5URI );
 
-		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
-		try
-		{
-			pool.submit( () -> IntStream.range( 0, groups.size() ).parallel().forEach( i -> {
+		parallel( "reading legacy interest points", () -> IntStream.range( 0, groups.size() ).parallel().forEach( i -> {
 				final String path = groups.get( i );
 				final Key k = Key.parse( path );
 				if ( k == null ) return;
@@ -1400,20 +1426,14 @@ public class PackedInterestPointStore
 					store.stagePoints( k, ip.ids, ip.locations );
 				if ( n5.exists( InterestPointsN5.corrDataset( path ) ) && ip.loadLegacyCorrespondences() )
 					store.stageCorrespondences( k, ip.correspondingInterestPoints );
-			}) ).get();
-		}
-		catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "reading legacy interest points failed", e ); }
-		finally { pool.shutdown(); }
+			}) );
 
 		store.commit();
 
 		final N5Writer w = store.n5Writer_legacy();
 		final Set< String > viewGroups = new HashSet<>();
 		for ( final String g : groups ) viewGroups.add( g.substring( 0, g.indexOf( '/' ) ) );
-		final ForkJoinPool pool2 = new ForkJoinPool( Threads.numThreads() );
-		try { pool2.submit( () -> viewGroups.parallelStream().forEach( g -> w.remove( g ) ) ).get(); }
-		catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "removing legacy interest point groups failed", e ); }
-		finally { pool2.shutdown(); }
+		parallel( "removing legacy interest point groups", () -> viewGroups.parallelStream().forEach( g -> w.remove( g ) ) );
 		IOFunctions.println( "PackedInterestPointStore: removed " + viewGroups.size() + " legacy view groups" );
 		return groups.size();
 	}
