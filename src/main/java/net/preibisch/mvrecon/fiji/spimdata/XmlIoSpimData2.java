@@ -52,6 +52,7 @@ import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlIoIntensityAdjustm
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5.InterestPointData;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlIoViewInterestPoints;
@@ -354,7 +355,10 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 			return;
 
 		final ForkJoinPool pool = new ForkJoinPool( numThreads );
-		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) )
+		PackedInterestPointStore.get( baseDir ).beginBatch(); // writer-variant saves below stage in memory; commit() at the end
+		// the shared legacy writer is only needed for lists the store cannot hold (do not create interestpoints.n5 otherwise)
+		final boolean needLegacyWriter = allIPs.stream().anyMatch( ipl -> ipl instanceof InterestPointsN5 && !( (InterestPointsN5) ipl ).usesStore() );
+		try ( final N5Writer n5Writer = needLegacyWriter ? URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) : null )
 		{
 			pool.submit( () ->
 				allIPs.parallelStream().forEach( ipl ->
@@ -381,6 +385,9 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 					}
 				})
 			).get();
+
+			// InterestPointsN5 entries were staged in memory by the loop above; write them into the packed arrays in one go
+			PackedInterestPointStore.get( baseDir ).commit();
 		}
 		catch ( final Exception e )
 		{

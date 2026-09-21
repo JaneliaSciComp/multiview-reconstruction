@@ -24,6 +24,11 @@ package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.net.URI;
 import java.util.Collection;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.Map;
 
 import mpicbg.spim.data.sequence.ViewId;
@@ -108,6 +113,30 @@ public abstract class InterestPoints
 	 * @return - the collection of corresponding interest points (copied), tries to load from disc if null
 	 */
 	public abstract Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy();
+
+	/**
+	 * @return only the correspondences to one other (view, label); backends with a pair index override this so it
+	 * does not load or copy the whole list
+	 */
+	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId correspondingViewId, final String correspondingLabel )
+	{
+		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
+		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
+			if ( c.getCorrespodingLabel().equals( correspondingLabel ) && c.getCorrespondingViewId().equals( correspondingViewId ) )
+				out.add( c );
+		return out;
+	}
+
+	/**
+	 * @return the (view, label)s this list has correspondences with; lets callers iterate actual partners instead of all view pairs
+	 */
+	public Set< Pair< ViewId, String > > getCorrespondingViews()
+	{
+		final Set< Pair< ViewId, String > > out = new HashSet<>();
+		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
+			out.add( new ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
+		return out;
+	}
 
 	public void setInterestPoints( final Collection< InterestPoint > list )
 	{
