@@ -24,6 +24,11 @@ package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.net.URI;
 import java.util.Collection;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.Map;
 
 import mpicbg.spim.data.sequence.ViewId;
@@ -115,7 +120,7 @@ public abstract class InterestPoints
 	 */
 	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId correspondingViewId, final String correspondingLabel )
 	{
-		final java.util.ArrayList< CorrespondingInterestPoints > out = new java.util.ArrayList<>();
+		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
 		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
 			if ( c.getCorrespodingLabel().equals( correspondingLabel ) && c.getCorrespondingViewId().equals( correspondingViewId ) )
 				out.add( c );
@@ -125,11 +130,11 @@ public abstract class InterestPoints
 	/**
 	 * @return the (view, label)s this list has correspondences with; lets callers iterate actual partners instead of all view pairs
 	 */
-	public java.util.Set< net.imglib2.util.Pair< ViewId, String > > getCorrespondingViews()
+	public Set< Pair< ViewId, String > > getCorrespondingViews()
 	{
-		final java.util.Set< net.imglib2.util.Pair< ViewId, String > > out = new java.util.HashSet<>();
+		final Set< Pair< ViewId, String > > out = new HashSet<>();
 		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
-			out.add( new net.imglib2.util.ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
+			out.add( new ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
 		return out;
 	}
 
