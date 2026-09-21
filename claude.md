@@ -64,8 +64,9 @@ interestpoints.zarr/zarr.json        root attrs: generation G, pointsData, corrD
 interestpoints.n5/tpId_X_viewSetupId_Y/label/   legacy per-view groups: readable, removed by conversion
 ```
 
-Defaults: chunk 65,536 points, shard 1<<20, zstd 3, crc32c shard index (statics, recorded in the root attrs; existing arrays keep
-their grid). Zarr C order: n5 dims `[3, N]` appear as shape `[N, 3]`. Load order: staged → staging file → arrays → legacy group.
+Defaults: chunk 65,536 points, shard 1<<20, raw bytes with a crc32c per chunk and on the shard index (statics, recorded in the
+root attrs; existing arrays keep their grid). No compression: it gained ~2 % on coordinates and its JNI decoder caused the
+GCLocker stall below. The zstd variant was never in production, nothing reads it. Zarr C order: n5 dims `[3, N]` appear as shape `[N, 3]`. Load order: staged → staging file → arrays → legacy group.
 
 **Writing**
 - The driver's XML save is the only commit: `XmlIoSpimData2.saveInterestPointsInParallel` opens a batch, the per-entry saves stage
@@ -74,7 +75,6 @@ their grid). Zarr C order: n5 dims `[3, N]` appear as shape `[N, 3]`. Load order
   The newest file wins for a key (split phase 3 overrides phase 2). Deletes are staged (`store.remove`) until the next commit.
 - Commit appends when ≥ 75 % of an array stays live (counted in points / correspondence rows), else rewrites it.
 - Never let two JVMs commit the same dataset at once.
-- Shard writes are fsynced and read back before the flip; a mismatch retries once, then aborts the commit.
 
 **Reading**
 - One lookup path (`where`): staged → staging file → index. On a miss the store re-lists `staging/` and re-reads the root
@@ -91,9 +91,12 @@ legacy + zarr datasets read fine. `--storeIntensities` detection keeps the old i
   correspondence was lost silently (1,922 instead of 3,566 connected pairs).
 - Never cache "does not exist" for something another JVM may create: an executor's stale staging listing dropped partner views.
 - Per-entry staging files are too many: deleting 1,780 of them took 9 s on /nrs even in parallel (unlinks serialize per directory).
-- /nrs once returned four 23 MB shards with an identical 4.9 MB page-aligned hole of zeros although the writer closed them without
-  error; not reproducible in Java. Hence fsync + read-back. Diagnostics: `scratchpad/bench/check/{ScanChunks,CheckCorr}.java`.
+- Shard files read through the macOS SMB mount showed a 5 MB page-aligned hole of zeros twice; on a cluster node the same
+  files were intact (`tools/check_store.sh`, md5). Never judge data on /nrs through the Mac mount; the fsync + read-back
+  code written for this phantom was removed. Every chunk carries a crc32c, so real damage fails loudly.
 - The fat jar must be built with `mvn clean package -Pfatjar`; without `clean`, shade reuses the previous jar's classes.
+- 64 threads decoding zstd chunks (zstd-jni uses JNI critical regions) made the JVM throw a spurious `OutOfMemoryError: Java heap
+  space` at 127 MB heap use (JDK-8192647, "Retried waiting for GCLocker too often"). Fixed by storing raw bytes; no JNI on reads.
 
 **Numbers** (ExpID99, identical resources, legacy N5 → store): solve1 pair setup 26 s → 4 s, solve2 37 s → 5 s, match_split driver
 save 26 s → 1 s, split stage 34 s → 19 s, detect 57 s → 35 s. Results equal within RANSAC noise. Chunk/shard sweep: bigger
