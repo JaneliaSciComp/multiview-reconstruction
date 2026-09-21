@@ -29,6 +29,19 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.TreeSet;
+import java.util.Random;
+import java.io.OutputStream;
+import java.io.InputStream;
+import java.io.BufferedOutputStream;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.Paths;
+import java.nio.file.Path;
+import java.nio.file.Files;
+import java.nio.channels.FileChannel;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -53,6 +66,8 @@ import org.janelia.saalfeldlab.n5.DoubleArrayDataBlock;
 import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
 import org.janelia.saalfeldlab.n5.IntArrayDataBlock;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
+import org.janelia.saalfeldlab.n5.N5Exception;
+import org.janelia.saalfeldlab.n5.FileSystemKeyValueAccess;
 import org.janelia.saalfeldlab.n5.LockedChannel;
 import org.janelia.saalfeldlab.n5.LongArrayDataBlock;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -84,16 +99,17 @@ import util.URITools;
  *   points/gk/loc       FLOAT64 [3, N] shard [3, shardPoints], chunk [3, chunkPoints], zstd, crc32c shard index
  *   points/gk/id        INT32 [1, N]   detection ids (sparse for *_split labels), same grid
  *   correspondences/gk/data INT32 [3, M] (detA, detB, consensusSetId) once per pair, A = smaller key, same grid
- * interestpoints.n5/staging/tp_setup_label.points|.corr   raw blobs from per-entry saves, folded in at the next commit
- * interestpoints.n5/tpId_X_viewSetupId_Y/label/...         legacy per-view groups, readable, removed by {@link #convertLegacy(URI)}
+ *   staging/tp_setup_label.points|.corr   raw blobs from per-entry saves (durable, JVM-independent), folded in at the next commit
+ * interestpoints.n5/tpId_X_viewSetupId_Y/label/...   legacy per-view groups, readable, removed by {@link #convertLegacy(URI)}
  * </pre>
  *
  * Writes are staged in memory ({@link #stagePoints}, {@link #stageCorrespondences}, {@link #remove}) and made durable by
  * one {@link #commit()} (called from {@code XmlIoSpimData2.saveInterestPointsInParallel}). A commit appends when at least
  * {@link #minLiveFractionForAppend} of the arrays stays live, otherwise it rewrites them (compaction). New index arrays
  * are written first and the root attributes are flipped last, so a crash leaves the previous generation intact.
- * Per-entry saves outside a batch ({@link #writePointsBlob}, {@link #writeCorrespondencesBlob}) write one raw file each
- * (durable immediately, also from other JVMs); readers prefer these blobs until the next commit folds them in.
+ * Saves outside a batch write staging files ({@link #writeStagingFile}): one raw file per Spark task (or per entry for
+ * single saves) with an entry table, durable immediately and readable from other JVMs; readers prefer them until the next
+ * commit folds them in. When a key is in several files the newest file (lexically largest name, millisecond-prefixed) wins.
  *
  * One store instance exists per dataset directory ({@link #get(URI)}); all {@code InterestPointsN5} of a dataset share
  * it, its open readers, its index and its chunk cache.
@@ -116,6 +132,8 @@ public class PackedInterestPointStore
 	public static int chunkCacheSize = 256;
 
 	static final String STAGING = "staging";
+	static final String STAGING_EXT = ".stage";
+	static final int STAGING_MAGIC = 0x49505354, STAGING_VERSION = 1;
 	static final String ATTR_VERSION = "interestpoints", ATTR_GEN = "generation", ATTR_POINTS = "pointsData", ATTR_CORR = "corrData", ATTR_LABELS = "labels",
 			ATTR_CHUNK = "chunkPoints", ATTR_SHARD = "shardPoints";
 
@@ -196,17 +214,22 @@ public class PackedInterestPointStore
 		return stores.computeIfAbsent( baseDir.toString(), k -> new PackedInterestPointStore( baseDir ) );
 	}
 
-	final URI baseDir, zarrURI, n5URI;
-	private N5Writer zarrWriter = null, n5Writer = null;
-	private N5Reader zarrReader = null, n5Reader = null;
-	private boolean zarrReaderTried = false, n5ReaderTried = false;
+	final URI baseDir, n5URI, n5URI_legacy;
+	private N5Writer n5Writer = null, n5Writer_legacy = null;
+	private N5Reader n5Reader = null, n5Reader_legacy = null;
+	private boolean n5ReaderTried = false, n5ReaderTried_legacy = false;
 	private volatile Index index = null;
 
 	private final Object lock = new Object();
+	private volatile boolean batch = false;
 	private final Map< Key, Points > stagedPoints = new HashMap<>();
 	private final Map< Key, List< CorrespondingInterestPoints > > stagedCorr = new HashMap<>();
 	private final Set< Key > removedPoints = new HashSet<>(), removedCorr = new HashSet<>();
-	private volatile Set< Key > blobPoints = Set.of(), blobCorr = Set.of();
+	/** location of one entry's payload inside a staging file */
+	record BlobRef( String file, long offset, int count ) {}
+	record BlobEntry( Key key, BlobRef points, BlobRef corr ) {}
+	private volatile Map< Key, BlobRef > blobPoints = Map.of(), blobCorr = Map.of();
+	private final Map< String, List< BlobEntry > > parsedFiles = new HashMap<>(); // staging file name -> its entry table
 	private boolean blobsListed = false;
 
 	private final LinkedHashMap< String, Object > chunkCache = new LinkedHashMap<>( 64, 0.75f, true )
@@ -219,35 +242,13 @@ public class PackedInterestPointStore
 	public PackedInterestPointStore( final URI baseDir )
 	{
 		this.baseDir = baseDir;
-		this.zarrURI = URITools.toURI( URITools.appendName( baseDir, ZARR_CONTAINER ) );
-		this.n5URI = URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) );
+		this.n5URI = URITools.toURI( URITools.appendName( baseDir, ZARR_CONTAINER ) );
+		this.n5URI_legacy = URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) );
 	}
 
 	// ------------------------------------------------------------------------------------------------
 	// containers
 	// ------------------------------------------------------------------------------------------------
-
-	private synchronized N5Reader zarrReader()
-	{
-		if ( zarrWriter != null ) return zarrWriter;
-		if ( !zarrReaderTried )
-		{
-			zarrReaderTried = true;
-			try { zarrReader = URITools.instantiateN5Reader( StorageFormat.ZARR, zarrURI ); }
-			catch ( final Exception e ) { zarrReader = null; } // no store yet
-		}
-		return zarrReader;
-	}
-
-	private synchronized N5Writer zarrWriter()
-	{
-		if ( zarrWriter == null )
-		{
-			zarrWriter = URITools.instantiateN5Writer( StorageFormat.ZARR, zarrURI );
-			zarrReader = null;
-		}
-		return zarrWriter;
-	}
 
 	private synchronized N5Reader n5Reader()
 	{
@@ -255,20 +256,49 @@ public class PackedInterestPointStore
 		if ( !n5ReaderTried )
 		{
 			n5ReaderTried = true;
-			try { n5Reader = URITools.instantiateN5Reader( StorageFormat.N5, n5URI ); }
-			catch ( final Exception e ) { n5Reader = null; }
+			try { n5Reader = URITools.instantiateN5Reader( StorageFormat.ZARR, n5URI ); }
+			catch ( final Exception e ) { n5Reader = null; } // no store yet
 		}
 		return n5Reader;
+	}
+
+	/** forget cached "container does not exist" results, so containers created meanwhile by another JVM are picked up */
+	private synchronized void retryContainers()
+	{
+		if ( n5Reader == null && n5Writer == null ) n5ReaderTried = false;
+		if ( n5Reader_legacy == null && n5Writer_legacy == null ) n5ReaderTried_legacy = false;
 	}
 
 	private synchronized N5Writer n5Writer()
 	{
 		if ( n5Writer == null )
 		{
-			n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, n5URI );
+			n5Writer = URITools.instantiateN5Writer( StorageFormat.ZARR, n5URI );
 			n5Reader = null;
 		}
 		return n5Writer;
+	}
+
+	private synchronized N5Reader n5Reader_legacy()
+	{
+		if ( n5Writer_legacy != null ) return n5Writer_legacy;
+		if ( !n5ReaderTried_legacy )
+		{
+			n5ReaderTried_legacy = true;
+			try { n5Reader_legacy = URITools.instantiateN5Reader( StorageFormat.N5, n5URI_legacy ); }
+			catch ( final Exception e ) { n5Reader_legacy = null; }
+		}
+		return n5Reader_legacy;
+	}
+
+	private synchronized N5Writer n5Writer_legacy()
+	{
+		if ( n5Writer_legacy == null )
+		{
+			n5Writer_legacy = URITools.instantiateN5Writer( StorageFormat.N5, n5URI_legacy );
+			n5Reader_legacy = null;
+		}
+		return n5Writer_legacy;
 	}
 
 	private static KeyValueAccess kva( final N5Reader n5 ) { return ( (GsonKeyValueN5Reader) n5 ).getKeyValueAccess(); }
@@ -293,7 +323,7 @@ public class PackedInterestPointStore
 	private Index loadIndex()
 	{
 		listBlobs();
-		final N5Reader z = zarrReader();
+		final N5Reader z = n5Reader();
 		if ( z == null || z.getAttribute( "/", ATTR_VERSION, String.class ) == null )
 			return Index.empty();
 
@@ -328,41 +358,76 @@ public class PackedInterestPointStore
 
 	static String indexGroup( final int gen ) { return "index/g" + gen; }
 
+	/** lists the staging dir and parses the entry tables of files not seen before (in parallel) */
 	private void listBlobs()
 	{
 		if ( blobsListed ) return;
 		blobsListed = true;
-		final Set< Key > p = new HashSet<>(), c = new HashSet<>();
-		final N5Reader n5 = n5Reader();
-		if ( n5 != null )
+		final N5Reader z = n5Reader();
+		if ( z == null ) { synchronized ( lock ) { parsedFiles.clear(); rebuildBlobMaps(); } return; }
+		final KeyValueAccess kva = kva( z );
+		final String dir = kva.compose( n5URI, STAGING );
+		final List< String > names = new ArrayList<>();
+		if ( kva.exists( dir ) ) for ( final String n : kva.list( dir ) ) if ( n.endsWith( STAGING_EXT ) ) names.add( n );
+		final List< String > fresh = new ArrayList<>();
+		synchronized ( lock )
 		{
-			final KeyValueAccess kva = kva( n5 );
-			final String dir = kva.compose( n5URI, STAGING );
-			if ( kva.exists( dir ) )
-			{
-				for ( final String name : kva.list( dir ) )
-				{
-					final int dot = name.lastIndexOf( '.' );
-					if ( dot < 0 ) continue;
-					final Key k = blobKey( name.substring( 0, dot ) );
-					if ( k == null ) continue;
-					if ( name.endsWith( ".points" ) ) p.add( k );
-					else if ( name.endsWith( ".corr" ) ) c.add( k );
-				}
-			}
+			parsedFiles.keySet().retainAll( new HashSet<>( names ) );
+			for ( final String n : names ) if ( !parsedFiles.containsKey( n ) ) fresh.add( n );
 		}
+		if ( !fresh.isEmpty() )
+		{
+			final Map< String, List< BlobEntry > > parsed = new ConcurrentHashMap<>();
+			final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+			try { pool.submit( () -> fresh.parallelStream().forEach( n -> { final List< BlobEntry > e = readHeader( kva, n ); if ( e != null ) parsed.put( n, e ); } ) ).get(); }
+			catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "reading staging file headers failed", e ); }
+			finally { pool.shutdown(); }
+			synchronized ( lock ) { parsedFiles.putAll( parsed ); }
+		}
+		synchronized ( lock ) { rebuildBlobMaps(); }
+	}
+
+	/** rebuilds the key -> payload maps from the parsed files; lexical order = chronological order, so later files win */
+	private void rebuildBlobMaps()
+	{
+		final Map< Key, BlobRef > p = new HashMap<>(), c = new HashMap<>();
+		for ( final List< BlobEntry > entries : new TreeMap<>( parsedFiles ).values() )
+			for ( final BlobEntry e : entries ) { if ( e.points != null ) p.put( e.key, e.points ); if ( e.corr != null ) c.put( e.key, e.corr ); }
 		blobPoints = p;
 		blobCorr = c;
 	}
 
-	static String blobName( final Key k ) { return k.tp + "_" + k.setup + "_" + k.label; }
+	private String stagingPath( final KeyValueAccess kva, final String name ) { return kva.compose( n5URI, STAGING, name ); }
 
-	static Key blobKey( final String name )
+	/** millisecond prefix (zero-padded, so names sort chronologically) + nanoTime + random: unique across JVMs and nodes */
+	private static String stagingFileName() { return String.format( "%013d_%016x_%08x%s", System.currentTimeMillis(), System.nanoTime(), new Random().nextInt(), STAGING_EXT ); }
+
+	/** @return the entry table of a staging file, or null if it cannot be read (e.g. still being written by another JVM) */
+	private List< BlobEntry > readHeader( final KeyValueAccess kva, final String name )
 	{
-		final int a = name.indexOf( '_' ), b = name.indexOf( '_', a + 1 );
-		if ( a < 0 || b < 0 ) return null;
-		try { return new Key( Integer.parseInt( name.substring( 0, a ) ), Integer.parseInt( name.substring( a + 1, b ) ), name.substring( b + 1 ) ); }
-		catch ( final NumberFormatException e ) { return null; }
+		try ( final LockedChannel ch = kva.lockForReading( stagingPath( kva, name ) );
+				final DataInputStream in = new DataInputStream( new BufferedInputStream( ch.newInputStream() ) ) )
+		{
+			return parseHeader( name, in );
+		}
+		catch ( final IOException | RuntimeException e ) { IOFunctions.println( "PackedInterestPointStore: WARNING cannot read staging file " + name + ": " + e ); return null; }
+	}
+
+	private static List< BlobEntry > parseHeader( final String name, final DataInputStream in ) throws IOException
+	{
+		if ( in.readInt() != STAGING_MAGIC ) throw new IOException( "not a staging file" );
+		final int version = in.readInt();
+		if ( version != STAGING_VERSION ) throw new IOException( "unsupported staging file version " + version );
+		final int n = in.readInt();
+		final List< BlobEntry > out = new ArrayList<>( n );
+		for ( int i = 0; i < n; ++i )
+		{
+			final Key k = new Key( in.readInt(), in.readInt(), in.readUTF() );
+			final boolean hasP = in.readBoolean(); final long pOff = in.readLong(); final int pCount = in.readInt();
+			final boolean hasC = in.readBoolean(); final long cOff = in.readLong(); final int cCount = in.readInt();
+			out.add( new BlobEntry( k, hasP ? new BlobRef( name, pOff, pCount ) : null, hasC ? new BlobRef( name, cOff, cCount ) : null ) );
+		}
+		return out;
 	}
 
 	// ------------------------------------------------------------------------------------------------
@@ -377,7 +442,7 @@ public class PackedInterestPointStore
 			if ( removedPoints.contains( k ) ) return false;
 			if ( stagedPoints.containsKey( k ) ) return true;
 		}
-		return blobPointsSet().contains( k ) || index().points.containsKey( k );
+		return blobPointsMap().containsKey( k ) || index().points.containsKey( k ) || refreshOnMiss( k, ".points" ) || index().points.containsKey( k );
 	}
 
 	public boolean hasCorrespondences( final Key k )
@@ -387,11 +452,74 @@ public class PackedInterestPointStore
 			if ( removedCorr.contains( k ) ) return false;
 			if ( stagedCorr.containsKey( k ) ) return true;
 		}
-		return blobCorrSet().contains( k ) || index().pairs.containsKey( k );
+		return blobCorrMap().containsKey( k ) || index().pairs.containsKey( k ) || refreshOnMiss( k, ".corr" ) || index().pairs.containsKey( k );
 	}
 
-	private Set< Key > blobPointsSet() { index(); return blobPoints; }
-	private Set< Key > blobCorrSet() { index(); return blobCorr; }
+	private Map< Key, BlobRef > blobPointsMap() { index(); return blobPoints; }
+	private Map< Key, BlobRef > blobCorrMap() { index(); return blobCorr; }
+
+	/**
+	 * Called when an entry is not known from staging, the cached blob listing or the cached index. Other JVMs (Spark
+	 * executors, the driver) may have written a staging blob or committed a new generation since this store instance
+	 * looked: check the blob file directly and reload the index if the root generation changed. Cheap (one stat, one
+	 * small attribute read), and datasets that never had a store only pay it on the legacy path.
+	 */
+	private boolean refreshOnMiss( final Key k, final String ext )
+	{
+		retryContainers();
+		final N5Reader z = n5Reader();
+		if ( z == null ) return false;
+		// re-list the staging dir: another JVM may have written a file since this instance listed (only new files are parsed)
+		blobsListed = false;
+		listBlobs();
+		if ( ( ext.equals( ".points" ) ? blobPoints : blobCorr ).containsKey( k ) ) return true;
+		refreshGeneration();
+		return false;
+	}
+
+	/** readers cache root attributes: ask a fresh one for the generation and reload everything if another JVM committed */
+	private void refreshGeneration()
+	{
+		synchronized ( this )
+		{
+			if ( n5Writer == null )
+			{
+				try
+				{
+					final N5Reader fresh = URITools.instantiateN5Reader( StorageFormat.ZARR, n5URI );
+					final Integer gen = fresh.getAttribute( "/", ATTR_GEN, Integer.class );
+					if ( gen != null && gen != index().generation )
+					{
+						n5Reader = fresh;
+						index = null;
+						blobsListed = false;
+						clearCache();
+					}
+				}
+				catch ( final Exception e ) { /* no store */ }
+			}
+		}
+		index();
+	}
+
+	/**
+	 * A staging file this instance knew about is gone: another JVM committed and deleted it. Forget the file, pick up the
+	 * new generation, and answer from the arrays.
+	 */
+	private void stagingFileGone( final String file )
+	{
+		synchronized ( lock ) { parsedFiles.remove( file ); rebuildBlobMaps(); }
+		blobsListed = false;
+		listBlobs();
+		refreshGeneration();
+	}
+
+	private static boolean isMissingFile( final Throwable e )
+	{
+		for ( Throwable t = e; t != null; t = t.getCause() )
+			if ( t instanceof java.nio.file.NoSuchFileException || t instanceof N5Exception.N5NoSuchKeyException ) return true;
+		return false;
+	}
 
 	/** @return the points of an entry, or null if unknown to this store */
 	public Points points( final Key k )
@@ -402,10 +530,16 @@ public class PackedInterestPointStore
 			final Points s = stagedPoints.get( k );
 			if ( s != null ) return s;
 		}
-		if ( blobPointsSet().contains( k ) ) return readPointsBlob( k );
-		final Index idx = index();
-		final long[] r = idx.points.get( k );
-		if ( r == null ) return null;
+		if ( blobPointsMap().containsKey( k ) ) return readPointsBlob( k );
+		Index idx = index();
+		long[] r = idx.points.get( k );
+		if ( r == null )
+		{
+			if ( refreshOnMiss( k, ".points" ) ) return readPointsBlob( k );
+			idx = index();
+			r = idx.points.get( k );
+			if ( r == null ) return null;
+		}
 		return readPoints( idx, r[ 0 ], (int) r[ 1 ] );
 	}
 
@@ -418,10 +552,16 @@ public class PackedInterestPointStore
 			final List< CorrespondingInterestPoints > s = stagedCorr.get( k );
 			if ( s != null ) return new ArrayList<>( s );
 		}
-		if ( blobCorrSet().contains( k ) ) return readCorrBlob( k );
-		final Index idx = index();
-		final List< PairRow > rows = idx.pairs.get( k );
-		if ( rows == null ) return null;
+		if ( blobCorrMap().containsKey( k ) ) return readCorrBlob( k );
+		Index idx = index();
+		List< PairRow > rows = idx.pairs.get( k );
+		if ( rows == null )
+		{
+			if ( refreshOnMiss( k, ".corr" ) ) return readCorrBlob( k );
+			idx = index();
+			rows = idx.pairs.get( k );
+			if ( rows == null ) return null;
+		}
 		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
 		for ( final PairRow row : rows ) appendRange( idx, row, out );
 		return out;
@@ -437,10 +577,16 @@ public class PackedInterestPointStore
 			final List< CorrespondingInterestPoints > s = stagedCorr.get( k );
 			if ( s != null ) return filter( s, p );
 		}
-		if ( blobCorrSet().contains( k ) ) return filter( readCorrBlob( k ), p );
-		final Index idx = index();
-		final List< PairRow > rows = idx.pairs.get( k );
-		if ( rows == null ) return null;
+		if ( blobCorrMap().containsKey( k ) ) return filter( readCorrBlob( k ), p );
+		Index idx = index();
+		List< PairRow > rows = idx.pairs.get( k );
+		if ( rows == null )
+		{
+			if ( refreshOnMiss( k, ".corr" ) ) return filter( readCorrBlob( k ), p );
+			idx = index();
+			rows = idx.pairs.get( k );
+			if ( rows == null ) return null;
+		}
 		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
 		for ( final PairRow row : rows )
 			if ( row.partner.equals( p ) ) appendRange( idx, row, out );
@@ -456,7 +602,8 @@ public class PackedInterestPointStore
 			if ( removedCorr.contains( k ) ) return null;
 			full = stagedCorr.get( k );
 		}
-		if ( full == null && blobCorrSet().contains( k ) ) full = readCorrBlob( k );
+		if ( full == null && blobCorrMap().containsKey( k ) ) full = readCorrBlob( k );
+		if ( full == null && !index().pairs.containsKey( k ) && refreshOnMiss( k, ".corr" ) ) full = readCorrBlob( k );
 		final Set< Pair< ViewId, String > > out = new HashSet<>();
 		if ( full != null )
 		{
@@ -523,7 +670,7 @@ public class PackedInterestPointStore
 			final Object o = chunkCache.get( key );
 			if ( o != null ) return o;
 		}
-		final Object data = zarrReader().readChunk( dataset, attrs, 0, c ).getData();
+		final Object data = n5Reader().readChunk( dataset, attrs, 0, c ).getData();
 		synchronized ( chunkCache ) { chunkCache.put( key, data ); }
 		return data;
 	}
@@ -562,93 +709,197 @@ public class PackedInterestPointStore
 		synchronized ( lock ) { return !stagedPoints.isEmpty() || !stagedCorr.isEmpty() || !removedPoints.isEmpty() || !removedCorr.isEmpty(); }
 	}
 
-	private String blobPath( final KeyValueAccess kva, final Key k, final String ext ) { return kva.compose( n5URI, STAGING, blobName( k ) + ext ); }
+	/**
+	 * Marks the start of a batch that this JVM will {@link #commit()} right away (XmlIoSpimData2.saveInterestPointsInParallel).
+	 * Only inside a batch do the writer-variant saves of InterestPointsN5 stage in memory; everywhere else (e.g. Spark
+	 * executors that are never going to commit) they write durable staging blobs instead, so nothing is lost silently.
+	 */
+	public void beginBatch() { batch = true; }
+	public boolean inBatch() { return batch; }
 
-	/** durable per-entry save: one raw file under interestpoints.n5/staging/, folded into the arrays by the next commit */
-	public void writePointsBlob( final Key k, final int[] ids, final double[][] locations )
+	/** single-entry convenience: one staging file holding the points of one entry */
+	public void writePointsBlob( final Key k, final int[] ids, final double[][] locations ) { writeStagingFile( Map.of( k, Points.of( ids, locations ) ), Map.of() ); }
+
+	/** single-entry convenience: one staging file holding the correspondences of one entry */
+	public void writeCorrespondencesBlob( final Key k, final Collection< CorrespondingInterestPoints > list ) { writeStagingFile( Map.of(), Map.of( k, new ArrayList<>( list ) ) ); }
+
+	/**
+	 * Durable save without a commit: writes ONE file under interestpoints.zarr/staging/ holding all given entries (entry
+	 * table first, then the payloads), readable at once from any JVM and folded into the arrays by the next commit.
+	 * Spark tasks call this once per task ({@code InterestPointsN5.saveStaged}) instead of once per entry.
+	 *
+	 * @return the file name, or null if there was nothing to write
+	 */
+	public String writeStagingFile( final Map< Key, Points > pts, final Map< Key, List< CorrespondingInterestPoints > > corr )
 	{
-		final Points p = Points.of( ids, locations );
-		final KeyValueAccess kva = kva( n5Writer() );
-		kva.createDirectories( kva.compose( n5URI, STAGING ) );
-		try ( final LockedChannel ch = kva.lockForWriting( blobPath( kva, k, ".points" ) );
-				final DataOutputStream out = new DataOutputStream( ch.newOutputStream() ) )
+		final TreeSet< Key > keys = new TreeSet<>( pts.keySet() );
+		keys.addAll( corr.keySet() );
+		if ( keys.isEmpty() ) return null;
+		try
 		{
-			out.writeInt( p.size() );
-			for ( final int id : p.ids ) out.writeInt( id );
-			for ( final double v : p.loc ) out.writeDouble( v );
+			final List< byte[] > payloads = new ArrayList<>();
+			final List< Object[] > rows = new ArrayList<>(); // { Key, pointsPayloadIdx | -1, pointsCount, corrPayloadIdx | -1, corrCount }
+			for ( final Key k : keys )
+			{
+				final Points p = pts.get( k );
+				final List< CorrespondingInterestPoints > c = corr.get( k );
+				int pi = -1, ci = -1;
+				if ( p != null ) { pi = payloads.size(); payloads.add( encodePoints( p ) ); }
+				if ( c != null ) { ci = payloads.size(); payloads.add( encodeCorr( c ) ); }
+				rows.add( new Object[] { k, pi, p == null ? 0 : p.size(), ci, c == null ? 0 : c.size() } );
+			}
+			final long[] offsets = new long[ payloads.size() ];
+			long off = encodeHeader( rows, offsets ).length; // header length does not depend on the offset values
+			for ( int i = 0; i < payloads.size(); ++i ) { offsets[ i ] = off; off += payloads.get( i ).length; }
+			final byte[] header = encodeHeader( rows, offsets );
+			final String name = stagingFileName();
+			final KeyValueAccess kva = kva( n5Writer() );
+			kva.createDirectories( kva.compose( n5URI, STAGING ) );
+			try ( final LockedChannel ch = kva.lockForWriting( stagingPath( kva, name ) ); final OutputStream out = new BufferedOutputStream( ch.newOutputStream() ) )
+			{
+				out.write( header );
+				for ( final byte[] b : payloads ) out.write( b );
+			}
+			final List< BlobEntry > entries = parseHeader( name, new DataInputStream( new ByteArrayInputStream( header ) ) );
+			synchronized ( lock )
+			{
+				for ( final BlobEntry e : entries )
+				{
+					if ( e.points != null ) { stagedPoints.remove( e.key ); removedPoints.remove( e.key ); }
+					if ( e.corr != null ) { stagedCorr.remove( e.key ); removedCorr.remove( e.key ); }
+				}
+				index(); // make sure the listing happened before we add to it
+				parsedFiles.put( name, entries );
+				rebuildBlobMaps();
+			}
+			return name;
 		}
-		catch ( final IOException e ) { throw new RuntimeException( "could not write staging blob for " + k, e ); }
-		synchronized ( lock )
-		{
-			stagedPoints.remove( k ); removedPoints.remove( k );
-			final Set< Key > s = new HashSet<>( blobPointsSet() ); s.add( k ); blobPoints = s;
-		}
+		catch ( final IOException e ) { throw new RuntimeException( "could not write staging file", e ); }
 	}
 
-	public void writeCorrespondencesBlob( final Key k, final Collection< CorrespondingInterestPoints > list )
+	private static byte[] encodeHeader( final List< Object[] > rows, final long[] offsets ) throws IOException
 	{
-		final KeyValueAccess kva = kva( n5Writer() );
-		kva.createDirectories( kva.compose( n5URI, STAGING ) );
-		try ( final LockedChannel ch = kva.lockForWriting( blobPath( kva, k, ".corr" ) );
-				final DataOutputStream out = new DataOutputStream( ch.newOutputStream() ) )
+		final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		final DataOutputStream out = new DataOutputStream( bytes );
+		out.writeInt( STAGING_MAGIC ); out.writeInt( STAGING_VERSION ); out.writeInt( rows.size() );
+		for ( final Object[] r : rows )
 		{
-			final List< String > labels = new ArrayList<>();
-			for ( final CorrespondingInterestPoints c : list ) if ( !labels.contains( c.getCorrespodingLabel() ) ) labels.add( c.getCorrespodingLabel() );
-			out.writeInt( labels.size() );
-			for ( final String l : labels ) out.writeUTF( l );
-			out.writeInt( list.size() );
-			for ( final CorrespondingInterestPoints c : list )
-			{
-				out.writeInt( c.getDetectionId() );
-				out.writeInt( c.getCorrespondingViewId().getTimePointId() );
-				out.writeInt( c.getCorrespondingViewId().getViewSetupId() );
-				out.writeInt( labels.indexOf( c.getCorrespodingLabel() ) );
-				out.writeInt( c.getCorrespondingDetectionId() );
-				out.writeInt( c.getConsensusSetId() );
-			}
+			final Key k = (Key) r[ 0 ];
+			final int pi = (Integer) r[ 1 ], ci = (Integer) r[ 3 ];
+			out.writeInt( k.tp ); out.writeInt( k.setup ); out.writeUTF( k.label );
+			out.writeBoolean( pi >= 0 ); out.writeLong( pi >= 0 ? offsets[ pi ] : 0L ); out.writeInt( (Integer) r[ 2 ] );
+			out.writeBoolean( ci >= 0 ); out.writeLong( ci >= 0 ? offsets[ ci ] : 0L ); out.writeInt( (Integer) r[ 4 ] );
 		}
-		catch ( final IOException e ) { throw new RuntimeException( "could not write staging blob for " + k, e ); }
-		synchronized ( lock )
+		out.flush();
+		return bytes.toByteArray();
+	}
+
+	private static byte[] encodePoints( final Points p ) throws IOException
+	{
+		final ByteArrayOutputStream bytes = new ByteArrayOutputStream( p.size() * 28 );
+		final DataOutputStream out = new DataOutputStream( bytes );
+		for ( final int id : p.ids ) out.writeInt( id );
+		for ( final double v : p.loc ) out.writeDouble( v );
+		out.flush();
+		return bytes.toByteArray();
+	}
+
+	private static Points decodePoints( final DataInputStream in, final int n ) throws IOException
+	{
+		final int[] ids = new int[ n ];
+		final double[] loc = new double[ n * 3 ];
+		for ( int i = 0; i < n; ++i ) ids[ i ] = in.readInt();
+		for ( int i = 0; i < loc.length; ++i ) loc[ i ] = in.readDouble();
+		return new Points( ids, loc );
+	}
+
+	private static byte[] encodeCorr( final List< CorrespondingInterestPoints > list ) throws IOException
+	{
+		final ByteArrayOutputStream bytes = new ByteArrayOutputStream( 64 + list.size() * 24 );
+		final DataOutputStream out = new DataOutputStream( bytes );
+		final List< String > labels = new ArrayList<>();
+		for ( final CorrespondingInterestPoints c : list ) if ( !labels.contains( c.getCorrespodingLabel() ) ) labels.add( c.getCorrespodingLabel() );
+		out.writeInt( labels.size() );
+		for ( final String l : labels ) out.writeUTF( l );
+		for ( final CorrespondingInterestPoints c : list )
 		{
-			stagedCorr.remove( k ); removedCorr.remove( k );
-			final Set< Key > s = new HashSet<>( blobCorrSet() ); s.add( k ); blobCorr = s;
+			out.writeInt( c.getDetectionId() );
+			out.writeInt( c.getCorrespondingViewId().getTimePointId() );
+			out.writeInt( c.getCorrespondingViewId().getViewSetupId() );
+			out.writeInt( labels.indexOf( c.getCorrespodingLabel() ) );
+			out.writeInt( c.getCorrespondingDetectionId() );
+			out.writeInt( c.getConsensusSetId() );
 		}
+		out.flush();
+		return bytes.toByteArray();
+	}
+
+	private static List< CorrespondingInterestPoints > decodeCorr( final DataInputStream in, final int n ) throws IOException
+	{
+		final String[] labels = new String[ in.readInt() ];
+		for ( int i = 0; i < labels.length; ++i ) labels[ i ] = in.readUTF();
+		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>( n );
+		for ( int i = 0; i < n; ++i )
+		{
+			final int det = in.readInt(), tp = in.readInt(), setup = in.readInt(), l = in.readInt(), cdet = in.readInt(), set = in.readInt();
+			out.add( new CorrespondingInterestPoints( det, tp, setup, labels[ l ], cdet, set ) );
+		}
+		return out;
+	}
+
+	/** opens the file and skips to the payload; closing the stream releases the channel */
+	private DataInputStream openPayload( final BlobRef r ) throws IOException
+	{
+		final KeyValueAccess kva = kva( n5Reader() );
+		final LockedChannel ch = kva.lockForReading( stagingPath( kva, r.file ) );
+		final DataInputStream in = new DataInputStream( new BufferedInputStream( ch.newInputStream() ) ) {
+			@Override public void close() throws IOException { try { super.close(); } finally { ch.close(); } }
+		};
+		in.skipNBytes( r.offset );
+		return in;
 	}
 
 	private Points readPointsBlob( final Key k )
 	{
-		final KeyValueAccess kva = kva( n5Reader() );
-		try ( final LockedChannel ch = kva.lockForReading( blobPath( kva, k, ".points" ) );
-				final DataInputStream in = new DataInputStream( ch.newInputStream() ) )
+		final BlobRef r = blobPoints.get( k );
+		try ( final DataInputStream in = openPayload( r ) ) { return decodePoints( in, r.count ); }
+		catch ( final IOException | N5Exception e )
 		{
-			final int n = in.readInt();
-			final int[] ids = new int[ n ];
-			final double[] loc = new double[ n * 3 ];
-			for ( int i = 0; i < n; ++i ) ids[ i ] = in.readInt();
-			for ( int i = 0; i < loc.length; ++i ) loc[ i ] = in.readDouble();
-			return new Points( ids, loc );
+			if ( !isMissingFile( e ) ) throw new RuntimeException( "could not read staging file " + r.file + " for " + k, e );
+			stagingFileGone( r.file );
+			return points( k );
 		}
-		catch ( final IOException e ) { throw new RuntimeException( "could not read staging blob for " + k, e ); }
 	}
 
 	private List< CorrespondingInterestPoints > readCorrBlob( final Key k )
 	{
-		final KeyValueAccess kva = kva( n5Reader() );
-		try ( final LockedChannel ch = kva.lockForReading( blobPath( kva, k, ".corr" ) );
-				final DataInputStream in = new DataInputStream( ch.newInputStream() ) )
+		final BlobRef r = blobCorr.get( k );
+		try ( final DataInputStream in = openPayload( r ) ) { return decodeCorr( in, r.count ); }
+		catch ( final IOException | N5Exception e )
 		{
-			final String[] labels = new String[ in.readInt() ];
-			for ( int i = 0; i < labels.length; ++i ) labels[ i ] = in.readUTF();
-			final int n = in.readInt();
-			final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>( n );
-			for ( int i = 0; i < n; ++i )
-			{
-				final int det = in.readInt(), tp = in.readInt(), setup = in.readInt(), l = in.readInt(), cdet = in.readInt(), set = in.readInt();
-				out.add( new CorrespondingInterestPoints( det, tp, setup, labels[ l ], cdet, set ) );
-			}
-			return out;
+			if ( !isMissingFile( e ) ) throw new RuntimeException( "could not read staging file " + r.file + " for " + k, e );
+			stagingFileGone( r.file );
+			return correspondences( k );
 		}
-		catch ( final IOException e ) { throw new RuntimeException( "could not read staging blob for " + k, e ); }
+	}
+
+	/** reads one whole staging file and decodes the wanted payloads from memory (the fold reads every file exactly once) */
+	private void foldFile( final String file, final List< Object[] > refs, final Map< Key, Points > fp, final Map< Key, List< CorrespondingInterestPoints > > fc )
+	{
+		final KeyValueAccess kva = kva( n5Reader() );
+		final byte[] bytes;
+		try ( final LockedChannel ch = kva.lockForReading( stagingPath( kva, file ) ); final InputStream in = ch.newInputStream() ) { bytes = in.readAllBytes(); }
+		catch ( final IOException e ) { throw new RuntimeException( "could not read staging file " + file, e ); }
+		for ( final Object[] ref : refs )
+		{
+			final Key k = (Key) ref[ 0 ]; final BlobRef r = (BlobRef) ref[ 1 ]; final boolean isPoints = (Boolean) ref[ 2 ];
+			if ( r.offset > bytes.length ) throw new RuntimeException( "staging file " + file + " is truncated (" + bytes.length + " bytes, entry " + k + " at " + r.offset + ")" );
+			try ( final DataInputStream in = new DataInputStream( new ByteArrayInputStream( bytes, (int) r.offset, bytes.length - (int) r.offset ) ) )
+			{
+				if ( isPoints ) fp.put( k, decodePoints( in, r.count ) ); else fc.put( k, decodeCorr( in, r.count ) );
+			}
+			catch ( final IOException e ) { throw new RuntimeException( "could not decode " + k + " from staging file " + file, e ); }
+		}
 	}
 
 	// ------------------------------------------------------------------------------------------------
@@ -663,17 +914,43 @@ public class PackedInterestPointStore
 	{
 		synchronized ( lock )
 		{
+			final long tStart = System.currentTimeMillis();
+			// pick up blobs written by other JVMs since this store instance listed them, and a newer generation
+			retryContainers();
+			blobsListed = false;
+			listBlobs();
 			final Index old = index();
+			final List< String > stagingFiles = new ArrayList<>( parsedFiles.keySet() ); // all obsolete after this commit
 
-			// fold staging blobs (per-entry saves) into the staged maps; in-memory staging wins if both exist
-			for ( final Key k : blobPointsSet() ) if ( !stagedPoints.containsKey( k ) && !removedPoints.contains( k ) ) stagedPoints.put( k, readPointsBlob( k ) );
-			for ( final Key k : blobCorrSet() ) if ( !stagedCorr.containsKey( k ) && !removedCorr.contains( k ) ) stagedCorr.put( k, readCorrBlob( k ) );
+			// fold the staging files into the staged maps (every file is read once); in-memory staging wins if both exist
+			final long tFoldStart = System.currentTimeMillis();
+			final Map< String, List< Object[] > > byFile = new HashMap<>(); // file -> { Key, BlobRef, isPoints }
+			int nFolded = 0;
+			for ( final Map.Entry< Key, BlobRef > e : blobPointsMap().entrySet() )
+				if ( !stagedPoints.containsKey( e.getKey() ) && !removedPoints.contains( e.getKey() ) ) { byFile.computeIfAbsent( e.getValue().file, x -> new ArrayList<>() ).add( new Object[] { e.getKey(), e.getValue(), true } ); ++nFolded; }
+			for ( final Map.Entry< Key, BlobRef > e : blobCorrMap().entrySet() )
+				if ( !stagedCorr.containsKey( e.getKey() ) && !removedCorr.contains( e.getKey() ) ) { byFile.computeIfAbsent( e.getValue().file, x -> new ArrayList<>() ).add( new Object[] { e.getKey(), e.getValue(), false } ); ++nFolded; }
+			if ( !byFile.isEmpty() )
+			{
+				final Map< Key, Points > fp = new ConcurrentHashMap<>();
+				final Map< Key, List< CorrespondingInterestPoints > > fc = new ConcurrentHashMap<>();
+				final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+				try { pool.submit( () -> byFile.entrySet().parallelStream().forEach( e -> foldFile( e.getKey(), e.getValue(), fp, fc ) ) ).get(); }
+				catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "reading staging files failed", e ); }
+				finally { pool.shutdown(); }
+				stagedPoints.putAll( fp );
+				stagedCorr.putAll( fc );
+			}
+			final long foldMs = System.currentTimeMillis() - tFoldStart;
 
 			if ( stagedPoints.isEmpty() && stagedCorr.isEmpty() && removedPoints.isEmpty() && removedCorr.isEmpty() )
+			{
+				batch = false;
 				return;
+			}
 
-			final long t0 = System.currentTimeMillis();
-			final N5Writer w = zarrWriter();
+			final long t0 = tStart;
+			final N5Writer w = n5Writer();
 			final List< String > labels = new ArrayList<>( old.labels );
 			final Map< String, Integer > labelId = new HashMap<>();
 			for ( int i = 0; i < labels.size(); ++i ) labelId.put( labels.get( i ), i );
@@ -717,7 +994,9 @@ public class PackedInterestPointStore
 				off += toWriteData.get( i ).size();
 			}
 			final long nPointsNew = off;
+			final long tPts = System.currentTimeMillis();
 			writePoints( w, pointsData, appendPts ? old : null, ptsStart, toWriteData, nPointsNew, shard, chunk );
+			final long ptsMs = System.currentTimeMillis() - tPts;
 
 			// ---------------- correspondences ----------------
 			// pair data keyed by canonical (a < b); rows oriented so column 0 = a's detection
@@ -791,7 +1070,10 @@ public class PackedInterestPointStore
 					coff += pe.getValue()[ 0 ].length;
 				}
 			final long nCorrNew = coff;
+			final long tCorr = System.currentTimeMillis();
 			writeCorr( w, corrData, appendCorr ? old : null, appendCorr ? old.nCorr : 0, corrToWrite, nCorrNew, shard, chunk );
+			final long corrMs = System.currentTimeMillis() - tCorr;
+			final long tIdx = System.currentTimeMillis();
 
 			// every entry with points (or staged correspondences) gets a views row, even with 0 pairs
 			for ( final Key k : newPoints.keySet() ) newPairs.putIfAbsent( k, new ArrayList<>() );
@@ -835,6 +1117,7 @@ public class PackedInterestPointStore
 			attrs.put( ATTR_VERSION, VERSION ); attrs.put( ATTR_GEN, gen ); attrs.put( ATTR_POINTS, pointsData ); attrs.put( ATTR_CORR, corrData ); attrs.put( ATTR_LABELS, labels );
 			attrs.put( ATTR_CHUNK, chunk ); attrs.put( ATTR_SHARD, shard );
 			w.setAttributes( "/", attrs ); // the commit point
+			final long tFlip = System.currentTimeMillis();
 
 			// ---------------- cleanup of the previous generation ----------------
 			if ( old.exists() )
@@ -843,23 +1126,31 @@ public class PackedInterestPointStore
 				if ( !appendPts && w.exists( old.pointsData ) ) w.remove( old.pointsData );
 				if ( !appendCorr && w.exists( old.corrData ) ) w.remove( old.corrData );
 			}
-			if ( !blobPoints.isEmpty() || !blobCorr.isEmpty() )
+			final long tOld = System.currentTimeMillis();
+			if ( !stagingFiles.isEmpty() )
 			{
-				final KeyValueAccess kva = kva( n5Writer() );
-				for ( final Key k : blobPoints ) { final String p = blobPath( kva, k, ".points" ); if ( kva.exists( p ) ) kva.delete( p ); }
-				for ( final Key k : blobCorr ) { final String p = blobPath( kva, k, ".corr" ); if ( kva.exists( p ) ) kva.delete( p ); }
-				blobPoints = Set.of(); blobCorr = Set.of();
+				// every staging file listed at the start of this commit is folded or superseded now: delete them (parallel)
+				final KeyValueAccess kva = kva( w );
+				final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+				try { pool.submit( () -> stagingFiles.parallelStream().forEach( f -> { final String p = stagingPath( kva, f ); if ( kva.exists( p ) ) kva.delete( p ); } ) ).get(); }
+				catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "deleting staging files failed", e ); }
+				finally { pool.shutdown(); }
+				parsedFiles.keySet().removeAll( stagingFiles );
+				rebuildBlobMaps();
 			}
+			final long tBlobs = System.currentTimeMillis();
 
 			final int nStaged = stagedPoints.size(), nStagedCorr = stagedCorr.size();
 			stagedPoints.clear(); stagedCorr.clear(); removedPoints.clear(); removedCorr.clear();
+			batch = false;
 			clearCache();
 			final DatasetAttributes loc = w.getDatasetAttributes( pointsData + "/loc" ), id = w.getDatasetAttributes( pointsData + "/id" ), corr = w.getDatasetAttributes( corrData + "/data" );
 			index = new Index( gen, labels, pointsData, corrData, newPoints, newPairs, nPointsNew, nCorrNew, loc, id, corr );
 
 			IOFunctions.println( "PackedInterestPointStore: committed generation " + gen + " (" + nStaged + " point entries, " + nStagedCorr + " correspondence entries, points "
 					+ ( appendPts ? "appended" : "rewritten" ) + ", correspondences " + ( appendCorr ? "appended" : "rewritten" ) + ", " + newPoints.size() + " entries / " + nPointsNew
-					+ " points / " + nCorrNew + " correspondences total, chunk " + chunk + " / shard " + shard + ") in " + ( System.currentTimeMillis() - t0 ) + " ms" );
+					+ " points / " + nCorrNew + " correspondences total, chunk " + chunk + " / shard " + shard + ") in " + ( System.currentTimeMillis() - t0 ) + " ms"
+					+ " [fold " + nFolded + " entries from " + byFile.size() + " staging files " + foldMs + " ms, points " + ptsMs + " ms, correspondences " + corrMs + " ms, indices+flip " + ( tFlip - tIdx ) + " ms, old generation " + ( tOld - tFlip ) + " ms, delete " + stagingFiles.size() + " staging files " + ( tBlobs - tOld ) + " ms]" );
 		}
 	}
 
@@ -893,13 +1184,15 @@ public class PackedInterestPointStore
 	 * call; the library merges into an existing partial shard). {@code filler} produces the complete chunk [cs, cs + n);
 	 * for a first chunk that also holds old data ({@code cs < start}) the caller includes that data.
 	 */
-	private static < T > void writeRange( final N5Writer w, final String ds, final DatasetAttributes attrs, final long start, final long end, final ChunkFiller< T > filler )
+	private < T > void writeRange( final N5Writer w, final String ds, final DatasetAttributes attrs, final long start, final long end, final ChunkFiller< T > filler )
 	{
 		if ( end <= start ) return;
 		final int shard = attrs.getBlockSize()[ 1 ], chunk = attrs.getChunkSize()[ 1 ];
 		final long total = attrs.getDimensions()[ 1 ];
 		final long s0 = start / shard, s1 = ( end - 1 ) / shard;
 		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
+		// one fresh reader for the read-back verification (the writer caches; we want the bytes that are on disk)
+		final N5Reader verify = URITools.instantiateN5Reader( StorageFormat.ZARR, n5URI );
 		try
 		{
 			pool.submit( () -> LongStream.rangeClosed( s0, s1 ).parallel().forEach( s -> {
@@ -909,11 +1202,55 @@ public class PackedInterestPointStore
 					chunks.add( filler.chunk( c, (int) ( Math.min( c + chunk, shardEnd ) - c ) ) );
 				@SuppressWarnings( "unchecked" )
 				final DataBlock< T >[] arr = chunks.toArray( new DataBlock[ 0 ] );
-				w.writeChunks( ds, attrs, arr );
+				for ( int attempt = 1; ; ++attempt )
+				{
+					w.writeChunks( ds, attrs, arr );
+					syncShard( w, ds, s );
+					final String bad = verifyChunks( verify, ds, attrs, arr );
+					if ( bad == null ) break;
+					IOFunctions.println( "PackedInterestPointStore: WARNING read-back of " + ds + " shard " + s + " failed (" + bad + "), attempt " + attempt );
+					if ( attempt == 2 ) throw new RuntimeException( "PackedInterestPointStore: " + ds + " shard " + s + " does not read back what was written (" + bad + "); commit aborted, previous generation stays valid" );
+				}
 			}) ).get();
 		}
 		catch ( InterruptedException | ExecutionException e ) { throw new RuntimeException( "writing " + ds + " failed", e ); }
-		finally { pool.shutdown(); }
+		finally { pool.shutdown(); verify.close(); }
+	}
+
+	/**
+	 * fsync of one shard file (filesystem containers only). Seen 2026-09-21 on /nrs: a shard written by the split driver
+	 * and read 6 s later on another node had a 4.9 MB page-aligned hole of zeros (4 of 6 shards, identical offsets); the
+	 * data never arrived on the server although the JVM had closed the file without error. Force the flush before the
+	 * root attributes are flipped.
+	 */
+	private void syncShard( final N5Writer w, final String ds, final long s )
+	{
+		final KeyValueAccess kva = kva( w );
+		if ( !( kva instanceof FileSystemKeyValueAccess ) ) return;
+		final Path p = Paths.get( kva.compose( n5URI, ds, "c", Long.toString( s ), "0" ) );
+		if ( !Files.exists( p ) ) { IOFunctions.println( "PackedInterestPointStore: WARNING expected shard file " + p + " not found, skipping fsync" ); return; }
+		try ( final FileChannel ch = FileChannel.open( p, StandardOpenOption.WRITE ) ) { ch.force( true ); }
+		catch ( final IOException e ) { throw new RuntimeException( "fsync of " + p + " failed", e ); }
+	}
+
+	/** reads every block back and compares it to what was written; @return null if identical, else a description */
+	private static < T > String verifyChunks( final N5Reader r, final String ds, final DatasetAttributes attrs, final DataBlock< T >[] written )
+	{
+		for ( final DataBlock< T > b : written )
+		{
+			final DataBlock< ? > back;
+			try { back = r.readChunk( ds, attrs, b.getGridPosition() ); }
+			catch ( final Exception e ) { return "chunk " + b.getGridPosition()[ 1 ] + ": " + e.getMessage(); }
+			if ( back == null ) return "chunk " + b.getGridPosition()[ 1 ] + " missing";
+			final Object a = b.getData(), c = back.getData();
+			final boolean same;
+			if ( a instanceof double[] ) same = c instanceof double[] && ( (double[]) c ).length >= ( (double[]) a ).length && Arrays.equals( (double[]) a, 0, ( (double[]) a ).length, (double[]) c, 0, ( (double[]) a ).length );
+			else if ( a instanceof int[] ) same = c instanceof int[] && ( (int[]) c ).length >= ( (int[]) a ).length && Arrays.equals( (int[]) a, 0, ( (int[]) a ).length, (int[]) c, 0, ( (int[]) a ).length );
+			else if ( a instanceof long[] ) same = c instanceof long[] && ( (long[]) c ).length >= ( (long[]) a ).length && Arrays.equals( (long[]) a, 0, ( (long[]) a ).length, (long[]) c, 0, ( (long[]) a ).length );
+			else same = true;
+			if ( !same ) return "chunk " + b.getGridPosition()[ 1 ] + " differs";
+		}
+		return null;
 	}
 
 	/** writes entries consecutively from {@code start}; creates the arrays if {@code old == null}, else appends */
@@ -1040,7 +1377,7 @@ public class PackedInterestPointStore
 	public static int convertLegacy( final URI baseDir )
 	{
 		final PackedInterestPointStore store = get( baseDir );
-		final N5Reader n5 = store.n5Reader();
+		final N5Reader n5 = store.n5Reader_legacy();
 		if ( n5 == null ) return 0;
 		final List< String > groups = new ArrayList<>();
 		for ( final String g : n5.list( "/" ) )
@@ -1049,7 +1386,7 @@ public class PackedInterestPointStore
 					groups.add( g + "/" + label );
 		Collections.sort( groups );
 		if ( groups.isEmpty() ) return 0;
-		IOFunctions.println( "PackedInterestPointStore: converting " + groups.size() + " legacy interest point groups of " + store.n5URI + " into " + store.zarrURI );
+		IOFunctions.println( "PackedInterestPointStore: converting " + groups.size() + " legacy interest point groups of " + store.n5URI_legacy + " into " + store.n5URI );
 
 		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
 		try
@@ -1070,7 +1407,7 @@ public class PackedInterestPointStore
 
 		store.commit();
 
-		final N5Writer w = store.n5Writer();
+		final N5Writer w = store.n5Writer_legacy();
 		final Set< String > viewGroups = new HashSet<>();
 		for ( final String g : groups ) viewGroups.add( g.substring( 0, g.indexOf( '/' ) ) );
 		final ForkJoinPool pool2 = new ForkJoinPool( Threads.numThreads() );

@@ -22,6 +22,7 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
+import java.util.Set;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -156,6 +157,39 @@ public class InterestPointsN5 extends InterestPoints
 	public static String ipDataset( final String n5dataset ) { return n5dataset + "/interestpoints"; }
 	public static String corrDataset( final String n5dataset  ) { return n5dataset + "/correspondences"; }
 
+	/**
+	 * Saves the modified points and correspondences of many lists into ONE staging file per store (one file per Spark task
+	 * instead of one per entry; see PackedInterestPointStore.writeStagingFile). Lists of datasets without a store fall back
+	 * to the per-entry legacy save. Nothing is committed: the next XML save folds the file in.
+	 */
+	public static void saveStaged( final Collection< ? extends InterestPoints > lists )
+	{
+		final Map< PackedInterestPointStore, Map< PackedInterestPointStore.Key, PackedInterestPointStore.Points > > pts = new HashMap<>();
+		final Map< PackedInterestPointStore, Map< PackedInterestPointStore.Key, List< CorrespondingInterestPoints > > > corr = new HashMap<>();
+		final List< InterestPointsN5 > written = new ArrayList<>();
+		for ( final InterestPoints ip : lists )
+		{
+			final InterestPointsN5 l = (InterestPointsN5) ip;
+			final PackedInterestPointStore store = l.store();
+			if ( store == null )
+			{
+				l.saveInterestPoints( false );
+				l.saveCorrespondingInterestPoints( false );
+				continue;
+			}
+			if ( l.modifiedInterestPoints && l.ids != null && l.locations != null )
+				pts.computeIfAbsent( store, x -> new HashMap<>() ).put( l.key, PackedInterestPointStore.Points.of( l.ids, l.locations ) );
+			if ( l.modifiedCorrespondingInterestPoints && l.correspondingInterestPoints != null )
+				corr.computeIfAbsent( store, x -> new HashMap<>() ).put( l.key, new ArrayList<>( l.correspondingInterestPoints ) );
+			written.add( l );
+		}
+		final Set< PackedInterestPointStore > stores = new HashSet<>( pts.keySet() );
+		stores.addAll( corr.keySet() );
+		for ( final PackedInterestPointStore store : stores )
+			store.writeStagingFile( pts.getOrDefault( store, Map.of() ), corr.getOrDefault( store, Map.of() ) );
+		for ( final InterestPointsN5 l : written ) { l.modifiedInterestPoints = false; l.modifiedCorrespondingInterestPoints = false; }
+	}
+
 	@Override
 	public boolean saveInterestPoints( final boolean forceWrite )
 	{
@@ -169,7 +203,10 @@ public class InterestPointsN5 extends InterestPoints
 		final boolean success;
 		if ( store != null )
 		{
-			store.writePointsBlob( key, ids, locations ); // one file; folded into the packed arrays by the next commit
+			if ( store.inBatch() )
+				store.stagePoints( key, ids, locations ); // in memory; the batch owner commits
+			else
+				store.writePointsBlob( key, ids, locations ); // one staging file; folded into the arrays by the next commit
 			success = true;
 		}
 		else
@@ -194,7 +231,10 @@ public class InterestPointsN5 extends InterestPoints
 		final boolean success;
 		if ( store != null )
 		{
-			store.writeCorrespondencesBlob( key, correspondingInterestPoints );
+			if ( store.inBatch() )
+				store.stageCorrespondences( key, correspondingInterestPoints );
+			else
+				store.writeCorrespondencesBlob( key, correspondingInterestPoints );
 			success = true;
 		}
 		else
@@ -222,7 +262,10 @@ public class InterestPointsN5 extends InterestPoints
 		final boolean success;
 		if ( store != null )
 		{
-			store.stagePoints( key, ids, locations ); // in memory; the caller (e.g. XmlIoSpimData2.saveInterestPointsInParallel) commits once for all entries
+			if ( store.inBatch() )
+				store.stagePoints( key, ids, locations ); // in memory; XmlIoSpimData2.saveInterestPointsInParallel commits right after its loop
+			else
+				store.writePointsBlob( key, ids, locations ); // no commit will follow in this JVM (e.g. Spark executor): durable staging file
 			success = true;
 		}
 		else
@@ -250,7 +293,10 @@ public class InterestPointsN5 extends InterestPoints
 		final boolean success;
 		if ( store != null )
 		{
-			store.stageCorrespondences( key, correspondingInterestPoints );
+			if ( store.inBatch() )
+				store.stageCorrespondences( key, correspondingInterestPoints );
+			else
+				store.writeCorrespondencesBlob( key, correspondingInterestPoints );
 			success = true;
 		}
 		else
