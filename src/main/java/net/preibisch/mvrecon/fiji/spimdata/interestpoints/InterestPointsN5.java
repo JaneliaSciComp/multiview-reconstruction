@@ -374,78 +374,8 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		try
 		{
-
-			@SuppressWarnings("unchecked")
-			final Map< String, Long > idMap = n5.getAttribute(dataset, "idMap", Map.class ); // to store ID (viewId.getTimePointId() + "," + viewId.getViewSetupId() + "," + label)
-
-			if ( idMap.size() == 0 )
-			{
-				this.correspondingInterestPoints = new ArrayList<>();
-				modifiedCorrespondingInterestPoints = false;
-
-				return true;
-			}
-
-			final Map< Long, Pair<ViewId, String> > quickLookup = new HashMap<>();
-			for ( final Entry<String, Long> entry : idMap.entrySet() )
-			{
-				final int firstComma = entry.getKey().indexOf( "," );
-				final String tp = entry.getKey().substring( 0, firstComma );
-				String remaining = entry.getKey().substring( firstComma + 1, entry.getKey().length() );
-				final int secondComma = remaining.indexOf( "," );
-				final String setup = remaining.substring( 0, secondComma );
-				final String label = remaining.substring( secondComma + 1, remaining.length() );
-
-				final int tpInt = Integer.parseInt(tp);
-				final int setupInt = Integer.parseInt(setup);
-
-				final long id;
-
-				if ( Double.class.isInstance((Object)entry.getValue()))
-					id = Math.round( (Double)(Object)entry.getValue() ); // TODO: bug, a long maybe loaded as a double
-				else
-					id = entry.getValue();
-
-				final Pair<ViewId, String> value = new ValuePair<>( new ViewId( tpInt, setupInt ), label );
-				quickLookup.put( id , value );
-			}
-			
-			final String corrDataset = dataset + "/data";
-
-			// 3 x N array (which is a 2D array, ID_a, ID_b, ID)
-			final RandomAccessibleInterval< UnsignedLongType > corrData = N5Utils.open( n5, corrDataset );
-
-			final RandomAccess< UnsignedLongType > corrRA = corrData.randomAccess();
-
-			final ArrayList< CorrespondingInterestPoints > correspondingInterestPoints = new ArrayList<>();
-
-			corrRA.setPosition( 0, 0 );
-			corrRA.setPosition( 0, 1 );
-
-			for ( int i = 0; i < corrData.dimension( 1 ); ++ i )
-			{
-				final long idA = corrRA.get().get();
-				corrRA.fwd(0);
-				final long idB = corrRA.get().get();
-				corrRA.fwd(0);
-				final long id = corrRA.get().get();
-
-				corrRA.bck(0);
-				corrRA.bck(0);
-
-				if ( i != corrData.dimension( 1 ) - 1 )
-					corrRA.fwd( 1 );
-
-				// final int detectionId, final ViewId correspondingViewId, final String correspondingLabel, final int correspondingDetectionId
-				final Pair<ViewId, String> value = quickLookup.get( id );
-				final CorrespondingInterestPoints cip = new CorrespondingInterestPoints( (int)idA, value.getA(), value.getB(), (int)idB );
-
-				correspondingInterestPoints.add( cip );
-			}
-
-			this.correspondingInterestPoints = correspondingInterestPoints;
+			this.correspondingInterestPoints = readCorrespondencesV1( n5, dataset );
 			modifiedCorrespondingInterestPoints = false;
-
 			return true;
 		}
 		catch ( final Exception e )
@@ -466,87 +396,8 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		try
 		{
-			@SuppressWarnings("unchecked")
-			final Map< String, Long > idMap = n5.getAttribute(dataset, "idMap", Map.class );
-
-			if ( idMap.size() == 0 )
-			{
-				this.correspondingInterestPoints = new ArrayList<>();
-				modifiedCorrespondingInterestPoints = false;
-				return true;
-			}
-
-			final Map< Long, Pair<ViewId, String> > quickLookup = new HashMap<>();
-			for ( final Entry<String, Long> entry : idMap.entrySet() )
-			{
-				final int firstComma = entry.getKey().indexOf( "," );
-				final String tp = entry.getKey().substring( 0, firstComma );
-				String remaining = entry.getKey().substring( firstComma + 1, entry.getKey().length() );
-				final int secondComma = remaining.indexOf( "," );
-				final String setup = remaining.substring( 0, secondComma );
-				final String label = remaining.substring( secondComma + 1, remaining.length() );
-
-				final int tpInt = Integer.parseInt(tp);
-				final int setupInt = Integer.parseInt(setup);
-
-				final long id;
-
-				if ( Double.class.isInstance((Object)entry.getValue()))
-					id = Math.round( (Double)(Object)entry.getValue() );
-				else
-					id = entry.getValue();
-
-				final Pair<ViewId, String> value = new ValuePair<>( new ViewId( tpInt, setupInt ), label );
-				quickLookup.put( id , value );
-			}
-
-			final String corrDataset = dataset + "/data";
-
-			// 4 x N array (detectionId_A, detectionId_B, metadataId, consensusSetId)
-			final RandomAccessibleInterval< UnsignedLongType > corrData = N5Utils.open( n5, corrDataset );
-
-			// Verify it's 4xN format
-			if ( corrData.dimension(0) != 4 )
-			{
-				IOFunctions.println( "Error: Expected 4xN array for v2.x, got " + corrData.dimension(0) + "xN" );
-				return false;
-			}
-
-			final RandomAccess< UnsignedLongType > corrRA = corrData.randomAccess();
-			final ArrayList< CorrespondingInterestPoints > correspondingInterestPoints = new ArrayList<>();
-
-			corrRA.setPosition( 0, 0 );
-			corrRA.setPosition( 0, 1 );
-
-			for ( int i = 0; i < corrData.dimension( 1 ); ++ i )
-			{
-				final long idA = corrRA.get().get();
-				corrRA.fwd(0);
-				final long idB = corrRA.get().get();
-				corrRA.fwd(0);
-				final long id = corrRA.get().get();
-				corrRA.fwd(0);
-				final long setIdRaw = corrRA.get().get();  // 4th element: consensus set ID
-
-				corrRA.bck(0);
-				corrRA.bck(0);
-				corrRA.bck(0);
-
-				if ( i != corrData.dimension( 1 ) - 1 )
-					corrRA.fwd( 1 );
-
-				// Decode setId: max uint64 represents -1
-				final int setId = (setIdRaw == 0xFFFFFFFFFFFFFFFFL) ? -1 : (int)setIdRaw;
-
-				final Pair<ViewId, String> value = quickLookup.get( id );
-				final CorrespondingInterestPoints cip = new CorrespondingInterestPoints( (int)idA, value.getA(), value.getB(), (int)idB, setId );
-
-				correspondingInterestPoints.add( cip );
-			}
-
-			this.correspondingInterestPoints = correspondingInterestPoints;
+			this.correspondingInterestPoints = readCorrespondencesV2( n5, dataset );
 			modifiedCorrespondingInterestPoints = false;
-
 			return true;
 		}
 		catch ( final Exception e )
@@ -557,6 +408,146 @@ public class InterestPointsN5 extends InterestPoints
 			e.printStackTrace();
 			return false;
 		}
+	}
+
+	/**
+	 * Read the correspondences stored in any {@code .../correspondences} group of an N5 store, independent of a
+	 * SpimData2/InterestPoints instance (e.g. to read externally computed match candidates stored in the same layout).
+	 * Dispatches on the {@code correspondences} version attribute (null / 1.x = 3xN legacy, 2.x = 4xN with consensusSetId).
+	 *
+	 * @param n5 an open reader on the store
+	 * @param dataset the group path, e.g. {@code corrDataset( createN5datasetPath( tp, setup, label ) )}
+	 * @return the list of corresponding interest points (empty if the idMap is empty)
+	 * @throws IllegalArgumentException if the group does not exist, the version is unsupported or the data has the wrong shape
+	 */
+	public static ArrayList< CorrespondingInterestPoints > readCorrespondences( final N5Reader n5, final String dataset )
+	{
+		if ( !n5.exists( dataset ) )
+			throw new IllegalArgumentException( "correspondences group '" + dataset + "' does not exist." );
+
+		final String version = n5.getAttribute( dataset, "correspondences", String.class );
+
+		if ( version == null || version.startsWith( "1." ) )
+			return readCorrespondencesV1( n5, dataset );
+		else if ( version.startsWith( "2." ) )
+			return readCorrespondencesV2( n5, dataset );
+		else
+			throw new IllegalArgumentException( "unsupported correspondences version '" + version + "' at '" + dataset + "'." );
+	}
+
+	/**
+	 * Read correspondences in v1.x format (3xN array: detectionId_A, detectionId_B, metadataId); consensusSetId = -1.
+	 */
+	public static ArrayList< CorrespondingInterestPoints > readCorrespondencesV1( final N5Reader n5, final String dataset )
+	{
+		final Map< Long, Pair< ViewId, String > > quickLookup = parseIdMap( n5, dataset );
+		final ArrayList< CorrespondingInterestPoints > correspondingInterestPoints = new ArrayList<>();
+
+		if ( quickLookup.isEmpty() )
+			return correspondingInterestPoints;
+
+		// 3 x N array (which is a 2D array, ID_a, ID_b, ID)
+		final RandomAccessibleInterval< UnsignedLongType > corrData = N5Utils.open( n5, dataset + "/data" );
+
+		if ( corrData.numDimensions() != 2 || corrData.dimension( 0 ) != 3 )
+			throw new IllegalArgumentException( "Expected 3xN array for v1.x correspondences at '" + dataset + "', got " + corrData.dimension( 0 ) + "xN" );
+
+		final RandomAccess< UnsignedLongType > corrRA = corrData.randomAccess();
+
+		for ( long i = 0; i < corrData.dimension( 1 ); ++i )
+		{
+			corrRA.setPosition( i, 1 );
+			corrRA.setPosition( 0, 0 );
+			final long idA = corrRA.get().get();
+			corrRA.fwd( 0 );
+			final long idB = corrRA.get().get();
+			corrRA.fwd( 0 );
+			final long id = corrRA.get().get();
+
+			final Pair< ViewId, String > value = quickLookup.get( id );
+			correspondingInterestPoints.add( new CorrespondingInterestPoints( (int)idA, value.getA(), value.getB(), (int)idB ) );
+		}
+
+		return correspondingInterestPoints;
+	}
+
+	/**
+	 * Read correspondences in v2.x format (4xN array: detectionId_A, detectionId_B, metadataId, consensusSetId),
+	 * decoding a consensusSetId of 0xFFFFFFFFFFFFFFFF as -1.
+	 */
+	public static ArrayList< CorrespondingInterestPoints > readCorrespondencesV2( final N5Reader n5, final String dataset )
+	{
+		final Map< Long, Pair< ViewId, String > > quickLookup = parseIdMap( n5, dataset );
+		final ArrayList< CorrespondingInterestPoints > correspondingInterestPoints = new ArrayList<>();
+
+		if ( quickLookup.isEmpty() )
+			return correspondingInterestPoints;
+
+		// 4 x N array (detectionId_A, detectionId_B, metadataId, consensusSetId)
+		final RandomAccessibleInterval< UnsignedLongType > corrData = N5Utils.open( n5, dataset + "/data" );
+
+		if ( corrData.numDimensions() != 2 || corrData.dimension( 0 ) != 4 )
+			throw new IllegalArgumentException( "Expected 4xN array for v2.x correspondences at '" + dataset + "', got " + corrData.dimension( 0 ) + "xN" );
+
+		final RandomAccess< UnsignedLongType > corrRA = corrData.randomAccess();
+
+		for ( long i = 0; i < corrData.dimension( 1 ); ++i )
+		{
+			corrRA.setPosition( i, 1 );
+			corrRA.setPosition( 0, 0 );
+			final long idA = corrRA.get().get();
+			corrRA.fwd( 0 );
+			final long idB = corrRA.get().get();
+			corrRA.fwd( 0 );
+			final long id = corrRA.get().get();
+			corrRA.fwd( 0 );
+			final long setIdRaw = corrRA.get().get(); // 4th element: consensus set ID
+
+			// Decode setId: max uint64 represents -1
+			final int setId = ( setIdRaw == 0xFFFFFFFFFFFFFFFFL ) ? -1 : (int)setIdRaw;
+
+			final Pair< ViewId, String > value = quickLookup.get( id );
+			correspondingInterestPoints.add( new CorrespondingInterestPoints( (int)idA, value.getA(), value.getB(), (int)idB, setId ) );
+		}
+
+		return correspondingInterestPoints;
+	}
+
+	/**
+	 * Parse the {@code idMap} attribute ({"tp,setup,label" -> id}) of a correspondences group into id -> (ViewId, label).
+	 * Labels may themselves contain commas (only the first two commas are separators). Empty map if the attribute is
+	 * missing or empty. Note: Gson may hand the ids back as Double.
+	 */
+	public static Map< Long, Pair< ViewId, String > > parseIdMap( final N5Reader n5, final String dataset )
+	{
+		@SuppressWarnings("unchecked")
+		final Map< String, Object > idMap = n5.getAttribute( dataset, "idMap", Map.class );
+
+		final Map< Long, Pair< ViewId, String > > quickLookup = new HashMap<>();
+
+		if ( idMap == null )
+			return quickLookup;
+
+		for ( final Entry< String, Object > entry : idMap.entrySet() )
+		{
+			final int firstComma = entry.getKey().indexOf( "," );
+			final String tp = entry.getKey().substring( 0, firstComma );
+			final String remaining = entry.getKey().substring( firstComma + 1, entry.getKey().length() );
+			final int secondComma = remaining.indexOf( "," );
+			final String setup = remaining.substring( 0, secondComma );
+			final String label = remaining.substring( secondComma + 1, remaining.length() );
+
+			final long id;
+
+			if ( entry.getValue() instanceof Number )
+				id = Math.round( ( (Number)entry.getValue() ).doubleValue() ); // a long may be loaded as a double
+			else
+				id = Long.parseLong( entry.getValue().toString() );
+
+			quickLookup.put( id, new ValuePair<>( new ViewId( Integer.parseInt( tp ), Integer.parseInt( setup ) ), label ) );
+		}
+
+		return quickLookup;
 	}
 
 	@Override
