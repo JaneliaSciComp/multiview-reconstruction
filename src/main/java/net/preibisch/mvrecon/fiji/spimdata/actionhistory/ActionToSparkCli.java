@@ -296,6 +296,8 @@ public class ActionToSparkCli
 				new String[]{ "icpUseRANSAC", "--icpUseRANSAC" },
 				new String[]{ "clearCorrespondences", "--clearCorrespondences" }
 		);
+		// same repeated-flag handling as the solver; matching has no --labelweights
+		matchRecipe.repeatKeys.add( "label" );
 		matchRecipe.skipWhen = p -> "true".equalsIgnoreCase( p.get( "skipMatching" ) )
 				|| isUnsupported( p, "matchingMethod", true );
 		registration.add( matchRecipe );
@@ -305,6 +307,7 @@ public class ActionToSparkCli
 				new FlagGroup[]{ SELECTABLE_VIEWS, REGISTRATION_GROUPING },
 				new String[]{ "sourcePoints", "-s" },
 				new String[]{ "label", "-l" },
+				new String[]{ "labelWeights", "-lw" },
 				new String[]{ "registrationType", "-rtp" },
 				new String[]{ "referenceTP", "--referenceTP" },
 				new String[]{ "rangeTP", "--rangeTP" },
@@ -319,11 +322,20 @@ public class ActionToSparkCli
 				new String[]{ "maxIterations", "--maxIterations" },
 				new String[]{ "maxPlateauwidth", "--maxPlateauwidth" },
 				new String[]{ "fixedViews", "-fv" },
-				new String[]{ "disableFixedViews", "--disableFixedViews" }
+				new String[]{ "disableFixedViews", "--disableFixedViews" },
+				new String[]{ "enableMapbackViews", "--enableMapbackViews" },
+				new String[]{ "mapBackViews", "--mapbackViews" },
+				new String[]{ "mapBackModel", "--mapbackModel" }
 		);
 		solverRecipe.skipWhen = p -> isUnsupported( p, "globalOptMethod", true );
 		// -fv is also repeatable ('0,0' '0,1' ...); "viewIds" is already in repeatKeys via SELECTABLE_VIEWS
 		solverRecipe.repeatKeys.add( "fixedViews" );
+		// -l/-lw are ArrayList options without a picocli split, so multiple labels have to be emitted
+		// as repeated flags ('-l beads -l nuclei'); Solver pairs label[i] with labelweight[i].
+		solverRecipe.repeatKeys.add( "label" );
+		solverRecipe.repeatKeys.add( "labelWeights" );
+		// --mapbackViews takes one view id per registration subset, repeated like -fv
+		solverRecipe.repeatKeys.add( "mapBackViews" );
 		registration.add( solverRecipe );
 		r.put( ActionHistory.REGISTER_INTERESTPOINTS, registration );
 
@@ -467,6 +479,26 @@ public class ActionToSparkCli
 					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
 					+ "before running the command below." );
 
+		// mvrecon only records regularizationModel/lambda when the user actually regularized (see
+		// PairwiseGUI.putModelParams), but BigStitcher-Spark's -rm defaults to RIGID with --lambda 0.1
+		// (AbstractRegistration) -- omitting the flag would silently add a rigid component to a solve
+		// the GUI ran unregularized. Say NONE explicitly instead.
+		if ( params.containsKey( "transformationModel" ) )
+			params.putIfAbsent( "regularizationModel", "NONE" );
+
+		// The GUI lets you fix views AND map back at the same time; Solver throws on
+		// --enableMapbackViews without --disableFixedViews (Solver.setupParameters()). Fixed views are
+		// the stronger anchor, so keep -fv and drop the mapback flags rather than emit a command that
+		// can only fail.
+		final String fixedViews = params.get( "fixedViews" );
+		if ( params.get( "mapBackModel" ) != null && fixedViews != null && !fixedViews.isEmpty() )
+		{
+			warnUntranslated( out, "WARNING: mvrecon both fixed view(s) " + fixedViews + " and mapped back onto view(s) "
+					+ params.get( "mapBackViews" ) + " — BigStitcher-Spark rejects --enableMapbackViews unless "
+					+ "--disableFixedViews is set, so the mapback flags are omitted below and the fixed views kept." );
+			params.keySet().removeAll( Arrays.asList( "enableMapbackViews", "mapBackViews", "mapBackModel" ) );
+		}
+
 		// every UNSUPPORTED_VALUES entry that fired for this action: whole-command ones already made
 		// their recipe skip itself (see matchRecipe/solverRecipe.skipWhen, both built from this same
 		// table); flag-only ones (e.g. GAUSS_FIT) are omitted below in renderOne(). Either way, say why.
@@ -486,16 +518,14 @@ public class ActionToSparkCli
 	}
 
 	/**
-	 * Record a translation gap: adds a {@code #}-prefixed comment line to {@code out} (so it survives
-	 * into whatever copies the rendered script, e.g. Show_Action_History's clipboard actions) and
-	 * prints the same message to stderr (so it's visible immediately, without needing to inspect the
-	 * rendered script).
+	 * Record a translation gap: adds a {@code #}-prefixed comment line to {@code out}, so it shows up
+	 * in the Action History detail pane and survives into whatever copies the rendered script (e.g.
+	 * Show_Action_History's clipboard actions). Deliberately does not log — render() is called for
+	 * every repaint of the detail pane, so logging here spams the console once per selection change.
 	 */
 	private static void warnUntranslated( final List<String> out, final String msg )
 	{
-		final String line = "# " + msg;
-		out.add( line );
-		System.err.println( line );
+		out.add( "# " + msg );
 	}
 
 	private static String renderOne( final Recipe recipe, final Map<String,String> params, final String xmlPath )
