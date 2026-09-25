@@ -197,6 +197,48 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
 ### Potential Next Optimization
 `LoadCorrespondencesPairwise.match()` calls `ipA.getCorrespondingInterestPointsCopy()`, which lazily opens an N5 reader, reads attrs, opens the dataset, and iterates correspondences — per pair. Even with `computePairs()` parallelized, each pair triggers I/O. A bulk parallel pre-load before `computePairs()` would amortize this.
 
+## RGLDM Descriptor Matching — Fast Exact Search (2026-09-25)
+
+`RGLDMMatcher` (Precise descriptor-based, `PRECISE_TRANSLATION` in BigStitcher-Spark) compared every A descriptor with every
+B descriptor through `SubsetMatcher`/`SquareDistance`, allocating 16 `ArrayList<PointMatch>` per pair. That distance is
+the minimum over subset pairs of a 9-D squared L2 between concatenated neighbor offsets, i.e. a nearest-neighbor problem in
+which each descriptor contributes one "subset vector" per 3-subset of its 3+redundancy neighbors (1 / 4 / 10 for redundancy
+0 / 1 / 2). `SubsetVectorMatching` solves exactly that; `RGLDMMatcher.search` (system property `rgldm.search`, default AUTO)
+selects the strategy, `LEGACY` keeps the old loop. Results are the identical candidate set (`RGLDMMatcherTest`).
+
+- **No search radius**: `process.pointcloud.FlatKDTree` over B's subset vectors (primitive arrays, split on widest extent,
+  32-vector component-major leaves so the leaf scan vectorizes, incremental cell-distance pruning). ExpID99 beads pair,
+  25.7K x 24.4K overlapping points: legacy ~5 min, imglib2 KD-tree 5.1 s, blocked brute force 48 s, flat tree 1.5 s.
+  Why the flat tree wins at 4-5 neighbors too: when pruning fails it degrades into the same vectorized scan as brute
+  force instead of into object pointer chasing. Ball tree, PCA rotation, projection-sorted window, 3-D partial-distance
+  index were all measured and are not better; the descriptors' intrinsic dimension is the full dimension.
+- **Search radius**: a 3-D radius query on B positions per A point, then the vectorized subset distance over the in-radius
+  B points ("gather + brute force"). Radii 100-500 admit 6-400 of 24K points: 7-74x faster than legacy, and a filtered tree
+  prunes nothing there (44 s at radius 100). The filtered flat tree only wins above a fraction of B in radius that grows
+  with the neighbor count (`SubsetVectorMatching.preferTree`: 3 -> 20 %, 4 -> 35 %, 5 -> 55 %, 6+ -> never, brute force
+  wins even unrestricted); AUTO samples 256 A points to decide. Same boundary on the M4 Max and a Xeon 8462Y+ (single core
+  1.7x slower for both methods). Decision maps: `tools/rgldm-decision.svg` (points x radius), `tools/rgldm-decision-neighbors.svg`
+  (neighbors x radius); data in `tools/bench-*.tsv`.
+- Radius vs. no radius are different answers: at radius 100 the beads pair yields 12 % more candidates (points whose global
+  ratio test fails because of a decoy elsewhere) and 5 % more RANSAC inliers, while ~1 % of global candidates whose best
+  match lies outside the radius disappear.
+- `SquareDistance` divides by the spatial dimensionality (3). Only `differenceThreshold` sees that factor; the ratio test and
+  all pruning are scale-invariant.
+- Benchmark (not part of the library): `tools/rgldm-bench.sh` runs `tools/RGLDMBench.java` in java source-file mode against
+  the fat jar (build with `tools/rgldm-bench.sh --build`), sweeps point count x radius, writes a TSV; `tools/rgldm-chart.py`
+  (stdlib only) draws the decision map, one panel per machine. Apple M4 Max: `MaxVectorSize` 16 B (4 floats); x86 AVX2 is 32 B,
+  so the vectorized variants gain relative to object code on the cluster.
+- **Multi-consensus RANSAC (`-rmc`) inlier ratio (2026-09-25)**: `minInlierRatio` now refers to the original candidate count, not
+  to the remainder after removing earlier sets (the loop stops once the remainder cannot hold such a set). Before, ever
+  smaller sets passed as the remainder shrank: pair 125<->140 of ExpID99 gave 7 sets (13779, 1725, 1445, 300, 244, 138, 67),
+  now 3; 124<->125 gave 5, now 1. The split stage's `ConsensusSetCriterion` consumes these sets, so this changes where the
+  octree splits. Match-stage time is dominated by this RANSAC (10,000 iterations x up to 20K candidates x sets, 174 s on the
+  slowest pair) and not by the matcher; an adaptive iteration stop (N = log(1-p)/log(1-w^m)) measured 25-50x faster with the
+  same sets but is not implemented (mpicbg's `ransac` is final, it would need our own sampling loop in `RANSAC.runRANSAC`).
+- Related bug, not fixed: `TranslationInvariantLocalCoordinateSystemPointDescriptor.localize(double[])` (FRGLDM) fills 6 of 9
+  components; imglib2 queries through it, so every FRGLDM nearest-neighbor query is wrong in the last three dimensions
+  (1,987 of 2,000 sampled best matches differ from the true ones) and 6x slower than a correct one. Since 2017.
+
 ## BDV Performance — Use Batch APIs
 
 ### Lesson: Per-Source Calls Don't Scale

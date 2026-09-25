@@ -177,15 +177,25 @@ public class RANSAC
 
 			String lastMessage = "";
 			int j = 0;
+			final int numCandidates = candidates.size();
 
 			do
 			{
 				inliers.clear();
 
+				// minInlierRatio refers to the original candidate set, not to what is left after removing earlier consensus
+				// sets; otherwise ever smaller (spurious) sets pass as the remainder shrinks
+				final double ratio = minInlierRatio * numCandidates / candidates.size();
+				if ( ratio > 1 )
+				{
+					lastMessage = "Remaining " + candidates.size() + " candidates cannot hold a consensus set of " + minInlierRatio + " x " + numCandidates;
+					modelFound = false;
+					break;
+				}
+
 				try
 				{
-					// TODO: the inlier-ratio requests a smaller and smaller set of inliers as the candidate set size decreases
-					modelFound = runRANSAC( model, candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust, filterRansac );
+					modelFound = runRANSAC( model, candidates, inliers, numIterations, maxEpsilon, ratio, maxTrust, filterRansac );
 
 					if ( modelFound && inliers.size() >= minNumCorrespondences )
 					{
