@@ -40,6 +40,9 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.similarity.Squar
 
 public class RGLDMMatcher< I extends InterestPoint >
 {
+	/** strategy for comparing descriptors (default AUTO); override with -Drgldm.search=LEGACY|FLAT_KDTREE|BLOCKED_BRUTE_FORCE */
+	public static SubsetVectorMatching.Search search = SubsetVectorMatching.Search.valueOf( System.getProperty( "rgldm.search", "AUTO" ).toUpperCase() );
+
 	public ArrayList< PointMatchGeneric< I > > extractCorrespondenceCandidates( 
 			final List< I > nodeListA,
 			final List< I > nodeListB,
@@ -50,12 +53,26 @@ public class RGLDMMatcher< I extends InterestPoint >
 			final boolean limitSearchRadius,
 			final double searchRadius )
 	{
+		return extractCorrespondenceCandidates( nodeListA, nodeListB, numNeighbors, redundancy, ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius, search );
+	}
+
+	public ArrayList< PointMatchGeneric< I > > extractCorrespondenceCandidates( 
+			final List< I > nodeListA,
+			final List< I > nodeListB,
+			final int numNeighbors,
+			final int redundancy,
+			final double ratioOfDistance,
+			final double differenceThreshold,
+			final boolean limitSearchRadius,
+			final double searchRadius,
+			final SubsetVectorMatching.Search search )
+	{
 		/* create KDTrees */	
 		final KDTree< I > treeA = new KDTree< I >( nodeListA, nodeListA );
 		final KDTree< I > treeB = new KDTree< I >( nodeListB, nodeListB );
 		
 		/* extract point descriptors */
-		final Matcher matcher = new SubsetMatcher( numNeighbors, numNeighbors + redundancy );
+		final SubsetMatcher matcher = new SubsetMatcher( numNeighbors, numNeighbors + redundancy );
 		final int numRequiredNeighbors = matcher.getRequiredNumNeighbors();
 		
 		final SimilarityMeasure similarityMeasure = new SquareDistance();
@@ -63,7 +80,10 @@ public class RGLDMMatcher< I extends InterestPoint >
 		final ArrayList< SimplePointDescriptor< I > > descriptorsA = createSimplePointDescriptors( treeA, nodeListA, numRequiredNeighbors, matcher, similarityMeasure );
 		final ArrayList< SimplePointDescriptor< I > > descriptorsB = createSimplePointDescriptors( treeB, nodeListB, numRequiredNeighbors, matcher, similarityMeasure );
 
-		return findCorrespondingDescriptors( descriptorsA, descriptorsB, ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius );
+		if ( search == SubsetVectorMatching.Search.LEGACY )
+			return findCorrespondingDescriptors( descriptorsA, descriptorsB, ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius );
+		else
+			return SubsetVectorMatching.match( descriptorsA, descriptorsB, matcher.getNeighbors(), ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius, search );
 	}
 	
 	protected static final < I extends InterestPoint, D extends AbstractPointDescriptor< I , D > > ArrayList< PointMatchGeneric< I > > findCorrespondingDescriptors(
