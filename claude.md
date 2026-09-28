@@ -215,9 +215,8 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
   not descriptor matching.
 - Benchmarks (not in the build): `tools/rgldm-bench.sh` + `rgldm-chart.py` (decision maps `tools/rgldm-decision*.svg`),
   `tools/match_benchmark.sh` (Spark A/B of the match stage via the pipeline script), `tools/ransac-ab.sh` (RANSAC variants on
-  identical candidates); numbers in `tools/bench-*.tsv` and the benchmark logs on the share. The fat jar needs the n5
-  registry transformers in the fatjar profile, else zarr v3 stores are unreadable. Never judge store reads through the
-  Mac SMB mount ("Bad file descriptor"); run on a node.
+  identical candidates); numbers in `tools/bench-*.tsv` and the benchmark logs on the share. Never judge interest point reads
+  through the Mac SMB mount ("Bad file descriptor"); run on a node.
 - Not fixed: `TranslationInvariantLocalCoordinateSystemPointDescriptor.localize(double[])` (FRGLDM) fills 6 of 9 components,
   so every FRGLDM nearest-neighbor query is wrong in the last three dimensions. Since 2017.
 

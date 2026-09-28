@@ -289,28 +289,23 @@ public class RANSAC
 			final double maxTrust,
 			final boolean filterRansac ) throws NotEnoughDataPointsException
 	{
-		if ( !adaptiveIterations )
-			return filterRansac
-					? model.filterRansac( candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust )
-					: model.ransac( candidates, inliers, numIterations, maxEpsilon, minInlierRatio );
-
 		// mpicbg's ransac() runs a fixed count, so call it in chunks and stop when the iterations done reach N
 		final Model raw = model; // Model<?> cannot call set()/copy() on itself
-		final int m = raw.getMinNumMatches();
+		final int m = raw.getMinNumMatches(), chunk = adaptiveIterations ? ITERATIONS_PER_CHUNK : numIterations;
 		final Model best = raw.copy();
 		List< PointMatch > bestInliers = new ArrayList<>();
-		for ( int done = 0; done < numIterations; done += ITERATIONS_PER_CHUNK )
+		for ( int done = 0; done < numIterations; done += chunk )
 		{
 			final ArrayList< PointMatch > found = new ArrayList<>();
-			if ( raw.ransac( candidates, found, Math.min( ITERATIONS_PER_CHUNK, numIterations - done ), maxEpsilon, minInlierRatio ) && found.size() > bestInliers.size() )
+			if ( raw.ransac( candidates, found, Math.min( chunk, numIterations - done ), maxEpsilon, minInlierRatio ) && found.size() > bestInliers.size() )
 			{
 				bestInliers = found;
 				best.set( raw );
 			}
-			if ( !bestInliers.isEmpty() )
+			if ( adaptiveIterations && !bestInliers.isEmpty() )
 			{
 				final double w = (double)bestInliers.size() / candidates.size();
-				if ( done + ITERATIONS_PER_CHUNK >= LOG_FAILURE_PROBABILITY / Math.log( 1 - Math.pow( w, m ) ) )
+				if ( done + chunk >= LOG_FAILURE_PROBABILITY / Math.log( 1 - Math.pow( w, m ) ) )
 					break;
 			}
 		}
