@@ -29,8 +29,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map.Entry;
+import java.util.Random;
 import java.util.stream.Collectors;
 
+import mpicbg.models.IllDefinedDataPointsException;
 import mpicbg.models.Model;
 import mpicbg.models.NotEnoughDataPointsException;
 import mpicbg.models.PointMatch;
@@ -271,6 +273,17 @@ public class RANSAC
 
 	}
 
+	/**
+	 * Stop sampling once the probability of having drawn an all-inlier sample, given the best inlier ratio seen so far,
+	 * exceeds {@link #ADAPTIVE_SUCCESS_PROBABILITY}; numIterations remains the cap. -Dransac.adaptive=false runs the full
+	 * numIterations. Both use the same loop and a fixed seed per pass, so on identical candidates the adaptive result is the
+	 * fixed run's state after N iterations (mpicbg's own loop draws from one static Random shared across the JVM, which made
+	 * results depend on what ran before in the same process).
+	 */
+	public static boolean adaptiveIterations = !"false".equalsIgnoreCase( System.getProperty( "ransac.adaptive", "true" ) );
+	private static final double ADAPTIVE_SUCCESS_PROBABILITY = 0.999;
+
+	@SuppressWarnings( { "rawtypes", "unchecked" } )
 	private static boolean runRANSAC(
 			final Model<?> model,
 			final List< PointMatch > candidates,
@@ -281,9 +294,73 @@ public class RANSAC
 			final double maxTrust,
 			final boolean filterRansac ) throws NotEnoughDataPointsException
 	{
-		return filterRansac
-				? model.filterRansac( candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust )
-				: model.ransac( candidates, inliers, numIterations, maxEpsilon, minInlierRatio );
+		return ransac( (Model)model, candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust, filterRansac, adaptiveIterations );
+	}
+
+	/** mpicbg's ransac() loop (sample, fit, test, refit until stable, keep the best), seeded per call, optionally with the standard adaptive termination */
+	private static < M extends Model< M > > boolean ransac(
+			final M model,
+			final List< PointMatch > candidates,
+			final List< PointMatch > inliers,
+			final int maxIterations,
+			final double maxEpsilon,
+			final double minInlierRatio,
+			final double maxTrust,
+			final boolean filter,
+			final boolean adaptive ) throws NotEnoughDataPointsException
+	{
+		final int m = model.getMinNumMatches();
+		if ( candidates.size() < m )
+			throw new NotEnoughDataPointsException( candidates.size() + " data points are not enough to solve the Model, at least " + m + " data points required." );
+
+		final M best = model.copy(), trial = model.copy();
+		best.setCost( Double.MAX_VALUE );
+		List< PointMatch > bestInliers = new ArrayList<>();
+		final Random rnd = new Random( 69997 );
+		final HashSet< PointMatch > sample = new HashSet<>();
+		double needed = maxIterations;
+
+		for ( int i = 0; i < maxIterations && i < needed; ++i )
+		{
+			sample.clear();
+			while ( sample.size() < m )
+				sample.add( candidates.get( rnd.nextInt( candidates.size() ) ) );
+			try { trial.fit( sample ); }
+			catch ( final IllDefinedDataPointsException e ) { continue; }
+
+			final ArrayList< PointMatch > tmp = new ArrayList<>();
+			int numInliers = 0;
+			boolean good = trial.test( candidates, tmp, maxEpsilon, minInlierRatio, m );
+			while ( good && numInliers < tmp.size() )
+			{
+				numInliers = tmp.size();
+				try { trial.fit( tmp ); }
+				catch ( final IllDefinedDataPointsException e ) { good = false; break; }
+				good = trial.test( candidates, tmp, maxEpsilon, minInlierRatio, m );
+			}
+			if ( good && tmp.size() >= m && trial.betterThan( best ) )
+			{
+				best.set( trial );
+				best.setCost( trial.getCost() );
+				bestInliers = tmp;
+				if ( adaptive )
+				{
+					final double w = (double)tmp.size() / candidates.size();
+					needed = Math.log( 1 - ADAPTIVE_SUCCESS_PROBABILITY ) / Math.log( 1 - Math.pow( w, m ) );
+				}
+			}
+		}
+
+		if ( bestInliers.isEmpty() )
+			return false;
+		model.set( best );
+		if ( !filter )
+		{
+			inliers.clear();
+			inliers.addAll( bestInliers );
+			return true;
+		}
+		return model.filter( bestInliers, inliers, maxTrust, m );
 	}
 
 	public static < P extends PointMatch > List< P > removeInliers( final List< P > candidates, final List< P > matches )

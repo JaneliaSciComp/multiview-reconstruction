@@ -233,8 +233,12 @@ selects the strategy, `LEGACY` keeps the old loop. Results are the identical can
   smaller sets passed as the remainder shrank: pair 125<->140 of ExpID99 gave 7 sets (13779, 1725, 1445, 300, 244, 138, 67),
   now 3; 124<->125 gave 5, now 1. The split stage's `ConsensusSetCriterion` consumes these sets, so this changes where the
   octree splits. Match-stage time is dominated by this RANSAC (10,000 iterations x up to 20K candidates x sets, 174 s on the
-  slowest pair) and not by the matcher; an adaptive iteration stop (N = log(1-p)/log(1-w^m)) measured 25-50x faster with the
-  same sets but is not implemented (mpicbg's `ransac` is final, it would need our own sampling loop in `RANSAC.runRANSAC`).
+  slowest pair) and not by the matcher; `RANSAC.ransac` is our own copy of mpicbg's sampling loop (mpicbg's is final) with the standard adaptive stop
+  N = log(1-p)/log(1-w^m), p = 0.999, `-rit` as the cap (`-Dransac.adaptive=false` runs the full count). Seeded per pass, so on
+  identical candidates the adaptive result is the fixed run's state after N iterations; mpicbg's loop shares one static Random
+  across the JVM, which is why two identical Spark runs never agreed. Standalone on all 89 beads pairs: 284 sets both, same
+  count on 81 pairs (the rest one borderline set at the 5 % threshold), inliers -0.18 %, RANSAC 2594 s -> 173 s. Tools:
+  `tools/ransac-ab.sh` (identical candidates), `tools/match_benchmark.sh` (Spark stage, modes FIXED/ADAPTIVE).
 - Related bug, not fixed: `TranslationInvariantLocalCoordinateSystemPointDescriptor.localize(double[])` (FRGLDM) fills 6 of 9
   components; imglib2 queries through it, so every FRGLDM nearest-neighbor query is wrong in the last three dimensions
   (1,987 of 2,000 sampled best matches differ from the true ones) and 6x slower than a correct one. Since 2017.
