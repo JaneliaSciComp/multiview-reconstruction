@@ -36,12 +36,12 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.AbstractPointDes
 import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.SubsetMatcher;
 
 /**
- * Exact, fast RGLDM descriptor matching. The RGLDM distance (min over subset pairs of the squared L2 between concatenated
- * neighbor offsets, / dims) is a nearest-neighbor search in which every descriptor contributes one "subset vector" per
- * subset. Without a radius a {@link FlatKDTree} answers it (up to 5 neighbors; at 6+ a vectorized brute force is faster).
- * With a radius, a 3-D radius query on B's positions gathers the candidates and the brute force runs over just those,
- * unless the radius admits so much of B that the filtered tree wins (~20/35/55 % for 3/4/5 neighbors, ExpID99 beads).
- * Candidate sets equal the legacy loop; see {@code RGLDMMatcherTest}.
+ * Exact, fast RGLDM descriptor matching. The RGLDM distance (minimum over subset pairs of the squared L2 distance between
+ * concatenated neighbor offsets) is a nearest-neighbor search in which every descriptor contributes one "subset vector"
+ * per subset. Without a search radius a {@link FlatKDTree} answers it; with a radius, a 3-D radius query on B's positions
+ * gathers the candidates and a vectorized brute force runs over those. The tree only pays off while it prunes, so brute
+ * force takes over for many neighbors (high dimension) or a radius that admits few points; {@link #preferTree} holds the
+ * measured thresholds. Candidate sets equal the legacy loop, see {@code RGLDMMatcherTest}.
  */
 public class SubsetVectorMatching
 {
@@ -54,7 +54,7 @@ public class SubsetVectorMatching
 		return numNeighbors <= 5 && inRadiusFraction >= ( numNeighbors <= 3 ? 0.2 : numNeighbors == 4 ? 0.35 : 0.55 );
 	}
 
-	/** @param subsets {@link SubsetMatcher#getNeighbors()} of the matcher the descriptors were built with */
+	/** @param subsets the neighbor subsets the descriptors were built with, {@link SubsetMatcher#getNeighbors()} */
 	public static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > ArrayList< PointMatchGeneric< I > > match(
 			final List< D > descA, final List< D > descB, final int[][] subsets, final double ratioOfDistance, final double differenceThreshold,
 			final boolean limitSearchRadius, final double searchRadius, final Search search )

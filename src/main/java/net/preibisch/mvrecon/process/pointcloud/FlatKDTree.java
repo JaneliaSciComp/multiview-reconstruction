@@ -26,9 +26,8 @@ import java.util.Arrays;
 import java.util.function.IntPredicate;
 
 /**
- * Exact k-nearest-neighbor search over fixed-length float vectors. Nodes are primitive arrays, leaves hold up to
- * {@link #LEAF_SIZE} vectors component-major so the leaf scan vectorizes; when pruning fails (high dimension) it degrades
- * into a fast linear scan rather than pointer chasing. Immutable; use one {@link Query} per thread.
+ * Exact k-nearest-neighbor search over fixed-length float vectors. Nodes are primitive arrays and leaves hold up to
+ * {@link #LEAF_SIZE} vectors component-major, so the leaf scan vectorizes. Immutable; use one {@link Query} per thread.
  */
 public class FlatKDTree
 {
