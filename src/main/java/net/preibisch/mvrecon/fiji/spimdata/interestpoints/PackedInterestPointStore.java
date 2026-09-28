@@ -190,7 +190,16 @@ public class PackedInterestPointStore
 	/** @param baseDir the dataset directory (containing interestpoints.zarr / interestpoints.n5), i.e. {@code SpimData2.getBasePathURI()} */
 	public static PackedInterestPointStore get( final URI baseDir )
 	{
-		return stores.computeIfAbsent( baseDir.toString(), k -> new PackedInterestPointStore( baseDir ) );
+		return stores.computeIfAbsent( storeKey( baseDir ), k -> new PackedInterestPointStore( baseDir ) );
+	}
+
+	/** one key per directory: {@code file:/x/}, {@code file:///x} and {@code file:///x/} are the same store */
+	static String storeKey( final URI baseDir )
+	{
+		if ( URITools.isFile( baseDir ) )
+			return java.nio.file.Paths.get( baseDir ).toAbsolutePath().normalize().toString();
+		final String s = baseDir.toString();
+		return s.endsWith( "/" ) ? s.substring( 0, s.length() - 1 ) : s;
 	}
 
 	final URI baseDir, n5URI, n5URI_legacy;

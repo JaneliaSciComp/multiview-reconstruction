@@ -95,6 +95,8 @@ legacy + zarr datasets read fine. `--storeIntensities` detection keeps the old i
   files were intact (`tools/check_store.sh`, md5). Never judge data on /nrs through the Mac mount; the fsync + read-back
   code written for this phantom was removed. Every chunk carries a crc32c, so real damage fails loudly.
 - The fat jar must be built with `mvn clean package -Pfatjar`; without `clean`, shade reuses the previous jar's classes.
+- `PackedInterestPointStore.get()` must key by normalized directory: `file:/x/` and `file:///x` once gave two instances per JVM, the second
+  answering from a stale index after the first committed (Spark's `TestClearInterestPoints`, 2026-09-28).
 - 64 threads decoding zstd chunks (zstd-jni uses JNI critical regions) made the JVM throw a spurious `OutOfMemoryError: Java heap
   space` at 127 MB heap use (JDK-8192647, "Retried waiting for GCLocker too often"). Fixed by storing raw bytes; no JNI on reads.
 
