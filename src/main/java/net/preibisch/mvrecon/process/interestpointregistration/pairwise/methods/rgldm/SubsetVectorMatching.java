@@ -39,9 +39,10 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.SubsetMa
  * Exact, fast RGLDM descriptor matching. The RGLDM distance (minimum over subset pairs of the squared L2 distance between
  * concatenated neighbor offsets) is a nearest-neighbor search in which every descriptor contributes one "subset vector"
  * per subset. Without a search radius a {@link FlatKDTree} answers it; with a radius, a 3-D radius query on B's positions
- * gathers the candidates and a vectorized brute force runs over those. The tree only pays off while it prunes, so brute
- * force takes over for many neighbors (high dimension) or a radius that admits few points; {@link #preferTree} holds the
- * measured thresholds. Candidate sets equal the legacy loop, see {@code RGLDMMatcherTest}.
+ * gathers the candidates and a vectorized brute force runs over those, or the tree with an owner filter once the radius
+ * admits a large share of B. The tree only pays off while it prunes, so brute force takes over for many neighbors (high
+ * dimension); {@link #preferTree} holds the measured thresholds. Candidate sets equal the legacy loop, see
+ * {@code RGLDMMatcherTest}.
  */
 public class SubsetVectorMatching
 {
