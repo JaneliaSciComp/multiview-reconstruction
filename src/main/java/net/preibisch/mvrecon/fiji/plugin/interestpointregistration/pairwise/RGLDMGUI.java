@@ -49,7 +49,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 public class RGLDMGUI extends PairwiseGUI
 {
 	public static int defaultModel = 2;
-	public static final String[] searchChoices = { "Automatic", "Flat KD-tree", "Blocked brute force", "Legacy (exhaustive, pre-2026)" };
+	public static final String[] searchChoices = { "Automatic", "Flat KD-tree", "Blocked brute force", "Legacy" };
 	public static final Search[] searchValues = { Search.AUTO, Search.FLAT_KDTREE, Search.BLOCKED_BRUTE_FORCE, Search.LEGACY };
 	public static int defaultSearch = 0;
 	public static boolean defaultRegularize = true;
@@ -113,7 +113,8 @@ public class RGLDMGUI extends PairwiseGUI
 		final double ratioOfDistance = RGLDMParameters.ratioOfDistance = gd.getNextNumber();
 		final boolean limitSearchRadius = RGLDMParameters.defaultLimitSearchRadius = gd.getNextBoolean();
 		final double searchRadius = RGLDMParameters.defaultSearchRadius = gd.getNextNumber();
-		final Search search = searchValues[ defaultSearch = gd.getNextChoiceIndex() ];
+		defaultSearch = gd.getNextChoiceIndex();
+		final Search search = searchValues[ defaultSearch ];
 		final RANSACParameters rp = parseRansacQuery( gd );
 		if ( rp == null )
 			return false;

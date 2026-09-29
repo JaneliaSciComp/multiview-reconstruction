@@ -52,7 +52,12 @@ public class SubsetVectorMatching
 
 	private static boolean preferTree( final int numNeighbors, final double inRadiusFraction )
 	{
-		return numNeighbors <= 5 && inRadiusFraction >= ( numNeighbors <= 3 ? 0.2 : numNeighbors == 4 ? 0.35 : 0.55 );
+		final double maxFraction = switch (numNeighbors) {
+			case 5  -> 0.55;
+			case 4  -> 0.35;
+			default -> 0.2;
+		};
+		return numNeighbors <= 5 && inRadiusFraction >= maxFraction;
 	}
 
 	/** @param subsets the neighbor subsets the descriptors were built with, {@link SubsetMatcher#getNeighbors()} */
