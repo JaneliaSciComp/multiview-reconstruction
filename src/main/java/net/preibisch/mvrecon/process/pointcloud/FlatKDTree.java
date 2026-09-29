@@ -27,7 +27,8 @@ import java.util.function.IntPredicate;
 
 /**
  * Exact k-nearest-neighbor search over fixed-length float vectors. Nodes are primitive arrays and leaves hold up to
- * {@link #LEAF_SIZE} vectors component-major, so the leaf scan vectorizes. Immutable; use one {@link Query} per thread.
+ * {@link #LEAF_SIZE} vectors component-major, so the leaf scan vectorizes. Holds the state of the last {@link #search};
+ * one instance per thread.
  */
 public class FlatKDTree
 {
@@ -40,7 +41,17 @@ public class FlatKDTree
 	private final float[] splitValue;
 	private int numNodes = 0;
 
-	public FlatKDTree( final float[][] vectors )
+	// state of the last search: the k nearest, sorted by squared distance
+	private final int k;
+	private final float[] sqDists;
+	private final int[] foundIdx;
+	private final float[] cellOffset;
+	private final float[] leafDists = new float[ LEAF_SIZE ];
+	private float[] query;
+	private IntPredicate accept;
+
+	/** @param k number of nearest neighbors a {@link #search} returns */
+	public FlatKDTree( final float[][] vectors, final int k )
 	{
 		final int numVecs = vectors.length;
 		if ( numVecs == 0 )
@@ -63,6 +74,11 @@ public class FlatKDTree
 		for ( int slot = 0; slot < numVecs; ++slot )
 			for ( int dim = 0; dim < numDims; ++dim )
 				coords[ dim ][ slot ] = vectors[ vecIdx[ slot ] ][ dim ];
+
+		this.k = k;
+		sqDists = new float[ k ];
+		foundIdx = new int[ k ];
+		cellOffset = new float[ numDims ];
 	}
 
 	private int build( final float[][] vectors, final int from, final int to )
@@ -129,105 +145,96 @@ public class FlatKDTree
 		}
 	}
 
-	/** k-nearest query state for one thread; results sorted by squared distance, {@link #size()} may be below k with a filter */
-	public final class Query
+	public void search( final float[] query ) { search( query, null ); }
+
+	/** @param acceptIndex optional filter on the original vector index */
+	public void search( final float[] query, final IntPredicate acceptIndex )
 	{
-		private final int k;
-		private final float[] sqDists;
-		private final int[] foundIdx;
-		private final float[] cellOffset = new float[ numDims ];
-		private final float[] leafDists = new float[ LEAF_SIZE ];
-		private float[] query;
-		private IntPredicate accept;
+		this.query = query;
+		this.accept = acceptIndex;
+		Arrays.fill( sqDists, Float.MAX_VALUE );
+		Arrays.fill( foundIdx, -1 );
+		Arrays.fill( cellOffset, 0f );
+		descend( 0, 0f );
+	}
 
-		public Query( final int k )
+	public int size()
+	{
+		int found = 0;
+		while ( found < k && foundIdx[ found ] >= 0 )
+			++found;
+		return found;
+	}
+
+	public float squareDistance( final int i ) { return sqDists[ i ]; }
+	public int index( final int i ) { return foundIdx[ i ]; }
+
+	private void descend( final int node, final float cellDist )
+	{
+		if ( childLeft[ node ] < 0 )
 		{
-			this.k = k;
-			sqDists = new float[ k ];
-			foundIdx = new int[ k ];
+			scanLeaf( node );
+			return;
 		}
+		final int dim = splitDim[ node ];
+		final float diff = query[ dim ] - splitValue[ node ];
+		descend( diff < 0 ? childLeft[ node ] : childRight[ node ], cellDist );
 
-		public void search( final float[] query ) { search( query, null ); }
-
-		/** @param acceptIndex optional filter on the original vector index */
-		public void search( final float[] query, final IntPredicate acceptIndex )
+		// the far cell lies beyond the split plane in this dimension: its lower bound replaces the dimension's offset
+		final float oldOffset = cellOffset[ dim ];
+		final float gap = Math.max( Math.abs( diff ), oldOffset );
+		final float farDist = cellDist - oldOffset * oldOffset + gap * gap;
+		if ( farDist < sqDists[ k - 1 ] )
 		{
-			this.query = query;
-			this.accept = acceptIndex;
-			Arrays.fill( sqDists, Float.MAX_VALUE );
-			Arrays.fill( foundIdx, -1 );
-			Arrays.fill( cellOffset, 0f );
-			descend( 0, 0f );
+			cellOffset[ dim ] = gap;
+			descend( diff < 0 ? childRight[ node ] : childLeft[ node ], farDist );
+			cellOffset[ dim ] = oldOffset;
 		}
+	}
 
-		public int size()
+	private void scanLeaf( final int node )
+	{
+		final int firstSlot = rangeFrom[ node ];
+		final int count = rangeTo[ node ] - firstSlot;
+		squaredDistances( query, coords, firstSlot, firstSlot + count, leafDists );
+		for ( int j = 0; j < count; ++j )
 		{
-			int found = 0;
-			while ( found < k && foundIdx[ found ] >= 0 )
-				++found;
-			return found;
+			final float sqDist = leafDists[ j ];
+			if ( sqDist >= sqDists[ k - 1 ] || ( accept != null && !accept.test( vecIdx[ firstSlot + j ] ) ) )
+				continue;
+			int insertAt = k - 1;
+			for ( ; insertAt > 0 && sqDists[ insertAt - 1 ] > sqDist; --insertAt )
+			{
+				sqDists[ insertAt ] = sqDists[ insertAt - 1 ];
+				foundIdx[ insertAt ] = foundIdx[ insertAt - 1 ];
+			}
+			sqDists[ insertAt ] = sqDist;
+			foundIdx[ insertAt ] = vecIdx[ firstSlot + j ];
 		}
+	}
 
-		public float squareDistance( final int i ) { return sqDists[ i ]; }
-		public int index( final int i ) { return foundIdx[ i ]; }
-
-		private void descend( final int node, final float cellDist )
+	/**
+	 * out[ i ] = |query - column (from + i)|^2 for the columns [from, to) of a component-major matrix
+	 * ({@code matrix[ dimension ][ column ]}); the loops over the columns vectorize.
+	 */
+	public static void squaredDistances( final float[] query, final float[][] matrix, final int from, final int to, final float[] out )
+	{
+		final int count = to - from;
+		final float query0 = query[ 0 ];
+		final float[] row0 = matrix[ 0 ];
+		for ( int i = 0; i < count; ++i )
 		{
-			if ( childLeft[ node ] < 0 )
-			{
-				scanLeaf( node );
-				return;
-			}
-			final int dim = splitDim[ node ];
-			final float diff = query[ dim ] - splitValue[ node ];
-			descend( diff < 0 ? childLeft[ node ] : childRight[ node ], cellDist );
-
-			// the far cell lies beyond the split plane in this dimension: its lower bound replaces the dimension's offset
-			final float oldOffset = cellOffset[ dim ];
-			final float gap = Math.max( Math.abs( diff ), oldOffset );
-			final float farDist = cellDist - oldOffset * oldOffset + gap * gap;
-			if ( farDist < sqDists[ k - 1 ] )
-			{
-				cellOffset[ dim ] = gap;
-				descend( diff < 0 ? childRight[ node ] : childLeft[ node ], farDist );
-				cellOffset[ dim ] = oldOffset;
-			}
+			final float diff = query0 - row0[ from + i ];
+			out[ i ] = diff * diff;
 		}
-
-		private void scanLeaf( final int node )
+		for ( int dim = 1; dim < matrix.length; ++dim )
 		{
-			final int firstSlot = rangeFrom[ node ];
-			final int count = rangeTo[ node ] - firstSlot;
-			final float query0 = query[ 0 ];
-			final float[] coords0 = coords[ 0 ];
-			for ( int j = 0; j < count; ++j )
+			final float queryVal = query[ dim ];
+			final float[] row = matrix[ dim ];
+			for ( int i = 0; i < count; ++i )
 			{
-				final float diff = query0 - coords0[ firstSlot + j ];
-				leafDists[ j ] = diff * diff;
-			}
-			for ( int dim = 1; dim < numDims; ++dim ) // vectorized: one component of all leaf vectors per pass
-			{
-				final float queryValue = query[ dim ];
-				final float[] coordRow = coords[ dim ];
-				for ( int j = 0; j < count; ++j )
-				{
-					final float diff = queryValue - coordRow[ firstSlot + j ];
-					leafDists[ j ] += diff * diff;
-				}
-			}
-			for ( int j = 0; j < count; ++j )
-			{
-				final float sqDist = leafDists[ j ];
-				if ( sqDist >= sqDists[ k - 1 ] || ( accept != null && !accept.test( vecIdx[ firstSlot + j ] ) ) )
-					continue;
-				int insertAt = k - 1;
-				for ( ; insertAt > 0 && sqDists[ insertAt - 1 ] > sqDist; --insertAt )
-				{
-					sqDists[ insertAt ] = sqDists[ insertAt - 1 ];
-					foundIdx[ insertAt ] = foundIdx[ insertAt - 1 ];
-				}
-				sqDists[ insertAt ] = sqDist;
-				foundIdx[ insertAt ] = vecIdx[ firstSlot + j ];
+				final float diff = queryVal - row[ from + i ];
+				out[ i ] += diff * diff;
 			}
 		}
 	}
