@@ -107,17 +107,22 @@ public class FlatKDTree
 			int i = l, j = r;
 			while ( i <= j )
 			{
-				while ( v[ index[ i ] ][ d ] < pivot ) ++i;
-				while ( v[ index[ j ] ][ d ] > pivot ) --j;
+				while ( v[ index[ i ] ][ d ] < pivot )
+					++i;
+				while ( v[ index[ j ] ][ d ] > pivot )
+					--j;
 				if ( i <= j )
 				{
 					final int t = index[ i ]; index[ i ] = index[ j ]; index[ j ] = t;
 					++i; --j;
 				}
 			}
-			if ( k <= j ) r = j;
-			else if ( k >= i ) l = i;
-			else return;
+			if ( k <= j )
+				r = j;
+			else if ( k >= i )
+				l = i;
+			else
+				return;
 		}
 	}
 
@@ -155,7 +160,8 @@ public class FlatKDTree
 		public int size()
 		{
 			int n = 0;
-			while ( n < k && found[ n ] >= 0 ) ++n;
+			while ( n < k && found[ n ] >= 0 )
+				++n;
 			return n;
 		}
 
@@ -191,12 +197,20 @@ public class FlatKDTree
 			final int n = to[ node ] - lo;
 			final float q0 = q[ 0 ];
 			final float[] c0 = coords[ 0 ];
-			for ( int j = 0; j < n; ++j ) { final float x = q0 - c0[ lo + j ]; buf[ j ] = x * x; }
+			for ( int j = 0; j < n; ++j )
+			{
+				final float x = q0 - c0[ lo + j ];
+				buf[ j ] = x * x;
+			}
 			for ( int d = 1; d < dim; ++d ) // vectorized: one component of all leaf vectors per pass
 			{
 				final float qd = q[ d ];
 				final float[] cd = coords[ d ];
-				for ( int j = 0; j < n; ++j ) { final float x = qd - cd[ lo + j ]; buf[ j ] += x * x; }
+				for ( int j = 0; j < n; ++j )
+				{
+					final float x = qd - cd[ lo + j ];
+					buf[ j ] += x * x;
+				}
 			}
 			for ( int j = 0; j < n; ++j )
 			{

@@ -137,9 +137,19 @@ public class SubsetVectorMatching
 
 		void fold( final int a, final int b, final double d )
 		{
-			if ( b == owner[ a ] ) { if ( d < best[ a ] ) best[ a ] = d; }
-			else if ( d < best[ a ] ) { second[ a ] = best[ a ]; best[ a ] = d; owner[ a ] = b; }
-			else if ( d < second[ a ] ) second[ a ] = d;
+			if ( b == owner[ a ] )
+			{
+				if ( d < best[ a ] )
+					best[ a ] = d;
+			}
+			else if ( d < best[ a ] )
+			{
+				second[ a ] = best[ a ];
+				best[ a ] = d;
+				owner[ a ] = b;
+			}
+			else if ( d < second[ a ] )
+				second[ a ] = d;
 		}
 
 		void fold( final int a, final FlatKDTree.Query q )
@@ -204,7 +214,9 @@ public class SubsetVectorMatching
 		for ( int j = from, b = from / C; j < to; ++b )
 		{
 			float min = distB[ b ];
-			for ( int t = 0; t < C; ++t, ++j ) if ( dist[ j ] < min ) min = dist[ j ];
+			for ( int t = 0; t < C; ++t, ++j )
+				if ( dist[ j ] < min )
+					min = dist[ j ];
 			distB[ b ] = min;
 		}
 	}
@@ -214,12 +226,20 @@ public class SubsetVectorMatching
 	{
 		final float q0 = q[ 0 ];
 		final float[] c0 = T[ 0 ];
-		for ( int j = from; j < to; ++j ) { final float x = q0 - c0[ j ]; dist[ j ] = x * x; }
+		for ( int j = from; j < to; ++j )
+		{
+			final float x = q0 - c0[ j ];
+			dist[ j ] = x * x;
+		}
 		for ( int d = 1; d < T.length; ++d )
 		{
 			final float qd = q[ d ];
 			final float[] cd = T[ d ];
-			for ( int j = from; j < to; ++j ) { final float x = qd - cd[ j ]; dist[ j ] += x * x; }
+			for ( int j = from; j < to; ++j )
+			{
+				final float x = qd - cd[ j ];
+				dist[ j ] += x * x;
+			}
 		}
 	}
 
@@ -234,7 +254,11 @@ public class SubsetVectorMatching
 		// 3-D tree over B's basis points (RealLocalizable over world coordinates, like Point.distance in the legacy loop)
 		final ArrayList< I > basisB = new ArrayList<>( nB );
 		final ArrayList< Integer > ids = new ArrayList<>( nB );
-		for ( int b = 0; b < nB; ++b ) { basisB.add( descB.get( b ).getBasisPoint() ); ids.add( b ); }
+		for ( int b = 0; b < nB; ++b )
+		{
+			basisB.add( descB.get( b ).getBasisPoint() );
+			ids.add( b );
+		}
 		final RadiusNeighborSearchOnKDTree< Integer > rs = new RadiusNeighborSearchOnKDTree<>( new KDTree<>( ids, basisB ) );
 
 		Search s = search;
@@ -243,7 +267,11 @@ public class SubsetVectorMatching
 			long inRadius = 0;
 			final int step = Math.max( 1, nA / SAMPLE );
 			int sampled = 0;
-			for ( int a = 0; a < nA; a += step, ++sampled ) { rs.search( descA.get( a ).getBasisPoint(), radius, false ); inRadius += rs.numNeighbors(); }
+			for ( int a = 0; a < nA; a += step, ++sampled )
+			{
+				rs.search( descA.get( a ).getBasisPoint(), radius, false );
+				inRadius += rs.numNeighbors();
+			}
 			s = preferTree( numNeighbors, (double)inRadius / ( (double)sampled * nB ) ) ? Search.FLAT_KDTREE : Search.BLOCKED_BRUTE_FORCE;
 		}
 
@@ -262,14 +290,16 @@ public class SubsetVectorMatching
 				for ( int t = 0; t < n; ++t )
 				{
 					owners[ t ] = rs.getSampler( t ).get();
-					for ( int k = 0; k < C; ++k ) columns[ t * C + k ] = owners[ t ] * C + k;
+					for ( int k = 0; k < C; ++k )
+						columns[ t * C + k ] = owners[ t ] * C + k;
 				}
 				transpose( vB, scratch, columns, n * C );
 				for ( int sub = 0; sub < C; ++sub )
 				{
 					squaredDistances( vA[ a * C + sub ], scratch, dist, 0, n * C );
 					for ( int t = 0, j = 0; t < n; ++t )
-						for ( int k = 0; k < C; ++k, ++j ) best.fold( a, owners[ t ], dist[ j ] );
+						for ( int k = 0; k < C; ++k, ++j )
+							best.fold( a, owners[ t ], dist[ j ] );
 				}
 			}
 		}
@@ -286,9 +316,14 @@ public class SubsetVectorMatching
 				final int n = rs.numNeighbors();
 				if ( n < 2 )
 					continue;
-				for ( int t = 0; t < n; ++t ) stamp[ rs.getSampler( t ).get() ] = a;
+				for ( int t = 0; t < n; ++t )
+					stamp[ rs.getSampler( t ).get() ] = a;
 				current[ 0 ] = a;
-				for ( int sub = 0; sub < C; ++sub ) { q.search( vA[ a * C + sub ], inRadius ); best.fold( a, q ); }
+				for ( int sub = 0; sub < C; ++sub )
+				{
+					q.search( vA[ a * C + sub ], inRadius );
+					best.fold( a, q );
+				}
 			}
 		}
 	}
