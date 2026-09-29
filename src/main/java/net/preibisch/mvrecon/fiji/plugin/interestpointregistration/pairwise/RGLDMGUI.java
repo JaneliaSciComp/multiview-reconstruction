@@ -38,6 +38,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.SubsetVectorMatching.Search;
 
 /**
  * Redundant Geometric Local Descriptor Matching (RGLDM)
@@ -48,6 +49,9 @@ import mpicbg.spim.data.sequence.ViewId;
 public class RGLDMGUI extends PairwiseGUI
 {
 	public static int defaultModel = 2;
+	public static final String[] searchChoices = { "Automatic", "Flat KD-tree", "Blocked brute force", "Legacy (exhaustive, pre-2026)" };
+	public static final Search[] searchValues = { Search.AUTO, Search.FLAT_KDTREE, Search.BLOCKED_BRUTE_FORCE, Search.LEGACY };
+	public static int defaultSearch = 0;
 	public static boolean defaultRegularize = true;
 
 	protected TransformationModelGUI model = null;
@@ -84,6 +88,7 @@ public class RGLDMGUI extends PairwiseGUI
 		gd.addSlider( "Significance required for a descriptor match", 1.0, 10.0, RGLDMParameters.ratioOfDistance );
 		gd.addCheckbox( "Limit_search_radius", RGLDMParameters.defaultLimitSearchRadius );
 		gd.addSlider( "Search_radius", 10.0, 1000.0, RGLDMParameters.defaultSearchRadius );
+		gd.addChoice( "Descriptor_search (Automatic picks per view pair)", searchChoices, searchChoices[ defaultSearch ] );
 
 		gd.addMessage( "" );
 		gd.addMessage( "Parameters for robust model-based outlier removal (RANSAC)", new Font( Font.SANS_SERIF, Font.BOLD, 12 ) );
@@ -108,6 +113,7 @@ public class RGLDMGUI extends PairwiseGUI
 		final double ratioOfDistance = RGLDMParameters.ratioOfDistance = gd.getNextNumber();
 		final boolean limitSearchRadius = RGLDMParameters.defaultLimitSearchRadius = gd.getNextBoolean();
 		final double searchRadius = RGLDMParameters.defaultSearchRadius = gd.getNextNumber();
+		final Search search = searchValues[ defaultSearch = gd.getNextChoiceIndex() ];
 		final RANSACParameters rp = parseRansacQuery( gd );
 		if ( rp == null )
 			return false;
@@ -119,7 +125,8 @@ public class RGLDMGUI extends PairwiseGUI
 				limitSearchRadius,
 				searchRadius,
 				numNeighbors,
-				redundancy );
+				redundancy,
+				search );
 		this.ransacParams = rp;
 
 		IOFunctions.println( "Selected Paramters:" );
@@ -127,6 +134,7 @@ public class RGLDMGUI extends PairwiseGUI
 		IOFunctions.println( "numNeighbors: " + numNeighbors );
 		IOFunctions.println( "redundancy: " + redundancy );
 		IOFunctions.println( "ratioOfDistance: " + ratioOfDistance );
+		IOFunctions.println( "descriptor search: " + search );
 
 		return true;
 	}
@@ -152,6 +160,8 @@ public class RGLDMGUI extends PairwiseGUI
 		p.put( "significance", Double.toString( RGLDMParameters.ratioOfDistance ) );
 		if ( RGLDMParameters.defaultLimitSearchRadius )
 			p.put( "searchRadius", Double.toString( RGLDMParameters.defaultSearchRadius ) );
+		if ( searchValues[ defaultSearch ] != Search.AUTO )
+			p.put( "descriptorSearch", searchValues[ defaultSearch ].name() );
 		putRansacParams( p, ransacParams );
 		return p;
 	}
