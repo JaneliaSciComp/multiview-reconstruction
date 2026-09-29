@@ -493,10 +493,11 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	@Override
 	public void saveXML()
 	{
-		io.save( data, xml );
-
+		// deletes first: the packed store only stages them, the XML save below commits them
 		for ( final SelectedViewDescriptionListener< AS > l : listeners )
 			l.save(); // e.g. delete interest points
+
+		io.save( data, xml );
 	}
 
 	protected void addPopupMenu( final JTable table )
