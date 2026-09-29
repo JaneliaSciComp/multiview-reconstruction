@@ -48,7 +48,8 @@ public class SubsetVectorMatching
 {
 	public enum Search { AUTO, FLAT_KDTREE, BLOCKED_BRUTE_FORCE, LEGACY }
 
-	private static final int BLOCK = 4096, SAMPLE = 256;
+	private static final int BLOCK = 4096;
+	private static final int SAMPLE = 256;
 
 	private static boolean preferTree( final int numNeighbors, final double inRadiusFraction )
 	{
@@ -71,8 +72,12 @@ public class SubsetVectorMatching
 		if ( descA.isEmpty() || descB.size() < 2 )
 			return candidates;
 
-		final int nA = descA.size(), C = subsets.length, numNeighbors = subsets[ 0 ].length, dims = descA.get( 0 ).numDimensions();
-		final float[][] vA = subsetVectors( descA, subsets, dims ), vB = subsetVectors( descB, subsets, dims );
+		final int nA = descA.size();
+		final int C = subsets.length;
+		final int numNeighbors = subsets[ 0 ].length;
+		final int dims = descA.get( 0 ).numDimensions();
+		final float[][] vA = subsetVectors( descA, subsets, dims );
+		final float[][] vB = subsetVectors( descB, subsets, dims );
 		final Best best = new Best( nA, C );
 
 		if ( !limitSearchRadius )
@@ -87,7 +92,8 @@ public class SubsetVectorMatching
 
 		for ( int a = 0; a < nA; ++a )
 		{
-			final double b = best.best[ a ] / dims, s = best.second[ a ] / dims;
+			final double b = best.best[ a ] / dims;
+			final double s = best.second[ a ] / dims;
 			if ( best.owner[ a ] >= 0 && best.second[ a ] < Double.MAX_VALUE && b < differenceThreshold && b * ratioOfDistance < s )
 				candidates.add( new PointMatchGeneric< I >( descA.get( a ).getBasisPoint(), descB.get( best.owner[ a ] ).getBasisPoint() ) );
 		}
@@ -97,7 +103,8 @@ public class SubsetVectorMatching
 	/** offsets of the chosen neighbors (world coordinates of the descriptor points, as SquareDistance uses), concatenated */
 	private static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > float[][] subsetVectors( final List< D > descs, final int[][] subsets, final int dims )
 	{
-		final int C = subsets.length, nn = subsets[ 0 ].length;
+		final int C = subsets.length;
+		final int nn = subsets[ 0 ].length;
 		final float[][] v = new float[ descs.size() * C ][ nn * dims ];
 		for ( int i = 0; i < descs.size(); ++i )
 			for ( int s = 0; s < C; ++s )
@@ -156,9 +163,12 @@ public class SubsetVectorMatching
 
 	private static void bruteForce( final float[][] vA, final float[][] vB, final Best best )
 	{
-		final int C = best.C, m = vB.length, block = Math.max( C, BLOCK / C * C );
+		final int C = best.C;
+		final int m = vB.length;
+		final int block = Math.max( C, BLOCK / C * C );
 		final float[][] T = transpose( vB, new float[ vB[ 0 ].length ][ m ], null, m );
-		final float[] dist = new float[ m ], distB = new float[ m / C ];
+		final float[] dist = new float[ m ];
+		final float[] distB = new float[ m / C ];
 		for ( int a = 0; a < best.best.length; ++a )
 		{
 			Arrays.fill( distB, Float.MAX_VALUE );
@@ -216,7 +226,10 @@ public class SubsetVectorMatching
 	private static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > void withRadius( final List< D > descA, final List< D > descB,
 			final float[][] vA, final float[][] vB, final int numNeighbors, final double radius, final Search search, final Best best )
 	{
-		final int nA = descA.size(), nB = descB.size(), C = best.C, dim = vB[ 0 ].length;
+		final int nA = descA.size();
+		final int nB = descB.size();
+		final int C = best.C;
+		final int dim = vB[ 0 ].length;
 
 		// 3-D tree over B's basis points (RealLocalizable over world coordinates, like Point.distance in the legacy loop)
 		final ArrayList< I > basisB = new ArrayList<>( nB );
@@ -238,7 +251,8 @@ public class SubsetVectorMatching
 		{
 			final float[][] scratch = new float[ dim ][ nB * C ];
 			final float[] dist = new float[ nB * C ];
-			final int[] columns = new int[ nB * C ], owners = new int[ nB ];
+			final int[] columns = new int[ nB * C ];
+			final int[] owners = new int[ nB ];
 			for ( int a = 0; a < nA; ++a )
 			{
 				rs.search( descA.get( a ).getBasisPoint(), radius, false );
@@ -262,7 +276,8 @@ public class SubsetVectorMatching
 		else
 		{
 			final FlatKDTree.Query q = new FlatKDTree( vB ).new Query( C + 1 );
-			final int[] stamp = new int[ nB ], current = { -1 };
+			final int[] stamp = new int[ nB ];
+			final int[] current = { -1 };
 			Arrays.fill( stamp, -1 );
 			final IntPredicate inRadius = v -> stamp[ v / C ] == current[ 0 ];
 			for ( int a = 0; a < nA; ++a )

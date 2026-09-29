@@ -125,7 +125,9 @@ public class FlatKDTree
 	public final class Query
 	{
 		private final int k;
-		private final float[] dist, offset = new float[ dim ], buf = new float[ LEAF_SIZE ];
+		private final float[] dist;
+		private final float[] offset = new float[ dim ];
+		private final float[] buf = new float[ LEAF_SIZE ];
 		private final int[] found;
 		private float[] q;
 		private IntPredicate accept;
@@ -172,7 +174,8 @@ public class FlatKDTree
 			descend( diff < 0 ? left[ node ] : right[ node ], cellDistance );
 
 			// the far cell lies beyond the split plane in d: its lower bound replaces this dimension's offset
-			final float old = offset[ d ], gap = Math.max( Math.abs( diff ), old );
+			final float old = offset[ d ];
+			final float gap = Math.max( Math.abs( diff ), old );
 			final float farDistance = cellDistance - old * old + gap * gap;
 			if ( farDistance < dist[ k - 1 ] )
 			{
@@ -184,7 +187,8 @@ public class FlatKDTree
 
 		private void scanLeaf( final int node )
 		{
-			final int lo = from[ node ], n = to[ node ] - lo;
+			final int lo = from[ node ];
+			final int n = to[ node ] - lo;
 			final float q0 = q[ 0 ];
 			final float[] c0 = coords[ 0 ];
 			for ( int j = 0; j < n; ++j ) { final float x = q0 - c0[ lo + j ]; buf[ j ] = x * x; }
