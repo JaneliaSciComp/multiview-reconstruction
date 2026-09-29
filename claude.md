@@ -197,7 +197,7 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
 ### Potential Next Optimization
 `LoadCorrespondencesPairwise.match()` calls `ipA.getCorrespondingInterestPointsCopy()`, which lazily opens an N5 reader, reads attrs, opens the dataset, and iterates correspondences — per pair. Even with `computePairs()` parallelized, each pair triggers I/O. A bulk parallel pre-load before `computePairs()` would amortize this.
 
-## RGLDM Descriptor Matching and Multi-Consensus RANSAC (2026-09)
+## RGLDM Descriptor Matching (2026-09)
 
 - `RGLDMMatcher` compared every descriptor pair through `SubsetMatcher`/`SquareDistance`, allocating 16 lists per pair.
   That distance is a nearest-neighbor problem in which every descriptor contributes one 9-D "subset vector" per 3-subset of
@@ -208,14 +208,8 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
   (thresholds in `preferTree`, e.g. radius 2000 on ExpID99). Ball tree, PCA rotation, projection window and a 3-D
   partial-distance index were all measured and are not better: the descriptors' intrinsic dimension is the full dimension.
   `RGLDMMatcher.search` / `-Drgldm.search` selects the strategy, LEGACY keeps the old loop.
-- Multi-consensus RANSAC (`-rmc`): `minInlierRatio` refers to the original candidate count, not the remainder, so ever
-  smaller spurious sets no longer pass. The split stage's `ConsensusSetCriterion` consumes these sets. `RANSAC.runRANSAC`
-  calls mpicbg's fixed-count `ransac` in chunks and stops at N = log(1-p)/log(1-w^m) (`-Dransac.adaptive=false` runs the
-  full `-rit`); same sets within RANSAC noise. Match-stage time is RANSAC on the tiles with many similar-size consensus sets,
-  not descriptor matching.
 - Benchmarks (not in the build): `tools/rgldm-bench.sh` + `rgldm-chart.py` (decision maps `tools/rgldm-decision*.svg`),
-  `tools/match_benchmark.sh` (Spark A/B of the match stage via the pipeline script), `tools/ransac-ab.sh` (RANSAC variants on
-  identical candidates); numbers in `tools/bench-*.tsv` and the benchmark logs on the share. Never judge interest point reads
+  `tools/match_benchmark.sh` (Spark A/B of the match stage via the pipeline script); numbers in `tools/bench-*.tsv` and the benchmark logs on the share. Never judge interest point reads
   through the Mac SMB mount ("Bad file descriptor"); run on a node.
 - Not fixed: `TranslationInvariantLocalCoordinateSystemPointDescriptor.localize(double[])` (FRGLDM) fills 6 of 9 components,
   so every FRGLDM nearest-neighbor query is wrong in the last three dimensions. Since 2017.

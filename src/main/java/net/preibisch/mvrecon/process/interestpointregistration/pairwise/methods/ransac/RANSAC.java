@@ -177,24 +177,15 @@ public class RANSAC
 
 			String lastMessage = "";
 			int j = 0;
-			final int numCandidates = candidates.size();
 
 			do
 			{
 				inliers.clear();
 
-				// minInlierRatio refers to the original candidate set, not to the remainder after removing earlier sets
-				final double ratio = minInlierRatio * numCandidates / candidates.size();
-				if ( ratio > 1 )
-				{
-					lastMessage = "Remaining " + candidates.size() + " candidates cannot hold a consensus set of " + minInlierRatio + " x " + numCandidates;
-					modelFound = false;
-					break;
-				}
-
 				try
 				{
-					modelFound = runRANSAC( model, candidates, inliers, numIterations, maxEpsilon, ratio, maxTrust, filterRansac );
+					// TODO: the inlier-ratio requests a smaller and smaller set of inliers as the candidate set size decreases
+					modelFound = runRANSAC( model, candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust, filterRansac );
 
 					if ( modelFound && inliers.size() >= minNumCorrespondences )
 					{
@@ -270,15 +261,6 @@ public class RANSAC
 
 	}
 
-	/**
-	 * Stop after N = log(1 - 0.999) / log(1 - w^m) iterations, w = best inlier ratio so far, m = model sample size;
-	 * numIterations stays the cap. -Dransac.adaptive=false runs the full count.
-	 */
-	public static boolean adaptiveIterations = !"false".equalsIgnoreCase( System.getProperty( "ransac.adaptive", "true" ) );
-	private static final double LOG_FAILURE_PROBABILITY = Math.log( 1 - 0.999 );
-	private static final int ITERATIONS_PER_CHUNK = 100;
-
-	@SuppressWarnings( { "rawtypes", "unchecked" } )
 	private static boolean runRANSAC(
 			final Model<?> model,
 			final List< PointMatch > candidates,
@@ -289,35 +271,9 @@ public class RANSAC
 			final double maxTrust,
 			final boolean filterRansac ) throws NotEnoughDataPointsException
 	{
-		// mpicbg's ransac() runs a fixed count, so call it in chunks and stop when the iterations done reach N
-		final Model raw = model; // Model<?> cannot call set()/copy() on itself
-		final int m = raw.getMinNumMatches(), chunk = adaptiveIterations ? ITERATIONS_PER_CHUNK : numIterations;
-		final Model best = raw.copy();
-		List< PointMatch > bestInliers = new ArrayList<>();
-		for ( int done = 0; done < numIterations; done += chunk )
-		{
-			final ArrayList< PointMatch > found = new ArrayList<>();
-			if ( raw.ransac( candidates, found, Math.min( chunk, numIterations - done ), maxEpsilon, minInlierRatio ) && found.size() > bestInliers.size() )
-			{
-				bestInliers = found;
-				best.set( raw );
-			}
-			if ( adaptiveIterations && !bestInliers.isEmpty() )
-			{
-				final double w = (double)bestInliers.size() / candidates.size();
-				if ( done + chunk >= LOG_FAILURE_PROBABILITY / Math.log( 1 - Math.pow( w, m ) ) )
-					break;
-			}
-		}
-		if ( bestInliers.isEmpty() )
-			return false;
-		raw.set( best );
-		if ( !filterRansac )
-		{
-			inliers.addAll( bestInliers );
-			return true;
-		}
-		return raw.filter( bestInliers, inliers, maxTrust, m );
+		return filterRansac
+				? model.filterRansac( candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust )
+				: model.ransac( candidates, inliers, numIterations, maxEpsilon, minInlierRatio );
 	}
 
 	public static < P extends PointMatch > List< P > removeInliers( final List< P > candidates, final List< P > matches )
