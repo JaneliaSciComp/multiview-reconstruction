@@ -352,7 +352,10 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 			allIPs.addAll( vipl.getHashMap().values() ) );
 
 		if ( allIPs.isEmpty() )
+		{
+			PackedInterestPointStore.get( baseDir ).commit(); // staged deletes of the last lists still need a commit
 			return;
+		}
 
 		final ForkJoinPool pool = new ForkJoinPool( numThreads );
 		PackedInterestPointStore.get( baseDir ).beginBatch(); // writer-variant saves below stage in memory; commit() at the end
