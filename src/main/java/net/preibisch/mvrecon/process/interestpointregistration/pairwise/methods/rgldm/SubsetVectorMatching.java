@@ -48,282 +48,283 @@ public class SubsetVectorMatching
 {
 	public enum Search { AUTO, FLAT_KDTREE, BLOCKED_BRUTE_FORCE, LEGACY }
 
-	private static final int BLOCK = 4096;
-	private static final int SAMPLE = 256;
+	private static final int BRUTE_FORCE_BLOCK = 4096;
+	private static final int RADIUS_SAMPLE_SIZE = 256;
 
+	/** tree vs brute force, by neighbor count and by the fraction of B inside the search radius (1 = no radius) */
 	private static boolean preferTree( final int numNeighbors, final double inRadiusFraction )
 	{
-		final double maxFraction = switch (numNeighbors) {
+		final double minFractionForTree = switch ( numNeighbors )
+		{
 			case 5  -> 0.55;
 			case 4  -> 0.35;
 			default -> 0.2;
 		};
-		return numNeighbors <= 5 && inRadiusFraction >= maxFraction;
+		return numNeighbors <= 5 && inRadiusFraction >= minFractionForTree;
 	}
 
 	/** @param subsets the neighbor subsets the descriptors were built with, {@link SubsetMatcher#getNeighbors()} */
 	public static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > ArrayList< PointMatchGeneric< I > > match(
-			final List< D > descA, final List< D > descB, final int[][] subsets, final double ratioOfDistance, final double differenceThreshold,
+			final List< D > descsA, final List< D > descsB, final int[][] subsets, final double ratioOfDistance, final double differenceThreshold,
 			final boolean limitSearchRadius, final double searchRadius, final Search search )
 	{
 		if ( search == Search.LEGACY )
-			throw new IllegalArgumentException( "LEGACY is handled by RGLDMMatcher, not by SubsetVectorMatching" );
+			throw new IllegalArgumentException( "LEGACY is handled by RGLDMMatcher" );
 		final ArrayList< PointMatchGeneric< I > > candidates = new ArrayList<>();
-		if ( descA.isEmpty() || descB.size() < 2 )
+		if ( descsA.isEmpty() || descsB.size() < 2 )
 			return candidates;
 
-		final int nA = descA.size();
-		final int C = subsets.length;
+		final int numSubsets = subsets.length;
 		final int numNeighbors = subsets[ 0 ].length;
-		final int dims = descA.get( 0 ).numDimensions();
-		final float[][] vA = subsetVectors( descA, subsets, dims );
-		final float[][] vB = subsetVectors( descB, subsets, dims );
-		final Best best = new Best( nA, C );
+		final int numDims = descsA.get( 0 ).numDimensions();
+		final float[][] vecsA = subsetVectors( descsA, subsets, numDims );
+		final float[][] vecsB = subsetVectors( descsB, subsets, numDims );
+		final BestMatches bestMatches = new BestMatches( descsA.size(), numSubsets );
 
-		if ( !limitSearchRadius )
-		{
-			if ( search == Search.BLOCKED_BRUTE_FORCE || ( search == Search.AUTO && !preferTree( numNeighbors, 1 ) ) )
-				bruteForce( vA, vB, best );
-			else
-				flatTree( vA, vB, best );
-		}
+		if ( limitSearchRadius )
+			withRadius( descsA, descsB, vecsA, vecsB, numNeighbors, searchRadius, search, bestMatches );
+		else if ( search == Search.BLOCKED_BRUTE_FORCE || ( search == Search.AUTO && !preferTree( numNeighbors, 1 ) ) )
+			bruteForce( vecsA, vecsB, bestMatches );
 		else
-			withRadius( descA, descB, vA, vB, numNeighbors, searchRadius, search, best );
+			flatTree( vecsA, vecsB, bestMatches );
 
-		for ( int a = 0; a < nA; ++a )
+		for ( int indexA = 0; indexA < descsA.size(); ++indexA )
 		{
-			final double b = best.best[ a ] / dims;
-			final double s = best.second[ a ] / dims;
-			if ( best.owner[ a ] >= 0 && best.second[ a ] < Double.MAX_VALUE && b < differenceThreshold && b * ratioOfDistance < s )
-				candidates.add( new PointMatchGeneric< I >( descA.get( a ).getBasisPoint(), descB.get( best.owner[ a ] ).getBasisPoint() ) );
+			final double bestDist = bestMatches.bestDist[ indexA ] / numDims;
+			final double secondDist = bestMatches.secondDist[ indexA ] / numDims;
+			if ( bestMatches.bestOwner[ indexA ] >= 0 && bestMatches.secondDist[ indexA ] < Double.MAX_VALUE
+					&& bestDist < differenceThreshold && bestDist * ratioOfDistance < secondDist )
+				candidates.add( new PointMatchGeneric< I >( descsA.get( indexA ).getBasisPoint(), descsB.get( bestMatches.bestOwner[ indexA ] ).getBasisPoint() ) );
 		}
 		return candidates;
 	}
 
 	/** offsets of the chosen neighbors (world coordinates of the descriptor points, as SquareDistance uses), concatenated */
-	private static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > float[][] subsetVectors( final List< D > descs, final int[][] subsets, final int dims )
+	private static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > float[][] subsetVectors(
+			final List< D > descs, final int[][] subsets, final int numDims )
 	{
-		final int C = subsets.length;
-		final int nn = subsets[ 0 ].length;
-		final float[][] v = new float[ descs.size() * C ][ nn * dims ];
-		for ( int i = 0; i < descs.size(); ++i )
-			for ( int s = 0; s < C; ++s )
-				for ( int n = 0; n < nn; ++n )
+		final int numSubsets = subsets.length;
+		final int numNeighbors = subsets[ 0 ].length;
+		final float[][] vecs = new float[ descs.size() * numSubsets ][ numNeighbors * numDims ];
+		for ( int desc = 0; desc < descs.size(); ++desc )
+			for ( int subset = 0; subset < numSubsets; ++subset )
+				for ( int neighbor = 0; neighbor < numNeighbors; ++neighbor )
 				{
-					final double[] offset = descs.get( i ).getDescriptorPoint( subsets[ s ][ n ] ).getW();
-					for ( int d = 0; d < dims; ++d )
-						v[ i * C + s ][ n * dims + d ] = (float)offset[ d ];
+					final double[] offset = descs.get( desc ).getDescriptorPoint( subsets[ subset ][ neighbor ] ).getW();
+					for ( int dim = 0; dim < numDims; ++dim )
+						vecs[ desc * numSubsets + subset ][ neighbor * numDims + dim ] = (float)offset[ dim ];
 				}
-		return v;
+		return vecs;
 	}
 
 	/** running best / second-best B owner per A descriptor */
-	private static final class Best
+	private static final class BestMatches
 	{
-		final double[] best, second;
-		final int[] owner;
-		final int C;
+		final double[] bestDist, secondDist;
+		final int[] bestOwner;
+		final int numSubsets;
 
-		Best( final int nA, final int C )
+		BestMatches( final int numA, final int numSubsets )
 		{
-			this.C = C;
-			best = new double[ nA ];
-			second = new double[ nA ];
-			owner = new int[ nA ];
-			Arrays.fill( best, Double.MAX_VALUE );
-			Arrays.fill( second, Double.MAX_VALUE );
-			Arrays.fill( owner, -1 );
+			this.numSubsets = numSubsets;
+			bestDist = new double[ numA ];
+			secondDist = new double[ numA ];
+			bestOwner = new int[ numA ];
+			Arrays.fill( bestDist, Double.MAX_VALUE );
+			Arrays.fill( secondDist, Double.MAX_VALUE );
+			Arrays.fill( bestOwner, -1 );
 		}
 
-		void fold( final int a, final int b, final double d )
+		void fold( final int indexA, final int ownerB, final double dist )
 		{
-			if ( b == owner[ a ] )
+			if ( ownerB == bestOwner[ indexA ] )
 			{
-				if ( d < best[ a ] )
-					best[ a ] = d;
+				if ( dist < bestDist[ indexA ] )
+					bestDist[ indexA ] = dist;
 			}
-			else if ( d < best[ a ] )
+			else if ( dist < bestDist[ indexA ] )
 			{
-				second[ a ] = best[ a ];
-				best[ a ] = d;
-				owner[ a ] = b;
+				secondDist[ indexA ] = bestDist[ indexA ];
+				bestDist[ indexA ] = dist;
+				bestOwner[ indexA ] = ownerB;
 			}
-			else if ( d < second[ a ] )
-				second[ a ] = d;
+			else if ( dist < secondDist[ indexA ] )
+				secondDist[ indexA ] = dist;
 		}
 
-		void fold( final int a, final FlatKDTree.Query q )
+		void fold( final int indexA, final FlatKDTree.Query query )
 		{
-			final int n = q.size();
-			for ( int t = 0; t < n; ++t )
-				fold( a, q.index( t ) / C, q.squareDistance( t ) );
+			final int found = query.size();
+			for ( int i = 0; i < found; ++i )
+				fold( indexA, query.index( i ) / numSubsets, query.squareDistance( i ) );
 		}
 	}
 
-	/** k = C + 1 suffices: everything closer than the second-best owner's best entry belongs to the best owner (C entries) */
-	private static void flatTree( final float[][] vA, final float[][] vB, final Best best )
+	/** k = numSubsets + 1 suffices: everything closer than the second-best owner's best entry belongs to the best owner (numSubsets entries) */
+	private static void flatTree( final float[][] vecsA, final float[][] vecsB, final BestMatches bestMatches )
 	{
-		final FlatKDTree.Query q = new FlatKDTree( vB ).new Query( best.C + 1 );
-		for ( int i = 0; i < vA.length; ++i )
+		final FlatKDTree.Query query = new FlatKDTree( vecsB ).new Query( bestMatches.numSubsets + 1 );
+		for ( int vec = 0; vec < vecsA.length; ++vec )
 		{
-			q.search( vA[ i ] );
-			best.fold( i / best.C, q );
+			query.search( vecsA[ vec ] );
+			bestMatches.fold( vec / bestMatches.numSubsets, query );
 		}
 	}
 
-	private static void bruteForce( final float[][] vA, final float[][] vB, final Best best )
+	private static void bruteForce( final float[][] vecsA, final float[][] vecsB, final BestMatches bestMatches )
 	{
-		final int C = best.C;
-		final int m = vB.length;
-		final int block = Math.max( C, BLOCK / C * C );
-		final float[][] T = transpose( vB, new float[ vB[ 0 ].length ][ m ], null, m );
-		final float[] dist = new float[ m ];
-		final float[] distB = new float[ m / C ];
-		for ( int a = 0; a < best.best.length; ++a )
+		final int numSubsets = bestMatches.numSubsets;
+		final int numVecsB = vecsB.length;
+		final int blockSize = Math.max( numSubsets, BRUTE_FORCE_BLOCK / numSubsets * numSubsets ); // whole owners per block
+		final float[][] transposedB = transpose( vecsB, new float[ vecsB[ 0 ].length ][ numVecsB ], null, numVecsB );
+		final float[] dists = new float[ numVecsB ];
+		final float[] minDistPerOwner = new float[ numVecsB / numSubsets ];
+		for ( int indexA = 0; indexA < bestMatches.bestDist.length; ++indexA )
 		{
-			Arrays.fill( distB, Float.MAX_VALUE );
-			for ( int lo = 0; lo < m; lo += block )
+			Arrays.fill( minDistPerOwner, Float.MAX_VALUE );
+			for ( int blockStart = 0; blockStart < numVecsB; blockStart += blockSize )
 			{
-				final int hi = Math.min( m, lo + block );
-				for ( int s = 0; s < C; ++s )
+				final int blockEnd = Math.min( numVecsB, blockStart + blockSize );
+				for ( int subset = 0; subset < numSubsets; ++subset )
 				{
-					squaredDistances( vA[ a * C + s ], T, dist, lo, hi );
-					minPerOwner( dist, lo, hi, C, distB );
+					sqDists( vecsA[ indexA * numSubsets + subset ], transposedB, dists, blockStart, blockEnd );
+					minPerOwner( dists, blockStart, blockEnd, numSubsets, minDistPerOwner );
 				}
 			}
-			for ( int b = 0; b < distB.length; ++b )
-				best.fold( a, b, distB[ b ] );
+			for ( int ownerB = 0; ownerB < minDistPerOwner.length; ++ownerB )
+				bestMatches.fold( indexA, ownerB, minDistPerOwner[ ownerB ] );
 		}
 	}
 
-	/** component-major copy of vectors {@code which} (all if null) into {@code target} */
-	private static float[][] transpose( final float[][] v, final float[][] target, final int[] which, final int count )
+	/** component-major copy of the vectors selected by {@code which} (all if null) into {@code target} */
+	private static float[][] transpose( final float[][] vecs, final float[][] target, final int[] which, final int count )
 	{
-		for ( int j = 0; j < count; ++j )
+		for ( int col = 0; col < count; ++col )
 		{
-			final float[] src = v[ which == null ? j : which[ j ] ];
-			for ( int d = 0; d < target.length; ++d )
-				target[ d ][ j ] = src[ d ];
+			final float[] source = vecs[ which == null ? col : which[ col ] ];
+			for ( int dim = 0; dim < target.length; ++dim )
+				target[ dim ][ col ] = source[ dim ];
 		}
 		return target;
 	}
 
-	/** distB[b] = min over the C owner-major slots of b (kept as its own small method: the JIT compiles it much better inline in the a loop) */
-	private static void minPerOwner( final float[] dist, final int from, final int to, final int C, final float[] distB )
+	/** minDistPerOwner[owner] = minimum over the owner's numSubsets consecutive columns (its own method: the JIT compiles it much better than inline in the caller's loop) */
+	private static void minPerOwner( final float[] dists, final int from, final int to, final int numSubsets, final float[] minDistPerOwner )
 	{
-		for ( int j = from, b = from / C; j < to; ++b )
+		for ( int col = from, owner = from / numSubsets; col < to; ++owner )
 		{
-			float min = distB[ b ];
-			for ( int t = 0; t < C; ++t, ++j )
-				if ( dist[ j ] < min )
-					min = dist[ j ];
-			distB[ b ] = min;
+			float min = minDistPerOwner[ owner ];
+			for ( int subset = 0; subset < numSubsets; ++subset, ++col )
+				if ( dists[ col ] < min )
+					min = dists[ col ];
+			minDistPerOwner[ owner ] = min;
 		}
 	}
 
-	/** dist[j] = |q - column j|^2 on [from, to); the loops over j vectorize */
-	private static void squaredDistances( final float[] q, final float[][] T, final float[] dist, final int from, final int to )
+	/** dists[col] = |query - column col|^2 on [from, to); the loops over the columns vectorize */
+	private static void sqDists( final float[] query, final float[][] transposed, final float[] dists, final int from, final int to )
 	{
-		final float q0 = q[ 0 ];
-		final float[] c0 = T[ 0 ];
-		for ( int j = from; j < to; ++j )
+		final float query0 = query[ 0 ];
+		final float[] row0 = transposed[ 0 ];
+		for ( int col = from; col < to; ++col )
 		{
-			final float x = q0 - c0[ j ];
-			dist[ j ] = x * x;
+			final float diff = query0 - row0[ col ];
+			dists[ col ] = diff * diff;
 		}
-		for ( int d = 1; d < T.length; ++d )
+		for ( int dim = 1; dim < transposed.length; ++dim )
 		{
-			final float qd = q[ d ];
-			final float[] cd = T[ d ];
-			for ( int j = from; j < to; ++j )
+			final float queryVal = query[ dim ];
+			final float[] row = transposed[ dim ];
+			for ( int col = from; col < to; ++col )
 			{
-				final float x = qd - cd[ j ];
-				dist[ j ] += x * x;
+				final float diff = queryVal - row[ col ];
+				dists[ col ] += diff * diff;
 			}
 		}
 	}
 
-	private static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > void withRadius( final List< D > descA, final List< D > descB,
-			final float[][] vA, final float[][] vB, final int numNeighbors, final double radius, final Search search, final Best best )
+	private static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > void withRadius( final List< D > descsA, final List< D > descsB,
+			final float[][] vecsA, final float[][] vecsB, final int numNeighbors, final double radius, final Search search, final BestMatches bestMatches )
 	{
-		final int nA = descA.size();
-		final int nB = descB.size();
-		final int C = best.C;
-		final int dim = vB[ 0 ].length;
+		final int numA = descsA.size();
+		final int numB = descsB.size();
+		final int numSubsets = bestMatches.numSubsets;
+		final int vecLen = vecsB[ 0 ].length;
 
 		// 3-D tree over B's basis points (RealLocalizable over world coordinates, like Point.distance in the legacy loop)
-		final ArrayList< I > basisB = new ArrayList<>( nB );
-		final ArrayList< Integer > ids = new ArrayList<>( nB );
-		for ( int b = 0; b < nB; ++b )
+		final ArrayList< I > basisPointsB = new ArrayList<>( numB );
+		final ArrayList< Integer > indicesB = new ArrayList<>( numB );
+		for ( int indexB = 0; indexB < numB; ++indexB )
 		{
-			basisB.add( descB.get( b ).getBasisPoint() );
-			ids.add( b );
+			basisPointsB.add( descsB.get( indexB ).getBasisPoint() );
+			indicesB.add( indexB );
 		}
-		final RadiusNeighborSearchOnKDTree< Integer > rs = new RadiusNeighborSearchOnKDTree<>( new KDTree<>( ids, basisB ) );
+		final RadiusNeighborSearchOnKDTree< Integer > radiusSearch = new RadiusNeighborSearchOnKDTree<>( new KDTree<>( indicesB, basisPointsB ) );
 
-		Search s = search;
-		if ( s == Search.AUTO )
+		Search strategy = search;
+		if ( strategy == Search.AUTO ) // sample the in-radius fraction of B to decide
 		{
-			long inRadius = 0;
-			final int step = Math.max( 1, nA / SAMPLE );
-			int sampled = 0;
-			for ( int a = 0; a < nA; a += step, ++sampled )
+			long numInRadius = 0;
+			final int sampleStep = Math.max( 1, numA / RADIUS_SAMPLE_SIZE );
+			int numSampled = 0;
+			for ( int indexA = 0; indexA < numA; indexA += sampleStep, ++numSampled )
 			{
-				rs.search( descA.get( a ).getBasisPoint(), radius, false );
-				inRadius += rs.numNeighbors();
+				radiusSearch.search( descsA.get( indexA ).getBasisPoint(), radius, false );
+				numInRadius += radiusSearch.numNeighbors();
 			}
-			s = preferTree( numNeighbors, (double)inRadius / ( (double)sampled * nB ) ) ? Search.FLAT_KDTREE : Search.BLOCKED_BRUTE_FORCE;
+			strategy = preferTree( numNeighbors, (double)numInRadius / ( (double)numSampled * numB ) ) ? Search.FLAT_KDTREE : Search.BLOCKED_BRUTE_FORCE;
 		}
 
-		if ( s == Search.BLOCKED_BRUTE_FORCE )
+		if ( strategy == Search.FLAT_KDTREE ) // tree over all of B, entries of out-of-radius owners filtered per query
 		{
-			final float[][] scratch = new float[ dim ][ nB * C ];
-			final float[] dist = new float[ nB * C ];
-			final int[] columns = new int[ nB * C ];
-			final int[] owners = new int[ nB ];
-			for ( int a = 0; a < nA; ++a )
+			final FlatKDTree.Query query = new FlatKDTree( vecsB ).new Query( numSubsets + 1 );
+			final int[] inRadiusStamp = new int[ numB ]; // holds the A index for which owner B was last inside the radius
+			final int[] currentA = { -1 };
+			Arrays.fill( inRadiusStamp, -1 );
+			final IntPredicate ownerInRadius = vec -> inRadiusStamp[ vec / numSubsets ] == currentA[ 0 ];
+			for ( int indexA = 0; indexA < numA; ++indexA )
 			{
-				rs.search( descA.get( a ).getBasisPoint(), radius, false );
-				final int n = rs.numNeighbors();
-				if ( n < 2 )
+				radiusSearch.search( descsA.get( indexA ).getBasisPoint(), radius, false );
+				final int numInRadiusB = radiusSearch.numNeighbors();
+				if ( numInRadiusB < 2 )
 					continue;
-				for ( int t = 0; t < n; ++t )
+				for ( int neighbor = 0; neighbor < numInRadiusB; ++neighbor )
+					inRadiusStamp[ radiusSearch.getSampler( neighbor ).get() ] = indexA;
+				currentA[ 0 ] = indexA;
+				for ( int subset = 0; subset < numSubsets; ++subset )
 				{
-					owners[ t ] = rs.getSampler( t ).get();
-					for ( int k = 0; k < C; ++k )
-						columns[ t * C + k ] = owners[ t ] * C + k;
-				}
-				transpose( vB, scratch, columns, n * C );
-				for ( int sub = 0; sub < C; ++sub )
-				{
-					squaredDistances( vA[ a * C + sub ], scratch, dist, 0, n * C );
-					for ( int t = 0, j = 0; t < n; ++t )
-						for ( int k = 0; k < C; ++k, ++j )
-							best.fold( a, owners[ t ], dist[ j ] );
+					query.search( vecsA[ indexA * numSubsets + subset ], ownerInRadius );
+					bestMatches.fold( indexA, query );
 				}
 			}
+			return;
 		}
-		else
+
+		// gather the in-radius B points and run the vectorized brute force over just those
+		final float[][] gatheredB = new float[ vecLen ][ numB * numSubsets ];
+		final float[] dists = new float[ numB * numSubsets ];
+		final int[] gatheredCols = new int[ numB * numSubsets ];
+		final int[] gatheredOwners = new int[ numB ];
+		for ( int indexA = 0; indexA < numA; ++indexA )
 		{
-			final FlatKDTree.Query q = new FlatKDTree( vB ).new Query( C + 1 );
-			final int[] stamp = new int[ nB ];
-			final int[] current = { -1 };
-			Arrays.fill( stamp, -1 );
-			final IntPredicate inRadius = v -> stamp[ v / C ] == current[ 0 ];
-			for ( int a = 0; a < nA; ++a )
+			radiusSearch.search( descsA.get( indexA ).getBasisPoint(), radius, false );
+			final int numInRadiusB = radiusSearch.numNeighbors();
+			if ( numInRadiusB < 2 )
+				continue;
+			for ( int neighbor = 0; neighbor < numInRadiusB; ++neighbor )
 			{
-				rs.search( descA.get( a ).getBasisPoint(), radius, false );
-				final int n = rs.numNeighbors();
-				if ( n < 2 )
-					continue;
-				for ( int t = 0; t < n; ++t )
-					stamp[ rs.getSampler( t ).get() ] = a;
-				current[ 0 ] = a;
-				for ( int sub = 0; sub < C; ++sub )
-				{
-					q.search( vA[ a * C + sub ], inRadius );
-					best.fold( a, q );
-				}
+				gatheredOwners[ neighbor ] = radiusSearch.getSampler( neighbor ).get();
+				for ( int subset = 0; subset < numSubsets; ++subset )
+					gatheredCols[ neighbor * numSubsets + subset ] = gatheredOwners[ neighbor ] * numSubsets + subset;
+			}
+			final int numCols = numInRadiusB * numSubsets;
+			transpose( vecsB, gatheredB, gatheredCols, numCols );
+			for ( int subset = 0; subset < numSubsets; ++subset )
+			{
+				sqDists( vecsA[ indexA * numSubsets + subset ], gatheredB, dists, 0, numCols );
+				for ( int neighbor = 0, col = 0; neighbor < numInRadiusB; ++neighbor )
+					for ( int subB = 0; subB < numSubsets; ++subB, ++col )
+						bestMatches.fold( indexA, gatheredOwners[ neighbor ], dists[ col ] );
 			}
 		}
 	}

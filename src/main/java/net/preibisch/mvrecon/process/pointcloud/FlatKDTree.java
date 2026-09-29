@@ -33,94 +33,97 @@ public class FlatKDTree
 {
 	private static final int LEAF_SIZE = 32;
 
-	private final int dim;
-	private final float[][] coords; // coords[ d ][ slot ], slots permuted so each leaf is contiguous
-	private final int[] index;      // original vector index per slot
-	private final int[] splitDim, left, right, from, to; // per node; left < 0 marks a leaf
+	private final int numDims;
+	private final float[][] coords; // coords[ dimension ][ slot ], slots permuted so each leaf is contiguous
+	private final int[] vecIdx;     // original vector index per slot
+	private final int[] splitDim, childLeft, childRight, rangeFrom, rangeTo; // per node; childLeft < 0 marks a leaf
 	private final float[] splitValue;
 	private int numNodes = 0;
 
 	public FlatKDTree( final float[][] vectors )
 	{
-		final int n = vectors.length;
-		if ( n == 0 )
+		final int numVecs = vectors.length;
+		if ( numVecs == 0 )
 			throw new IllegalArgumentException( "FlatKDTree needs at least one vector" );
-		dim = vectors[ 0 ].length;
-		index = new int[ n ];
-		for ( int i = 0; i < n; ++i )
-			index[ i ] = i;
+		numDims = vectors[ 0 ].length;
+		vecIdx = new int[ numVecs ];
+		for ( int i = 0; i < numVecs; ++i )
+			vecIdx[ i ] = i;
 
-		final int maxNodes = 4 * ( n / LEAF_SIZE + 2 ); // median splits: leaves hold > LEAF_SIZE/2
+		final int maxNodes = 4 * ( numVecs / LEAF_SIZE + 2 ); // median splits: leaves hold > LEAF_SIZE/2
 		splitDim = new int[ maxNodes ];
-		left = new int[ maxNodes ];
-		right = new int[ maxNodes ];
-		from = new int[ maxNodes ];
-		to = new int[ maxNodes ];
+		childLeft = new int[ maxNodes ];
+		childRight = new int[ maxNodes ];
+		rangeFrom = new int[ maxNodes ];
+		rangeTo = new int[ maxNodes ];
 		splitValue = new float[ maxNodes ];
-		build( vectors, 0, n );
+		build( vectors, 0, numVecs );
 
-		coords = new float[ dim ][ n ];
-		for ( int slot = 0; slot < n; ++slot )
-			for ( int d = 0; d < dim; ++d )
-				coords[ d ][ slot ] = vectors[ index[ slot ] ][ d ];
+		coords = new float[ numDims ][ numVecs ];
+		for ( int slot = 0; slot < numVecs; ++slot )
+			for ( int dim = 0; dim < numDims; ++dim )
+				coords[ dim ][ slot ] = vectors[ vecIdx[ slot ] ][ dim ];
 	}
 
-	private int build( final float[][] v, final int lo, final int hi )
+	private int build( final float[][] vectors, final int from, final int to )
 	{
 		final int node = numNodes++;
-		from[ node ] = lo;
-		to[ node ] = hi;
-		left[ node ] = -1;
-		if ( hi - lo <= LEAF_SIZE )
+		rangeFrom[ node ] = from;
+		rangeTo[ node ] = to;
+		childLeft[ node ] = -1;
+		if ( to - from <= LEAF_SIZE )
 			return node;
 
 		// split the dimension of largest extent at its median
-		final float[] min = new float[ dim ], max = new float[ dim ];
+		final float[] min = new float[ numDims ], max = new float[ numDims ];
 		Arrays.fill( min, Float.MAX_VALUE );
 		Arrays.fill( max, -Float.MAX_VALUE );
-		for ( int i = lo; i < hi; ++i )
-			for ( int d = 0; d < dim; ++d )
+		for ( int slot = from; slot < to; ++slot )
+			for ( int dim = 0; dim < numDims; ++dim )
 			{
-				min[ d ] = Math.min( min[ d ], v[ index[ i ] ][ d ] );
-				max[ d ] = Math.max( max[ d ], v[ index[ i ] ][ d ] );
+				min[ dim ] = Math.min( min[ dim ], vectors[ vecIdx[ slot ] ][ dim ] );
+				max[ dim ] = Math.max( max[ dim ], vectors[ vecIdx[ slot ] ][ dim ] );
 			}
-		int sd = 0;
-		for ( int d = 1; d < dim; ++d )
-			if ( max[ d ] - min[ d ] > max[ sd ] - min[ sd ] )
-				sd = d;
+		int widestDim = 0;
+		for ( int dim = 1; dim < numDims; ++dim )
+			if ( max[ dim ] - min[ dim ] > max[ widestDim ] - min[ widestDim ] )
+				widestDim = dim;
 
-		final int mid = ( lo + hi ) >>> 1;
-		select( v, lo, hi - 1, mid, sd );
-		splitDim[ node ] = sd;
-		splitValue[ node ] = v[ index[ mid ] ][ sd ];
-		left[ node ] = build( v, lo, mid );
-		right[ node ] = build( v, mid, hi );
+		final int median = ( from + to ) >>> 1;
+		select( vectors, from, to - 1, median, widestDim );
+		splitDim[ node ] = widestDim;
+		splitValue[ node ] = vectors[ vecIdx[ median ] ][ widestDim ];
+		childLeft[ node ] = build( vectors, from, median );
+		childRight[ node ] = build( vectors, median, to );
 		return node;
 	}
 
-	/** Hoare selection on index[l..r]: afterwards index[k] is the k-th smallest along d, smaller left, larger right */
-	private void select( final float[][] v, int l, int r, final int k, final int d )
+	/** Hoare selection on vecIdx[left..right]: afterwards slot k holds the k-th smallest value along the dimension, smaller left, larger right */
+	private void select( final float[][] vectors, int left, int right, final int k, final int dim )
 	{
-		while ( l < r )
+		while ( left < right )
 		{
-			final float pivot = v[ index[ ( l + r ) >>> 1 ] ][ d ];
-			int i = l, j = r;
+			final float pivot = vectors[ vecIdx[ ( left + right ) >>> 1 ] ][ dim ];
+			int i = left, j = right;
 			while ( i <= j )
 			{
-				while ( v[ index[ i ] ][ d ] < pivot )
+				while ( vectors[ vecIdx[ i ] ][ dim ] < pivot )
 					++i;
-				while ( v[ index[ j ] ][ d ] > pivot )
+				while ( vectors[ vecIdx[ j ] ][ dim ] > pivot )
 					--j;
 				if ( i <= j )
 				{
-					final int t = index[ i ]; index[ i ] = index[ j ]; index[ j ] = t;
-					++i; --j;
+					final int swap = vecIdx[ i ];
+					vecIdx[ i ] = vecIdx[ j ];
+					vecIdx[ j ] = swap;
+					++i;
+					--j;
 				}
 			}
 			if ( k <= j )
-				r = j;
+				right = j;
 			else if ( k >= i )
-				l = i;
+				left = i;
 			else
 				return;
 		}
@@ -130,18 +133,18 @@ public class FlatKDTree
 	public final class Query
 	{
 		private final int k;
-		private final float[] dist;
-		private final float[] offset = new float[ dim ];
-		private final float[] buf = new float[ LEAF_SIZE ];
-		private final int[] found;
-		private float[] q;
+		private final float[] sqDists;
+		private final int[] foundIdx;
+		private final float[] cellOffset = new float[ numDims ];
+		private final float[] leafDists = new float[ LEAF_SIZE ];
+		private float[] query;
 		private IntPredicate accept;
 
 		public Query( final int k )
 		{
 			this.k = k;
-			dist = new float[ k ];
-			found = new int[ k ];
+			sqDists = new float[ k ];
+			foundIdx = new int[ k ];
 		}
 
 		public void search( final float[] query ) { search( query, null ); }
@@ -149,82 +152,82 @@ public class FlatKDTree
 		/** @param acceptIndex optional filter on the original vector index */
 		public void search( final float[] query, final IntPredicate acceptIndex )
 		{
-			q = query;
-			accept = acceptIndex;
-			Arrays.fill( dist, Float.MAX_VALUE );
-			Arrays.fill( found, -1 );
-			Arrays.fill( offset, 0f );
+			this.query = query;
+			this.accept = acceptIndex;
+			Arrays.fill( sqDists, Float.MAX_VALUE );
+			Arrays.fill( foundIdx, -1 );
+			Arrays.fill( cellOffset, 0f );
 			descend( 0, 0f );
 		}
 
 		public int size()
 		{
-			int n = 0;
-			while ( n < k && found[ n ] >= 0 )
-				++n;
-			return n;
+			int found = 0;
+			while ( found < k && foundIdx[ found ] >= 0 )
+				++found;
+			return found;
 		}
 
-		public float squareDistance( final int i ) { return dist[ i ]; }
-		public int index( final int i ) { return found[ i ]; }
+		public float squareDistance( final int i ) { return sqDists[ i ]; }
+		public int index( final int i ) { return foundIdx[ i ]; }
 
-		private void descend( final int node, final float cellDistance )
+		private void descend( final int node, final float cellDist )
 		{
-			if ( left[ node ] < 0 )
+			if ( childLeft[ node ] < 0 )
 			{
 				scanLeaf( node );
 				return;
 			}
-			final int d = splitDim[ node ];
-			final float diff = q[ d ] - splitValue[ node ];
-			descend( diff < 0 ? left[ node ] : right[ node ], cellDistance );
+			final int dim = splitDim[ node ];
+			final float diff = query[ dim ] - splitValue[ node ];
+			descend( diff < 0 ? childLeft[ node ] : childRight[ node ], cellDist );
 
-			// the far cell lies beyond the split plane in d: its lower bound replaces this dimension's offset
-			final float old = offset[ d ];
-			final float gap = Math.max( Math.abs( diff ), old );
-			final float farDistance = cellDistance - old * old + gap * gap;
-			if ( farDistance < dist[ k - 1 ] )
+			// the far cell lies beyond the split plane in this dimension: its lower bound replaces the dimension's offset
+			final float oldOffset = cellOffset[ dim ];
+			final float gap = Math.max( Math.abs( diff ), oldOffset );
+			final float farDist = cellDist - oldOffset * oldOffset + gap * gap;
+			if ( farDist < sqDists[ k - 1 ] )
 			{
-				offset[ d ] = gap;
-				descend( diff < 0 ? right[ node ] : left[ node ], farDistance );
-				offset[ d ] = old;
+				cellOffset[ dim ] = gap;
+				descend( diff < 0 ? childRight[ node ] : childLeft[ node ], farDist );
+				cellOffset[ dim ] = oldOffset;
 			}
 		}
 
 		private void scanLeaf( final int node )
 		{
-			final int lo = from[ node ];
-			final int n = to[ node ] - lo;
-			final float q0 = q[ 0 ];
-			final float[] c0 = coords[ 0 ];
-			for ( int j = 0; j < n; ++j )
+			final int firstSlot = rangeFrom[ node ];
+			final int count = rangeTo[ node ] - firstSlot;
+			final float query0 = query[ 0 ];
+			final float[] coords0 = coords[ 0 ];
+			for ( int j = 0; j < count; ++j )
 			{
-				final float x = q0 - c0[ lo + j ];
-				buf[ j ] = x * x;
+				final float diff = query0 - coords0[ firstSlot + j ];
+				leafDists[ j ] = diff * diff;
 			}
-			for ( int d = 1; d < dim; ++d ) // vectorized: one component of all leaf vectors per pass
+			for ( int dim = 1; dim < numDims; ++dim ) // vectorized: one component of all leaf vectors per pass
 			{
-				final float qd = q[ d ];
-				final float[] cd = coords[ d ];
-				for ( int j = 0; j < n; ++j )
+				final float queryValue = query[ dim ];
+				final float[] coordRow = coords[ dim ];
+				for ( int j = 0; j < count; ++j )
 				{
-					final float x = qd - cd[ lo + j ];
-					buf[ j ] += x * x;
+					final float diff = queryValue - coordRow[ firstSlot + j ];
+					leafDists[ j ] += diff * diff;
 				}
 			}
-			for ( int j = 0; j < n; ++j )
+			for ( int j = 0; j < count; ++j )
 			{
-				final float dd = buf[ j ];
-				if ( dd >= dist[ k - 1 ] || ( accept != null && !accept.test( index[ lo + j ] ) ) )
+				final float sqDist = leafDists[ j ];
+				if ( sqDist >= sqDists[ k - 1 ] || ( accept != null && !accept.test( vecIdx[ firstSlot + j ] ) ) )
 					continue;
-				int t = k - 1;
-				for ( ; t > 0 && dist[ t - 1 ] > dd; --t )
+				int insertAt = k - 1;
+				for ( ; insertAt > 0 && sqDists[ insertAt - 1 ] > sqDist; --insertAt )
 				{
-					dist[ t ] = dist[ t - 1 ];
-					found[ t ] = found[ t - 1 ];
+					sqDists[ insertAt ] = sqDists[ insertAt - 1 ];
+					foundIdx[ insertAt ] = foundIdx[ insertAt - 1 ];
 				}
-				dist[ t ] = dd;
-				found[ t ] = index[ lo + j ];
+				sqDists[ insertAt ] = sqDist;
+				foundIdx[ insertAt ] = vecIdx[ firstSlot + j ];
 			}
 		}
 	}
