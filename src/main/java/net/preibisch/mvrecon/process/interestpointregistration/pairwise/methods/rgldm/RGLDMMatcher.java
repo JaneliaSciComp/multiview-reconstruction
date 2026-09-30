@@ -40,9 +40,6 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.similarity.Squar
 
 public class RGLDMMatcher< I extends InterestPoint >
 {
-	/** strategy for comparing descriptors (default AUTO); override with -Drgldm.search=LEGACY|FLAT_KDTREE|BLOCKED_BRUTE_FORCE */
-	public static SubsetVectorMatching.Search search = SubsetVectorMatching.Search.valueOf( System.getProperty( "rgldm.search", "AUTO" ).toUpperCase() );
-
 	public ArrayList< PointMatchGeneric< I > > extractCorrespondenceCandidates( 
 			final List< I > nodeListA,
 			final List< I > nodeListB,
@@ -53,7 +50,7 @@ public class RGLDMMatcher< I extends InterestPoint >
 			final boolean limitSearchRadius,
 			final double searchRadius )
 	{
-		return extractCorrespondenceCandidates( nodeListA, nodeListB, numNeighbors, redundancy, ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius, search );
+		return extractCorrespondenceCandidates( nodeListA, nodeListB, numNeighbors, redundancy, ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius, RGLDMParameters.defaultSearch );
 	}
 
 	public ArrayList< PointMatchGeneric< I > > extractCorrespondenceCandidates( 
@@ -65,7 +62,7 @@ public class RGLDMMatcher< I extends InterestPoint >
 			final double differenceThreshold,
 			final boolean limitSearchRadius,
 			final double searchRadius,
-			final SubsetVectorMatching.Search search )
+			final DescriptorSearch search )
 	{
 		/* create KDTrees */	
 		final KDTree< I > treeA = new KDTree< I >( nodeListA, nodeListA );
@@ -80,7 +77,7 @@ public class RGLDMMatcher< I extends InterestPoint >
 		final ArrayList< SimplePointDescriptor< I > > descriptorsA = createSimplePointDescriptors( treeA, nodeListA, numRequiredNeighbors, matcher, similarityMeasure );
 		final ArrayList< SimplePointDescriptor< I > > descriptorsB = createSimplePointDescriptors( treeB, nodeListB, numRequiredNeighbors, matcher, similarityMeasure );
 
-		if ( search == SubsetVectorMatching.Search.LEGACY )
+		if ( search == DescriptorSearch.LEGACY )
 			return findCorrespondingDescriptors( descriptorsA, descriptorsB, ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius );
 		else
 			return SubsetVectorMatching.match( descriptorsA, descriptorsB, matcher.getNeighbors(), ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius, search );

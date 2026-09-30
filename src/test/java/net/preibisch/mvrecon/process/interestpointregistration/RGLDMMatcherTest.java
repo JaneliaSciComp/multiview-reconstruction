@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMMatcher;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.SubsetVectorMatching.Search;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.DescriptorSearch;
 
 /**
  * The fast RGLDM search paths must return exactly the candidate set of the legacy double loop, with and without a
@@ -86,11 +86,11 @@ public class RGLDMMatcherTest
 			for ( final double radius : radii )
 			{
 				final boolean limit = radius > 0;
-				final Set< String > legacy = pairs( matcher.extractCorrespondenceCandidates( a, b, cfg[ 0 ], cfg[ 1 ], 3, Double.MAX_VALUE, limit, radius, Search.LEGACY ) );
+				final Set< String > legacy = pairs( matcher.extractCorrespondenceCandidates( a, b, cfg[ 0 ], cfg[ 1 ], 3, Double.MAX_VALUE, limit, radius, DescriptorSearch.LEGACY ) );
 				final String what = "neighbors=" + cfg[ 0 ] + " redundancy=" + cfg[ 1 ] + " radius=" + radius;
 
 				assertTrue( legacy.size() > ( limit ? 5 : 30 ), what + ": legacy found only " + legacy.size() + " candidates, test data is broken" );
-				for ( final Search s : new Search[] { Search.FLAT_KDTREE, Search.BLOCKED_BRUTE_FORCE, Search.AUTO } )
+				for ( final DescriptorSearch s : new DescriptorSearch[] { DescriptorSearch.FLAT_KDTREE, DescriptorSearch.BLOCKED_BRUTE_FORCE, DescriptorSearch.AUTO } )
 					assertEquals( legacy, pairs( matcher.extractCorrespondenceCandidates( a, b, cfg[ 0 ], cfg[ 1 ], 3, Double.MAX_VALUE, limit, radius, s ) ), what + " " + s );
 			}
 	}

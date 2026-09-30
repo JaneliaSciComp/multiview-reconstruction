@@ -23,7 +23,6 @@
 package net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm;
 
 import mpicbg.models.Model;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.SubsetVectorMatching.Search;
 
 public class RGLDMParameters
 {
@@ -35,13 +34,28 @@ public class RGLDMParameters
 
 	public static boolean defaultLimitSearchRadius = false;
 	public static double defaultSearchRadius = 100;
-	public static Search defaultSearch = RGLDMMatcher.search; // AUTO unless -Drgldm.search says otherwise
+	/** default descriptor search, AUTO unless -Drgldm.search names another {@link DescriptorSearch} */
+	public static DescriptorSearch defaultSearch = parseDefaultSearch();
+
+	private static DescriptorSearch parseDefaultSearch()
+	{
+		final String value = System.getProperty( "rgldm.search", "AUTO" );
+		try
+		{
+			return DescriptorSearch.valueOf( value.trim().toUpperCase() );
+		}
+		catch ( final IllegalArgumentException e )
+		{
+			System.err.println( "WARNING: unknown rgldm.search='" + value + "', using AUTO" );
+			return DescriptorSearch.AUTO;
+		}
+	}
 
 	protected final boolean limitSearchRadius;
 	protected final double searchRadius;
 	protected final double dt, rod;
 	protected final int nn, re;
-	protected final Search search;
+	protected final DescriptorSearch search;
 
 	private Model< ? > model = null;
 	public Model< ? > getModel() { return model.copy(); }
@@ -78,7 +92,7 @@ public class RGLDMParameters
 			final double searchRadius,
 			final int numNeighbors,
 			final int redundancy,
-			final Search search )
+			final DescriptorSearch search )
 	{
 		this.model = model;
 		this.dt = differenceThreshold;
@@ -96,5 +110,5 @@ public class RGLDMParameters
 	public double getRatioOfDistance() { return rod; }
 	public int getNumNeighbors() { return nn; }
 	public int getRedundancy() { return re; }
-	public Search getSearch() { return search; }
+	public DescriptorSearch getSearch() { return search; }
 }

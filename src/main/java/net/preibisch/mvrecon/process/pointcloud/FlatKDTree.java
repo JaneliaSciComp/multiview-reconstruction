@@ -196,7 +196,7 @@ public class FlatKDTree
 	{
 		final int firstSlot = rangeFrom[ node ];
 		final int count = rangeTo[ node ] - firstSlot;
-		squaredDistances( query, coords, firstSlot, firstSlot + count, leafDists );
+		ComponentMajor.squaredDistances( query, coords, firstSlot, firstSlot + count, leafDists );
 		for ( int j = 0; j < count; ++j )
 		{
 			final float sqDist = leafDists[ j ];
@@ -210,32 +210,6 @@ public class FlatKDTree
 			}
 			sqDists[ insertAt ] = sqDist;
 			foundIdx[ insertAt ] = vecIdx[ firstSlot + j ];
-		}
-	}
-
-	/**
-	 * out[ i ] = |query - column (from + i)|^2 for the columns [from, to) of a component-major matrix
-	 * ({@code matrix[ dimension ][ column ]}); the loops over the columns vectorize.
-	 */
-	public static void squaredDistances( final float[] query, final float[][] matrix, final int from, final int to, final float[] out )
-	{
-		final int count = to - from;
-		final float query0 = query[ 0 ];
-		final float[] row0 = matrix[ 0 ];
-		for ( int i = 0; i < count; ++i )
-		{
-			final float diff = query0 - row0[ from + i ];
-			out[ i ] = diff * diff;
-		}
-		for ( int dim = 1; dim < matrix.length; ++dim )
-		{
-			final float queryVal = query[ dim ];
-			final float[] row = matrix[ dim ];
-			for ( int i = 0; i < count; ++i )
-			{
-				final float diff = queryVal - row[ from + i ];
-				out[ i ] += diff * diff;
-			}
 		}
 	}
 }

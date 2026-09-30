@@ -38,7 +38,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewId;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.SubsetVectorMatching.Search;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.DescriptorSearch;
 
 /**
  * Redundant Geometric Local Descriptor Matching (RGLDM)
@@ -50,7 +50,7 @@ public class RGLDMGUI extends PairwiseGUI
 {
 	public static int defaultModel = 2;
 	public static final String[] searchChoices = { "Automatic", "Flat KD-tree", "Blocked brute force", "Legacy" };
-	public static final Search[] searchValues = { Search.AUTO, Search.FLAT_KDTREE, Search.BLOCKED_BRUTE_FORCE, Search.LEGACY };
+	public static final DescriptorSearch[] searchValues = { DescriptorSearch.AUTO, DescriptorSearch.FLAT_KDTREE, DescriptorSearch.BLOCKED_BRUTE_FORCE, DescriptorSearch.LEGACY };
 	public static int defaultSearch = 0;
 	public static boolean defaultRegularize = true;
 
@@ -114,7 +114,7 @@ public class RGLDMGUI extends PairwiseGUI
 		final boolean limitSearchRadius = RGLDMParameters.defaultLimitSearchRadius = gd.getNextBoolean();
 		final double searchRadius = RGLDMParameters.defaultSearchRadius = gd.getNextNumber();
 		defaultSearch = gd.getNextChoiceIndex();
-		final Search search = searchValues[ defaultSearch ];
+		final DescriptorSearch search = searchValues[ defaultSearch ];
 		final RANSACParameters rp = parseRansacQuery( gd );
 		if ( rp == null )
 			return false;
@@ -161,7 +161,7 @@ public class RGLDMGUI extends PairwiseGUI
 		p.put( "significance", Double.toString( RGLDMParameters.ratioOfDistance ) );
 		if ( RGLDMParameters.defaultLimitSearchRadius )
 			p.put( "searchRadius", Double.toString( RGLDMParameters.defaultSearchRadius ) );
-		if ( searchValues[ defaultSearch ] != Search.AUTO )
+		if ( searchValues[ defaultSearch ] != DescriptorSearch.AUTO )
 			p.put( "descriptorSearch", searchValues[ defaultSearch ].name() );
 		putRansacParams( p, ransacParams );
 		return p;

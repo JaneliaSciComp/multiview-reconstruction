@@ -31,6 +31,7 @@ import net.imglib2.KDTree;
 import net.imglib2.neighborsearch.RadiusNeighborSearchOnKDTree;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.process.pointcloud.ComponentMajor;
 import net.preibisch.mvrecon.process.pointcloud.FlatKDTree;
 import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.AbstractPointDescriptor;
 import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.SubsetMatcher;
@@ -46,8 +47,6 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.SubsetMa
  */
 public class SubsetVectorMatching
 {
-	public enum Search { AUTO, FLAT_KDTREE, BLOCKED_BRUTE_FORCE, LEGACY }
-
 	private static final int BRUTE_FORCE_BLOCK = 4096;
 	private static final int RADIUS_SAMPLE_SIZE = 256;
 
@@ -66,9 +65,9 @@ public class SubsetVectorMatching
 	/** @param subsets the neighbor subsets the descriptors were built with, {@link SubsetMatcher#getNeighbors()} */
 	public static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > ArrayList< PointMatchGeneric< I > > match(
 			final List< D > descsA, final List< D > descsB, final int[][] subsets, final double ratioOfDistance, final double differenceThreshold,
-			final boolean limitSearchRadius, final double searchRadius, final Search search )
+			final boolean limitSearchRadius, final double searchRadius, final DescriptorSearch search )
 	{
-		if ( search == Search.LEGACY )
+		if ( search == DescriptorSearch.LEGACY )
 			throw new IllegalArgumentException( "LEGACY is handled by RGLDMMatcher" );
 		final ArrayList< PointMatchGeneric< I > > candidates = new ArrayList<>();
 		if ( descsA.isEmpty() || descsB.size() < 2 )
@@ -99,7 +98,7 @@ public class SubsetVectorMatching
 			}
 			final RadiusNeighborSearchOnKDTree< Integer > radiusSearch = new RadiusNeighborSearchOnKDTree<>( new KDTree<>( indicesB, basisPointsB ) );
 
-			final double inRadiusFraction = ( search == Search.AUTO ) ? sampleInRadiusFraction( descsA, descsB.size(), radiusSearch, searchRadius ) : 1.0;
+			final double inRadiusFraction = ( search == DescriptorSearch.AUTO ) ? sampleInRadiusFraction( descsA, descsB.size(), radiusSearch, searchRadius ) : 1.0;
 			final SubsetSearch searcher = createSearch( search, numNeighbors, inRadiusFraction, vecsA, vecsB, numSubsets );
 			final int[] ownersB = new int[ descsB.size() ];
 			for ( int indexA = 0; indexA < descsA.size(); ++indexA )
@@ -125,10 +124,10 @@ public class SubsetVectorMatching
 		return candidates;
 	}
 
-	private static SubsetSearch createSearch( final Search search, final int numNeighbors, final double inRadiusFraction,
+	private static SubsetSearch createSearch( final DescriptorSearch search, final int numNeighbors, final double inRadiusFraction,
 			final float[][] vecsA, final float[][] vecsB, final int numSubsets )
 	{
-		final boolean tree = ( search == Search.FLAT_KDTREE ) || ( search == Search.AUTO && preferTree( numNeighbors, inRadiusFraction ) );
+		final boolean tree = ( search == DescriptorSearch.FLAT_KDTREE ) || ( search == DescriptorSearch.AUTO && preferTree( numNeighbors, inRadiusFraction ) );
 		return tree ? new FlatTreeSearch( vecsA, vecsB, numSubsets ) : new BruteForceSearch( vecsA, vecsB, numSubsets );
 	}
 
@@ -291,7 +290,7 @@ public class SubsetVectorMatching
 		private void sweepAll( final int indexA, final BestMatches out )
 		{
 			if ( transposedB == null )
-				transposedB = transpose( vecsB, new float[ vecLen ][ numVecsB ], null, numVecsB );
+				transposedB = ComponentMajor.transpose( vecsB, new float[ vecLen ][ numVecsB ], null, numVecsB );
 			final int blockSize = Math.max( numSubsets, BRUTE_FORCE_BLOCK / numSubsets * numSubsets ); // whole owners per block
 			Arrays.fill( minDistPerOwner, Float.MAX_VALUE );
 			for ( int blockStart = 0; blockStart < numVecsB; blockStart += blockSize )
@@ -299,7 +298,7 @@ public class SubsetVectorMatching
 				final int blockEnd = Math.min( numVecsB, blockStart + blockSize );
 				for ( int subset = 0; subset < numSubsets; ++subset )
 				{
-					FlatKDTree.squaredDistances( vecsA[ indexA * numSubsets + subset ], transposedB, blockStart, blockEnd, dists );
+					ComponentMajor.squaredDistances( vecsA[ indexA * numSubsets + subset ], transposedB, blockStart, blockEnd, dists );
 					minPerOwner( dists, blockEnd - blockStart, numSubsets, blockStart / numSubsets, minDistPerOwner );
 				}
 			}
@@ -318,27 +317,15 @@ public class SubsetVectorMatching
 				for ( int subset = 0; subset < numSubsets; ++subset )
 					gatheredCols[ owner * numSubsets + subset ] = ownersB[ owner ] * numSubsets + subset;
 			final int numCols = numOwners * numSubsets;
-			transpose( vecsB, gatheredB, gatheredCols, numCols );
+			ComponentMajor.transpose( vecsB, gatheredB, gatheredCols, numCols );
 			for ( int subset = 0; subset < numSubsets; ++subset )
 			{
-				FlatKDTree.squaredDistances( vecsA[ indexA * numSubsets + subset ], gatheredB, 0, numCols, dists );
+				ComponentMajor.squaredDistances( vecsA[ indexA * numSubsets + subset ], gatheredB, 0, numCols, dists );
 				for ( int owner = 0, col = 0; owner < numOwners; ++owner )
 					for ( int subB = 0; subB < numSubsets; ++subB, ++col )
 						out.fold( indexA, ownersB[ owner ], dists[ col ] );
 			}
 		}
-	}
-
-	/** component-major copy of the vectors selected by {@code which} (all if null) into {@code target} */
-	private static float[][] transpose( final float[][] vecs, final float[][] target, final int[] which, final int count )
-	{
-		for ( int col = 0; col < count; ++col )
-		{
-			final float[] source = vecs[ which == null ? col : which[ col ] ];
-			for ( int dim = 0; dim < target.length; ++dim )
-				target[ dim ][ col ] = source[ dim ];
-		}
-		return target;
 	}
 
 	/** minDistPerOwner[firstOwner + n] = minimum over the n-th group of numSubsets consecutive distances (its own method: the JIT compiles it much better than inline in the caller's loop) */
