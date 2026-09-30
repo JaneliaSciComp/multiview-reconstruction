@@ -34,23 +34,7 @@ public class RGLDMParameters
 
 	public static boolean defaultLimitSearchRadius = false;
 	public static double defaultSearchRadius = 100;
-	/** default descriptor search, AUTO unless -Drgldm.search names another {@link DescriptorSearch} */
-	public static DescriptorSearch defaultSearch = parseDefaultSearch();
-
-	private static DescriptorSearch parseDefaultSearch()
-	{
-		final String value = System.getProperty( "rgldm.search", "AUTO" );
-		try
-		{
-			return DescriptorSearch.valueOf( value.trim().toUpperCase() );
-		}
-		catch ( final IllegalArgumentException e )
-		{
-			System.err.println( "WARNING: unknown rgldm.search='" + value + "', using AUTO" );
-			return DescriptorSearch.AUTO;
-		}
-	}
-
+	public static DescriptorSearch defaultSearch = DescriptorSearch.AUTO;
 	protected final boolean limitSearchRadius;
 	protected final double searchRadius;
 	protected final double dt, rod;

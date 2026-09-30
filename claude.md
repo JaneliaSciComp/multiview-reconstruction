@@ -207,7 +207,8 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
   brute force over the in-radius points, or the tree with an owner filter once the radius admits a large share of B
   (thresholds in `preferTree`, e.g. radius 2000 on ExpID99). Ball tree, PCA rotation, projection window and a 3-D
   partial-distance index were all measured and are not better: the descriptors' intrinsic dimension is the full dimension.
-  `RGLDMMatcher.search` / `-Drgldm.search` selects the strategy, LEGACY keeps the old loop.
+  `DescriptorSearch` (GUI pulldown, `RGLDMParameters`, `--descriptorSearch` in BigStitcher-Spark) selects the strategy,
+  LEGACY keeps the old loop.
 - Benchmarks (not in the build): `tools/rgldm-bench.sh` + `rgldm-chart.py` (decision maps `tools/rgldm-decision*.svg`),
   `tools/match_benchmark.sh` (Spark A/B of the match stage via the pipeline script); numbers in `tools/bench-*.tsv` and the benchmark logs on the share. Never judge interest point reads
   through the Mac SMB mount ("Bad file descriptor"); run on a node.
