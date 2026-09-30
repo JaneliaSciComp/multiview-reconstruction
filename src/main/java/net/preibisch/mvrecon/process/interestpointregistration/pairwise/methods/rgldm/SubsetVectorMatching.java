@@ -78,7 +78,7 @@ public class SubsetVectorMatching
 		final int numDims = descsA.get( 0 ).numDimensions();
 		final float[][] vecsA = subsetVectors( descsA, subsets, numDims );
 		final float[][] vecsB = subsetVectors( descsB, subsets, numDims );
-		final BestMatches bestMatches = new BestMatches( descsA.size(), numSubsets );
+		final BestMatches bestMatches = new BestMatches( descsA.size() );
 
 		if ( !limitSearchRadius )
 		{
@@ -169,11 +169,9 @@ public class SubsetVectorMatching
 	{
 		final double[] bestDist, secondDist;
 		final int[] bestOwner;
-		final int numSubsets;
 
-		BestMatches( final int numA, final int numSubsets )
+		BestMatches( final int numA )
 		{
-			this.numSubsets = numSubsets;
 			bestDist = new double[ numA ];
 			secondDist = new double[ numA ];
 			bestOwner = new int[ numA ];

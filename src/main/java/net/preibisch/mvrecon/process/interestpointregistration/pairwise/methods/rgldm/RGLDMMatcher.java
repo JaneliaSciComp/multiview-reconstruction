@@ -48,19 +48,6 @@ public class RGLDMMatcher< I extends InterestPoint >
 			final double ratioOfDistance,
 			final double differenceThreshold,
 			final boolean limitSearchRadius,
-			final double searchRadius )
-	{
-		return extractCorrespondenceCandidates( nodeListA, nodeListB, numNeighbors, redundancy, ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius, RGLDMParameters.defaultSearch );
-	}
-
-	public ArrayList< PointMatchGeneric< I > > extractCorrespondenceCandidates( 
-			final List< I > nodeListA,
-			final List< I > nodeListB,
-			final int numNeighbors,
-			final int redundancy,
-			final double ratioOfDistance,
-			final double differenceThreshold,
-			final boolean limitSearchRadius,
 			final double searchRadius,
 			final DescriptorSearch search )
 	{

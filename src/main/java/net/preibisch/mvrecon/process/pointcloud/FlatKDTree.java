@@ -145,9 +145,7 @@ public class FlatKDTree
 		}
 	}
 
-	public void search( final float[] query ) { search( query, null ); }
-
-	/** @param acceptIndex optional filter on the original vector index */
+	/** @param acceptIndex optional filter on the original vector index, null for none */
 	public void search( final float[] query, final IntPredicate acceptIndex )
 	{
 		this.query = query;
