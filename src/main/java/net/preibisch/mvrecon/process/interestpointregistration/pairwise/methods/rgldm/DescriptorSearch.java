@@ -27,10 +27,10 @@ public enum DescriptorSearch
 {
 	/** flat KD-tree or brute force, chosen per view pair from the neighbor count and the in-radius fraction */
 	AUTO,
-	/** {@link SubsetVectorMatching} with the flat KD-tree */
+	/** {@link net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.subsetvector.SubsetVectorMatching SubsetVectorMatching} with the flat KD-tree */
 	FLAT_KDTREE,
-	/** {@link SubsetVectorMatching} with the blocked, vectorized brute force */
+	/** {@link net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.subsetvector.SubsetVectorMatching SubsetVectorMatching} with the blocked, vectorized brute force */
 	BLOCKED_BRUTE_FORCE,
-	/** the original exhaustive descriptor loop in {@link RGLDMMatcher} */
+	/** the original exhaustive descriptor loop, {@link net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.legacy.RGLDMLegacy RGLDMLegacy} */
 	LEGACY
 }

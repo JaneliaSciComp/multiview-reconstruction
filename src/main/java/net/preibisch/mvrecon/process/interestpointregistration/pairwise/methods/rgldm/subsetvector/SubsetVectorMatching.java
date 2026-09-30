@@ -20,18 +20,16 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm;
+package net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.subsetvector;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.function.IntPredicate;
 
 import net.imglib2.KDTree;
 import net.imglib2.neighborsearch.RadiusNeighborSearchOnKDTree;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.process.pointcloud.ComponentMajor;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.DescriptorSearch;
 import net.preibisch.mvrecon.process.pointcloud.FlatKDTree;
 import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.AbstractPointDescriptor;
 import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.SubsetMatcher;
@@ -47,15 +45,6 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.SubsetMa
  */
 public class SubsetVectorMatching
 {
-	/**
-	 * Width, in subset vectors, of the blocks in which {@link BruteForceSearch#searchAll} sweeps B's transposed matrix.
-	 * Each block is compared against all subset vectors of the current A descriptor before the next block is touched, so
-	 * a block is read from memory once per A descriptor instead of once per A subset vector. 4096 columns of 9 to 15
-	 * floats (3 to 5 neighbors) are 147 to 245 KB, sized for a 256 KB L2 cache; the {@code dists} scratch for one block
-	 * (16 KB) stays in L1. The use site rounds it down to a multiple of the subset count so a block holds whole owners.
-	 */
-	private static final int BRUTE_FORCE_BLOCK = 4096;
-
 	/**
 	 * Number of A descriptors, evenly spaced over A, whose radius queries estimate the fraction of B inside the search
 	 * radius ({@link #sampleInRadiusFraction}). Only {@link DescriptorSearch#AUTO} needs the estimate, in
@@ -77,12 +66,10 @@ public class SubsetVectorMatching
 	}
 
 	/** @param subsets the neighbor subsets the descriptors were built with, {@link SubsetMatcher#getNeighbors()} */
-	public static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > ArrayList< PointMatchGeneric< I > > match(
+	public static < I extends InterestPoint, D extends AbstractPointDescriptor< I, D > > ArrayList< PointMatchGeneric< I > > findCorrespondingDescriptors(
 			final List< D > descsA, final List< D > descsB, final int[][] subsets, final double ratioOfDistance, final double differenceThreshold,
 			final boolean limitSearchRadius, final double searchRadius, final DescriptorSearch search )
 	{
-		if ( search == DescriptorSearch.LEGACY )
-			throw new IllegalArgumentException( "LEGACY is handled by RGLDMMatcher" );
 		final ArrayList< PointMatchGeneric< I > > candidates = new ArrayList<>();
 		if ( descsA.isEmpty() || descsB.size() < 2 )
 			return candidates;
@@ -176,189 +163,5 @@ public class SubsetVectorMatching
 						vecs[ desc * numSubsets + subset ][ neighbor * numDims + dim ] = (float)offset[ dim ];
 				}
 		return vecs;
-	}
-
-	/** running best / second-best B owner per A descriptor */
-	private static final class BestMatches
-	{
-		final double[] bestDist, secondDist;
-		final int[] bestOwner;
-
-		BestMatches( final int numA )
-		{
-			bestDist = new double[ numA ];
-			secondDist = new double[ numA ];
-			bestOwner = new int[ numA ];
-			Arrays.fill( bestDist, Double.MAX_VALUE );
-			Arrays.fill( secondDist, Double.MAX_VALUE );
-			Arrays.fill( bestOwner, -1 );
-		}
-
-		void fold( final int indexA, final int ownerB, final double dist )
-		{
-			if ( ownerB == bestOwner[ indexA ] )
-			{
-				if ( dist < bestDist[ indexA ] )
-					bestDist[ indexA ] = dist;
-			}
-			else if ( dist < bestDist[ indexA ] )
-			{
-				secondDist[ indexA ] = bestDist[ indexA ];
-				bestDist[ indexA ] = dist;
-				bestOwner[ indexA ] = ownerB;
-			}
-			else if ( dist < secondDist[ indexA ] )
-				secondDist[ indexA ] = dist;
-		}
-	}
-
-	/**
-	 * Finds the best and second-best B owner for one A descriptor, over all of B or over the B descriptors inside the
-	 * search radius. Built once per view pair over A's and B's subset vectors.
-	 */
-	private interface SubsetSearch
-	{
-		/** folds the best and second-best B owner over all of B into {@code out} */
-		void searchAll( int indexA, BestMatches out );
-
-		/** same, restricted to the B descriptors {@code ownersB[ 0 .. numOwners - 1 ]} (those inside the search radius) */
-		void searchWithin( int indexA, int[] ownersB, int numOwners, BestMatches out );
-	}
-
-	/**
-	 * {@link FlatKDTree} over B's subset vectors. k = numSubsets + 1 nearest entries suffice: everything closer than the
-	 * second-best owner's best entry belongs to the best owner, which has numSubsets entries. A radius restriction becomes
-	 * an index filter: the tree skips entries whose owner was not stamped for the current A descriptor.
-	 */
-	private static final class FlatTreeSearch implements SubsetSearch
-	{
-		private final float[][] vecsA;
-		private final int numSubsets;
-		private final FlatKDTree tree;
-		private final int[] inRadiusStamp; // the A index for which each B owner was last inside the radius
-		private int currentA = -1;
-		private final IntPredicate ownerInRadius;
-
-		FlatTreeSearch( final float[][] vecsA, final float[][] vecsB, final int numSubsets )
-		{
-			this.vecsA = vecsA;
-			this.numSubsets = numSubsets;
-			this.tree = new FlatKDTree( vecsB, numSubsets + 1 );
-			this.inRadiusStamp = new int[ vecsB.length / numSubsets ];
-			Arrays.fill( inRadiusStamp, -1 );
-			this.ownerInRadius = vec -> inRadiusStamp[ vec / numSubsets ] == currentA;
-		}
-
-		@Override
-		public void searchAll( final int indexA, final BestMatches out )
-		{
-			for ( int subset = 0; subset < numSubsets; ++subset )
-			{
-				tree.search( vecsA[ indexA * numSubsets + subset ], null );
-				foldFound( indexA, out );
-			}
-		}
-
-		@Override
-		public void searchWithin( final int indexA, final int[] ownersB, final int numOwners, final BestMatches out )
-		{
-			for ( int i = 0; i < numOwners; ++i )
-				inRadiusStamp[ ownersB[ i ] ] = indexA;
-			currentA = indexA;
-			for ( int subset = 0; subset < numSubsets; ++subset )
-			{
-				tree.search( vecsA[ indexA * numSubsets + subset ], ownerInRadius );
-				foldFound( indexA, out );
-			}
-		}
-
-		/** folds the entries of the last tree search into their B owners */
-		private void foldFound( final int indexA, final BestMatches out )
-		{
-			final int found = tree.size();
-			for ( int i = 0; i < found; ++i )
-				out.fold( indexA, tree.index( i ) / numSubsets, tree.squareDistance( i ) );
-		}
-	}
-
-	/**
-	 * Vectorized sweep over B's subset vectors, stored component-major so the distance loop runs over contiguous columns.
-	 * Without a radius the full matrix is swept in cache-sized blocks; with a radius the in-radius owners' columns are
-	 * gathered into a scratch matrix first.
-	 */
-	private static final class BruteForceSearch implements SubsetSearch
-	{
-		private final float[][] vecsA, vecsB;
-		private final int numSubsets, numVecsB, vecLen;
-		private float[][] transposedB, gatheredB;
-		private final float[] dists;
-		private final float[] minDistPerOwner;
-		private int[] gatheredCols;
-
-		BruteForceSearch( final float[][] vecsA, final float[][] vecsB, final int numSubsets )
-		{
-			this.vecsA = vecsA;
-			this.vecsB = vecsB;
-			this.numSubsets = numSubsets;
-			this.numVecsB = vecsB.length;
-			this.vecLen = vecsB[ 0 ].length;
-			this.dists = new float[ numVecsB ];
-			this.minDistPerOwner = new float[ numVecsB / numSubsets ];
-		}
-
-		@Override
-		public void searchAll( final int indexA, final BestMatches out )
-		{
-			if ( transposedB == null )
-				transposedB = ComponentMajor.transpose( vecsB, new float[ vecLen ][ numVecsB ], null, numVecsB );
-			final int blockSize = Math.max( numSubsets, BRUTE_FORCE_BLOCK / numSubsets * numSubsets ); // whole owners per block
-			Arrays.fill( minDistPerOwner, Float.MAX_VALUE );
-			for ( int blockStart = 0; blockStart < numVecsB; blockStart += blockSize )
-			{
-				final int blockEnd = Math.min( numVecsB, blockStart + blockSize );
-				for ( int subset = 0; subset < numSubsets; ++subset )
-				{
-					ComponentMajor.squaredDistances( vecsA[ indexA * numSubsets + subset ], transposedB, blockStart, blockEnd, dists );
-					minPerOwner( dists, blockEnd - blockStart, numSubsets, blockStart / numSubsets, minDistPerOwner );
-				}
-			}
-			for ( int ownerB = 0; ownerB < minDistPerOwner.length; ++ownerB )
-				out.fold( indexA, ownerB, minDistPerOwner[ ownerB ] );
-		}
-
-		@Override
-		public void searchWithin( final int indexA, final int[] ownersB, final int numOwners, final BestMatches out )
-		{
-			if ( gatheredB == null )
-			{
-				gatheredB = new float[ vecLen ][ numVecsB ];
-				gatheredCols = new int[ numVecsB ];
-			}
-			for ( int owner = 0; owner < numOwners; ++owner )
-				for ( int subset = 0; subset < numSubsets; ++subset )
-					gatheredCols[ owner * numSubsets + subset ] = ownersB[ owner ] * numSubsets + subset;
-			final int numCols = numOwners * numSubsets;
-			ComponentMajor.transpose( vecsB, gatheredB, gatheredCols, numCols );
-			for ( int subset = 0; subset < numSubsets; ++subset )
-			{
-				ComponentMajor.squaredDistances( vecsA[ indexA * numSubsets + subset ], gatheredB, 0, numCols, dists );
-				for ( int owner = 0, col = 0; owner < numOwners; ++owner )
-					for ( int subB = 0; subB < numSubsets; ++subB, ++col )
-						out.fold( indexA, ownersB[ owner ], dists[ col ] );
-			}
-		}
-	}
-
-	/** minDistPerOwner[firstOwner + n] = minimum over the n-th group of numSubsets consecutive distances (its own method: the JIT compiles it much better than inline in the caller's loop) */
-	private static void minPerOwner( final float[] dists, final int count, final int numSubsets, final int firstOwner, final float[] minDistPerOwner )
-	{
-		for ( int col = 0, owner = firstOwner; col < count; ++owner )
-		{
-			float min = minDistPerOwner[ owner ];
-			for ( int subset = 0; subset < numSubsets; ++subset, ++col )
-				if ( dists[ col ] < min )
-					min = dists[ col ];
-			minDistPerOwner[ owner ] = min;
-		}
 	}
 }
