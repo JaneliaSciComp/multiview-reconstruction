@@ -84,7 +84,7 @@ public class SubsetVectorMatching
 		{
 			final SubsetSearch searcher = createSearch( search, numNeighbors, 1.0, vecsA, vecsB, numSubsets );
 			for ( int indexA = 0; indexA < descsA.size(); ++indexA )
-				searcher.search( indexA, null, 0, bestMatches );
+				searcher.searchAll( indexA, bestMatches );
 		}
 		else
 		{
@@ -109,7 +109,7 @@ public class SubsetVectorMatching
 					continue;
 				for ( int neighbor = 0; neighbor < numInRadius; ++neighbor )
 					ownersB[ neighbor ] = radiusSearch.getSampler( neighbor ).get();
-				searcher.search( indexA, ownersB, numInRadius, bestMatches );
+				searcher.searchWithin( indexA, ownersB, numInRadius, bestMatches );
 			}
 		}
 
@@ -199,13 +199,16 @@ public class SubsetVectorMatching
 	}
 
 	/**
-	 * Finds the best and second-best B owner for one A descriptor over all of B, or over the given B owners only.
-	 * Built once per view pair over A's and B's subset vectors.
+	 * Finds the best and second-best B owner for one A descriptor, over all of B or over the B descriptors inside the
+	 * search radius. Built once per view pair over A's and B's subset vectors.
 	 */
 	private interface SubsetSearch
 	{
-		/** @param ownersB the B descriptors to consider (first numOwners entries), or null for all of B */
-		void search( int indexA, int[] ownersB, int numOwners, BestMatches out );
+		/** folds the best and second-best B owner over all of B into {@code out} */
+		void searchAll( int indexA, BestMatches out );
+
+		/** same, restricted to the B descriptors {@code ownersB[ 0 .. numOwners - 1 ]} (those inside the search radius) */
+		void searchWithin( int indexA, int[] ownersB, int numOwners, BestMatches out );
 	}
 
 	/**
@@ -233,21 +236,34 @@ public class SubsetVectorMatching
 		}
 
 		@Override
-		public void search( final int indexA, final int[] ownersB, final int numOwners, final BestMatches out )
+		public void searchAll( final int indexA, final BestMatches out )
 		{
-			if ( ownersB != null )
-			{
-				for ( int i = 0; i < numOwners; ++i )
-					inRadiusStamp[ ownersB[ i ] ] = indexA;
-				currentA = indexA;
-			}
 			for ( int subset = 0; subset < numSubsets; ++subset )
 			{
-				tree.search( vecsA[ indexA * numSubsets + subset ], ownersB == null ? null : ownerInRadius );
-				final int found = tree.size();
-				for ( int i = 0; i < found; ++i )
-					out.fold( indexA, tree.index( i ) / numSubsets, tree.squareDistance( i ) );
+				tree.search( vecsA[ indexA * numSubsets + subset ], null );
+				foldFound( indexA, out );
 			}
+		}
+
+		@Override
+		public void searchWithin( final int indexA, final int[] ownersB, final int numOwners, final BestMatches out )
+		{
+			for ( int i = 0; i < numOwners; ++i )
+				inRadiusStamp[ ownersB[ i ] ] = indexA;
+			currentA = indexA;
+			for ( int subset = 0; subset < numSubsets; ++subset )
+			{
+				tree.search( vecsA[ indexA * numSubsets + subset ], ownerInRadius );
+				foldFound( indexA, out );
+			}
+		}
+
+		/** folds the entries of the last tree search into their B owners */
+		private void foldFound( final int indexA, final BestMatches out )
+		{
+			final int found = tree.size();
+			for ( int i = 0; i < found; ++i )
+				out.fold( indexA, tree.index( i ) / numSubsets, tree.squareDistance( i ) );
 		}
 	}
 
@@ -277,15 +293,7 @@ public class SubsetVectorMatching
 		}
 
 		@Override
-		public void search( final int indexA, final int[] ownersB, final int numOwners, final BestMatches out )
-		{
-			if ( ownersB == null )
-				sweepAll( indexA, out );
-			else
-				sweepGathered( indexA, ownersB, numOwners, out );
-		}
-
-		private void sweepAll( final int indexA, final BestMatches out )
+		public void searchAll( final int indexA, final BestMatches out )
 		{
 			if ( transposedB == null )
 				transposedB = ComponentMajor.transpose( vecsB, new float[ vecLen ][ numVecsB ], null, numVecsB );
@@ -304,7 +312,8 @@ public class SubsetVectorMatching
 				out.fold( indexA, ownerB, minDistPerOwner[ ownerB ] );
 		}
 
-		private void sweepGathered( final int indexA, final int[] ownersB, final int numOwners, final BestMatches out )
+		@Override
+		public void searchWithin( final int indexA, final int[] ownersB, final int numOwners, final BestMatches out )
 		{
 			if ( gatheredB == null )
 			{
