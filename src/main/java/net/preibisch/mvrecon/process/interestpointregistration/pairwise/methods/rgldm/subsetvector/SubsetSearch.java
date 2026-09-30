@@ -20,39 +20,17 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm;
+package net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.subsetvector;
 
-import mpicbg.models.Model;
-
-public class FRGLDMParameters
+/**
+ * Finds the best and second-best B owner for one A descriptor, over all of B or over the B descriptors inside the
+ * search radius. Built once per view pair over A's and B's subset vectors.
+ */
+interface SubsetSearch
 {
-	public static double ratioOfDistance = 10;
+	/** folds the best and second-best B owner over all of B into {@code out} */
+	void searchAll( int indexA, BestMatches out );
 
-	public static int redundancy = 1;
-
-	protected final double rod;
-	protected final int nn, re;
-
-	private Model< ? > model = null;
-	public Model< ? > getModel() { return model.copy(); }
-
-	public FRGLDMParameters( final Model< ? > model )
-	{
-		this.rod = ratioOfDistance;
-		this.nn = 3;
-		this.re = redundancy;
-		this.model = model;
-	}
-	
-	public FRGLDMParameters( final Model< ? > model, final double ratioOfDistance, final int redundancy )
-	{
-		this.model = model;
-		this.rod = ratioOfDistance;
-		this.nn = 3;
-		this.re = redundancy;
-	}
-
-	public double getRatioOfDistance() { return rod; }
-	public int getNumNeighbors() { return nn; }
-	public int getRedundancy() { return re; }
+	/** same, restricted to the B descriptors {@code ownersB[ 0 .. numOwners - 1 ]} (those inside the search radius) */
+	void searchWithin( int indexA, int[] ownersB, int numOwners, BestMatches out );
 }

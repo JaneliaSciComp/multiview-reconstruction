@@ -31,7 +31,6 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -61,7 +60,6 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters.GlobalOptType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.CenterOfMassGUI;
-import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.FRGLDMGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.GeometricHashingGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.IterativeClosestPointGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.LoadCorrespondencesGUI;
@@ -122,7 +120,6 @@ public class Interest_Point_Registration implements PlugIn
 	{
 		IOFunctions.printIJLog = true;
 		staticPairwiseAlgorithms.add( new GeometricHashingGUI() ); // good method
-		staticPairwiseAlgorithms.add( new FRGLDMGUI() ); // good method
 		staticPairwiseAlgorithms.add( new RGLDMGUI() ); // good method
 		staticPairwiseAlgorithms.add( new CenterOfMassGUI() );
 		staticPairwiseAlgorithms.add( new IterativeClosestPointGUI() );
@@ -130,7 +127,7 @@ public class Interest_Point_Registration implements PlugIn
 	}
 
 	// basic dialog
-	public static int defaultAlgorithm = 2;
+	public static int defaultAlgorithm = 1;
 	public static int defaultRegistrationType = 0;
 	public static int defaultOverlapType = 1;
 	public static int defaultInterestpointOverlapType = 1;

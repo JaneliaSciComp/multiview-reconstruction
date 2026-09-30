@@ -25,12 +25,12 @@ package net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods
 import java.util.ArrayList;
 import java.util.List;
 
-import mpicbg.models.Point;
 import net.imglib2.KDTree;
 import net.imglib2.neighborsearch.KNearestNeighborSearchOnKDTree;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.AbstractPointDescriptor;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.legacy.RGLDMLegacy;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.subsetvector.SubsetVectorMatching;
 import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.SimplePointDescriptor;
 import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.exception.NoSuitablePointsException;
 import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.Matcher;
@@ -48,14 +48,15 @@ public class RGLDMMatcher< I extends InterestPoint >
 			final double ratioOfDistance,
 			final double differenceThreshold,
 			final boolean limitSearchRadius,
-			final double searchRadius )
+			final double searchRadius,
+			final DescriptorSearch search )
 	{
 		/* create KDTrees */	
 		final KDTree< I > treeA = new KDTree< I >( nodeListA, nodeListA );
 		final KDTree< I > treeB = new KDTree< I >( nodeListB, nodeListB );
 		
 		/* extract point descriptors */
-		final Matcher matcher = new SubsetMatcher( numNeighbors, numNeighbors + redundancy );
+		final SubsetMatcher matcher = new SubsetMatcher( numNeighbors, numNeighbors + redundancy );
 		final int numRequiredNeighbors = matcher.getRequiredNumNeighbors();
 		
 		final SimilarityMeasure similarityMeasure = new SquareDistance();
@@ -63,66 +64,10 @@ public class RGLDMMatcher< I extends InterestPoint >
 		final ArrayList< SimplePointDescriptor< I > > descriptorsA = createSimplePointDescriptors( treeA, nodeListA, numRequiredNeighbors, matcher, similarityMeasure );
 		final ArrayList< SimplePointDescriptor< I > > descriptorsB = createSimplePointDescriptors( treeB, nodeListB, numRequiredNeighbors, matcher, similarityMeasure );
 
-		return findCorrespondingDescriptors( descriptorsA, descriptorsB, ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius );
-	}
-	
-	protected static final < I extends InterestPoint, D extends AbstractPointDescriptor< I , D > > ArrayList< PointMatchGeneric< I > > findCorrespondingDescriptors(
-			final ArrayList< D > descriptorsA,
-			final ArrayList< D > descriptorsB,
-			final double nTimesBetter,
-			final double differenceThreshold,
-			final boolean limitSearchRadius,
-			final double searchRadius )
-	{
-		final ArrayList< PointMatchGeneric< I > > correspondenceCandidates = new ArrayList<>();
-
-		// TODO: smaller list on the outside
-		for ( final D descriptorA : descriptorsA )
-		{
-			double bestDifference = Double.MAX_VALUE;
-			double secondBestDifference = Double.MAX_VALUE;
-
-			D bestMatch = null;
-			D secondBestMatch = null;
-
-			for ( final D descriptorB : descriptorsB )
-			{
-				if ( limitSearchRadius && Point.distance( descriptorA.getBasisPoint(), descriptorB.getBasisPoint() ) > searchRadius )
-						continue;
-
-				final double difference = descriptorA.descriptorDistance( descriptorB );
-
-				if ( difference < secondBestDifference )
-				{
-					secondBestDifference = difference;
-					secondBestMatch = descriptorB;
-					
-					if ( secondBestDifference < bestDifference )
-					{
-						double tmpDiff = secondBestDifference;
-						D tmpMatch = secondBestMatch;
-						
-						secondBestDifference = bestDifference;
-						secondBestMatch = bestMatch;
-						
-						bestDifference = tmpDiff;
-						bestMatch = tmpMatch;
-					}
-				}
-			}
-
-			if ( bestDifference < differenceThreshold && bestDifference * nTimesBetter < secondBestDifference && secondBestDifference != Double.MAX_VALUE ) // there must be a second one (make sure 2nd best is set)
-			{	
-				// add correspondence for the two basis points of the descriptor
-				I detectionA = descriptorA.getBasisPoint();
-				I detectionB = bestMatch.getBasisPoint();
-				
-				// for RANSAC
-				correspondenceCandidates.add( new PointMatchGeneric< I >( detectionA, detectionB ) );
-			}
-		}
-
-		return correspondenceCandidates;
+		if ( search == DescriptorSearch.LEGACY )
+			return RGLDMLegacy.findCorrespondingDescriptors( descriptorsA, descriptorsB, ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius );
+		else
+			return SubsetVectorMatching.findCorrespondingDescriptors( descriptorsA, descriptorsB, matcher.getNeighbors(), ratioOfDistance, differenceThreshold, limitSearchRadius, searchRadius, search );
 	}
 
 	protected static < I extends InterestPoint > ArrayList< SimplePointDescriptor< I > > createSimplePointDescriptors(
