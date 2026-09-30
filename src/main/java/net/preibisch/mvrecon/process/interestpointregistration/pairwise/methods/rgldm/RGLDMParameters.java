@@ -34,11 +34,12 @@ public class RGLDMParameters
 
 	public static boolean defaultLimitSearchRadius = false;
 	public static double defaultSearchRadius = 100;
-
+	public static DescriptorSearch defaultSearch = DescriptorSearch.AUTO;
 	protected final boolean limitSearchRadius;
 	protected final double searchRadius;
 	protected final double dt, rod;
 	protected final int nn, re;
+	protected final DescriptorSearch search;
 
 	private Model< ? > model = null;
 	public Model< ? > getModel() { return model.copy(); }
@@ -51,6 +52,7 @@ public class RGLDMParameters
 		this.re = redundancy;
 		this.limitSearchRadius = defaultLimitSearchRadius;
 		this.searchRadius = defaultSearchRadius;
+		this.search = defaultSearch;
 		this.model = model;
 	}
 	
@@ -63,6 +65,19 @@ public class RGLDMParameters
 			final int numNeighbors,
 			final int redundancy)
 	{
+		this( model, differenceThreshold, ratioOfDistance, limitSearchRadius, searchRadius, numNeighbors, redundancy, defaultSearch );
+	}
+
+	public RGLDMParameters(
+			final Model<?> model,
+			final double differenceThreshold,
+			final double ratioOfDistance,
+			final boolean limitSearchRadius,
+			final double searchRadius,
+			final int numNeighbors,
+			final int redundancy,
+			final DescriptorSearch search )
+	{
 		this.model = model;
 		this.dt = differenceThreshold;
 		this.rod = ratioOfDistance;
@@ -70,6 +85,7 @@ public class RGLDMParameters
 		this.re = redundancy;
 		this.limitSearchRadius = limitSearchRadius;
 		this.searchRadius = searchRadius;
+		this.search = search;
 	}
 
 	public boolean limitSearchRadius() { return limitSearchRadius; }
@@ -78,4 +94,5 @@ public class RGLDMParameters
 	public double getRatioOfDistance() { return rod; }
 	public int getNumNeighbors() { return nn; }
 	public int getRedundancy() { return re; }
+	public DescriptorSearch getSearch() { return search; }
 }
