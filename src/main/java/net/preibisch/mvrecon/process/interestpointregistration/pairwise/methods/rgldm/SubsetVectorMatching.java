@@ -47,7 +47,21 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.SubsetMa
  */
 public class SubsetVectorMatching
 {
+	/**
+	 * Width, in subset vectors, of the blocks in which {@link BruteForceSearch#searchAll} sweeps B's transposed matrix.
+	 * Each block is compared against all subset vectors of the current A descriptor before the next block is touched, so
+	 * a block is read from memory once per A descriptor instead of once per A subset vector. 4096 columns of 9 to 15
+	 * floats (3 to 5 neighbors) are 147 to 245 KB, sized for a 256 KB L2 cache; the {@code dists} scratch for one block
+	 * (16 KB) stays in L1. The use site rounds it down to a multiple of the subset count so a block holds whole owners.
+	 */
 	private static final int BRUTE_FORCE_BLOCK = 4096;
+
+	/**
+	 * Number of A descriptors, evenly spaced over A, whose radius queries estimate the fraction of B inside the search
+	 * radius ({@link #sampleInRadiusFraction}). Only {@link DescriptorSearch#AUTO} needs the estimate, in
+	 * {@link #preferTree}, to pick the tree or brute force for a view pair. The estimate only has to fall on the right side
+	 * of those thresholds, and 256 queries against the 3-D tree are negligible next to the matching itself.
+	 */
 	private static final int RADIUS_SAMPLE_SIZE = 256;
 
 	/** tree vs brute force, by neighbor count and by the fraction of B inside the search radius (1 = no radius) */
