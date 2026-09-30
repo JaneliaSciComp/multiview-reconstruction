@@ -219,7 +219,7 @@ public class SubsetVectorMatching
 		private final int numSubsets;
 		private final FlatKDTree tree;
 		private final int[] inRadiusStamp; // the A index for which each B owner was last inside the radius
-		private final int[] currentA = { -1 };
+		private int currentA = -1;
 		private final IntPredicate ownerInRadius;
 
 		FlatTreeSearch( final float[][] vecsA, final float[][] vecsB, final int numSubsets )
@@ -229,7 +229,7 @@ public class SubsetVectorMatching
 			this.tree = new FlatKDTree( vecsB, numSubsets + 1 );
 			this.inRadiusStamp = new int[ vecsB.length / numSubsets ];
 			Arrays.fill( inRadiusStamp, -1 );
-			this.ownerInRadius = vec -> inRadiusStamp[ vec / numSubsets ] == currentA[ 0 ];
+			this.ownerInRadius = vec -> inRadiusStamp[ vec / numSubsets ] == currentA;
 		}
 
 		@Override
@@ -239,7 +239,7 @@ public class SubsetVectorMatching
 			{
 				for ( int i = 0; i < numOwners; ++i )
 					inRadiusStamp[ ownersB[ i ] ] = indexA;
-				currentA[ 0 ] = indexA;
+				currentA = indexA;
 			}
 			for ( int subset = 0; subset < numSubsets; ++subset )
 			{
