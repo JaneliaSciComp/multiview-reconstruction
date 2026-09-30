@@ -212,8 +212,14 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
 - Benchmarks (not in the build): `tools/rgldm-bench.sh` + `rgldm-chart.py` (decision maps `tools/rgldm-decision*.svg`),
   `tools/match_benchmark.sh` (Spark A/B of the match stage via the pipeline script); numbers in `tools/bench-*.tsv` and the benchmark logs on the share. Never judge interest point reads
   through the Mac SMB mount ("Bad file descriptor"); run on a node.
-- Not fixed: `TranslationInvariantLocalCoordinateSystemPointDescriptor.localize(double[])` (FRGLDM) fills 6 of 9 components,
-  so every FRGLDM nearest-neighbor query is wrong in the last three dimensions. Since 2017.
+- Layout: `RGLDMMatcher` builds the descriptors and dispatches; the old loop is `rgldm.legacy.RGLDMLegacy` (reference
+  implementation for the test), the fast paths are `rgldm.subsetvector` (`SubsetVectorMatching` public, the strategies
+  `FlatTreeSearch` / `BruteForceSearch` and `BestMatches` package-private).
+- FRGLDM (`fastrgldm` package, `FRGLDMGUI`, `--method FAST_TRANSLATION` in BigStitcher-Spark) was removed on 2026-09-30
+  together with its descriptor `TranslationInvariantLocalCoordinateSystemPointDescriptor`, whose `localize(double[])` had
+  filled only 6 of 9 components since 2017. RGLDM in AUTO mode is faster and exact. BigStitcher-Spark still references the
+  removed classes and must map `FAST_TRANSLATION` to RGLDM/AUTO (or drop it) before it bumps its multiview-reconstruction
+  dependency past 9.0.13.
 
 ## BDV Performance — Use Batch APIs
 
