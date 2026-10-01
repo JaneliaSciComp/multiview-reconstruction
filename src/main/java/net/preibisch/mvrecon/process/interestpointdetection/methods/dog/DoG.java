@@ -22,6 +22,8 @@
  */
 package net.preibisch.mvrecon.process.interestpointdetection.methods.dog;
 
+import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -30,6 +32,7 @@ import ij.IJ;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
+import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -41,6 +44,7 @@ import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
@@ -122,6 +126,51 @@ public class DoG
 		return ips;
 	}
 
+	/**
+	 * @return dog.scaleSpaceParameters with sigmaMin (= sigma, the finest sigma), threshold (the minimal response),
+	 * findMin/findMax, localization and the intensity range set from the DoG parameters
+	 */
+	public static ScaleSpaceParameters toScaleSpaceParameters( final DoGParameters dog )
+	{
+		final ScaleSpaceParameters p = dog.scaleSpaceParameters;
+
+		p.sigmaMin = dog.sigma;
+		p.threshold = dog.threshold;
+		p.findMin = dog.findMin;
+		p.findMax = dog.findMax;
+		p.localization = dog.localization;
+		p.minIntensity = dog.minIntensity;
+		p.maxIntensity = dog.maxIntensity;
+
+		return p;
+	}
+
+	/**
+	 * Scale-space DoG on an (already downsampled) image, shared by the GUI and BigStitcher-Spark.
+	 * Positions and sigmas are in pixels of the image, DownsampleTools.correctForDownsampling maps
+	 * both to full resolution.
+	 *
+	 * @param input - the image, extended to infinity
+	 * @param mask - peaks are only accepted where the mask is &gt; 0, can be null
+	 * @param imageInterval - the entire image
+	 * @param processInterval - the block to process (the entire image in the GUI)
+	 * @param dog - the parameters, sigma is the finest sigma and threshold the minimal response
+	 * @param service - for multithreading
+	 */
+	public static < T extends RealType< T > > ArrayList< InterestPointSS > computeScaleSpace(
+			final RandomAccessible< T > input,
+			final RandomAccessible< T > mask,
+			final Interval imageInterval,
+			final Interval processInterval,
+			final DoGParameters dog,
+			final ExecutorService service )
+	{
+		if ( dog.cuda != null )
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): The scale space is computed on the CPU, CUDA is ignored." );
+
+		return DoGScaleSpace.computeDoGScaleSpace( input, imageInterval, processInterval, mask, toScaleSpaceParameters( dog ), service );
+	}
+
 	public static void addInterestPoints( final HashMap< ViewId, List< InterestPoint > > interestPoints, final DoGParameters dog )
 	{
 		if ( dog.showProgress() )
@@ -152,7 +201,18 @@ public class DoG
 								new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
 								false );
 
-				List< InterestPoint > ips = DoGImgLib2.computeDoG(
+				List< InterestPoint > ips;
+
+				if ( dog.scaleSpace )
+					ips = new ArrayList<>( computeScaleSpace(
+							(RandomAccessible)Views.extendMirrorSingle( input.getA() ),
+							null, // mask
+							new FinalInterval( input.getA() ),
+							new FinalInterval( input.getA() ),
+							dog,
+							service ) );
+				else
+					ips = DoGImgLib2.computeDoG(
 							(RandomAccessible)Views.extendMirrorSingle( input.getA() ),
 							null, // mask
 							new FinalInterval( input.getA() ),

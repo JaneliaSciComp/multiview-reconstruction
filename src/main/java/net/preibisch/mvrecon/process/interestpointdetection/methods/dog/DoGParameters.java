@@ -43,6 +43,16 @@ public class DoGParameters extends InterestPointParameters
 	public boolean findMin = false;
 	public boolean findMax = true;
 
+	/**
+	 * detect in a scale space (DoGScaleSpace) instead of at a single scale; sigma is then the sigma
+	 * of the finest level (in pixels of the downsampled image) and threshold the minimal response.
+	 * steps, octaves, detectFinestLevel etc. are taken from scaleSpaceParameters, whose sigmaMin,
+	 * threshold, findMin/findMax, localization and intensity range are set from this object
+	 * (DoG.toScaleSpaceParameters)
+	 */
+	public boolean scaleSpace = false;
+	public ScaleSpaceParameters scaleSpaceParameters = new ScaleSpaceParameters();
+
 	public double percentGPUMem = 75;
 	public CUDADevice deviceCUDA = null;
 	public CUDASeparableConvolution cuda = null;
