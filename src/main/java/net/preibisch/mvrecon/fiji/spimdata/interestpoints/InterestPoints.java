@@ -53,22 +53,20 @@ public abstract class InterestPoints
 		this.modifiedCorrespondingInterestPoints = false;
 	}
 
+	/** Zarr store for every (timepoint, setup, label) entry (it reads not yet converted legacy groups); N5 only for other paths */
 	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo )
 	{
 		if ( fromXMLInfo.trim().toLowerCase().startsWith("interestpoints/") )
 			throw new RuntimeException( "text-file based interest points not supported anymore.");
+		else if ( InterestPointsZarr.supports( fromXMLInfo ) )
+			return new InterestPointsZarr( baseDir, fromXMLInfo );
 		else
 			return new InterestPointsN5( baseDir, fromXMLInfo );
 	}
 
 	public static InterestPoints newInstance( final URI baseDir, final ViewId viewId, final String label )
 	{
-		final InterestPoints list;
-
-		final String n5dataset = InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label );
-		list = new InterestPointsN5( baseDir, n5dataset );
-
-		return list;
+		return new InterestPointsZarr( baseDir, viewId, label );
 	}
 
 	public boolean hasModifiedInterestPoints() { return modifiedInterestPoints; }

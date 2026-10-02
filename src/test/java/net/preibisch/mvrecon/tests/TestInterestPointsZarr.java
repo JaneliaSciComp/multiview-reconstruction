@@ -36,11 +36,13 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestP
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore.Key;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5ToZarr;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Key;
 import util.URITools;
 
-public class TestPackedInterestPointStore
+public class TestInterestPointsZarr
 {
 	@TempDir
 	Path tmp;
@@ -108,9 +110,9 @@ public class TestPackedInterestPointStore
 		final File base = tmp.resolve( "dataset" ).toFile();
 		base.mkdirs();
 		final URI baseURI = base.toURI();
-		PackedInterestPointStore.defaultChunkPoints = 16; // tiny grid: entries (5..45 points) span chunk and shard borders
-		PackedInterestPointStore.defaultShardPoints = 64;
-		final File zarr = new File( base, PackedInterestPointStore.ZARR_CONTAINER );
+		InterestPointsZarrStore.defaultChunkPoints = 16; // tiny grid: entries (5..45 points) span chunk and shard borders
+		InterestPointsZarrStore.defaultShardPoints = 64;
+		final File zarr = new File( base, InterestPointsZarrStore.ZARR_CONTAINER );
 
 		// ---- 1. legacy per-view groups, written with the legacy static writers ----
 		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
@@ -127,20 +129,20 @@ public class TestPackedInterestPointStore
 				}
 		}
 		final long[] legacyCount = count( new File( base, InterestPointsN5.baseN5 ).toPath() );
-		assertFalse( PackedInterestPointStore.get( baseURI ).exists() );
+		assertFalse( InterestPointsZarrStore.get( baseURI ).exists() );
 
 		// legacy read path still works
 		for ( int v = 0; v < N_VIEWS; ++v )
 			for ( final String label : LABELS )
 			{
-				final InterestPoints ip = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
+				final InterestPoints ip = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
 				assertSame( points( v, label ), ip.getInterestPointsCopy() );
 				assertEquals( sig( corrs( v, label ) ), sig( ip.getCorrespondingInterestPointsCopy() ) );
 			}
 
 		// ---- 2. convert ----
-		assertEquals( N_VIEWS * LABELS.length, PackedInterestPointStore.convertLegacy( baseURI ) );
-		final PackedInterestPointStore store = PackedInterestPointStore.get( baseURI );
+		assertEquals( N_VIEWS * LABELS.length, InterestPointsN5ToZarr.convert( baseURI ) );
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseURI );
 		assertTrue( store.exists() );
 		final long[] packedCount = count( zarr.toPath() );
 		final long[] n5Count = count( new File( base, InterestPointsN5.baseN5 ).toPath() );
@@ -159,7 +161,7 @@ public class TestPackedInterestPointStore
 		for ( int v = 0; v < N_VIEWS; ++v )
 			for ( final String label : LABELS )
 			{
-				final InterestPoints ip = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
+				final InterestPoints ip = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
 				assertSame( points( v, label ), ip.getInterestPointsCopy() );
 				assertEquals( sig( corrs( v, label ) ), sig( ip.getCorrespondingInterestPointsCopy() ), "corrs " + v + " " + label );
 				// pair range API equals the filtered full list
@@ -167,7 +169,7 @@ public class TestPackedInterestPointStore
 				{
 					final List< CorrespondingInterestPoints > expected = new ArrayList<>();
 					for ( final CorrespondingInterestPoints c : corrs( v, label ) ) if ( c.getCorrespondingViewId().getViewSetupId() == o ) expected.add( c );
-					final InterestPoints fresh = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
+					final InterestPoints fresh = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
 					assertEquals( sig( expected ), sig( fresh.getCorrespondingInterestPointsCopy( new ViewId( 0, o ), label ) ), "pair " + v + "-" + o );
 				}
 				assertEquals( corrs( v, label ).stream().map( c -> c.getCorrespondingViewId().getViewSetupId() ).distinct().count(), ip.getCorrespondingViews().size() );
@@ -176,100 +178,94 @@ public class TestPackedInterestPointStore
 		// ---- 3. append path: replace one view's points (bigger), add a new label; batch save through the writer variant + commit ----
 		final List< InterestPoint > bigger = new ArrayList<>( points( 1, "beads" ) );
 		for ( int i = 0; i < 100; ++i ) bigger.add( new InterestPoint( 1000 + i, new double[] { i, 2 * i, 3 * i } ) );
-		final InterestPointsN5 v1 = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 1, "beads" ) );
+		final InterestPointsZarr v1 = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 1, "beads" ) );
 		v1.setInterestPoints( bigger );
-		final InterestPointsN5 newLabel = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 2, "nuclei" ) );
+		final InterestPointsZarr newLabel = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 2, "nuclei" ) );
 		newLabel.setInterestPoints( points( 2, "beads_split" ) );
 		newLabel.setCorrespondingInterestPoints( new ArrayList<>() );
-		store.beginBatch(); // like XmlIoSpimData2.saveInterestPointsInParallel: writer-variant saves stage in memory until commit()
-		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
-		{
-			assertTrue( v1.saveInterestPoints( false, w ) );
-			assertTrue( newLabel.saveInterestPoints( false, w ) );
-			assertTrue( newLabel.saveCorrespondingInterestPoints( false, w ) );
-		}
+		store.beginBatch(); // like XmlIoSpimData2.saveInterestPointsInParallel: saves stage in memory until commit()
+		assertTrue( v1.saveInterestPoints( false ) );
+		assertTrue( newLabel.saveInterestPoints( false ) );
+		assertTrue( newLabel.saveCorrespondingInterestPoints( false ) );
 		store.commit();
-		assertSame( bigger, new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 1, "beads" ) ).getInterestPointsCopy() );
-		assertSame( points( 2, "beads_split" ), new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 2, "nuclei" ) ).getInterestPointsCopy() );
-		assertEquals( 0, new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 2, "nuclei" ) ).getCorrespondingInterestPointsCopy().size() );
+		assertSame( bigger, new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 1, "beads" ) ).getInterestPointsCopy() );
+		assertSame( points( 2, "beads_split" ), new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 2, "nuclei" ) ).getInterestPointsCopy() );
+		assertEquals( 0, new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 2, "nuclei" ) ).getCorrespondingInterestPointsCopy().size() );
 		// untouched entries and their correspondences (incl. pairs with view 1) survive
-		assertSame( points( 0, "beads" ), new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 0, "beads" ) ).getInterestPointsCopy() );
-		assertEquals( sig( corrs( 1, "beads" ) ), sig( new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 1, "beads" ) ).getCorrespondingInterestPointsCopy() ) );
+		assertSame( points( 0, "beads" ), new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 0, "beads" ) ).getInterestPointsCopy() );
+		assertEquals( sig( corrs( 1, "beads" ) ), sig( new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 1, "beads" ) ).getCorrespondingInterestPointsCopy() ) );
 
 		// ---- 4. rewrite path: replace every entry's points (live fraction of the old array drops to 0) ----
 		final long[] before = count( zarr.toPath() );
 		store.beginBatch();
-		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
-		{
-			for ( int v = 0; v < N_VIEWS; ++v )
-				for ( final String label : LABELS )
-				{
-					final InterestPointsN5 ip = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
-					ip.setInterestPoints( points( v, label ) ); // original sizes again
-					ip.saveInterestPoints( false, w );
-				}
-		}
+		for ( int v = 0; v < N_VIEWS; ++v )
+			for ( final String label : LABELS )
+			{
+				final InterestPointsZarr ip = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
+				ip.setInterestPoints( points( v, label ) ); // original sizes again
+				ip.saveInterestPoints( false );
+			}
 		store.commit();
 		final long[] after = count( zarr.toPath() );
 		assertTrue( after[ 0 ] <= before[ 0 ], "rewrite must not grow the store: " + after[ 0 ] + " vs " + before[ 0 ] );
 		for ( int v = 0; v < N_VIEWS; ++v )
 			for ( final String label : LABELS )
 			{
-				final InterestPoints ip = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
+				final InterestPoints ip = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
 				assertSame( points( v, label ), ip.getInterestPointsCopy() );
 				assertEquals( sig( corrs( v, label ) ), sig( ip.getCorrespondingInterestPointsCopy() ), "after rewrite " + v + " " + label );
 			}
 
 		// ---- 5. per-entry save outside a batch -> staging blob, readable at once, folded by the next commit ----
-		final InterestPointsN5 v4 = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) );
+		final InterestPointsZarr v4 = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) );
 		final List< CorrespondingInterestPoints > fewer = new ArrayList<>( corrs( 4, "beads" ).subList( 0, 3 ) );
 		v4.setCorrespondingInterestPoints( fewer );
 		assertTrue( v4.saveCorrespondingInterestPoints( true ) );
 		assertTrue( new File( zarr, "staging" ).isDirectory() );
-		assertEquals( sig( fewer ), sig( new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) ).getCorrespondingInterestPointsCopy() ) );
+		assertEquals( sig( fewer ), sig( new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) ).getCorrespondingInterestPointsCopy() ) );
 		store.commit();
 		final String[] leftover = new File( zarr, "staging" ).list();
 		assertTrue( leftover == null || leftover.length == 0, "staging files left after commit: " + Arrays.toString( leftover ) );
-		assertEquals( sig( fewer ), sig( new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) ).getCorrespondingInterestPointsCopy() ) );
+		assertEquals( sig( fewer ), sig( new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) ).getCorrespondingInterestPointsCopy() ) );
 		// the partner side (view 3/5) was not staged, so view 4 is authoritative for those pairs: partners now see only what view 4 lists
-		final List< CorrespondingInterestPoints > seenBy3 = new ArrayList<>( new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 3, "beads" ) ).getCorrespondingInterestPointsCopy( new ViewId( 0, 4 ), "beads" ) );
+		final List< CorrespondingInterestPoints > seenBy3 = new ArrayList<>( new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 3, "beads" ) ).getCorrespondingInterestPointsCopy( new ViewId( 0, 4 ), "beads" ) );
 		long expected3 = fewer.stream().filter( c -> c.getCorrespondingViewId().getViewSetupId() == 3 ).count();
 		assertEquals( expected3, seenBy3.size() );
 
 		// ---- 6. delete ----
-		final InterestPointsN5 v5 = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 5, "beads" ) );
+		final InterestPointsZarr v5 = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 5, "beads" ) );
 		assertTrue( v5.deleteInterestPoints() );
 		assertTrue( v5.deleteCorrespondingInterestPoints() );
 		store.commit();
 		assertFalse( store.hasPoints( new Key( 0, 5, "beads" ) ) );
-		assertEquals( 0, new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 5, "beads" ) ).getInterestPointsCopy().size() );
-		assertEquals( 0, new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) ).getCorrespondingInterestPointsCopy( new ViewId( 0, 5 ), "beads" ).size() );
-		assertSame( points( 5, "beads_split" ), new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 5, "beads_split" ) ).getInterestPointsCopy() );
+		assertEquals( 0, new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 5, "beads" ) ).getInterestPointsCopy().size() );
+		assertEquals( 0, new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 4, "beads" ) ).getCorrespondingInterestPointsCopy( new ViewId( 0, 5 ), "beads" ).size() );
+		assertSame( points( 5, "beads_split" ), new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 5, "beads_split" ) ).getInterestPointsCopy() );
 
 		// ---- 7. two JVMs: instance B lists the store, then instance A writes a blob and later commits; B must see both ----
-		final PackedInterestPointStore b = new PackedInterestPointStore( baseURI );
+		final InterestPointsZarrStore b = new InterestPointsZarrStore( baseURI );
 		assertFalse( b.hasPoints( new Key( 0, 9, "late" ) ) ); // B has listed now: no such entry
-		final InterestPointsN5 late = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 9, "late" ) );
+		final InterestPointsZarr late = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 9, "late" ) );
 		late.setInterestPoints( points( 2, "beads" ) );
 		late.setCorrespondingInterestPoints( new ArrayList<>() );
-		final InterestPointsN5 late2 = new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, 10, "late" ) );
+		final InterestPointsZarr late2 = new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, 10, "late" ) );
 		late2.setInterestPoints( points( 3, "beads" ) );
 		late2.setCorrespondingInterestPoints( new ArrayList<>( corrs( 3, "beads" ) ) );
-		InterestPointsN5.saveStaged( Arrays.asList( late, late2 ) ); // ONE staging file for both entries, via the registry instance (A)
+		InterestPointsZarr.saveStaged( Arrays.asList( late, late2 ) ); // ONE staging file for both entries, via the registry instance (A)
 		assertEquals( 1, new File( zarr, "staging" ).list().length, "one staging file per saveStaged call" );
 		assertTrue( b.hasPoints( new Key( 0, 9, "late" ) ), "second instance must find a staging file written after its listing" );
 		assertEquals( sig( corrs( 3, "beads" ) ), sig( b.correspondences( new Key( 0, 10, "late" ) ) ) );
-		assertArrayEquals( PackedInterestPointStore.Points.of( points( 2, "beads" ).stream().mapToInt( InterestPoint::getId ).toArray(), points( 2, "beads" ).stream().map( InterestPoint::getL ).toArray( double[][]::new ) ).loc(),
+		assertArrayEquals( InterestPointsZarrStore.Points.of( points( 2, "beads" ).stream().mapToInt( InterestPoint::getId ).toArray(), points( 2, "beads" ).stream().map( InterestPoint::getL ).toArray( double[][]::new ) ).loc(),
 				b.points( new Key( 0, 9, "late" ) ).loc(), 0.0 );
 		store.commit(); // A folds the staging file into a new generation and deletes it
 		assertEquals( 0, new File( zarr, "staging" ).list().length );
-		assertArrayEquals( points( 3, "beads" ).stream().mapToInt( InterestPoint::getId ).toArray(), new PackedInterestPointStore( baseURI ).points( new Key( 0, 10, "late" ) ).ids() );
-		final PackedInterestPointStore c = new PackedInterestPointStore( baseURI ); // fresh instance sees the new generation
+		assertArrayEquals( points( 3, "beads" ).stream().mapToInt( InterestPoint::getId ).toArray(), new InterestPointsZarrStore( baseURI ).points( new Key( 0, 10, "late" ) ).ids() );
+		final InterestPointsZarrStore c = new InterestPointsZarrStore( baseURI ); // fresh instance sees the new generation
 		assertNotNull( c.points( new Key( 0, 9, "late" ) ) );
 		assertEquals( 0, b.correspondences( new Key( 0, 9, "late" ) ).size(), "B must reload the index after the generation changed" );
 
 		// re-open from disk in a fresh store instance (bypass the registry) and check the final state once more
-		final PackedInterestPointStore fresh = new PackedInterestPointStore( baseURI );
+		final InterestPointsZarrStore fresh = new InterestPointsZarrStore( baseURI );
 		assertTrue( fresh.exists() );
 		assertArrayEquals( store.points( new Key( 0, 0, "beads" ) ).loc(), fresh.points( new Key( 0, 0, "beads" ) ).loc(), 0.0 );
 		assertFalse( fresh.hasPoints( new Key( 0, 5, "beads" ) ) );
@@ -283,15 +279,15 @@ public class TestPackedInterestPointStore
 		return a;
 	}
 
-	static InterestPointsN5 list( final URI baseURI, final int v, final String label )
+	static InterestPointsZarr list( final URI baseURI, final int v, final String label )
 	{
-		return new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
+		return new InterestPointsZarr( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
 	}
 
 	/** root attributes of the store on disk: [pointsData, pointAttributes] */
 	static Object[] root( final File base )
 	{
-		try ( final N5Reader r = URITools.instantiateN5Reader( StorageFormat.ZARR, new File( base, PackedInterestPointStore.ZARR_CONTAINER ).toURI() ) )
+		try ( final N5Reader r = URITools.instantiateN5Reader( StorageFormat.ZARR, new File( base, InterestPointsZarrStore.ZARR_CONTAINER ).toURI() ) )
 		{
 			return new Object[] { r.getAttribute( "/", "pointsData", String.class ), r.getAttribute( "/", "pointAttributes", List.class ) };
 		}
@@ -303,10 +299,10 @@ public class TestPackedInterestPointStore
 		final File base = tmp.resolve( "attributes" ).toFile();
 		base.mkdirs();
 		final URI baseURI = base.toURI();
-		PackedInterestPointStore.defaultChunkPoints = 16; // entries span chunks
-		PackedInterestPointStore.defaultShardPoints = 64;
-		final double minLive = PackedInterestPointStore.minLiveFractionForAppend;
-		final String I = InterestPointsN5.INTENSITY;
+		InterestPointsZarrStore.defaultChunkPoints = 16; // entries span chunks
+		InterestPointsZarrStore.defaultShardPoints = 64;
+		final double minLive = InterestPointsZarrStore.minLiveFractionForAppend;
+		final String I = InterestPointsZarr.INTENSITY;
 
 		// ---- 1. legacy groups; view 0 has the float32 intensities BigStitcher-Spark wrote next to them ----
 		final double[] legacyIntensity = new double[ points( 0, "beads" ).size() ];
@@ -325,38 +321,38 @@ public class TestPackedInterestPointStore
 		}
 		assertArrayEquals( legacyIntensity, list( baseURI, 0, "beads" ).getAttributeCopy( I ), 0.0, "legacy intensities are readable" );
 
-		PackedInterestPointStore.convertLegacy( baseURI );
+		InterestPointsN5ToZarr.convert( baseURI );
 		final Key k0 = new Key( 0, 0, "beads" ), k1 = new Key( 0, 1, "beads" ), k2 = new Key( 0, 2, "beads" );
 		assertEquals( List.of( I ), root( base )[ 1 ], "one attribute column" );
-		assertArrayEquals( legacyIntensity, new PackedInterestPointStore( baseURI ).points( k0 ).attributes().get( I ), 0.0, "conversion keeps intensities" );
-		assertTrue( new PackedInterestPointStore( baseURI ).points( k1 ).attributes().isEmpty(), "-1 everywhere = no attribute" );
+		assertArrayEquals( legacyIntensity, new InterestPointsZarrStore( baseURI ).points( k0 ).attributes().get( I ), 0.0, "conversion keeps intensities" );
+		assertTrue( new InterestPointsZarrStore( baseURI ).points( k1 ).attributes().isEmpty(), "-1 everywhere = no attribute" );
 		assertSame( points( 1, "beads" ), list( baseURI, 1, "beads" ).getInterestPointsCopy() );
 
-		final PackedInterestPointStore store = PackedInterestPointStore.get( baseURI );
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseURI );
 		try
 		{
 			// ---- 2. staging file with an existing column: readable before the commit, appended by it ----
-			PackedInterestPointStore.minLiveFractionForAppend = 0; // append whenever the columns allow it
+			InterestPointsZarrStore.minLiveFractionForAppend = 0; // append whenever the columns allow it
 			final double[] int2 = values( 2, I, points( 2, "beads" ).size() );
-			final InterestPointsN5 v2 = list( baseURI, 2, "beads" );
+			final InterestPointsZarr v2 = list( baseURI, 2, "beads" );
 			v2.setInterestPoints( points( 2, "beads" ), Map.of( I, int2 ) );
-			InterestPointsN5.saveStaged( List.of( v2 ) );
-			assertArrayEquals( int2, new PackedInterestPointStore( baseURI ).points( k2 ).attributes().get( I ), 0.0, "from the staging file" );
+			InterestPointsZarr.saveStaged( List.of( v2 ) );
+			assertArrayEquals( int2, new InterestPointsZarrStore( baseURI ).points( k2 ).attributes().get( I ), 0.0, "from the staging file" );
 			final String before = (String) root( base )[ 0 ];
 			store.commit();
 			assertEquals( before, root( base )[ 0 ], "same columns: appended" );
-			assertArrayEquals( int2, new PackedInterestPointStore( baseURI ).points( k2 ).attributes().get( I ), 0.0, "from the arrays" );
+			assertArrayEquals( int2, new InterestPointsZarrStore( baseURI ).points( k2 ).attributes().get( I ), 0.0, "from the arrays" );
 
 			// ---- 3. a new attribute name changes the shape of loc: rewritten even though appending is allowed ----
 			final double[] size1 = values( 1, "size", points( 1, "beads" ).size() );
-			final InterestPointsN5 v1 = list( baseURI, 1, "beads" );
+			final InterestPointsZarr v1 = list( baseURI, 1, "beads" );
 			v1.setInterestPoints( points( 1, "beads" ), Map.of( "size", size1 ) );
 			store.beginBatch();
 			v1.saveInterestPoints( false );
 			store.commit();
 			assertNotEquals( before, root( base )[ 0 ], "new column: rewritten" );
 			assertEquals( List.of( I, "size" ), root( base )[ 1 ] );
-			PackedInterestPointStore fresh = new PackedInterestPointStore( baseURI );
+			InterestPointsZarrStore fresh = new InterestPointsZarrStore( baseURI );
 			assertEquals( Set.of( "size" ), fresh.points( k1 ).attributes().keySet() );
 			assertArrayEquals( size1, fresh.points( k1 ).attributes().get( "size" ), 0.0 );
 			assertEquals( Set.of( I ), fresh.points( k0 ).attributes().keySet() );
@@ -366,20 +362,20 @@ public class TestPackedInterestPointStore
 			assertSame( points( 4, "beads" ), list( baseURI, 4, "beads" ).getInterestPointsCopy() );
 
 			// ---- 4. a rewrite drops columns no entry uses any more ----
-			PackedInterestPointStore.minLiveFractionForAppend = minLive;
+			InterestPointsZarrStore.minLiveFractionForAppend = minLive;
 			store.remove( k0 );
 			store.remove( k2 );
 			store.commit();
 			assertEquals( List.of( "size" ), root( base )[ 1 ] );
-			fresh = new PackedInterestPointStore( baseURI );
+			fresh = new InterestPointsZarrStore( baseURI );
 			assertFalse( fresh.hasPoints( k0 ) );
 			assertArrayEquals( size1, fresh.points( k1 ).attributes().get( "size" ), 0.0 );
 			assertSame( points( 5, "beads" ), list( baseURI, 5, "beads" ).getInterestPointsCopy() );
 		}
-		finally { PackedInterestPointStore.minLiveFractionForAppend = minLive; }
+		finally { InterestPointsZarrStore.minLiveFractionForAppend = minLive; }
 
 		// ---- 5. new points drop the attributes; bad input is rejected ----
-		final InterestPointsN5 v1b = list( baseURI, 1, "beads" );
+		final InterestPointsZarr v1b = list( baseURI, 1, "beads" );
 		assertEquals( Set.of( "size" ), v1b.getAttributeNames() );
 		v1b.setInterestPoints( points( 1, "beads" ) );
 		assertTrue( v1b.getAttributeNames().isEmpty() );

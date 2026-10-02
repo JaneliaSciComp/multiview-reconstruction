@@ -52,8 +52,18 @@ Multi-view reconstruction combines multiple images of the same specimen taken fr
 
 ### Interest Point Storage (Zarr v3 store, 2026-09)
 
-All points and correspondences of a dataset live in a few sharded Zarr v3 arrays, managed by `PackedInterestPointStore`
-(one instance per dataset dir, `PackedInterestPointStore.get(baseDir)`). `InterestPointsN5` keeps its XML text and API.
+All points and correspondences of a dataset live in a few sharded Zarr v3 arrays. Two classes:
+- `InterestPointsZarr extends InterestPoints`: one per (view, label), what the XML and all callers use (`InterestPoints.newInstance`,
+  `instantiatefromXML` for every `tpId_X_viewSetupId_Y/label` path; same XML text as before). Thin handle: key, in-memory copy, flags.
+- `InterestPointsZarrStore`: one per dataset dir (`InterestPointsZarrStore.get(baseDir)`): arrays, index, staging, commit, cache.
+  Must be single per dataset (one index, one commit); per-list state lives in `InterestPointsZarr`.
+- `InterestPointsN5` is the unchanged master code (legacy per-view groups), still used for XML paths that are not
+  `tpId_X_viewSetupId_Y/label`.
+- `InterestPointsN5ToZarr` holds ALL legacy reading for the Zarr side: entries not converted yet (`InterestPointsZarr` falls back
+  to it, read-only, incl. legacy `intensities`), removing legacy groups on delete, and the conversion. The Zarr store has no N5
+  code. Once the Zarr format has proven itself: delete `InterestPointsN5` + `InterestPointsN5ToZarr`; the compiler then points at
+  the three calls in `InterestPointsZarr` (marked `legacy: goes with InterestPointsN5`) and the N5 branch in
+  `InterestPoints.instantiatefromXML` / `XmlIoSpimData2`.
 
 ```
 interestpoints.zarr/zarr.json        root attrs: generation G, pointsData, corrData, labels, chunkPoints, shardPoints, pointAttributes
@@ -72,7 +82,7 @@ GCLocker stall below. The zstd variant was never in production, nothing reads it
 **Writing**
 - The driver's XML save is the only commit: `XmlIoSpimData2.saveInterestPointsInParallel` opens a batch, the per-entry saves stage
   in memory, `commit()` writes the arrays, the next index generation, then flips the root attrs (atomic), then deletes the old one.
-- Outside a batch every save writes a durable staging file. Spark tasks use `InterestPointsN5.saveStaged(lists)`: one file per task.
+- Outside a batch every save writes a durable staging file. Spark tasks use `InterestPointsZarr.saveStaged(lists)`: one file per task.
   The newest file wins for a key (split phase 3 overrides phase 2). Deletes are staged (`store.remove`) until the next commit.
 - Commit appends when ≥ 75 % of an array stays live (counted in points / correspondence rows), else rewrites it.
 - Never let two JVMs commit the same dataset at once.
@@ -84,11 +94,11 @@ GCLocker stall below. The zstd variant was never in production, nothing reads it
   `LoadCorrespondencesPairwise` and BigStitcher-Spark's `Solver`.
 - n5 4.0.1: write inner chunks per shard with `writeChunks`; never `writeBlock` a truncated last shard (corrupts `readChunk`).
 
-**Conversion**: `java -cp <fat jar> ...interestpoints.PackedInterestPointStore <dataset.xml> [chunk shard]`. Never implicit; mixed
+**Conversion**: `java -cp <fat jar> ...interestpoints.InterestPointsN5ToZarr <dataset.xml> [chunk shard]`. Never implicit; mixed
 legacy + zarr datasets read fine; conversion packs legacy `interestpoints/intensities` into the `intensity` attribute.
 
 **Point attributes**: part of the point, like its location: they change iff the points change. Set only together with the
-points, `InterestPointsN5.setInterestPoints(points, Map<name, double[]>)`; read with `getAttributeCopy(name)`;
+points, `InterestPointsZarr.setInterestPoints(points, Map<name, double[]>)`; read with `getAttributeCopy(name)`;
 `setInterestPoints(points)` drops them. Stored as extra `loc` columns, -1 = no value (like the single-consensus set id); an
 entry whose column is all -1 has no such attribute. A new attribute name changes the shape of `loc`, so that commit rewrites
 the points arrays; a rewrite drops columns no entry uses. Staging files v2 carry attributes (v1 still read).
@@ -103,14 +113,14 @@ BigStitcher-Spark `--storeIntensities` writes `intensity` through the normal sta
   files were intact (`tools/check_store.sh`, md5). Never judge data on /nrs through the Mac mount; the fsync + read-back
   code written for this phantom was removed. Every chunk carries a crc32c, so real damage fails loudly.
 - The fat jar must be built with `mvn clean package -Pfatjar`; without `clean`, shade reuses the previous jar's classes.
-- `PackedInterestPointStore.get()` must key by normalized directory: `file:/x/` and `file:///x` once gave two instances per JVM, the second
+- `InterestPointsZarrStore.get()` must key by normalized directory: `file:/x/` and `file:///x` once gave two instances per JVM, the second
   answering from a stale index after the first committed (Spark's `TestClearInterestPoints`, 2026-09-28).
 - 64 threads decoding zstd chunks (zstd-jni uses JNI critical regions) made the JVM throw a spurious `OutOfMemoryError: Java heap
   space` at 127 MB heap use (JDK-8192647, "Retried waiting for GCLocker too often"). Fixed by storing raw bytes; no JNI on reads.
 
 **Numbers** (ExpID99, identical resources, legacy N5 → store): solve1 pair setup 26 s → 4 s, solve2 37 s → 5 s, match_split driver
 save 26 s → 1 s, split stage 34 s → 19 s, detect 57 s → 35 s. Results equal within RANSAC noise. Chunk/shard sweep: bigger
-chunks read faster up to the 64K tested; shard size only affects write parallelism. Test: `TestPackedInterestPointStore`.
+chunks read faster up to the 64K tested; shard size only affects write parallelism. Test: `TestInterestPointsZarr`.
 
 ## InterestPointExplorer GUI
 

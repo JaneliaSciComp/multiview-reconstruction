@@ -24,7 +24,6 @@ package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
@@ -55,7 +54,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 
 import org.janelia.saalfeldlab.n5.DataBlock;
@@ -99,7 +97,7 @@ import util.URITools;
  *   points/gk/id        INT32 [1, N]   detection ids (sparse for *_split labels), same grid
  *   correspondences/gk/data INT32 [3, M] (detA, detB, consensusSetId) once per pair, A = smaller key, same grid
  *   staging/MILLIS_NANOS_RND.stage    one raw file per Spark task (entry table + payloads), folded in at the next commit
- * interestpoints.n5/tpId_X_viewSetupId_Y/label/...   legacy per-view groups, readable, removed by {@link #convertLegacy(URI)}
+ * interestpoints.n5/tpId_X_viewSetupId_Y/label/...   legacy per-view groups: read and converted by {@link InterestPointsN5ToZarr}
  * </pre>
  *
  * Writes are staged in memory ({@link #stagePoints}, {@link #stageCorrespondences}, {@link #remove}) and made durable by
@@ -111,10 +109,10 @@ import util.URITools;
  * single saves) with an entry table, durable immediately and readable from other JVMs; readers prefer them until the next
  * commit folds them in. When a key is in several files the newest file (lexically largest name, millisecond-prefixed) wins.
  *
- * One store instance exists per dataset directory ({@link #get(URI)}); all {@code InterestPointsN5} of a dataset share
+ * One store instance exists per dataset directory ({@link #get(URI)}); all {@link InterestPointsZarr} of a dataset share
  * it, its open readers, its index and its chunk cache.
  */
-public class PackedInterestPointStore
+public class InterestPointsZarrStore
 {
 	public static final String VERSION = "1.0.0";
 	public static final String ZARR_CONTAINER = "interestpoints.zarr";
@@ -146,7 +144,7 @@ public class PackedInterestPointStore
 
 		public static Key of( final ViewId v, final String label ) { return new Key( v.getTimePointId(), v.getViewSetupId(), label ); }
 
-		/** @return the key encoded in a legacy dataset path {@code tpId_X_viewSetupId_Y/label}, or null */
+		/** @return the key encoded in an XML path {@code tpId_X_viewSetupId_Y/label}, or null */
 		public static Key parse( final String n5dataset )
 		{
 			final Matcher m = LEGACY.matcher( n5dataset );
@@ -154,6 +152,9 @@ public class PackedInterestPointStore
 		}
 
 		public ViewId viewId() { return new ViewId( tp, setup ); }
+
+		/** the XML text of the entry, {@code tpId_X_viewSetupId_Y/label} (inverse of {@link #parse}) */
+		public String path() { return "tpId_" + tp + "_viewSetupId_" + setup + "/" + label; }
 
 		private static final Comparator< Key > ORDER = Comparator.comparingInt( ( Key k ) -> k.tp ).thenComparingInt( k -> k.setup ).thenComparing( k -> k.label );
 
@@ -170,12 +171,7 @@ public class PackedInterestPointStore
 		public Points
 		{
 			attributes = attributes == null ? Map.of() : attributes;
-			for ( final Map.Entry< String, double[] > a : attributes.entrySet() )
-			{
-				checkAttributeName( a.getKey() );
-				if ( a.getValue().length != ids.length )
-					throw new IllegalArgumentException( "attribute '" + a.getKey() + "' has " + a.getValue().length + " values for " + ids.length + " points" );
-			}
+			checkAttributes( attributes, ids.length );
 		}
 		public Points( final int[] ids, final double[] loc ) { this( ids, loc, null ); }
 		public int size() { return ids.length; }
@@ -197,11 +193,16 @@ public class PackedInterestPointStore
 		}
 	}
 
-	/** attribute names are listed in the root attributes: letters, digits, '_', '.', '-' only */
-	public static void checkAttributeName( final String name )
+	/** one value per point (n points) for every attribute; names (listed in the root attributes) of letters, digits, '_', '.', '-' only */
+	static void checkAttributes( final Map< String, double[] > attributes, final int n )
 	{
-		if ( name == null || !ATTRIBUTE_NAME.matcher( name ).matches() )
-			throw new IllegalArgumentException( "invalid interest point attribute name '" + name + "' (allowed: letters, digits, '_', '.', '-')" );
+		for ( final Map.Entry< String, double[] > a : attributes.entrySet() )
+		{
+			if ( a.getKey() == null || !ATTRIBUTE_NAME.matcher( a.getKey() ).matches() )
+				throw new IllegalArgumentException( "invalid interest point attribute name '" + a.getKey() + "' (allowed: letters, digits, '_', '.', '-')" );
+			if ( a.getValue().length != n )
+				throw new IllegalArgumentException( "attribute '" + a.getKey() + "' has " + a.getValue().length + " values for " + n + " points" );
+		}
 	}
 
 	record PairRow( Key partner, long offset, int count, boolean swapped ) {}
@@ -215,12 +216,12 @@ public class PackedInterestPointStore
 	}
 
 	// ponytail: one store per dataset directory for the whole JVM; fine as long as all SpimData2 of a base path see the same files
-	private static final ConcurrentHashMap< String, PackedInterestPointStore > stores = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap< String, InterestPointsZarrStore > stores = new ConcurrentHashMap<>();
 
 	/** @param baseDir the dataset directory (containing interestpoints.zarr / interestpoints.n5), i.e. {@code SpimData2.getBasePathURI()} */
-	public static PackedInterestPointStore get( final URI baseDir )
+	public static InterestPointsZarrStore get( final URI baseDir )
 	{
-		return stores.computeIfAbsent( storeKey( baseDir ), k -> new PackedInterestPointStore( baseDir ) );
+		return stores.computeIfAbsent( storeKey( baseDir ), k -> new InterestPointsZarrStore( baseDir ) );
 	}
 
 	/** one key per directory: {@code file:/x/}, {@code file:///x} and {@code file:///x/} are the same store */
@@ -232,10 +233,10 @@ public class PackedInterestPointStore
 		return s.endsWith( "/" ) ? s.substring( 0, s.length() - 1 ) : s;
 	}
 
-	final URI baseDir, n5URI, n5URI_legacy;
-	private N5Writer n5Writer = null, n5Writer_legacy = null;
-	private N5Reader n5Reader = null, n5Reader_legacy = null;
-	private boolean n5ReaderTried = false, n5ReaderTried_legacy = false;
+	final URI baseDir, n5URI;
+	private N5Writer n5Writer = null;
+	private N5Reader n5Reader = null;
+	private boolean n5ReaderTried = false;
 	private volatile Index index = null;
 
 	private final Object lock = new Object();
@@ -263,11 +264,10 @@ public class PackedInterestPointStore
 	};
 
 	/** prefer {@link #get(URI)}; a private instance does not share index and cache with the rest of the JVM */
-	public PackedInterestPointStore( final URI baseDir )
+	public InterestPointsZarrStore( final URI baseDir )
 	{
 		this.baseDir = baseDir;
 		this.n5URI = URITools.toURI( URITools.appendName( baseDir, ZARR_CONTAINER ) );
-		this.n5URI_legacy = URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) );
 	}
 
 	// ------------------------------------------------------------------------------------------------
@@ -290,7 +290,6 @@ public class PackedInterestPointStore
 	private synchronized void retryContainers()
 	{
 		if ( n5Reader == null && n5Writer == null ) n5ReaderTried = false;
-		if ( n5Reader_legacy == null && n5Writer_legacy == null ) n5ReaderTried_legacy = false;
 	}
 
 	private synchronized N5Writer n5Writer()
@@ -301,28 +300,6 @@ public class PackedInterestPointStore
 			n5Reader = null;
 		}
 		return n5Writer;
-	}
-
-	private synchronized N5Reader n5Reader_legacy()
-	{
-		if ( n5Writer_legacy != null ) return n5Writer_legacy;
-		if ( !n5ReaderTried_legacy )
-		{
-			n5ReaderTried_legacy = true;
-			try { n5Reader_legacy = URITools.instantiateN5Reader( StorageFormat.N5, n5URI_legacy ); }
-			catch ( final Exception e ) { n5Reader_legacy = null; }
-		}
-		return n5Reader_legacy;
-	}
-
-	private synchronized N5Writer n5Writer_legacy()
-	{
-		if ( n5Writer_legacy == null )
-		{
-			n5Writer_legacy = URITools.instantiateN5Writer( StorageFormat.N5, n5URI_legacy );
-			n5Reader_legacy = null;
-		}
-		return n5Writer_legacy;
 	}
 
 	private static KeyValueAccess kva( final N5Reader n5 ) { return ( (GsonKeyValueN5Reader) n5 ).getKeyValueAccess(); }
@@ -434,7 +411,7 @@ public class PackedInterestPointStore
 		{
 			return parseHeader( name, in );
 		}
-		catch ( final IOException | RuntimeException e ) { IOFunctions.println( "PackedInterestPointStore: WARNING cannot read staging file " + name + ": " + e ); return null; }
+		catch ( final IOException | RuntimeException e ) { IOFunctions.println( "InterestPointsZarrStore: WARNING cannot read staging file " + name + ": " + e ); return null; }
 	}
 
 	private static List< BlobEntry > parseHeader( final String name, final DataInputStream in ) throws IOException
@@ -678,31 +655,30 @@ public class PackedInterestPointStore
 	// staging (in memory) and per-entry blobs (durable)
 	// ------------------------------------------------------------------------------------------------
 
-	public void stagePoints( final Key k, final int[] ids, final double[][] locations ) { stagePoints( k, Points.of( ids, locations ) ); }
+	/** saves the points of an entry: in memory while a batch is open ({@link #beginBatch()}), else one durable staging file */
+	public void savePoints( final Key k, final Points p )
+	{
+		if ( batch ) stagePoints( k, p ); else writeStagingFile( Map.of( k, p ), Map.of() );
+	}
 
-	public void stagePoints( final Key k, final Points p )
+	/** saves the correspondences of an entry; same dispatch as {@link #savePoints} */
+	public void saveCorrespondences( final Key k, final Collection< CorrespondingInterestPoints > list )
+	{
+		if ( batch ) stageCorrespondences( k, list ); else writeStagingFile( Map.of(), Map.of( k, new ArrayList<>( list ) ) );
+	}
+
+	private void stagePoints( final Key k, final Points p )
 	{
 		synchronized ( lock ) { stagedPoints.put( k, p ); removedPoints.remove( k ); }
 	}
 
-	public void stageCorrespondences( final Key k, final Collection< CorrespondingInterestPoints > list )
+	private void stageCorrespondences( final Key k, final Collection< CorrespondingInterestPoints > list )
 	{
 		final ArrayList< CorrespondingInterestPoints > l = new ArrayList<>( list.size() );
 		for ( final CorrespondingInterestPoints c : list ) l.add( new CorrespondingInterestPoints( c ) );
 		synchronized ( lock ) { stagedCorr.put( k, l ); removedCorr.remove( k ); }
 	}
 
-	/**
-	 * Removes a legacy per-view group (e.g. tpId_0_viewSetupId_3/beads/interestpoints) if the legacy container has it;
-	 * uses the cached legacy reader/writer instead of opening one per call. @return true if something was removed
-	 */
-	public boolean removeLegacyGroup( final String dataset )
-	{
-		final N5Reader r = n5Reader_legacy();
-		if ( r == null || !r.exists( dataset ) ) return false;
-		n5Writer_legacy().remove( dataset );
-		return true;
-	}
 
 	/** marks points and correspondences of an entry for removal at the next commit */
 	public void remove( final Key k )
@@ -716,22 +692,15 @@ public class PackedInterestPointStore
 
 	/**
 	 * Marks the start of a batch that this JVM will {@link #commit()} right away (XmlIoSpimData2.saveInterestPointsInParallel).
-	 * Only inside a batch do the writer-variant saves of InterestPointsN5 stage in memory; everywhere else (e.g. Spark
+	 * Only inside a batch do the saves of InterestPointsZarr stage in memory; everywhere else (e.g. Spark
 	 * executors that are never going to commit) they write durable staging blobs instead, so nothing is lost silently.
 	 */
 	public void beginBatch() { batch = true; }
-	public boolean inBatch() { return batch; }
-
-	/** single-entry convenience: one staging file holding the points of one entry */
-	public void writePointsBlob( final Key k, final Points p ) { writeStagingFile( Map.of( k, p ), Map.of() ); }
-
-	/** single-entry convenience: one staging file holding the correspondences of one entry */
-	public void writeCorrespondencesBlob( final Key k, final Collection< CorrespondingInterestPoints > list ) { writeStagingFile( Map.of(), Map.of( k, new ArrayList<>( list ) ) ); }
 
 	/**
 	 * Durable save without a commit: writes ONE file under interestpoints.zarr/staging/ holding all given entries (entry
 	 * table first, then the payloads), readable at once from any JVM and folded into the arrays by the next commit.
-	 * Spark tasks call this once per task ({@code InterestPointsN5.saveStaged}) instead of once per entry.
+	 * Spark tasks call this once per task ({@link InterestPointsZarr#saveStaged}) instead of once per entry.
 	 *
 	 * @return the file name, or null if there was nothing to write
 	 */
@@ -1194,7 +1163,7 @@ public class PackedInterestPointStore
 			final DatasetAttributes loc = w.getDatasetAttributes( pointsData + "/loc" ), id = w.getDatasetAttributes( pointsData + "/id" ), corr = w.getDatasetAttributes( corrData + "/data" );
 			index = new Index( gen, labels, pointsData, corrData, newPoints, newPairs, nPointsNew, nCorrNew, loc, id, corr, List.copyOf( attrNames ) );
 
-			IOFunctions.println( "PackedInterestPointStore: committed generation " + gen + " (" + nStaged + " point entries, " + nStagedCorr + " correspondence entries, points "
+			IOFunctions.println( "InterestPointsZarrStore: committed generation " + gen + " (" + nStaged + " point entries, " + nStagedCorr + " correspondence entries, points "
 					+ ( appendPts ? "appended" : "rewritten" ) + ", correspondences " + ( appendCorr ? "appended" : "rewritten" ) + ", " + newPoints.size() + " entries / " + nPointsNew
 					+ " points / " + nCorrNew + " correspondences total, chunk " + chunk + " / shard " + shard + ") in " + ( System.currentTimeMillis() - t0 ) + " ms"
 					+ " [fold " + nFolded + " entries from " + byFile.size() + " staging files " + foldMs + " ms, points " + ptsMs + " ms, correspondences " + corrMs + " ms, indices+flip " + ( tFlip - tIdx ) + " ms, old generation " + ( tOld - tFlip ) + " ms, delete " + stagingFiles.size() + " staging files " + ( tBlobs - tOld ) + " ms]" );
@@ -1202,7 +1171,7 @@ public class PackedInterestPointStore
 	}
 
 	/** runs body (which uses parallel streams) in a pool of Threads.numThreads() threads and waits for it */
-	private static void parallel( final String what, final Runnable body )
+	static void parallel( final String what, final Runnable body )
 	{
 		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
 		try { pool.submit( body ).get(); }
@@ -1382,60 +1351,4 @@ public class PackedInterestPointStore
 		return out;
 	}
 
-	// ------------------------------------------------------------------------------------------------
-	// legacy conversion
-	// ------------------------------------------------------------------------------------------------
-
-	/**
-	 * Packs every legacy per-view group ({@code interestpoints.n5/tpId_X_viewSetupId_Y/label}) into the store and deletes
-	 * the groups. Safe to run again on a partially converted dataset.
-	 *
-	 * @param baseDir the dataset directory
-	 * @return number of converted entries
-	 */
-	public static int convertLegacy( final URI baseDir )
-	{
-		final PackedInterestPointStore store = get( baseDir );
-		final N5Reader n5 = store.n5Reader_legacy();
-		if ( n5 == null ) return 0;
-		final List< String > groups = new ArrayList<>();
-		for ( final String g : n5.list( "/" ) )
-			if ( g.startsWith( "tpId_" ) && g.contains( "_viewSetupId_" ) )
-				for ( final String label : n5.list( g ) )
-					groups.add( g + "/" + label );
-		Collections.sort( groups );
-		if ( groups.isEmpty() ) return 0;
-		IOFunctions.println( "PackedInterestPointStore: converting " + groups.size() + " legacy interest point groups of " + store.n5URI_legacy + " into " + store.n5URI );
-
-		parallel( "reading legacy interest points", () -> IntStream.range( 0, groups.size() ).parallel().forEach( i -> {
-				final String path = groups.get( i );
-				final Key k = Key.parse( path );
-				if ( k == null ) return;
-				final InterestPointsN5 ip = new InterestPointsN5( baseDir, path );
-				if ( n5.exists( InterestPointsN5.ipDataset( path ) ) && ip.loadLegacyInterestPoints() )
-					store.stagePoints( k, Points.of( ip.ids, ip.locations, ip.attributes ) ); // incl. legacy intensities
-				if ( n5.exists( InterestPointsN5.corrDataset( path ) ) && ip.loadLegacyCorrespondences() )
-					store.stageCorrespondences( k, ip.correspondingInterestPoints );
-			}) );
-
-		store.commit();
-
-		final N5Writer w = store.n5Writer_legacy();
-		final Set< String > viewGroups = new HashSet<>();
-		for ( final String g : groups ) viewGroups.add( g.substring( 0, g.indexOf( '/' ) ) );
-		parallel( "removing legacy interest point groups", () -> viewGroups.parallelStream().forEach( g -> w.remove( g ) ) );
-		IOFunctions.println( "PackedInterestPointStore: removed " + viewGroups.size() + " legacy view groups" );
-		return groups.size();
-	}
-
-	/** java ... PackedInterestPointStore &lt;dataset.xml | dataset directory&gt; [chunkPoints shardPoints] */
-	public static void main( final String[] args )
-	{
-		File dir = new File( args[ 0 ] );
-		if ( dir.isFile() ) dir = dir.getParentFile();
-		if ( args.length > 2 ) { defaultChunkPoints = Integer.parseInt( args[ 1 ] ); defaultShardPoints = Integer.parseInt( args[ 2 ] ); }
-		final long t0 = System.currentTimeMillis();
-		final int n = convertLegacy( dir.toURI() );
-		System.out.println( "converted " + n + " entries in " + ( System.currentTimeMillis() - t0 ) + " ms" );
-	}
 }

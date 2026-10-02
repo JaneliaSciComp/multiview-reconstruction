@@ -52,7 +52,7 @@ import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlIoIntensityAdjustm
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5.InterestPointData;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlIoViewInterestPoints;
@@ -353,14 +353,14 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 
 		if ( allIPs.isEmpty() )
 		{
-			PackedInterestPointStore.get( baseDir ).commit(); // staged deletes of the last lists still need a commit
+			InterestPointsZarrStore.get( baseDir ).commit(); // staged deletes of the last lists still need a commit
 			return;
 		}
 
 		final ForkJoinPool pool = new ForkJoinPool( numThreads );
-		PackedInterestPointStore.get( baseDir ).beginBatch(); // writer-variant saves below stage in memory; commit() at the end
-		// the shared legacy writer is only needed for lists the store cannot hold (do not create interestpoints.n5 otherwise)
-		final boolean needLegacyWriter = allIPs.stream().anyMatch( ipl -> ipl instanceof InterestPointsN5 && !( (InterestPointsN5) ipl ).usesStore() );
+		InterestPointsZarrStore.get( baseDir ).beginBatch(); // InterestPointsZarr saves below stage in memory; commit() at the end
+		// the shared legacy writer is only needed for InterestPointsN5 lists (paths the store cannot hold); do not create interestpoints.n5 otherwise
+		final boolean needLegacyWriter = allIPs.stream().anyMatch( ipl -> ipl instanceof InterestPointsN5 );
 		try ( final N5Writer n5Writer = needLegacyWriter ? URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) : null )
 		{
 			pool.submit( () ->
@@ -389,8 +389,8 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 				})
 			).get();
 
-			// InterestPointsN5 entries were staged in memory by the loop above; write them into the packed arrays in one go
-			PackedInterestPointStore.get( baseDir ).commit();
+			// InterestPointsZarr entries were staged in memory by the loop above; write them into the arrays in one go
+			InterestPointsZarrStore.get( baseDir ).commit();
 		}
 		catch ( final Exception e )
 		{
