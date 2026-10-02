@@ -207,9 +207,8 @@ public class InterestPointTools
 	}
 
 	/**
-	 * Registers interest point lists for a label without data in memory, e.g. when the points were already written as
-	 * staging blobs by other JVMs (Spark detection): the next XML save folds them into the interest point store and the
-	 * lists load lazily from there.
+	 * Adds empty list entries for a label whose data other JVMs already wrote as staging files (Spark detection). The next
+	 * XML save commits the data; the lists load it on first use.
 	 */
 	public static void addInterestPointEntries( final SpimData2 data, final String label, final Collection< ? extends ViewId > viewIds, final String parameters )
 	{

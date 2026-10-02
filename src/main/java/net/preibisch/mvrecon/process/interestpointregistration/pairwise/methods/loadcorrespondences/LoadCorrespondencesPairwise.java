@@ -150,7 +150,7 @@ public class LoadCorrespondencesPairwise< I extends InterestPoint > implements M
 			// Timing: getCorrespondingInterestPointsCopy (this is the lazy loading bottleneck!)
 			start = System.currentTimeMillis();
 			final Collection<CorrespondingInterestPoints> corrA =
-					ipA.getCorrespondingInterestPointsCopy( (ViewId) viewsB, labelB ); // pair range only (packed store), or filtered full list (legacy)
+					ipA.getCorrespondingInterestPointsCopy( (ViewId) viewsB, labelB ); // only this pair
 			getCorrespondencesCopyTime.addAndGet(System.currentTimeMillis() - start);
 
 			totalCorrespondencesLoaded.addAndGet(corrA.size());
