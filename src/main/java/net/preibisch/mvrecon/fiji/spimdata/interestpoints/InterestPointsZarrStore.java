@@ -30,7 +30,6 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -120,7 +119,7 @@ public class InterestPointsZarrStore
 	static final String STAGING = "staging";
 	static final String STAGING_EXT = ".stage";
 	static final int STAGING_MAGIC = 0x49505354;
-	static final int STAGING_VERSION = 2; // version 2 adds point attributes; version 1 is still read
+	static final int STAGING_VERSION = 1;
 
 	static final String ATTR_VERSION = "interestpoints";
 	static final String ATTR_GENERATION = "generation";
@@ -158,6 +157,8 @@ public class InterestPointsZarrStore
 		public String path() { return "tpId_" + tp + "_viewSetupId_" + setup + "/" + label; }
 
 		public ViewId viewId() { return new ViewId( tp, setup ); }
+
+		public Pair< ViewId, String > toPair() { return new ValuePair<>( viewId(), label ); }
 
 		@Override
 		public int compareTo( final Key other ) { return ORDER.compare( this, other ); }
@@ -243,7 +244,7 @@ public class InterestPointsZarrStore
 	}
 
 	/** Where one entry's payload is inside a staging file. */
-	record StagingRef( String file, long offset, int count, int version ) {}
+	record StagingRef( String file, long offset, int count ) {}
 
 	/** One row of a staging file's entry table. */
 	record StagingEntry( Key key, StagingRef points, StagingRef correspondences ) {}
@@ -252,7 +253,18 @@ public class InterestPointsZarrStore
 	private record StagingRow( Key key, int pointsPayload, int pointCount, int correspondencesPayload, int correspondenceCount ) {}
 
 	/** One payload that a commit reads from a staging file. */
-	private record FoldRef( Key key, StagingRef ref, boolean points ) {}
+	private record FoldRef< T >( Key key, StagingRef ref, Side< T > side )
+	{
+		/**
+		 * Decodes the payload and stages it. Runs on pool threads while the committing thread holds the store lock, so the
+		 * puts are serialized on the map itself.
+		 */
+		void fold( final DataInputStream in ) throws IOException
+		{
+			final T value = side.decode( in, ref.count );
+			synchronized ( side.staged ) { side.staged.put( key, value ); }
+		}
+	}
 
 	/** An existing pair (a < b) that a commit keeps. */
 	private record KeptPair( Key a, Key b, PairRow row ) {}
@@ -262,6 +274,84 @@ public class InterestPointsZarrStore
 
 	/** What a commit wrote for the correspondences. */
 	private record CorrespondencesCommit( String data, boolean appended, Map< Key, List< PairRow > > pairs, long total ) {}
+
+	/**
+	 * An N5 / Zarr container opened on first use. The reader is null while the container does not exist (cached until
+	 * {@link #retryReader()}); the writer, once opened, serves as the reader.
+	 */
+	static final class LazyN5Container
+	{
+		private final StorageFormat format;
+		private final URI uri;
+		private N5Reader reader = null;
+		private N5Writer writer = null;
+		private boolean readerTried = false;
+
+		LazyN5Container( final StorageFormat format, final URI uri )
+		{
+			this.format = format;
+			this.uri = uri;
+		}
+
+		/** @return the reader, or null if there is no container */
+		synchronized N5Reader reader()
+		{
+			if ( writer != null )
+				return writer;
+
+			if ( !readerTried )
+			{
+				readerTried = true;
+				try
+				{
+					reader = URITools.instantiateN5Reader( format, uri );
+				}
+				catch ( final Exception e )
+				{
+					reader = null; // no container
+				}
+			}
+			return reader;
+		}
+
+		/** Forgets a cached "no container", so one that another JVM created meanwhile is found. */
+		synchronized void retryReader()
+		{
+			if ( reader == null && writer == null )
+				readerTried = false;
+		}
+
+		/** Creates the container if needed. */
+		synchronized N5Writer writer()
+		{
+			if ( writer == null )
+			{
+				writer = URITools.instantiateN5Writer( format, uri );
+				reader = null;
+			}
+			return writer;
+		}
+
+		/**
+		 * @return a new reader that sees the current state of the container (readers cache root attributes), or null if
+		 * this JVM writes the container itself or the container does not exist
+		 */
+		synchronized N5Reader freshReader()
+		{
+			if ( writer != null )
+				return null;
+			try
+			{
+				return URITools.instantiateN5Reader( format, uri );
+			}
+			catch ( final Exception e )
+			{
+				return null;
+			}
+		}
+
+		synchronized void replaceReader( final N5Reader fresh ) { reader = fresh; }
+	}
 
 	// ponytail: one store per dataset directory for the whole JVM; fine as long as all SpimData2 of a base path see the same files
 	private static final ConcurrentHashMap< String, InterestPointsZarrStore > stores = new ConcurrentHashMap<>();
@@ -285,22 +375,53 @@ public class InterestPointsZarrStore
 	final URI baseDir;
 	final URI containerURI;
 
-	private N5Writer writer = null;
-	private N5Reader reader = null;
-	private boolean readerTried = false;
+	private final LazyN5Container container;
 	private volatile Index index = null;
 
 	private final Object lock = new Object();
 	private volatile boolean batchOpen = false;
-	private final Map< Key, Points > stagedPoints = new HashMap<>();
-	private final Map< Key, List< CorrespondingInterestPoints > > stagedCorrespondences = new HashMap<>();
-	private final Set< Key > removedPoints = new HashSet<>();
-	private final Set< Key > removedCorrespondences = new HashSet<>();
 
 	private final Map< String, List< StagingEntry > > parsedStagingFiles = new HashMap<>(); // file name -> entry table
-	private volatile Map< Key, StagingRef > stagingPoints = Map.of();
-	private volatile Map< Key, StagingRef > stagingCorrespondences = Map.of();
 	private boolean stagingListed = false;
+
+	/**
+	 * Everything that exists once for the points and once for the correspondences: the changes staged in this JVM, the
+	 * payloads in staging files, how a staging payload is decoded, and where the index keeps the entry.
+	 */
+	private abstract class Side< T >
+	{
+		final Map< Key, T > staged = new HashMap<>(); // guarded by lock
+		final Set< Key > removed = new HashSet<>(); // guarded by lock
+		volatile Map< Key, StagingRef > staging = Map.of(); // key -> payload in a staging file, a later file wins
+
+		abstract StagingRef ref( StagingEntry entry );
+		abstract boolean indexed( Index index, Key key );
+		/** @return what a reader gets of a staged value: the value itself if immutable, else a shallow copy */
+		abstract T snapshot( T value );
+		abstract T decode( DataInputStream in, int count ) throws IOException;
+		/** @return the entry read again after its staging file disappeared */
+		abstract T reload( Key key );
+	}
+
+	private final Side< Points > pointSide = new Side<>()
+	{
+		@Override StagingRef ref( final StagingEntry entry ) { return entry.points; }
+		@Override boolean indexed( final Index index, final Key key ) { return index.points.containsKey( key ); }
+		@Override Points snapshot( final Points value ) { return value; }
+		@Override Points decode( final DataInputStream in, final int count ) throws IOException { return decodePoints( in, count ); }
+		@Override Points reload( final Key key ) { return points( key ); }
+	};
+
+	private final Side< List< CorrespondingInterestPoints > > correspondenceSide = new Side<>()
+	{
+		@Override StagingRef ref( final StagingEntry entry ) { return entry.correspondences; }
+		@Override boolean indexed( final Index index, final Key key ) { return index.pairs.containsKey( key ); }
+		@Override List< CorrespondingInterestPoints > snapshot( final List< CorrespondingInterestPoints > value ) { return new ArrayList<>( value ); }
+		@Override List< CorrespondingInterestPoints > decode( final DataInputStream in, final int count ) throws IOException { return decodeCorrespondences( in, count ); }
+		@Override List< CorrespondingInterestPoints > reload( final Key key ) { return correspondences( key ); }
+	};
+
+	private final List< Side< ? > > sides = List.of( pointSide, correspondenceSide );
 
 	private final LinkedHashMap< String, Object > chunkCache = new LinkedHashMap<>( 64, 0.75f, true )
 	{
@@ -315,49 +436,13 @@ public class InterestPointsZarrStore
 	{
 		this.baseDir = baseDir;
 		this.containerURI = URITools.toURI( URITools.appendName( baseDir, ZARR_CONTAINER ) );
+		this.container = new LazyN5Container( StorageFormat.ZARR, containerURI );
 	}
 
 	// ------------------------------------------------------------------------------------------------
 	// container
 	// ------------------------------------------------------------------------------------------------
 
-	/** @return the reader, or null if there is no store yet */
-	private synchronized N5Reader reader()
-	{
-		if ( writer != null )
-			return writer;
-
-		if ( !readerTried )
-		{
-			readerTried = true;
-			try
-			{
-				reader = URITools.instantiateN5Reader( StorageFormat.ZARR, containerURI );
-			}
-			catch ( final Exception e )
-			{
-				reader = null; // no store yet
-			}
-		}
-		return reader;
-	}
-
-	/** Forgets a cached "no store yet", so a store that another JVM created meanwhile is found. */
-	private synchronized void retryReader()
-	{
-		if ( reader == null && writer == null )
-			readerTried = false;
-	}
-
-	private synchronized N5Writer writer()
-	{
-		if ( writer == null )
-		{
-			writer = URITools.instantiateN5Writer( StorageFormat.ZARR, containerURI );
-			reader = null;
-		}
-		return writer;
-	}
 
 	private static KeyValueAccess keyValueAccess( final N5Reader n5 )
 	{
@@ -385,7 +470,7 @@ public class InterestPointsZarrStore
 	private Index loadIndex()
 	{
 		listStagingFiles();
-		final N5Reader zarr = reader();
+		final N5Reader zarr = container.reader();
 		if ( zarr == null || zarr.getAttribute( "/", ATTR_VERSION, String.class ) == null )
 			return Index.empty();
 
@@ -398,19 +483,15 @@ public class InterestPointsZarrStore
 		final List< String > attributeNames = zarr.getAttribute( "/", ATTR_POINT_ATTRIBUTES, List.class );
 
 		final long[] entryRows = readLongs( zarr, indexGroup( generation ) + "/entries", 5 );
-		final Map< Key, long[] > points = new HashMap<>();
+		final Map< Key, long[] > pointRanges = new HashMap<>();
 		for ( int row = 0; row < entryRows.length; row += 5 )
-		{
-			final Key key = new Key( (int) entryRows[ row ], (int) entryRows[ row + 1 ], labels.get( (int) entryRows[ row + 2 ] ) );
-			points.put( key, new long[] { entryRows[ row + 3 ], entryRows[ row + 4 ] } );
-		}
+			pointRanges.put( readKey( entryRows, row, labels ), new long[] { entryRows[ row + 3 ], entryRows[ row + 4 ] } );
 
 		final long[] viewRows = readLongs( zarr, indexGroup( generation ) + "/views", 5 );
 		final long[] pairRows = readLongs( zarr, indexGroup( generation ) + "/pairs", 6 );
 		final Map< Key, List< PairRow > > pairs = new HashMap<>();
 		for ( int row = 0; row < viewRows.length; row += 5 )
 		{
-			final Key key = new Key( (int) viewRows[ row ], (int) viewRows[ row + 1 ], labels.get( (int) viewRows[ row + 2 ] ) );
 			final long firstPair = viewRows[ row + 3 ];
 			final long pairCount = viewRows[ row + 4 ];
 
@@ -418,10 +499,9 @@ public class InterestPointsZarrStore
 			for ( long pair = firstPair; pair < firstPair + pairCount; ++pair )
 			{
 				final int first = (int) ( 6 * pair );
-				final Key partner = new Key( (int) pairRows[ first ], (int) pairRows[ first + 1 ], labels.get( (int) pairRows[ first + 2 ] ) );
-				partners.add( new PairRow( partner, pairRows[ first + 3 ], (int) pairRows[ first + 4 ], pairRows[ first + 5 ] != 0 ) );
+				partners.add( new PairRow( readKey( pairRows, first, labels ), pairRows[ first + 3 ], (int) pairRows[ first + 4 ], pairRows[ first + 5 ] != 0 ) );
 			}
-			pairs.put( key, partners );
+			pairs.put( readKey( viewRows, row, labels ), partners );
 		}
 
 		final DatasetAttributes locAttributes = zarr.getDatasetAttributes( pointsData + "/loc" );
@@ -429,13 +509,28 @@ public class InterestPointsZarrStore
 		final DatasetAttributes correspondenceAttributes = zarr.getDatasetAttributes( correspondencesData + "/data" );
 
 		return new Index(
-				generation, labels, pointsData, correspondencesData, points, pairs,
+				generation, labels, pointsData, correspondencesData, pointRanges, pairs,
 				locAttributes.getDimensions()[ 1 ], correspondenceAttributes.getDimensions()[ 1 ],
 				locAttributes, idAttributes, correspondenceAttributes,
-				attributeNames == null ? List.of() : List.copyOf( attributeNames ) );
+				List.copyOf( attributeNames ) );
 	}
 
 	static String indexGroup( final int generation ) { return "index/g" + generation; }
+
+	/** The key in the three index columns (tp, setup, label id) at {@code position}. */
+	private static Key readKey( final long[] rows, final int position, final List< String > labels )
+	{
+		return new Key( (int) rows[ position ], (int) rows[ position + 1 ], labels.get( (int) rows[ position + 2 ] ) );
+	}
+
+	/** Writes the three index columns of a key at {@code position}. @return the next position */
+	private static int writeKey( final long[] rows, final int position, final Key key, final Map< String, Integer > labelIds )
+	{
+		rows[ position ] = key.tp;
+		rows[ position + 1 ] = key.setup;
+		rows[ position + 2 ] = labelIds.get( key.label );
+		return position + 3;
+	}
 
 	/** Lists the staging directory and reads the entry tables of files not seen before. */
 	private void listStagingFiles()
@@ -444,7 +539,7 @@ public class InterestPointsZarrStore
 			return;
 		stagingListed = true;
 
-		final N5Reader zarr = reader();
+		final N5Reader zarr = container.reader();
 		if ( zarr == null )
 		{
 			synchronized ( lock )
@@ -490,19 +585,26 @@ public class InterestPointsZarrStore
 	/** Rebuilds the key -> payload maps. Names sort chronologically, so a later file wins. */
 	private void rebuildStagingMaps()
 	{
-		final Map< Key, StagingRef > points = new HashMap<>();
-		final Map< Key, StagingRef > correspondences = new HashMap<>();
-		for ( final List< StagingEntry > entries : new TreeMap<>( parsedStagingFiles ).values() )
-			for ( final StagingEntry entry : entries )
-			{
-				if ( entry.points != null )
-					points.put( entry.key, entry.points );
-				if ( entry.correspondences != null )
-					correspondences.put( entry.key, entry.correspondences );
-			}
+		final Collection< List< StagingEntry > > chronological = new TreeMap<>( parsedStagingFiles ).values();
+		for ( final Side< ? > side : sides )
+		{
+			final Map< Key, StagingRef > refs = new HashMap<>();
+			for ( final List< StagingEntry > entries : chronological )
+				for ( final StagingEntry entry : entries )
+				{
+					final StagingRef ref = side.ref( entry );
+					if ( ref != null )
+						refs.put( entry.key, ref );
+				}
+			side.staging = refs;
+		}
+	}
 
-		stagingPoints = points;
-		stagingCorrespondences = correspondences;
+	/** Lists the staging directory again, so files that other JVMs wrote or deleted since are picked up. */
+	private void relistStagingFiles()
+	{
+		stagingListed = false;
+		listStagingFiles();
 	}
 
 	private String stagingPath( final KeyValueAccess kva, final String name ) { return kva.compose( containerURI, STAGING, name ); }
@@ -516,8 +618,7 @@ public class InterestPointsZarrStore
 	/** @return the entry table of a staging file, or null if it cannot be read (for example, still being written) */
 	private List< StagingEntry > readHeader( final KeyValueAccess kva, final String name )
 	{
-		try ( final LockedChannel channel = kva.lockForReading( stagingPath( kva, name ) );
-				final DataInputStream in = new DataInputStream( new BufferedInputStream( channel.newInputStream() ) ) )
+		try ( final DataInputStream in = openStagingFile( kva, name ) )
 		{
 			return parseHeader( name, in );
 		}
@@ -534,7 +635,7 @@ public class InterestPointsZarrStore
 			throw new IOException( "not a staging file" );
 
 		final int version = in.readInt();
-		if ( version < 1 || version > STAGING_VERSION )
+		if ( version != STAGING_VERSION )
 			throw new IOException( "unsupported staging file version " + version );
 
 		final int entryCount = in.readInt();
@@ -542,91 +643,76 @@ public class InterestPointsZarrStore
 		for ( int i = 0; i < entryCount; ++i )
 		{
 			final Key key = new Key( in.readInt(), in.readInt(), in.readUTF() );
-			final StagingRef points = readStagingRef( in, name, version );
-			final StagingRef correspondences = readStagingRef( in, name, version );
+			final StagingRef points = readStagingRef( in, name );
+			final StagingRef correspondences = readStagingRef( in, name );
 			entries.add( new StagingEntry( key, points, correspondences ) );
 		}
 		return entries;
 	}
 
 	/** Reads (present, offset, count). @return null if not present */
-	private static StagingRef readStagingRef( final DataInputStream in, final String file, final int version ) throws IOException
+	private static StagingRef readStagingRef( final DataInputStream in, final String file ) throws IOException
 	{
 		final boolean present = in.readBoolean();
 		final long offset = in.readLong();
 		final int count = in.readInt();
-		return present ? new StagingRef( file, offset, count, version ) : null;
+		return present ? new StagingRef( file, offset, count ) : null;
 	}
 
 	// ------------------------------------------------------------------------------------------------
 	// reading
 	// ------------------------------------------------------------------------------------------------
 
-	/** Where an entry's data is. At most one field is set; none set means this store does not know the entry. */
-	private record Where( Object staged, StagingRef stagingRef, Index index )
-	{
-		static final Where NONE = new Where( null, null, null );
-	}
+	/** Where an entry's data is: exactly one field is set. */
+	private record Where< T >( T staged, StagingRef stagingRef, Index index ) {}
 
 	/**
 	 * Looks in the data staged in this JVM, then in the staging files, then in the arrays. On a miss it refreshes once,
 	 * because another JVM may have written the entry since.
+	 *
+	 * @return null if this store does not know the entry
 	 */
-	private Where where( final Key key, final boolean points )
+	private < T > Where< T > where( final Side< T > side, final Key key )
 	{
 		synchronized ( lock )
 		{
-			final Set< Key > removed = points ? removedPoints : removedCorrespondences;
-			if ( removed.contains( key ) )
-				return Where.NONE;
+			if ( side.removed.contains( key ) )
+				return null;
 
-			if ( points && stagedPoints.containsKey( key ) )
-				return new Where( stagedPoints.get( key ), null, null );
-
-			if ( !points && stagedCorrespondences.containsKey( key ) )
-				return new Where( new ArrayList<>( stagedCorrespondences.get( key ) ), null, null );
+			final T staged = side.staged.get( key );
+			if ( staged != null )
+				return new Where<>( side.snapshot( staged ), null, null );
 		}
 
 		final Index current = index();
-		final StagingRef ref = stagingRefs( points ).get( key );
+		final StagingRef ref = side.staging.get( key );
 		if ( ref != null )
-			return new Where( null, ref, null );
+			return new Where<>( null, ref, null );
 
-		if ( isIndexed( current, key, points ) )
-			return new Where( null, null, current );
+		if ( side.indexed( current, key ) )
+			return new Where<>( null, null, current );
 
-		if ( refreshOnMiss( key, points ) )
-			return new Where( null, stagingRefs( points ).get( key ), null );
+		if ( refreshOnMiss( side, key ) )
+			return new Where<>( null, side.staging.get( key ), null );
 
 		final Index refreshed = index();
-		return isIndexed( refreshed, key, points ) ? new Where( null, null, refreshed ) : Where.NONE;
-	}
-
-	private Map< Key, StagingRef > stagingRefs( final boolean points ) { return points ? stagingPoints : stagingCorrespondences; }
-
-	private static boolean isIndexed( final Index index, final Key key, final boolean points )
-	{
-		return points ? index.points.containsKey( key ) : index.pairs.containsKey( key );
+		return side.indexed( refreshed, key ) ? new Where<>( null, null, refreshed ) : null;
 	}
 
 	/** @return true if this store knows the entry (staged, in a staging file, or in the arrays) */
-	public boolean hasPoints( final Key key ) { return where( key, true ) != Where.NONE; }
+	public boolean hasPoints( final Key key ) { return where( pointSide, key ) != null; }
 
 	/** @return the points of an entry, or null if this store does not know it */
 	public Points points( final Key key )
 	{
-		final Where where = where( key, true );
-		if ( where.staged != null )
-			return (Points) where.staged;
-
-		if ( where.stagingRef != null )
-			return readStagedPoints( where.stagingRef, key );
-
-		if ( where.index == null )
+		final Where< Points > where = where( pointSide, key );
+		if ( where == null )
 			return null;
-
-		final long[] range = where.index.points.get( key );
-		return readPoints( where.index, range[ 0 ], (int) range[ 1 ] );
+		if ( where.staged != null )
+			return where.staged;
+		if ( where.stagingRef != null )
+			return readStaged( pointSide, where.stagingRef, key );
+		return readPoints( where.index, key );
 	}
 
 	/** @return all correspondences of an entry, to all partners; null if this store does not know it */
@@ -639,10 +725,11 @@ public class InterestPointsZarrStore
 	}
 
 	/** @param partner only correspondences to this partner, or null for all */
-	@SuppressWarnings( "unchecked" )
 	private List< CorrespondingInterestPoints > correspondences( final Key key, final Key partner )
 	{
-		final Where where = where( key, false );
+		final Where< List< CorrespondingInterestPoints > > where = where( correspondenceSide, key );
+		if ( where == null )
+			return null;
 		if ( where.index != null )
 		{
 			final ArrayList< CorrespondingInterestPoints > result = new ArrayList<>();
@@ -653,14 +740,7 @@ public class InterestPointsZarrStore
 			return result;
 		}
 
-		final List< CorrespondingInterestPoints > all;
-		if ( where.staged != null )
-			all = (List< CorrespondingInterestPoints >) where.staged;
-		else if ( where.stagingRef != null )
-			all = readStagedCorrespondences( where.stagingRef, key );
-		else
-			all = null;
-
+		final List< CorrespondingInterestPoints > all = where.staged != null ? where.staged : readStaged( correspondenceSide, where.stagingRef, key );
 		if ( all == null || partner == null )
 			return all;
 
@@ -680,12 +760,14 @@ public class InterestPointsZarrStore
 	/** @return the (view, label)s this entry has correspondences with; null if this store does not know the entry */
 	public Set< Pair< ViewId, String > > correspondingViews( final Key key )
 	{
-		final Where where = where( key, false );
+		final Where< List< CorrespondingInterestPoints > > where = where( correspondenceSide, key );
+		if ( where == null )
+			return null;
 		final Set< Pair< ViewId, String > > partners = new HashSet<>();
 		if ( where.index != null )
 		{
 			for ( final PairRow row : where.index.pairs.get( key ) )
-				partners.add( new ValuePair<>( row.partner.viewId(), row.partner.label ) );
+				partners.add( row.partner.toPair() );
 
 			return partners;
 		}
@@ -695,7 +777,7 @@ public class InterestPointsZarrStore
 			return null;
 
 		for ( final CorrespondingInterestPoints correspondence : all )
-			partners.add( new ValuePair<>( correspondence.getCorrespondingViewId(), correspondence.getCorrespodingLabel() ) );
+			partners.add( partnerOf( correspondence ).toPair() );
 
 		return partners;
 	}
@@ -706,15 +788,14 @@ public class InterestPointsZarrStore
 	 *
 	 * @return true if a staging file now has the entry
 	 */
-	private boolean refreshOnMiss( final Key key, final boolean points )
+	private boolean refreshOnMiss( final Side< ? > side, final Key key )
 	{
-		retryReader();
-		if ( reader() == null )
+		container.retryReader();
+		if ( container.reader() == null )
 			return false;
 
-		stagingListed = false;
-		listStagingFiles(); // parses only files not seen before
-		if ( stagingRefs( points ).containsKey( key ) )
+		relistStagingFiles(); // parses only files not seen before
+		if ( side.staging.containsKey( key ) )
 			return true;
 
 		refreshGeneration();
@@ -726,24 +807,14 @@ public class InterestPointsZarrStore
 	{
 		synchronized ( this )
 		{
-			if ( writer == null )
+			final N5Reader freshReader = container.freshReader();
+			final Integer generation = freshReader == null ? null : freshReader.getAttribute( "/", ATTR_GENERATION, Integer.class );
+			if ( generation != null && generation != index().generation )
 			{
-				try
-				{
-					final N5Reader freshReader = URITools.instantiateN5Reader( StorageFormat.ZARR, containerURI );
-					final Integer generation = freshReader.getAttribute( "/", ATTR_GENERATION, Integer.class );
-					if ( generation != null && generation != index().generation )
-					{
-						reader = freshReader;
-						index = null;
-						stagingListed = false;
-						clearCache();
-					}
-				}
-				catch ( final Exception e )
-				{
-					// no store
-				}
+				container.replaceReader( freshReader );
+				index = null;
+				stagingListed = false;
+				clearCache();
 			}
 		}
 		index();
@@ -757,8 +828,7 @@ public class InterestPointsZarrStore
 			parsedStagingFiles.remove( file );
 			rebuildStagingMaps();
 		}
-		stagingListed = false;
-		listStagingFiles();
+		relistStagingFiles();
 		refreshGeneration();
 	}
 
@@ -771,6 +841,31 @@ public class InterestPointsZarrStore
 		return false;
 	}
 
+	/** Receives one chunk of an array and the rows [from, to) of it that are wanted. */
+	private interface ChunkVisitor< C > { void visit( C chunk, long chunkStart, long from, long to ); }
+
+	/** Calls the visitor for every chunk that holds rows of [offset, offset + count), clipped to the array's {@code rows}. */
+	private < C > void forChunks( final String dataset, final DatasetAttributes attributes, final long rows, final long offset, final int count,
+			final ChunkVisitor< C > visitor )
+	{
+		final int chunkSize = attributes.getChunkSize()[ 1 ];
+		final long end = offset + count;
+		for ( long chunkIndex = offset / chunkSize; chunkIndex * chunkSize < end; ++chunkIndex )
+		{
+			final long chunkStart = chunkIndex * chunkSize;
+			final long from = Math.max( chunkStart, offset );
+			final long to = Math.min( Math.min( chunkStart + chunkSize, rows ), end );
+			visitor.visit( readChunk( dataset, attributes, chunkIndex ), chunkStart, from, to );
+		}
+	}
+
+	/** Reads an entry's points from the arrays of a generation. */
+	private Points readPoints( final Index index, final Key key )
+	{
+		final long[] range = index.points.get( key );
+		return readPoints( index, range[ 0 ], (int) range[ 1 ] );
+	}
+
 	/** Reads {@code count} points from {@code offset} in the arrays of a generation. */
 	private Points readPoints( final Index index, final long offset, final int count )
 	{
@@ -779,34 +874,25 @@ public class InterestPointsZarrStore
 		final int attributeCount = index.attributeNames.size();
 		final int columns = 3 + attributeCount;
 		final double[][] attributeValues = new double[ attributeCount ][ count ];
-		final int chunkSize = index.locAttributes.getChunkSize()[ 1 ];
 
-		for ( long chunkIndex = offset / chunkSize; chunkIndex * chunkSize < offset + count; ++chunkIndex )
-		{
-			final double[] locChunk = (double[]) readChunk( index.pointsData + "/loc", index.locAttributes, chunkIndex );
-			final int[] idChunk = (int[]) readChunk( index.pointsData + "/id", index.idAttributes, chunkIndex );
-			final long chunkStart = chunkIndex * chunkSize;
-			final long from = Math.max( chunkStart, offset );
-			final long to = Math.min( Math.min( chunkStart + chunkSize, index.pointCount ), offset + count );
+		forChunks( index.pointsData + "/id", index.idAttributes, index.pointCount, offset, count, ( final int[] chunk, final long chunkStart, final long from, final long to ) ->
+				System.arraycopy( chunk, (int) ( from - chunkStart ), ids, (int) ( from - offset ), (int) ( to - from ) ) );
 
+		forChunks( index.pointsData + "/loc", index.locAttributes, index.pointCount, offset, count, ( final double[] chunk, final long chunkStart, final long from, final long to ) -> {
 			if ( attributeCount == 0 )
 			{
-				System.arraycopy( locChunk, (int) ( from - chunkStart ) * 3, loc, (int) ( from - offset ) * 3, (int) ( to - from ) * 3 );
+				System.arraycopy( chunk, (int) ( from - chunkStart ) * 3, loc, (int) ( from - offset ) * 3, (int) ( to - from ) * 3 );
+				return;
 			}
-			else
+			for ( long point = from; point < to; ++point )
 			{
-				for ( long point = from; point < to; ++point )
-				{
-					final int source = (int) ( point - chunkStart ) * columns;
-					final int target = (int) ( point - offset );
-					System.arraycopy( locChunk, source, loc, target * 3, 3 );
-					for ( int a = 0; a < attributeCount; ++a )
-						attributeValues[ a ][ target ] = locChunk[ source + 3 + a ];
-				}
+				final int source = (int) ( point - chunkStart ) * columns;
+				final int target = (int) ( point - offset );
+				System.arraycopy( chunk, source, loc, target * 3, 3 );
+				for ( int a = 0; a < attributeCount; ++a )
+					attributeValues[ a ][ target ] = chunk[ source + 3 + a ];
 			}
-
-			System.arraycopy( idChunk, (int) ( from - chunkStart ), ids, (int) ( from - offset ), (int) ( to - from ) );
-		}
+		} );
 
 		final TreeMap< String, double[] > attributes = new TreeMap<>();
 		for ( int a = 0; a < attributeCount; ++a )
@@ -828,17 +914,8 @@ public class InterestPointsZarrStore
 	/** Appends the correspondences of one pair row, seen from the row's owner. */
 	private void readPairRows( final Index index, final PairRow row, final List< CorrespondingInterestPoints > result )
 	{
-		final int chunkSize = index.correspondenceAttributes.getChunkSize()[ 1 ];
 		final ViewId partnerView = row.partner.viewId();
-		final long end = row.offset + row.count;
-
-		for ( long chunkIndex = row.offset / chunkSize; chunkIndex * chunkSize < end; ++chunkIndex )
-		{
-			final int[] data = (int[]) readChunk( index.correspondencesData + "/data", index.correspondenceAttributes, chunkIndex );
-			final long chunkStart = chunkIndex * chunkSize;
-			final long from = Math.max( chunkStart, row.offset );
-			final long to = Math.min( Math.min( chunkStart + chunkSize, index.correspondenceCount ), end );
-
+		forChunks( index.correspondencesData + "/data", index.correspondenceAttributes, index.correspondenceCount, row.offset, row.count, ( final int[] data, final long chunkStart, final long from, final long to ) -> {
 			for ( long rowIndex = from; rowIndex < to; ++rowIndex )
 			{
 				final int first = (int) ( rowIndex - chunkStart ) * 3;
@@ -849,23 +926,24 @@ public class InterestPointsZarrStore
 				final int other = row.swapped ? detectionA : detectionB;
 				result.add( new CorrespondingInterestPoints( own, partnerView, row.partner.label, other, consensusSet ) );
 			}
-		}
+		} );
 	}
 
-	/** One inner chunk, read through the shard index and cached. */
-	private Object readChunk( final String dataset, final DatasetAttributes attributes, final long chunkIndex )
+	/** One inner chunk (a primitive array of the dataset's type), read through the shard index and cached. */
+	@SuppressWarnings( "unchecked" )
+	private < C > C readChunk( final String dataset, final DatasetAttributes attributes, final long chunkIndex )
 	{
 		final String cacheKey = dataset + "#" + chunkIndex;
 		synchronized ( chunkCache )
 		{
 			final Object cached = chunkCache.get( cacheKey );
 			if ( cached != null )
-				return cached;
+				return (C) cached;
 		}
 
-		final Object data = reader().readChunk( dataset, attributes, 0, chunkIndex ).getData();
+		final Object data = container.reader().readChunk( dataset, attributes, 0, chunkIndex ).getData();
 		synchronized ( chunkCache ) { chunkCache.put( cacheKey, data ); }
-		return data;
+		return (C) data;
 	}
 
 	private void clearCache()
@@ -878,42 +956,34 @@ public class InterestPointsZarrStore
 	// ------------------------------------------------------------------------------------------------
 
 	/** Saves the points of an entry: in memory during a batch ({@link #beginBatch()}), otherwise in a staging file. */
-	public void savePoints( final Key key, final Points points )
+	public void savePoints( final Key key, final Points value )
 	{
 		if ( batchOpen )
-			stagePoints( key, points );
+			stage( pointSide, key, value );
 		else
-			writeStagingFile( Map.of( key, points ), Map.of() );
+			writeStagingFile( Map.of( key, value ), Map.of() );
 	}
 
-	/** Saves the correspondences of an entry, like {@link #savePoints}. */
-	public void saveCorrespondences( final Key key, final Collection< CorrespondingInterestPoints > correspondences )
+	/** Saves the correspondences of an entry, like {@link #savePoints}. The list is copied. */
+	public void saveCorrespondences( final Key key, final Collection< CorrespondingInterestPoints > value )
 	{
-		if ( batchOpen )
-			stageCorrespondences( key, correspondences );
-		else
-			writeStagingFile( Map.of(), Map.of( key, new ArrayList<>( correspondences ) ) );
-	}
-
-	private void stagePoints( final Key key, final Points points )
-	{
-		synchronized ( lock )
-		{
-			stagedPoints.put( key, points );
-			removedPoints.remove( key );
-		}
-	}
-
-	private void stageCorrespondences( final Key key, final Collection< CorrespondingInterestPoints > correspondences )
-	{
-		final ArrayList< CorrespondingInterestPoints > copy = new ArrayList<>( correspondences.size() );
-		for ( final CorrespondingInterestPoints correspondence : correspondences )
+		final ArrayList< CorrespondingInterestPoints > copy = new ArrayList<>( value.size() );
+		for ( final CorrespondingInterestPoints correspondence : value )
 			copy.add( new CorrespondingInterestPoints( correspondence ) );
 
+		if ( batchOpen )
+			stage( correspondenceSide, key, copy );
+		else
+			writeStagingFile( Map.of(), Map.of( key, copy ) );
+	}
+
+	/** Stages a value this store now owns. */
+	private < T > void stage( final Side< T > side, final Key key, final T value )
+	{
 		synchronized ( lock )
 		{
-			stagedCorrespondences.put( key, copy );
-			removedCorrespondences.remove( key );
+			side.staged.put( key, value );
+			side.removed.remove( key );
 		}
 	}
 
@@ -922,10 +992,11 @@ public class InterestPointsZarrStore
 	{
 		synchronized ( lock )
 		{
-			stagedPoints.remove( key );
-			stagedCorrespondences.remove( key );
-			removedPoints.add( key );
-			removedCorrespondences.add( key );
+			for ( final Side< ? > side : sides )
+			{
+				side.staged.remove( key );
+				side.removed.add( key );
+			}
 		}
 	}
 
@@ -988,7 +1059,7 @@ public class InterestPointsZarrStore
 			final byte[] header = encodeHeader( rows, offsets );
 
 			final String name = stagingFileName();
-			final KeyValueAccess kva = keyValueAccess( writer() );
+			final KeyValueAccess kva = keyValueAccess( container.writer() );
 			kva.createDirectories( kva.compose( containerURI, STAGING ) );
 			try ( final LockedChannel channel = kva.lockForWriting( stagingPath( kva, name ) );
 					final OutputStream out = new BufferedOutputStream( channel.newOutputStream() ) )
@@ -1003,18 +1074,12 @@ public class InterestPointsZarrStore
 			synchronized ( lock )
 			{
 				for ( final StagingEntry entry : entries )
-				{
-					if ( entry.points != null )
-					{
-						stagedPoints.remove( entry.key );
-						removedPoints.remove( entry.key );
-					}
-					if ( entry.correspondences != null )
-					{
-						stagedCorrespondences.remove( entry.key );
-						removedCorrespondences.remove( entry.key );
-					}
-				}
+					for ( final Side< ? > side : sides )
+						if ( side.ref( entry ) != null )
+						{
+							side.staged.remove( entry.key );
+							side.removed.remove( entry.key );
+						}
 				index(); // the directory must be listed before the file is added
 				parsedStagingFiles.put( name, entries );
 				rebuildStagingMaps();
@@ -1060,47 +1125,50 @@ public class InterestPointsZarrStore
 		final int count = points.size();
 		final ByteArrayOutputStream bytes = new ByteArrayOutputStream( count * 28 + 4 + points.attributes().size() * ( 16 + count * 8 ) );
 
-		final ByteBuffer idsAndLocations = ByteBuffer.allocate( count * 28 );
-		idsAndLocations.asIntBuffer().put( points.ids );
-		idsAndLocations.position( count * 4 );
-		idsAndLocations.asDoubleBuffer().put( points.loc );
-		bytes.write( idsAndLocations.array() );
+		final ByteBuffer ids = ByteBuffer.allocate( count * 4 );
+		ids.asIntBuffer().put( points.ids );
+		bytes.write( ids.array() );
+		bytes.write( doubleBytes( points.loc ) );
 
 		final DataOutputStream out = new DataOutputStream( bytes );
 		out.writeInt( points.attributes().size() );
 		for ( final Map.Entry< String, double[] > attribute : points.attributes().entrySet() )
 		{
 			out.writeUTF( attribute.getKey() );
-			final ByteBuffer values = ByteBuffer.allocate( count * 8 );
-			values.asDoubleBuffer().put( attribute.getValue() );
-			out.write( values.array() );
+			out.write( doubleBytes( attribute.getValue() ) );
 		}
 		out.flush();
 		return bytes.toByteArray();
 	}
 
-	private static Points decodePoints( final DataInputStream in, final int count, final int version ) throws IOException
+	private static Points decodePoints( final DataInputStream in, final int count ) throws IOException
 	{
-		final ByteBuffer idsAndLocations = ByteBuffer.wrap( readFully( in, count * 28, "points" ) );
 		final int[] ids = new int[ count ];
-		final double[] loc = new double[ count * 3 ];
-		idsAndLocations.asIntBuffer().get( ids );
-		idsAndLocations.position( count * 4 );
-		idsAndLocations.asDoubleBuffer().get( loc );
+		ByteBuffer.wrap( readFully( in, count * 4, "ids" ) ).asIntBuffer().get( ids );
+		final double[] loc = readDoubles( in, count * 3, "locations" );
 
 		final TreeMap< String, double[] > attributes = new TreeMap<>();
-		if ( version >= 2 )
+		final int attributeCount = in.readInt();
+		for ( int a = 0; a < attributeCount; ++a )
 		{
-			final int attributeCount = in.readInt();
-			for ( int a = 0; a < attributeCount; ++a )
-			{
-				final String name = in.readUTF();
-				final double[] values = new double[ count ];
-				ByteBuffer.wrap( readFully( in, count * 8, "attribute " + name ) ).asDoubleBuffer().get( values );
-				attributes.put( name, values );
-			}
+			final String name = in.readUTF();
+			attributes.put( name, readDoubles( in, count, "attribute " + name ) );
 		}
 		return new Points( ids, loc, attributes );
+	}
+
+	private static byte[] doubleBytes( final double[] values )
+	{
+		final ByteBuffer buffer = ByteBuffer.allocate( values.length * 8 );
+		buffer.asDoubleBuffer().put( values );
+		return buffer.array();
+	}
+
+	private static double[] readDoubles( final DataInputStream in, final int count, final String what ) throws IOException
+	{
+		final double[] values = new double[ count ];
+		ByteBuffer.wrap( readFully( in, count * 8, what ) ).asDoubleBuffer().get( values );
+		return values;
 	}
 
 	private static byte[] readFully( final DataInputStream in, final int length, final String what ) throws IOException
@@ -1160,12 +1228,11 @@ public class InterestPointsZarrStore
 		return correspondences;
 	}
 
-	/** Opens a staging file at a payload; closing the stream also releases the file. */
-	private DataInputStream openPayload( final StagingRef ref ) throws IOException
+	/** Opens a staging file for reading; closing the stream also releases the file lock. */
+	private DataInputStream openStagingFile( final KeyValueAccess kva, final String name ) throws IOException
 	{
-		final KeyValueAccess kva = keyValueAccess( reader() );
-		final LockedChannel channel = kva.lockForReading( stagingPath( kva, ref.file ) );
-		final DataInputStream in = new DataInputStream( new BufferedInputStream( channel.newInputStream() ) )
+		final LockedChannel channel = kva.lockForReading( stagingPath( kva, name ) );
+		return new DataInputStream( new BufferedInputStream( channel.newInputStream() ) )
 		{
 			@Override
 			public void close() throws IOException
@@ -1180,15 +1247,22 @@ public class InterestPointsZarrStore
 				}
 			}
 		};
+	}
+
+	/** Opens a staging file at a payload. */
+	private DataInputStream openPayload( final StagingRef ref ) throws IOException
+	{
+		final DataInputStream in = openStagingFile( keyValueAccess( container.reader() ), ref.file );
 		in.skipNBytes( ref.offset );
 		return in;
 	}
 
-	private Points readStagedPoints( final StagingRef ref, final Key key )
+	/** Reads one payload from a staging file; if the file is gone (another JVM committed), reads the entry again. */
+	private < T > T readStaged( final Side< T > side, final StagingRef ref, final Key key )
 	{
 		try ( final DataInputStream in = openPayload( ref ) )
 		{
-			return decodePoints( in, ref.count, ref.version );
+			return side.decode( in, ref.count );
 		}
 		catch ( final IOException | N5Exception e )
 		{
@@ -1196,34 +1270,15 @@ public class InterestPointsZarrStore
 				throw new RuntimeException( "could not read staging file " + ref.file + " for " + key, e );
 
 			stagingFileGone( ref.file );
-			return points( key );
-		}
-	}
-
-	private List< CorrespondingInterestPoints > readStagedCorrespondences( final StagingRef ref, final Key key )
-	{
-		try ( final DataInputStream in = openPayload( ref ) )
-		{
-			return decodeCorrespondences( in, ref.count );
-		}
-		catch ( final IOException | N5Exception e )
-		{
-			if ( !isMissingFile( e ) )
-				throw new RuntimeException( "could not read staging file " + ref.file + " for " + key, e );
-
-			stagingFileGone( ref.file );
-			return correspondences( key );
+			return side.reload( key );
 		}
 	}
 
 	/** Reads a whole staging file once and decodes the requested payloads from memory. */
-	private void readStagingFile( final String file, final List< FoldRef > refs,
-			final Map< Key, Points > points, final Map< Key, List< CorrespondingInterestPoints > > correspondences )
+	private void readStagingFile( final String file, final List< FoldRef< ? > > refs )
 	{
-		final KeyValueAccess kva = keyValueAccess( reader() );
 		final byte[] bytes;
-		try ( final LockedChannel channel = kva.lockForReading( stagingPath( kva, file ) );
-				final InputStream in = channel.newInputStream() )
+		try ( final DataInputStream in = openStagingFile( keyValueAccess( container.reader() ), file ) )
 		{
 			bytes = in.readAllBytes();
 		}
@@ -1232,7 +1287,7 @@ public class InterestPointsZarrStore
 			throw new RuntimeException( "could not read staging file " + file, e );
 		}
 
-		for ( final FoldRef fold : refs )
+		for ( final FoldRef< ? > fold : refs )
 		{
 			final StagingRef ref = fold.ref;
 			if ( ref.offset > bytes.length )
@@ -1240,10 +1295,7 @@ public class InterestPointsZarrStore
 
 			try ( final DataInputStream in = new DataInputStream( new ByteArrayInputStream( bytes, (int) ref.offset, bytes.length - (int) ref.offset ) ) )
 			{
-				if ( fold.points )
-					points.put( fold.key, decodePoints( in, ref.count, ref.version ) );
-				else
-					correspondences.put( fold.key, decodeCorrespondences( in, ref.count ) );
+				fold.fold( in );
 			}
 			catch ( final IOException e )
 			{
@@ -1279,9 +1331,8 @@ public class InterestPointsZarrStore
 			final long startTime = System.currentTimeMillis();
 
 			// pick up staging files and a newer generation from other JVMs
-			retryReader();
-			stagingListed = false;
-			listStagingFiles();
+			container.retryReader();
+			relistStagingFiles();
 			final Index old = index();
 			final List< String > stagingFiles = new ArrayList<>( parsedStagingFiles.keySet() ); // all obsolete after this commit
 
@@ -1289,10 +1340,10 @@ public class InterestPointsZarrStore
 			final int foldedEntries = foldStagingFiles();
 			final long foldMs = System.currentTimeMillis() - foldStart;
 
-			if ( stagedPoints.isEmpty() && stagedCorrespondences.isEmpty() && removedPoints.isEmpty() && removedCorrespondences.isEmpty() )
+			if ( sides.stream().allMatch( side -> side.staged.isEmpty() && side.removed.isEmpty() ) )
 				return;
 
-			final N5Writer zarr = writer();
+			final N5Writer zarr = container.writer();
 			final List< String > labels = new ArrayList<>( old.labels );
 			final Map< String, Integer > labelIds = new HashMap<>();
 			for ( int i = 0; i < labels.size(); ++i )
@@ -1314,10 +1365,10 @@ public class InterestPointsZarrStore
 			final Map< Key, List< PairRow > > pairs = correspondences.pairs;
 			for ( final Key key : points.ranges.keySet() )
 				pairs.putIfAbsent( key, new ArrayList<>() );
-			for ( final Key key : stagedCorrespondences.keySet() )
-				if ( !removedCorrespondences.contains( key ) )
+			for ( final Key key : correspondenceSide.staged.keySet() )
+				if ( !correspondenceSide.removed.contains( key ) )
 					pairs.putIfAbsent( key, new ArrayList<>() );
-			for ( final Key key : removedCorrespondences )
+			for ( final Key key : correspondenceSide.removed )
 				pairs.remove( key );
 			for ( final Key key : pairs.keySet() )
 				addLabel( labels, labelIds, key.label );
@@ -1343,12 +1394,13 @@ public class InterestPointsZarrStore
 			deleteStagingFiles( zarr, stagingFiles );
 			final long cleanupMs = System.currentTimeMillis() - cleanupStart;
 
-			final int stagedPointEntries = stagedPoints.size();
-			final int stagedCorrespondenceEntries = stagedCorrespondences.size();
-			stagedPoints.clear();
-			stagedCorrespondences.clear();
-			removedPoints.clear();
-			removedCorrespondences.clear();
+			final int stagedPointEntries = pointSide.staged.size();
+			final int stagedCorrespondenceEntries = correspondenceSide.staged.size();
+			for ( final Side< ? > side : sides )
+			{
+				side.staged.clear();
+				side.removed.clear();
+			}
 			batchOpen = false;
 			clearCache();
 
@@ -1377,37 +1429,23 @@ public class InterestPointsZarrStore
 	 */
 	private int foldStagingFiles()
 	{
-		final Map< String, List< FoldRef > > byFile = new HashMap<>();
+		final Map< String, List< FoldRef< ? > > > byFile = new HashMap<>();
 		int count = 0;
-		for ( final Map.Entry< Key, StagingRef > staging : stagingPoints.entrySet() )
-		{
-			final Key key = staging.getKey();
-			if ( !stagedPoints.containsKey( key ) && !removedPoints.contains( key ) )
+		for ( final Side< ? > side : sides )
+			for ( final Map.Entry< Key, StagingRef > staging : side.staging.entrySet() )
 			{
-				byFile.computeIfAbsent( staging.getValue().file, file -> new ArrayList<>() ).add( new FoldRef( key, staging.getValue(), true ) );
-				++count;
+				final Key key = staging.getKey();
+				if ( !side.staged.containsKey( key ) && !side.removed.contains( key ) )
+				{
+					byFile.computeIfAbsent( staging.getValue().file, file -> new ArrayList<>() ).add( new FoldRef<>( key, staging.getValue(), side ) );
+					++count;
+				}
 			}
-		}
-		for ( final Map.Entry< Key, StagingRef > staging : stagingCorrespondences.entrySet() )
-		{
-			final Key key = staging.getKey();
-			if ( !stagedCorrespondences.containsKey( key ) && !removedCorrespondences.contains( key ) )
-			{
-				byFile.computeIfAbsent( staging.getValue().file, file -> new ArrayList<>() ).add( new FoldRef( key, staging.getValue(), false ) );
-				++count;
-			}
-		}
 
-		if ( byFile.isEmpty() )
-			return count;
+		if ( !byFile.isEmpty() )
+			parallel( "reading staging files", () -> byFile.entrySet().parallelStream().forEach(
+					file -> readStagingFile( file.getKey(), file.getValue() ) ) );
 
-		final Map< Key, Points > points = new ConcurrentHashMap<>();
-		final Map< Key, List< CorrespondingInterestPoints > > correspondences = new ConcurrentHashMap<>();
-		parallel( "reading staging files", () -> byFile.entrySet().parallelStream().forEach(
-				file -> readStagingFile( file.getKey(), file.getValue(), points, correspondences ) ) );
-
-		stagedPoints.putAll( points );
-		stagedCorrespondences.putAll( correspondences );
 		return count;
 	}
 
@@ -1419,7 +1457,7 @@ public class InterestPointsZarrStore
 		for ( final Map.Entry< Key, long[] > entry : old.points.entrySet() )
 		{
 			final Key key = entry.getKey();
-			if ( !stagedPoints.containsKey( key ) && !removedPoints.contains( key ) )
+			if ( !pointSide.staged.containsKey( key ) && !pointSide.removed.contains( key ) )
 			{
 				kept.add( key );
 				keptPoints += entry.getValue()[ 1 ];
@@ -1428,18 +1466,16 @@ public class InterestPointsZarrStore
 
 		long newPoints = 0;
 		boolean newColumns = false; // a new attribute name changes the shape of loc
-		for ( final Points points : stagedPoints.values() )
+		for ( final Points entry : pointSide.staged.values() )
 		{
-			newPoints += points.size();
-			newColumns |= !old.attributeNames.containsAll( points.attributes().keySet() );
+			newPoints += entry.size();
+			newColumns |= !old.attributeNames.containsAll( entry.attributes().keySet() );
 		}
 
-		final boolean append = old.pointsData != null
-				&& !newColumns
-				&& keptPoints + newPoints >= minLiveFractionForAppend * ( old.pointCount + newPoints );
+		final boolean append = !newColumns && canAppend( old.pointsData, keptPoints, newPoints, old.pointCount );
 
 		final TreeMap< Key, long[] > ranges = new TreeMap<>();
-		final List< Key > toWrite = new ArrayList<>( stagedPoints.keySet() );
+		final List< Key > toWrite = new ArrayList<>( pointSide.staged.keySet() );
 		Collections.sort( toWrite );
 		final String data;
 		final long start;
@@ -1462,19 +1498,10 @@ public class InterestPointsZarrStore
 		long end = start;
 		for ( final Key key : toWrite )
 		{
-			final Points points;
-			if ( stagedPoints.containsKey( key ) )
-			{
-				points = stagedPoints.get( key );
-			}
-			else
-			{
-				final long[] range = old.points.get( key );
-				points = readPoints( old, range[ 0 ], (int) range[ 1 ] );
-			}
-			toWritePoints.add( points );
-			ranges.put( key, new long[] { end, points.size() } );
-			end += points.size();
+			final Points entry = pointSide.staged.containsKey( key ) ? pointSide.staged.get( key ) : readPoints( old, key );
+			toWritePoints.add( entry );
+			ranges.put( key, new long[] { end, entry.size() } );
+			end += entry.size();
 		}
 
 		// loc columns 3, 4, ...: an append keeps the columns, a rewrite uses those that some entry has (sorted)
@@ -1502,8 +1529,8 @@ public class InterestPointsZarrStore
 	private CorrespondencesCommit commitCorrespondences( final N5Writer zarr, final Index old, final int chunkSize, final int shardSize,
 			final List< String > labels, final Map< String, Integer > labelIds )
 	{
-		final Set< Key > replaced = new HashSet<>( stagedCorrespondences.keySet() );
-		replaced.addAll( removedCorrespondences );
+		final Set< Key > replaced = new HashSet<>( correspondenceSide.staged.keySet() );
+		replaced.addAll( correspondenceSide.removed );
 
 		// existing pairs (each once, from the A side) that no staged or removed entry is part of
 		final List< KeptPair > keptPairs = new ArrayList<>();
@@ -1519,17 +1546,17 @@ public class InterestPointsZarrStore
 		// staged pairs by A < B, as rows with A's detection in column 0
 		final TreeMap< Key, TreeMap< Key, int[][] > > stagedPairs = new TreeMap<>();
 		long stagedRows = 0;
-		for ( final Map.Entry< Key, List< CorrespondingInterestPoints > > entry : stagedCorrespondences.entrySet() )
+		for ( final Map.Entry< Key, List< CorrespondingInterestPoints > > entry : correspondenceSide.staged.entrySet() )
 		{
 			final Key key = entry.getKey();
 			for ( final Map.Entry< Key, List< CorrespondingInterestPoints > > byPartner : groupByPartner( entry.getValue() ).entrySet() )
 			{
 				final Key partner = byPartner.getKey();
-				if ( removedCorrespondences.contains( partner ) )
+				if ( correspondenceSide.removed.contains( partner ) )
 					continue;
 
 				final boolean keyIsA = key.compareTo( partner ) <= 0;
-				if ( !keyIsA && stagedCorrespondences.containsKey( partner ) )
+				if ( !keyIsA && correspondenceSide.staged.containsKey( partner ) )
 					continue; // both sides are staged: the A side defines the pair
 
 				final Key a = keyIsA ? key : partner;
@@ -1542,8 +1569,7 @@ public class InterestPointsZarrStore
 			}
 		}
 
-		final boolean append = old.correspondencesData != null
-				&& keptRows + stagedRows >= minLiveFractionForAppend * ( old.correspondenceCount + stagedRows );
+		final boolean append = canAppend( old.correspondencesData, keptRows, stagedRows, old.correspondenceCount );
 		final String data = append ? old.correspondencesData : "correspondences/g" + ( old.generation + 1 );
 		final long start = append ? old.correspondenceCount : 0;
 
@@ -1616,10 +1642,7 @@ public class InterestPointsZarrStore
 		int entryPosition = 0;
 		for ( final Map.Entry< Key, long[] > entry : ranges.entrySet() )
 		{
-			final Key key = entry.getKey();
-			entryRows[ entryPosition++ ] = key.tp;
-			entryRows[ entryPosition++ ] = key.setup;
-			entryRows[ entryPosition++ ] = labelIds.get( key.label );
+			entryPosition = writeKey( entryRows, entryPosition, entry.getKey(), labelIds );
 			entryRows[ entryPosition++ ] = entry.getValue()[ 0 ];
 			entryRows[ entryPosition++ ] = entry.getValue()[ 1 ];
 		}
@@ -1635,18 +1658,13 @@ public class InterestPointsZarrStore
 		int pairPosition = 0;
 		for ( final Map.Entry< Key, List< PairRow > > entry : sortedPairs.entrySet() )
 		{
-			final Key key = entry.getKey();
-			viewRows[ viewPosition++ ] = key.tp;
-			viewRows[ viewPosition++ ] = key.setup;
-			viewRows[ viewPosition++ ] = labelIds.get( key.label );
+			viewPosition = writeKey( viewRows, viewPosition, entry.getKey(), labelIds );
 			viewRows[ viewPosition++ ] = pairPosition / 6; // first pair row
 			viewRows[ viewPosition++ ] = entry.getValue().size();
 
 			for ( final PairRow row : entry.getValue() )
 			{
-				pairRows[ pairPosition++ ] = row.partner.tp;
-				pairRows[ pairPosition++ ] = row.partner.setup;
-				pairRows[ pairPosition++ ] = labelIds.get( row.partner.label );
+				pairPosition = writeKey( pairRows, pairPosition, row.partner, labelIds );
 				pairRows[ pairPosition++ ] = row.offset;
 				pairRows[ pairPosition++ ] = row.count;
 				pairRows[ pairPosition++ ] = row.swapped ? 1 : 0;
@@ -1723,6 +1741,12 @@ public class InterestPointsZarrStore
 
 	private static int roundUp( final int value, final int multiple ) { return ( ( value + multiple - 1 ) / multiple ) * multiple; }
 
+	/** An existing array is appended to if, after the commit, at least {@link #minLiveFractionForAppend} of its rows are still in use. */
+	private static boolean canAppend( final String existingData, final long keptRows, final long newRows, final long existingRows )
+	{
+		return existingData != null && keptRows + newRows >= minLiveFractionForAppend * ( existingRows + newRows );
+	}
+
 	/** Adds the pair to both entries: to a as is, to b as swapped. */
 	private static void addPair( final Map< Key, List< PairRow > > pairs, final Key a, final Key b, final long offset, final int count )
 	{
@@ -1738,13 +1762,46 @@ public class InterestPointsZarrStore
 	/** A sharded array [columns, rows]: raw bytes, with a crc32c on every chunk and on the shard index. */
 	static DatasetAttributes arrayAttributes( final int columns, final long rows, final DataType type, final int shardSize, final int chunkSize )
 	{
-		return ZarrV3DatasetAttributes.builder( new long[] { columns, rows }, type )
-				.blockSize( new int[] { columns, shardSize } )
+		return rawChecksummed( columns, rows, type, shardSize )
 				.chunkSize( new int[] { columns, chunkSize } )
-				.compression( new RawCompression() ) // compression gained about 2 % and cost a JNI decoder on every read
-				.dataCodecInfos( new Crc32cChecksumCodec() ) // damaged chunks fail instead of decoding to garbage
 				.shardIndexDataCodecInfos( new Crc32cChecksumCodec() )
 				.build();
+	}
+
+	/** A [columns, rows] array of raw bytes with a crc32c on every chunk: compression gained about 2 % and cost a JNI decoder on every read. */
+	private static ZarrV3DatasetAttributes.Builder rawChecksummed( final int columns, final long rows, final DataType type, final int blockRows )
+	{
+		return ZarrV3DatasetAttributes.builder( new long[] { columns, rows }, type )
+				.blockSize( new int[] { columns, blockRows } )
+				.compression( new RawCompression() )
+				.dataCodecInfos( new Crc32cChecksumCodec() ); // damaged chunks fail instead of decoding to garbage
+	}
+
+	/** Creates the array, or only sets the new (longer) shape of an existing one. @return the attributes */
+	private static DatasetAttributes prepareDataset( final N5Writer zarr, final String dataset, final DatasetAttributes attributes, final boolean create )
+	{
+		if ( create )
+			zarr.createDataset( dataset, attributes );
+		else
+			zarr.setDatasetAttributes( dataset, attributes );
+		return attributes;
+	}
+
+	/** @return the existing chunk that an append from {@code start} lands in; null for a new array or a {@code start} on a chunk border */
+	private < C > C partialFirstChunk( final Index old, final String dataset, final DatasetAttributes attributes, final long start )
+	{
+		if ( old == null )
+			return null;
+		final int chunkSize = attributes.getChunkSize()[ 1 ];
+		final long firstChunk = start / chunkSize;
+		return firstChunk * chunkSize < start ? readChunk( dataset, attributes, firstChunk ) : null;
+	}
+
+	/** Copies the rows before {@code start} of a partly filled first chunk into the new chunk buffer. */
+	private static void keepOldRows( final Object oldChunk, final Object buffer, final long chunkStart, final long start, final int columns )
+	{
+		if ( chunkStart < start )
+			System.arraycopy( oldChunk, 0, buffer, 0, (int) ( start - chunkStart ) * columns );
 	}
 
 	/** Returns the complete chunk of {@code count} rows from {@code chunkStart}. */
@@ -1789,32 +1846,18 @@ public class InterestPointsZarrStore
 			final long end, final int shardSize, final int chunkSize, final List< String > attributeNames )
 	{
 		final int columns = 3 + attributeNames.size();
-		final DatasetAttributes locAttributes = arrayAttributes( columns, end, DataType.FLOAT64, shardSize, chunkSize );
-		final DatasetAttributes idAttributes = arrayAttributes( 1, end, DataType.INT32, shardSize, chunkSize );
 		if ( old == null )
-		{
 			removeIfExists( zarr, group );
-			zarr.createDataset( group + "/loc", locAttributes );
-			zarr.createDataset( group + "/id", idAttributes );
-		}
-		else
-		{
-			zarr.setDatasetAttributes( group + "/loc", locAttributes );
-			zarr.setDatasetAttributes( group + "/id", idAttributes );
-		}
+		final DatasetAttributes locAttributes = prepareDataset( zarr, group + "/loc", arrayAttributes( columns, end, DataType.FLOAT64, shardSize, chunkSize ), old == null );
+		final DatasetAttributes idAttributes = prepareDataset( zarr, group + "/id", arrayAttributes( 1, end, DataType.INT32, shardSize, chunkSize ), old == null );
 
 		final long[] offsets = entryOffsets( entries, start, Points::size );
-
-		// an append into a partly filled chunk keeps the chunk's existing rows
-		final long firstChunk = start / chunkSize;
-		final boolean partialFirstChunk = old != null && firstChunk * chunkSize < start;
-		final double[] oldLoc = partialFirstChunk ? (double[]) readChunk( old.pointsData + "/loc", old.locAttributes, firstChunk ) : null;
-		final int[] oldIds = partialFirstChunk ? (int[]) readChunk( old.pointsData + "/id", old.idAttributes, firstChunk ) : null;
+		final double[] oldLoc = partialFirstChunk( old, old == null ? null : old.pointsData + "/loc", old == null ? null : old.locAttributes, start );
+		final int[] oldIds = partialFirstChunk( old, old == null ? null : old.pointsData + "/id", old == null ? null : old.idAttributes, start );
 
 		writeRange( zarr, group + "/loc", locAttributes, start, end, ( chunkStart, count ) -> {
 			final double[] buffer = new double[ count * columns ];
-			if ( chunkStart < start )
-				System.arraycopy( oldLoc, 0, buffer, 0, (int) ( start - chunkStart ) * columns );
+			keepOldRows( oldLoc, buffer, chunkStart, start, columns );
 
 			forEntries( entries, offsets, chunkStart, count, Points::size, ( points, entryStart, from, to ) ->
 					copyLocRows( points, entryStart, from, to, chunkStart, buffer, attributeNames ) );
@@ -1824,8 +1867,7 @@ public class InterestPointsZarrStore
 
 		writeRange( zarr, group + "/id", idAttributes, start, end, ( chunkStart, count ) -> {
 			final int[] buffer = new int[ count ];
-			if ( chunkStart < start )
-				System.arraycopy( oldIds, 0, buffer, 0, (int) ( start - chunkStart ) );
+			keepOldRows( oldIds, buffer, chunkStart, start, 1 );
 
 			forEntries( entries, offsets, chunkStart, count, Points::size, ( points, entryStart, from, to ) ->
 					System.arraycopy( points.ids, (int) ( from - entryStart ), buffer, (int) ( from - chunkStart ), (int) ( to - from ) ) );
@@ -1900,27 +1942,16 @@ public class InterestPointsZarrStore
 	private void writeCorrespondences( final N5Writer zarr, final String group, final Index old, final long start, final List< int[][] > pairs,
 			final long end, final int shardSize, final int chunkSize )
 	{
-		final DatasetAttributes attributes = arrayAttributes( 3, end, DataType.INT32, shardSize, chunkSize );
 		if ( old == null )
-		{
 			removeIfExists( zarr, group );
-			zarr.createDataset( group + "/data", attributes );
-		}
-		else
-		{
-			zarr.setDatasetAttributes( group + "/data", attributes );
-		}
+		final DatasetAttributes attributes = prepareDataset( zarr, group + "/data", arrayAttributes( 3, end, DataType.INT32, shardSize, chunkSize ), old == null );
 
 		final long[] offsets = entryOffsets( pairs, start, rows -> rows[ 0 ].length );
-
-		final long firstChunk = start / chunkSize;
-		final boolean partialFirstChunk = old != null && firstChunk * chunkSize < start;
-		final int[] oldData = partialFirstChunk ? (int[]) readChunk( old.correspondencesData + "/data", old.correspondenceAttributes, firstChunk ) : null;
+		final int[] oldData = partialFirstChunk( old, old == null ? null : old.correspondencesData + "/data", old == null ? null : old.correspondenceAttributes, start );
 
 		writeRange( zarr, group + "/data", attributes, start, end, ( chunkStart, count ) -> {
 			final int[] buffer = new int[ count * 3 ];
-			if ( chunkStart < start )
-				System.arraycopy( oldData, 0, buffer, 0, (int) ( start - chunkStart ) * 3 );
+			keepOldRows( oldData, buffer, chunkStart, start, 3 );
 
 			forEntries( pairs, offsets, chunkStart, count, rows -> rows[ 0 ].length, ( rows, entryStart, from, to ) -> {
 				for ( long row = from; row < to; ++row )
@@ -1936,11 +1967,7 @@ public class InterestPointsZarrStore
 	private static void writeLongs( final N5Writer zarr, final String dataset, final int columns, final long[] values )
 	{
 		final int rows = values.length / columns;
-		final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder( new long[] { columns, rows }, DataType.INT64 )
-				.blockSize( new int[] { columns, Math.max( 1, rows ) } )
-				.compression( new RawCompression() )
-				.dataCodecInfos( new Crc32cChecksumCodec() )
-				.build();
+		final DatasetAttributes attributes = rawChecksummed( columns, rows, DataType.INT64, Math.max( 1, rows ) ).build();
 
 		removeIfExists( zarr, dataset );
 		zarr.createDataset( dataset, attributes );
