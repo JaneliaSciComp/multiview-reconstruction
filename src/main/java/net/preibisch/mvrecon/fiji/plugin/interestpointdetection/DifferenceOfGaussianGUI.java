@@ -50,7 +50,6 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoG;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGParameters;
-import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.ScaleSpaceParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericDialogAppender
@@ -68,19 +67,10 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		"GPU accurate (Nvidia CUDA via JNA)" };
 	public static int defaultComputationChoiceIndex = 0;
 
-	public static boolean defaultScaleSpace = false;
-	public static int defaultScaleSpaceSteps = new ScaleSpaceParameters().steps;
-	public static int defaultScaleSpaceOctaves = new ScaleSpaceParameters().octaves;
-
 	double sigma;
 	double threshold;
 	boolean findMin;
 	boolean findMax;
-
-	// detect in a scale space (sigma is then the finest sigma, threshold the minimal response)
-	boolean scaleSpace;
-	int steps, octaves;
-	boolean scaleSpaceFinestLevel = new ScaleSpaceParameters().detectFinestLevel; // keep the single-scale detections at sigma (no dialog option yet)
 
 	double percentGPUMem = defaultUseGPUMem;
 
@@ -105,13 +95,6 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		final LinkedHashMap<String,String> p = new LinkedHashMap<>();
 		p.put( "sigma", Double.toString( sigma ) );
 		p.put( "threshold", Double.toString( threshold ) );
-		if ( scaleSpace )
-		{
-			p.put( "scaleSpace", "true" );
-			p.put( "steps", Integer.toString( steps ) );
-			p.put( "octaves", Integer.toString( octaves ) );
-			p.put( "finestLevel", Boolean.toString( scaleSpaceFinestLevel ) );
-		}
 		// Spark --type is the detection point type (MIN/MAX/BOTH), not the algorithm
 		if ( findMin && findMax )
 			p.put( "type", "BOTH" );
@@ -199,11 +182,6 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		dog.threshold = this.threshold;
 		dog.findMin = this.findMin;
 		dog.findMax = this.findMax;
-
-		dog.scaleSpace = this.scaleSpace;
-		dog.scaleSpaceParameters.steps = this.steps;
-		dog.scaleSpaceParameters.octaves = this.octaves;
-		dog.scaleSpaceParameters.detectFinestLevel = this.scaleSpaceFinestLevel;
 
 		dog.cuda = this.cuda;
 		dog.deviceCUDA = this.deviceCUDA;
@@ -356,46 +334,16 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	@Override
 	public String getParameters()
 	{
-		if ( scaleSpace )
-			return "DOG-SS s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + scaleSpaceFinestLevel + " t=" + threshold + " min=" + findMin + " max=" + findMax +
-					" downsampleXY=" + resolvedDownsampleXY() + " downsampleXYIndex=" + downsampleXYIndex +
-					" downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
-
 		return "DOG s=" + sigma + " t=" + threshold + " min=" + findMin + " max=" + findMax +
 				" imageSigmaX=" + imageSigmaX + " imageSigmaY=" + imageSigmaY + " imageSigmaZ=" + imageSigmaZ + " downsampleXYIndex=" + downsampleXYIndex +
 				" downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
-	}
-
-	/**
-	 * @return the downsampling in xy that is applied to all views being processed, or -1 if it differs
-	 * between views (the "match z resolution" modes compute it per view from the calibration)
-	 */
-	protected int resolvedDownsampleXY()
-	{
-		if ( downsampleXYIndex >= 1 )
-			return downsampleXYIndex;
-
-		final LinkedHashSet< Integer > resolved = new LinkedHashSet<>();
-
-		for ( final ViewId v : viewIdsToProcess )
-		{
-			final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( v.getTimePointId(), v.getViewSetupId() );
-
-			if ( vd.isPresent() )
-				resolved.add( DownsampleTools.downsampleFactor( downsampleXYIndex, downsampleZ, vd.getViewSetup().getVoxelSize() ) );
-		}
-
-		return resolved.size() == 1 ? resolved.iterator().next() : -1;
 	}
 
 	@Override
 	protected void addAddtionalParameters( final GenericDialog gd )
 	{
 		gd.addChoice( "Compute_on", computationOnChoice, computationOnChoice[ defaultComputationChoiceIndex ] );
-
-		gd.addCheckbox( "Scale_space (octaves of sigma, sigma = finest scale, threshold = minimal response)", defaultScaleSpace );
-		gd.addNumericField( "Scale_space_steps_per_octave", defaultScaleSpaceSteps, 0 );
-		gd.addNumericField( "Scale_space_octaves (-1 = as many as possible)", defaultScaleSpaceOctaves, 0 );
+		
 	}
 
 	@Override
@@ -403,34 +351,12 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	{
 		final int computationTypeIndex = defaultComputationChoiceIndex = gd.getNextChoiceIndex();
 
-		this.scaleSpace = defaultScaleSpace = gd.getNextBoolean();
-		this.steps = defaultScaleSpaceSteps = (int)Math.round( gd.getNextNumber() );
-		this.octaves = defaultScaleSpaceOctaves = (int)Math.round( gd.getNextNumber() );
-
-		if ( scaleSpace )
-		{
-			if ( steps < 1 )
-			{
-				IOFunctions.println( "Scale space: the steps per octave must be >= 1." );
-				return false;
-			}
-
-			if ( octaves == 0 || octaves < -1 )
-			{
-				IOFunctions.println( "Scale space: the number of octaves must be -1 (as many as possible) or >= 1." );
-				return false;
-			}
-
-			if ( computationTypeIndex >= 1 )
-				IOFunctions.println( "Scale space: computed on the CPU, the GPU is ignored." );
-		}
-
 		if ( computationTypeIndex == 1 )
 			accurateCUDA = false;
 		else
 			accurateCUDA = true;
 
-		if ( computationTypeIndex >= 1 && !scaleSpace )
+		if ( computationTypeIndex >= 1 )
 		{
 			final ArrayList< String > potentialNames = new ArrayList< String >();
 			potentialNames.add( "separable" );

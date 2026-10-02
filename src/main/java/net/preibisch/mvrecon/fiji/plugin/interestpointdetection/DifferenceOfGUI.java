@@ -464,7 +464,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 	protected ImagePlus getImagePlusForInteractive( final String dialogHeader )
 	{
-		final ViewId view = getViewSelection( "Interactive Difference-of-Gaussian", "Please select view to use" );
+		final ViewId view = getViewSelection( dialogHeader, "Please select view to use" );
 		
 		if ( view == null )
 			return null;

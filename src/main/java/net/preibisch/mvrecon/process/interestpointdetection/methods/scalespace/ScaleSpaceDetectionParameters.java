@@ -20,54 +20,36 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.process.interestpointdetection.methods.dog;
+package net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace;
 
 import java.util.Collection;
 
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
-import net.preibisch.mvrecon.process.cuda.CUDADevice;
-import net.preibisch.mvrecon.process.cuda.CUDASeparableConvolution;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.InterestPointParameters;
 
-public class DoGParameters extends InterestPointParameters
+/**
+ * Parameters of the scale-space DoG detection of views (see DoGParameters for the single-scale DoG):
+ * which views, the downsampling (the "starting position" of the scale space), the intensity range
+ * and the limit of detections come from InterestPointParameters, everything about the scale space
+ * itself from {@link ScaleSpaceParameters}, which is the only place that defines its defaults.
+ *
+ * @author Stephan Preibisch
+ */
+public class ScaleSpaceDetectionParameters extends InterestPointParameters
 {
 	/**
-	 * 0 = no subpixel localization
-	 * 1 = quadratic fit
+	 * sigmaMin, steps, octaves, threshold, findMin/findMax, detectFinestLevel, localization, ...;
+	 * its minIntensity/maxIntensity are set from this object by ScaleSpace.addInterestPoints
 	 */
-	public int localization = 1;
+	public final ScaleSpaceParameters scaleSpace = new ScaleSpaceParameters();
 
-	public double sigma = 1.8;
-	public double threshold = 0.01;
-	public boolean findMin = false;
-	public boolean findMax = true;
+	public ScaleSpaceDetectionParameters() { super(); }
 
-	public double percentGPUMem = 75;
-	public CUDADevice deviceCUDA = null;
-	public CUDASeparableConvolution cuda = null;
-	public boolean accurateCUDA = false;
-
-	public DoGParameters() { super(); }
-
-	public DoGParameters(
-			final Collection<ViewDescription> toProcess,
-			final ImgLoader imgloader,
-			final double sigma,
-			final double threshold )
+	public ScaleSpaceDetectionParameters(
+			final Collection< ViewDescription > toProcess,
+			final ImgLoader imgloader )
 	{
 		super( toProcess, imgloader );
-		this.sigma = sigma;
-		this.threshold = threshold;
-	}
-
-	public DoGParameters(
-			final Collection<ViewDescription> toProcess,
-			final ImgLoader imgloader,
-			final double sigma, final int downsampleXY )
-	{
-		super( toProcess, imgloader );
-		this.sigma = sigma;
-		this.downsampleXY = downsampleXY;
 	}
 }

@@ -20,7 +20,7 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.process.interestpointdetection.methods.dog;
+package net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -61,6 +61,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.Localization;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.lazygauss.LazyDoG;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.lazygauss.LazyGauss;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.lazygauss.LazyWeightedGauss;

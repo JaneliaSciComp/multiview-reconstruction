@@ -20,7 +20,9 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.process.interestpointdetection.methods.dog;
+package net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace;
+
+import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 
 /**
  * Parameters of the scale-space DoG ({@link DoGScaleSpace}). Octave 0 is the image that is handed in

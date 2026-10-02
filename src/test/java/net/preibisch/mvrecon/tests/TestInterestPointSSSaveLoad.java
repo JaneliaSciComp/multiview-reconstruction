@@ -295,7 +295,7 @@ public class TestInterestPointSSSaveLoad
 		for ( final ViewId viewId : spimData.getSequenceDescription().getViewDescriptions().keySet() )
 			map.put( viewId, scaleSpacePoints( 50 + 10 * seed, seed++ ) );
 
-		final String params = "DOG-SS s=1.8 steps=3 octaves=-1 t=0.008 min=false max=true downsampleXY=2 downsampleXYIndex=0 downsampleZ=1 minIntensity=0.0 maxIntensity=1137.0";
+		final String params = "DOG-SS s=1.8 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleXY=2 downsampleXYIndex=0 downsampleZ=1 minIntensity=0.0 maxIntensity=1137.0";
 		InterestPointTools.addInterestPoints( spimData, "ss", map, params );
 
 		final URI xmlURI = tempDir.resolve( "dataset.xml" ).toUri();

@@ -38,6 +38,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGaussianGUI;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.ScaleSpaceGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.InterestPointDetectionGUI;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
@@ -61,7 +62,7 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 public class Interest_Point_Detection implements PlugIn
 {
 	public static ArrayList< InterestPointDetectionGUI > staticAlgorithms = new ArrayList< InterestPointDetectionGUI >();
-	public static int defaultAlgorithm = 1;
+	public static int defaultAlgorithm = 0;
 	public static boolean defaultDefineAnisotropy = false;
 	public static boolean defaultSetMinMax = false;
 	public static boolean defaultLimitDetections = false;
@@ -75,6 +76,7 @@ public class Interest_Point_Detection implements PlugIn
 	{
 		IOFunctions.printIJLog = true;
 		staticAlgorithms.add( new DifferenceOfGaussianGUI( null, null ) );
+		staticAlgorithms.add( new ScaleSpaceGUI( null, null ) );
 	}
 	
 	@Override

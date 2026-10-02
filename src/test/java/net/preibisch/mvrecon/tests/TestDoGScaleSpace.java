@@ -22,6 +22,7 @@
  */
 package net.preibisch.mvrecon.tests;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,6 +35,7 @@ import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.Test;
 
 import mpicbg.spim.data.sequence.ViewDescription;
+import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Cursor;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
@@ -60,13 +62,19 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
-import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoG;
-import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGParameters;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
-import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGScaleSpace;
-import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGScaleSpace.Octave;
-import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGScaleSpace.ScaleSpacePeak;
-import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.ScaleSpaceParameters;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace.Octave;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace.ScaleSpacePeak;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.ScaleSpaceParameters;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.ScaleSpace;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.ScaleSpaceDetectionParameters;
+import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Detection;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGaussianGUI;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.ScaleSpaceGUI;
+import mpicbg.spim.data.sequence.TimePoint;
+import java.util.HashMap;
+import java.util.Map;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.lazygauss.LazyGauss;
 import util.ImgLib2Tools;
 
@@ -392,8 +400,8 @@ public class TestDoGScaleSpace
 	}
 
 	/**
-	 * The whole-view driver (DoG.findInterestPoints with scaleSpace = true) returns InterestPointSS mapped
-	 * to full resolution, identical to the shared helper plus DownsampleTools.correctForDownsampling
+	 * The whole-view driver (ScaleSpace.findInterestPoints) returns InterestPointSS mapped to full
+	 * resolution, identical to DoGScaleSpace.computeDoGScaleSpace plus DownsampleTools.correctForDownsampling
 	 */
 	@Test
 	@SuppressWarnings({ "rawtypes", "unchecked" })
@@ -403,29 +411,28 @@ public class TestDoGScaleSpace
 		final SpimData2 spimData = SpimData2.convert( SimulatedBeadsImgLoader.spimdataExample( new int[] { 0, 90 }, 0, 100, new double[] { 2, 2, 2 }, new FinalInterval( 128, 128, 64 ) ) );
 		final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( 0, 0 );
 
-		final DoGParameters dog = new DoGParameters();
-		dog.imgloader = spimData.getSequenceDescription().getImgLoader();
-		dog.toProcess = new ArrayList<>();
-		dog.toProcess.add( vd );
-		dog.sigma = 1.5;
-		dog.threshold = 0.01;
-		dog.downsampleXY = 1;
-		dog.downsampleZ = 1;
-		dog.minIntensity = Double.NaN; // from the image
-		dog.maxIntensity = Double.NaN;
-		dog.scaleSpace = true;
-		dog.scaleSpaceParameters.steps = 3;
-		dog.scaleSpaceParameters.octaves = -1;
+		final ScaleSpaceDetectionParameters p = new ScaleSpaceDetectionParameters();
+		p.imgloader = spimData.getSequenceDescription().getImgLoader();
+		p.toProcess = new ArrayList<>();
+		p.toProcess.add( vd );
+		p.downsampleXY = 1;
+		p.downsampleZ = 1;
+		p.minIntensity = Double.NaN; // from the image
+		p.maxIntensity = Double.NaN;
+		p.scaleSpace.sigmaMin = 1.5;
+		p.scaleSpace.threshold = 0.01;
+		p.scaleSpace.steps = 3;
+		p.scaleSpace.octaves = -1;
 
-		final List< InterestPoint > driver = DoG.findInterestPoints( dog ).get( vd );
+		final List< InterestPoint > driver = ScaleSpace.findInterestPoints( p ).get( vd );
 
-		// the same through the shared helper
+		// the same directly through the algorithm
 		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
 
 		final Pair< RandomAccessibleInterval, AffineTransform3D > input =
-				DownsampleTools.openAndDownsample( dog.imgloader, vd, new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ }, false );
+				DownsampleTools.openAndDownsample( p.imgloader, vd, new long[] { p.downsampleXY, p.downsampleXY, p.downsampleZ }, false );
 
-		final ArrayList< InterestPointSS > helper = DoG.computeScaleSpace( (RandomAccessible)Views.extendMirrorSingle( input.getA() ), null, new FinalInterval( input.getA() ), new FinalInterval( input.getA() ), dog, service );
+		final ArrayList< InterestPointSS > helper = DoGScaleSpace.computeDoGScaleSpace( (RandomAccessible)Views.extendMirrorSingle( input.getA() ), new FinalInterval( input.getA() ), new FinalInterval( input.getA() ), null, p.scaleSpace, service );
 
 		service.shutdown();
 
@@ -461,8 +468,80 @@ public class TestDoGScaleSpace
 			}
 
 			// the sigma in full resolution lies in the range of the scale space (in full-resolution pixels)
-			final double sigmaMinFull = DoGScaleSpace.sigmaBase( DoG.toScaleSpaceParameters( dog ), 0, 0.5 ) * sigmaScale;
+			final double sigmaMinFull = DoGScaleSpace.sigmaBase( p.scaleSpace, 0, 0.5 ) * sigmaScale;
 			assertTrue( d.getSigma() >= sigmaMinFull * 0.99, "sigma " + d.getSigma() + " >= " + sigmaMinFull );
+		}
+	}
+
+	/**
+	 * The scale space is a second detection method in the GUI, with its own parameters, params string
+	 * and the same result as the driver
+	 */
+	@Test
+	public void testGUIRegistered()
+	{
+		assertEquals( 0, Interest_Point_Detection.defaultAlgorithm );
+		assertTrue( Interest_Point_Detection.staticAlgorithms.get( 0 ) instanceof DifferenceOfGaussianGUI );
+		assertTrue( Interest_Point_Detection.staticAlgorithms.get( 1 ) instanceof ScaleSpaceGUI );
+		assertEquals( "Scale-space Difference-of-Gaussian", Interest_Point_Detection.staticAlgorithms.get( 1 ).getDescription() );
+
+		final SpimData2 spimData = SimulateUtil.setUp();
+		final ArrayList< ViewId > views = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		final TimePoint tp = spimData.getSequenceDescription().getTimePoints().getTimePointsOrdered().get( 0 );
+
+		assertTrue( Interest_Point_Detection.staticAlgorithms.get( 1 ).newInstance( spimData, views ) instanceof ScaleSpaceGUI );
+
+		// headless: set what the dialog would set
+		final ScaleSpaceGUI gui = new ScaleSpaceGUI( spimData, views )
+		{{
+			localization = 1;
+			downsampleXYIndex = 2;
+			downsampleZ = 1;
+			minIntensity = 0.0;
+			maxIntensity = 1137.0;
+			setDefaultValues( 1 ); // sigma 1.8, threshold 0.008, maxima only
+			steps = 4;
+			octaves = -1;
+			detectFinestLevel = true;
+		}};
+
+		assertEquals( "DOG-SS s=1.8 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleXY=2 downsampleXYIndex=2 downsampleZ=1 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
+
+		final Map< String, String > d = gui.describeParameters();
+		assertEquals( "SCALE_SPACE", d.get( "detectionMethod" ) );
+		assertEquals( "4", d.get( "steps" ) );
+		assertEquals( "-1", d.get( "octaves" ) );
+		assertEquals( "true", d.get( "finestLevel" ) );
+		assertEquals( "MAX", d.get( "type" ) );
+		assertEquals( "QUADRATIC", d.get( "localization" ) );
+		assertEquals( "2", d.get( "downsampleXY" ) );
+
+		final HashMap< ViewId, List< InterestPoint > > viaGUI = gui.findInterestPoints( tp );
+
+		// the same through the driver
+		final ScaleSpaceDetectionParameters p = new ScaleSpaceDetectionParameters( SpimData2.getAllViewIdsForTimePointSorted( spimData, views, tp ), spimData.getSequenceDescription().getImgLoader() );
+		p.downsampleXY = 2;
+		p.downsampleZ = 1;
+		p.minIntensity = 0.0;
+		p.maxIntensity = 1137.0;
+		p.scaleSpace.sigmaMin = 1.8;
+		p.scaleSpace.threshold = 0.008;
+
+		final HashMap< ViewId, List< InterestPoint > > viaDriver = ScaleSpace.findInterestPoints( p );
+
+		assertEquals( 3, viaGUI.size() );
+		assertEquals( viaDriver.size(), viaGUI.size() );
+
+		for ( final ViewId viewId : viaDriver.keySet() )
+		{
+			assertEquals( viaDriver.get( viewId ).size(), viaGUI.get( viewId ).size(), "points of view " + viewId.getViewSetupId() );
+
+			for ( int i = 0; i < viaDriver.get( viewId ).size(); ++i )
+			{
+				assertTrue( InterestPointSS.class.isInstance( viaGUI.get( viewId ).get( i ) ) );
+				assertEquals( ( (InterestPointSS)viaDriver.get( viewId ).get( i ) ).getSigma(), ( (InterestPointSS)viaGUI.get( viewId ).get( i ) ).getSigma(), 0.0 );
+				assertArrayEquals( viaDriver.get( viewId ).get( i ).getL(), viaGUI.get( viewId ).get( i ).getL(), 0.0 );
+			}
 		}
 	}
 

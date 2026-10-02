@@ -217,6 +217,10 @@ public class ActionToSparkCli
 					"--method NO_OPTIMIZATION is not supported in BigStitcher-Spark (global optimization is always run). "
 					+ "The solver step was therefore not translated.",
 					true ),
+			new UnsupportedValue( "detectionMethod", "SCALE_SPACE",
+					"The scale-space Difference-of-Gaussian is not supported in BigStitcher-Spark yet. "
+					+ "The detect-interestpoints step was therefore not translated.",
+					true ),
 			new UnsupportedValue( "localization", "GAUSS_FIT",
 					"-localization GAUSS_FIT is not supported in BigStitcher-Spark (only NONE/QUADRATIC). "
 					+ "It was therefore not translated; QUADRATIC (Spark's default) will be used instead.",
@@ -258,6 +262,7 @@ public class ActionToSparkCli
 				new String[]{ "medianFilter", "--medianFilter" },
 				new String[]{ "maxSpots", "--maxSpots" }
 		);
+		detectRecipe.skipWhen = p -> isUnsupported( p, "detectionMethod", true );
 		r.put( "detect-interestpoints", Collections.singletonList( detectRecipe ) );
 
 		// registration in the mvrecon GUI is two Spark stages: descriptor matching + global solve.
