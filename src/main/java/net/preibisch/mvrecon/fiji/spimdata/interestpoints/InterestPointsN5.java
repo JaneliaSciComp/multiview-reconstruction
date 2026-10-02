@@ -32,6 +32,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -46,8 +48,11 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.position.FunctionRandomAccessible;
+import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedLongType;
 import net.imglib2.type.numeric.real.DoubleType;
+import net.imglib2.util.Cast;
+import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
@@ -59,11 +64,18 @@ public class InterestPointsN5 extends InterestPoints
 	public static int defaultBlockSize = 300_000;
 	public static final String baseN5 = "interestpoints.n5";
 
+	/** per-point attribute holding the image intensity at each point (BigStitcher-Spark detection --storeIntensities) */
+	public static final String INTENSITY = "intensity";
+	/** legacy per-view dataset of the intensities, next to id and loc: tpId_X_viewSetupId_Y/label/interestpoints/intensities */
+	static final String LEGACY_INTENSITIES = "intensities";
+
 	final String n5dataset;
 	final PackedInterestPointStore.Key key; // null if n5dataset is not of the form tpId_X_viewSetupId_Y/label
 
 	int[] ids = null;
 	double[][] locations = null;
+	/** named per-point attributes, one value per point in the order of ids; part of the points: loaded, set and saved with them */
+	TreeMap< String, double[] > attributes = new TreeMap<>();
 
 	ArrayList< CorrespondingInterestPoints > correspondingInterestPoints;
 
@@ -119,9 +131,52 @@ public class InterestPointsN5 extends InterestPoints
 		return list;
 	}
 
+	/** @return the names of the per-point attributes of this list (loads the points if needed) */
+	public synchronized Set< String > getAttributeNames()
+	{
+		if ( this.locations == null || this.ids == null )
+			loadInterestPoints();
+		return new TreeSet<>( attributes.keySet() );
+	}
+
+	/** @return a copy of the values of a per-point attribute, in the order of the points, or null if the list does not have it */
+	public synchronized double[] getAttributeCopy( final String name )
+	{
+		if ( this.locations == null || this.ids == null )
+			loadInterestPoints();
+		final double[] v = attributes.get( name );
+		return v == null ? null : v.clone();
+	}
+
+	/**
+	 * Sets new points together with their per-point attributes (one value per point, in the order of {@code points}).
+	 * Attributes belong to the points: they change only with the points, so there is no way to set them on their own, and
+	 * {@link #setInterestPoints(Collection)} drops them. Values that are all {@link PackedInterestPointStore#NO_VALUE} (-1)
+	 * are not stored (-1 means "no value").
+	 *
+	 * @param attributes name -> values, may be null
+	 */
+	public synchronized void setInterestPoints( final Collection< InterestPoint > points, final Map< String, double[] > attributes )
+	{
+		final int n = points == null ? 0 : points.size();
+		final TreeMap< String, double[] > a = new TreeMap<>();
+		if ( attributes != null )
+			for ( final Map.Entry< String, double[] > e : attributes.entrySet() )
+			{
+				PackedInterestPointStore.checkAttributeName( e.getKey() );
+				if ( e.getValue().length != n )
+					throw new IllegalArgumentException( "attribute '" + e.getKey() + "' has " + e.getValue().length + " values for " + n + " points" );
+				a.put( e.getKey(), e.getValue().clone() );
+			}
+		setInterestPoints( points );
+		this.attributes = a;
+	}
+
 	@Override
 	protected void setInterestPointsLocal( final Collection< InterestPoint > collection )
 	{
+		this.attributes = new TreeMap<>(); // per-point values do not survive new points
+
 		if ( collection == null || collection.size() == 0 )
 		{
 			this.ids = new int[0];
@@ -181,7 +236,7 @@ public class InterestPointsN5 extends InterestPoints
 				continue;
 			}
 			if ( l.modifiedInterestPoints && l.ids != null && l.locations != null )
-				pts.computeIfAbsent( store, x -> new HashMap<>() ).put( l.key, PackedInterestPointStore.Points.of( l.ids, l.locations ) );
+				pts.computeIfAbsent( store, x -> new HashMap<>() ).put( l.key, PackedInterestPointStore.Points.of( l.ids, l.locations, l.attributes ) );
 			if ( l.modifiedCorrespondingInterestPoints && l.correspondingInterestPoints != null )
 				corr.computeIfAbsent( store, x -> new HashMap<>() ).put( l.key, new ArrayList<>( l.correspondingInterestPoints ) );
 			written.add( l );
@@ -213,10 +268,16 @@ public class InterestPointsN5 extends InterestPoints
 		final PackedInterestPointStore store = store();
 		if ( store != null )
 		{
-			if ( store.inBatch() ) store.stagePoints( key, ids, locations ); else store.writePointsBlob( key, ids, locations );
+			final PackedInterestPointStore.Points p = PackedInterestPointStore.Points.of( ids, locations, attributes );
+			if ( store.inBatch() ) store.stagePoints( key, p ); else store.writePointsBlob( key, p );
 		}
-		else if ( !( n5Writer == null ? saveInterestPointsStatic( basePath, n5dataset, ids, locations ) : saveInterestPointsStatic( n5Writer, n5dataset, ids, locations ) ) )
-			return false;
+		else
+		{
+			if ( !attributes.isEmpty() )
+				IOFunctions.println( "InterestPointsN5: WARNING " + n5dataset + " is not stored in " + PackedInterestPointStore.ZARR_CONTAINER + ", its point attributes " + attributes.keySet() + " are not saved" );
+			if ( !( n5Writer == null ? saveInterestPointsStatic( basePath, n5dataset, ids, locations ) : saveInterestPointsStatic( n5Writer, n5dataset, ids, locations ) ) )
+				return false;
+		}
 		modifiedInterestPoints = false;
 		return true;
 	}
@@ -250,6 +311,8 @@ public class InterestPointsN5 extends InterestPoints
 			{
 				this.ids = p.ids().clone();
 				this.locations = p.locations(); // ponytail: keep the double[][] layout of this class for now, flat arrays would halve memory
+				this.attributes = new TreeMap<>();
+				p.attributes().forEach( ( name, v ) -> attributes.put( name, v.clone() ) );
 				modifiedInterestPoints = false;
 				return true;
 			}
@@ -345,6 +408,11 @@ public class InterestPointsN5 extends InterestPoints
 				}
 			}
 
+			this.attributes = new TreeMap<>();
+			final double[] intensities = loadLegacyIntensities( n5, dataset + "/" + LEGACY_INTENSITIES, ids.length );
+			if ( intensities != null )
+				attributes.put( INTENSITY, intensities );
+
 			n5.close();
 			modifiedInterestPoints = false;
 			return true;
@@ -353,10 +421,29 @@ public class InterestPointsN5 extends InterestPoints
 		{
 			this.ids = new int[0];
 			this.locations = new double[0][0];
+			this.attributes = new TreeMap<>();
 			IOFunctions.println( "InterestPointsN5.loadInterestPoints(): " + e );
 			e.printStackTrace();
 			return false;
 		}
+	}
+
+	/** the 1 x N float32 intensities BigStitcher-Spark wrote next to the legacy points, or null if absent or of another size */
+	private static double[] loadLegacyIntensities( final N5Reader n5, final String dataset, final int size )
+	{
+		if ( size == 0 || !n5.exists( dataset ) )
+			return null;
+		final RandomAccessibleInterval< RealType< ? > > data = Cast.unchecked( N5Utils.open( n5, dataset ) );
+		if ( Intervals.numElements( data ) != size )
+		{
+			IOFunctions.println( "InterestPointsN5: WARNING ignoring " + dataset + " (" + Intervals.numElements( data ) + " values for " + size + " points)" );
+			return null;
+		}
+		final double[] v = new double[ size ];
+		int i = 0;
+		for ( final RealType< ? > t : Views.flatIterable( data ) )
+			v[ i++ ] = t.getRealDouble();
+		return v;
 	}
 
 	@Override

@@ -3,7 +3,9 @@ package net.preibisch.mvrecon.tests;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -17,14 +19,19 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.stream.Stream;
 
+import org.janelia.saalfeldlab.n5.GzipCompression;
+import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.img.array.ArrayImgs;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -266,5 +273,117 @@ public class TestPackedInterestPointStore
 		assertTrue( fresh.exists() );
 		assertArrayEquals( store.points( new Key( 0, 0, "beads" ) ).loc(), fresh.points( new Key( 0, 0, "beads" ) ).loc(), 0.0 );
 		assertFalse( fresh.hasPoints( new Key( 0, 5, "beads" ) ) );
+	}
+
+	static double[] values( final int v, final String name, final int n )
+	{
+		final Random rnd = new Random( 17 * v + name.hashCode() );
+		final double[] a = new double[ n ];
+		for ( int i = 0; i < n; ++i ) a[ i ] = rnd.nextDouble() * 1000;
+		return a;
+	}
+
+	static InterestPointsN5 list( final URI baseURI, final int v, final String label )
+	{
+		return new InterestPointsN5( baseURI, InterestPointsN5.createN5datasetPath( 0, v, label ) );
+	}
+
+	/** root attributes of the store on disk: [pointsData, pointAttributes] */
+	static Object[] root( final File base )
+	{
+		try ( final N5Reader r = URITools.instantiateN5Reader( StorageFormat.ZARR, new File( base, PackedInterestPointStore.ZARR_CONTAINER ).toURI() ) )
+		{
+			return new Object[] { r.getAttribute( "/", "pointsData", String.class ), r.getAttribute( "/", "pointAttributes", List.class ) };
+		}
+	}
+
+	@Test
+	public void pointAttributes() throws Exception
+	{
+		final File base = tmp.resolve( "attributes" ).toFile();
+		base.mkdirs();
+		final URI baseURI = base.toURI();
+		PackedInterestPointStore.defaultChunkPoints = 16; // entries span chunks
+		PackedInterestPointStore.defaultShardPoints = 64;
+		final double minLive = PackedInterestPointStore.minLiveFractionForAppend;
+		final String I = InterestPointsN5.INTENSITY;
+
+		// ---- 1. legacy groups; view 0 has the float32 intensities BigStitcher-Spark wrote next to them ----
+		final double[] legacyIntensity = new double[ points( 0, "beads" ).size() ];
+		try ( final N5Writer w = URITools.instantiateN5Writer( StorageFormat.N5, new File( base, InterestPointsN5.baseN5 ).toURI() ) )
+		{
+			for ( int v = 0; v < N_VIEWS; ++v )
+			{
+				final List< InterestPoint > pts = points( v, "beads" );
+				final String path = InterestPointsN5.createN5datasetPath( 0, v, "beads" );
+				InterestPointsN5.saveInterestPointsStatic( w, path, pts.stream().mapToInt( InterestPoint::getId ).toArray(), pts.stream().map( InterestPoint::getL ).toArray( double[][]::new ) );
+				InterestPointsN5.saveCorrespondencesStatic( w, path, corrs( v, "beads" ) );
+			}
+			final float[] f = new float[ legacyIntensity.length ];
+			for ( int i = 0; i < f.length; ++i ) legacyIntensity[ i ] = f[ i ] = 10.5f * i;
+			N5Utils.save( ArrayImgs.floats( f, 1, f.length ), w, InterestPointsN5.ipDataset( InterestPointsN5.createN5datasetPath( 0, 0, "beads" ) ) + "/intensities", new int[] { 1, f.length }, new GzipCompression() );
+		}
+		assertArrayEquals( legacyIntensity, list( baseURI, 0, "beads" ).getAttributeCopy( I ), 0.0, "legacy intensities are readable" );
+
+		PackedInterestPointStore.convertLegacy( baseURI );
+		final Key k0 = new Key( 0, 0, "beads" ), k1 = new Key( 0, 1, "beads" ), k2 = new Key( 0, 2, "beads" );
+		assertEquals( List.of( I ), root( base )[ 1 ], "one attribute column" );
+		assertArrayEquals( legacyIntensity, new PackedInterestPointStore( baseURI ).points( k0 ).attributes().get( I ), 0.0, "conversion keeps intensities" );
+		assertTrue( new PackedInterestPointStore( baseURI ).points( k1 ).attributes().isEmpty(), "-1 everywhere = no attribute" );
+		assertSame( points( 1, "beads" ), list( baseURI, 1, "beads" ).getInterestPointsCopy() );
+
+		final PackedInterestPointStore store = PackedInterestPointStore.get( baseURI );
+		try
+		{
+			// ---- 2. staging file with an existing column: readable before the commit, appended by it ----
+			PackedInterestPointStore.minLiveFractionForAppend = 0; // append whenever the columns allow it
+			final double[] int2 = values( 2, I, points( 2, "beads" ).size() );
+			final InterestPointsN5 v2 = list( baseURI, 2, "beads" );
+			v2.setInterestPoints( points( 2, "beads" ), Map.of( I, int2 ) );
+			InterestPointsN5.saveStaged( List.of( v2 ) );
+			assertArrayEquals( int2, new PackedInterestPointStore( baseURI ).points( k2 ).attributes().get( I ), 0.0, "from the staging file" );
+			final String before = (String) root( base )[ 0 ];
+			store.commit();
+			assertEquals( before, root( base )[ 0 ], "same columns: appended" );
+			assertArrayEquals( int2, new PackedInterestPointStore( baseURI ).points( k2 ).attributes().get( I ), 0.0, "from the arrays" );
+
+			// ---- 3. a new attribute name changes the shape of loc: rewritten even though appending is allowed ----
+			final double[] size1 = values( 1, "size", points( 1, "beads" ).size() );
+			final InterestPointsN5 v1 = list( baseURI, 1, "beads" );
+			v1.setInterestPoints( points( 1, "beads" ), Map.of( "size", size1 ) );
+			store.beginBatch();
+			v1.saveInterestPoints( false );
+			store.commit();
+			assertNotEquals( before, root( base )[ 0 ], "new column: rewritten" );
+			assertEquals( List.of( I, "size" ), root( base )[ 1 ] );
+			PackedInterestPointStore fresh = new PackedInterestPointStore( baseURI );
+			assertEquals( Set.of( "size" ), fresh.points( k1 ).attributes().keySet() );
+			assertArrayEquals( size1, fresh.points( k1 ).attributes().get( "size" ), 0.0 );
+			assertEquals( Set.of( I ), fresh.points( k0 ).attributes().keySet() );
+			assertArrayEquals( legacyIntensity, fresh.points( k0 ).attributes().get( I ), 0.0 );
+			assertArrayEquals( int2, fresh.points( k2 ).attributes().get( I ), 0.0 );
+			assertSame( points( 1, "beads" ), list( baseURI, 1, "beads" ).getInterestPointsCopy() );
+			assertSame( points( 4, "beads" ), list( baseURI, 4, "beads" ).getInterestPointsCopy() );
+
+			// ---- 4. a rewrite drops columns no entry uses any more ----
+			PackedInterestPointStore.minLiveFractionForAppend = minLive;
+			store.remove( k0 );
+			store.remove( k2 );
+			store.commit();
+			assertEquals( List.of( "size" ), root( base )[ 1 ] );
+			fresh = new PackedInterestPointStore( baseURI );
+			assertFalse( fresh.hasPoints( k0 ) );
+			assertArrayEquals( size1, fresh.points( k1 ).attributes().get( "size" ), 0.0 );
+			assertSame( points( 5, "beads" ), list( baseURI, 5, "beads" ).getInterestPointsCopy() );
+		}
+		finally { PackedInterestPointStore.minLiveFractionForAppend = minLive; }
+
+		// ---- 5. new points drop the attributes; bad input is rejected ----
+		final InterestPointsN5 v1b = list( baseURI, 1, "beads" );
+		assertEquals( Set.of( "size" ), v1b.getAttributeNames() );
+		v1b.setInterestPoints( points( 1, "beads" ) );
+		assertTrue( v1b.getAttributeNames().isEmpty() );
+		assertThrows( IllegalArgumentException.class, () -> v1b.setInterestPoints( points( 1, "beads" ), Map.of( "size", new double[ 1 ] ) ) );
+		assertThrows( IllegalArgumentException.class, () -> v1b.setInterestPoints( points( 1, "beads" ), Map.of( "a/b", new double[ points( 1, "beads" ).size() ] ) ) );
 	}
 }
