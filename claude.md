@@ -57,13 +57,14 @@ All points and correspondences of a dataset live in a few sharded Zarr v3 arrays
   `instantiatefromXML` for every `tpId_X_viewSetupId_Y/label` path; same XML text as before). Thin handle: key, in-memory copy, flags.
 - `InterestPointsZarrStore`: one per dataset dir (`InterestPointsZarrStore.get(baseDir)`): arrays, index, staging, commit, cache.
   Must be single per dataset (one index, one commit); per-list state lives in `InterestPointsZarr`.
-- `InterestPointsN5` is the unchanged master code (legacy per-view groups), still used for XML paths that are not
-  `tpId_X_viewSetupId_Y/label`.
+- `InterestPointsN5` is static-only (final, private constructor): the legacy per-view layout (`baseN5`, `createN5datasetPath`,
+  `ipDataset` / `corrDataset`), the readers the conversion uses (`readCorrespondences`, `parseIdMap`) and the static writers that
+  produce the layout for tests. Nothing instantiates it any more; `instantiatefromXML` throws for an XML path that is not
+  `tpId_X_viewSetupId_Y/label`, and `XmlIoSpimData2` saves only through the Zarr store.
 - `InterestPointsN5ToZarr` holds ALL legacy reading for the Zarr side: entries not converted yet (`InterestPointsZarr` falls back
   to it, read-only, incl. legacy `intensities`), removing legacy groups on delete, and the conversion. The Zarr store has no N5
   code. Once the Zarr format has proven itself: delete `InterestPointsN5` + `InterestPointsN5ToZarr`; the compiler then points at
-  the three calls in `InterestPointsZarr` (marked `legacy: goes with InterestPointsN5`) and the N5 branch in
-  `InterestPoints.instantiatefromXML` / `XmlIoSpimData2`.
+  the three calls in `InterestPointsZarr` (marked `legacy: goes with InterestPointsN5`).
 
 ```
 interestpoints.zarr/zarr.json        root attrs: generation G, pointsData, corrData, labels, chunkPoints, shardPoints, pointAttributes
