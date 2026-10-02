@@ -209,7 +209,7 @@ public class InterestPointsZarr extends InterestPoints
 
 	/**
 	 * Saves the modified points and correspondences of many lists into one staging file per store (one per Spark task
-	 * instead of one per list). Lists of other types are saved one by one. Nothing is committed.
+	 * instead of one per list). Nothing is committed.
 	 */
 	public static void saveStaged( final Collection< ? extends InterestPoints > lists )
 	{
@@ -219,14 +219,7 @@ public class InterestPointsZarr extends InterestPoints
 
 		for ( final InterestPoints list : lists )
 		{
-			if ( !( list instanceof InterestPointsZarr ) )
-			{
-				list.saveInterestPoints( false );
-				list.saveCorrespondingInterestPoints( false );
-				continue;
-			}
-
-			final InterestPointsZarr zarrList = (InterestPointsZarr) list;
+			final InterestPointsZarr zarrList = (InterestPointsZarr) list; // the only InterestPoints implementation
 			final InterestPointsZarrStore store = zarrList.store();
 			if ( zarrList.modifiedInterestPoints && zarrList.ids != null && zarrList.locations != null )
 			{
