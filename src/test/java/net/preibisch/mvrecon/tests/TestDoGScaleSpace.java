@@ -72,6 +72,7 @@ import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.S
 import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Detection;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGaussianGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.ScaleSpaceGUI;
+import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.TimePoint;
 import java.util.HashMap;
 import java.util.Map;
@@ -417,6 +418,7 @@ public class TestDoGScaleSpace
 		p.toProcess.add( vd );
 		p.downsampleXY = 1;
 		p.downsampleZ = 1;
+		p.downsampling = new long[] { 1, 1, 1 };
 		p.minIntensity = Double.NaN; // from the image
 		p.maxIntensity = Double.NaN;
 		p.scaleSpace.sigmaMin = 1.5;
@@ -495,8 +497,7 @@ public class TestDoGScaleSpace
 		final ScaleSpaceGUI gui = new ScaleSpaceGUI( spimData, views )
 		{{
 			localization = 1;
-			downsampleXYIndex = 2;
-			downsampleZ = 1;
+			downsampling = new long[] { 2, 2, 1 };
 			minIntensity = 0.0;
 			maxIntensity = 1137.0;
 			setDefaultValues( 1 ); // sigma 1.8, threshold 0.008, maxima only
@@ -505,7 +506,7 @@ public class TestDoGScaleSpace
 			detectFinestLevel = true;
 		}};
 
-		assertEquals( "DOG-SS s=1.8 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleXY=2 downsampleXYIndex=2 downsampleZ=1 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
+		assertEquals( "DOG-SS s=1.8 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
 
 		final Map< String, String > d = gui.describeParameters();
 		assertEquals( "SCALE_SPACE", d.get( "detectionMethod" ) );
@@ -520,8 +521,7 @@ public class TestDoGScaleSpace
 
 		// the same through the driver
 		final ScaleSpaceDetectionParameters p = new ScaleSpaceDetectionParameters( SpimData2.getAllViewIdsForTimePointSorted( spimData, views, tp ), spimData.getSequenceDescription().getImgLoader() );
-		p.downsampleXY = 2;
-		p.downsampleZ = 1;
+		p.downsampling = new long[] { 2, 2, 1 };
 		p.minIntensity = 0.0;
 		p.maxIntensity = 1137.0;
 		p.scaleSpace.sigmaMin = 1.8;
@@ -543,6 +543,40 @@ public class TestDoGScaleSpace
 				assertArrayEquals( viaDriver.get( viewId ).get( i ).getL(), viaGUI.get( viewId ).get( i ).getL(), 0.0 );
 			}
 		}
+	}
+
+	/**
+	 * The drop-down of the starting resolution lists the precomputed levels (with the voxel size) and
+	 * the manual entry; the default is the second level if it exists
+	 */
+	@Test
+	public void testResolutionChoices()
+	{
+		final String[] resolutions = new String[] { "1, 1, 1", "2, 2, 1", "4, 4, 2" };
+		final String[] choices = ScaleSpaceGUI.resolutionChoices( resolutions, new FinalVoxelDimensions( "um", 0.45, 0.45, 2.0 ) );
+
+		assertEquals( 4, choices.length );
+		assertTrue( choices[ 0 ].startsWith( "1, 1, 1" ) && choices[ 0 ].contains( "0.45 x 0.45 x 2.0 um" ), choices[ 0 ] );
+		assertTrue( choices[ 1 ].startsWith( "2, 2, 1" ) && choices[ 1 ].contains( "0.9 x 0.9 x 2.0 um" ), choices[ 1 ] );
+		assertTrue( choices[ 2 ].startsWith( "4, 4, 2" ) && choices[ 2 ].contains( "1.8 x 1.8 x 4.0 um" ), choices[ 2 ] );
+		assertEquals( ScaleSpaceGUI.manualResolution, choices[ 3 ] );
+
+		assertEquals( 2, ScaleSpaceGUI.resolutionChoices( new String[] { "1, 1, 1" }, null ).length );
+		assertEquals( "1, 1, 1", ScaleSpaceGUI.resolutionChoices( new String[] { "1, 1, 1" }, null )[ 0 ] );
+
+		assertEquals( 1, ScaleSpaceGUI.defaultResolutionChoice( 3, 1, false ) );
+		assertEquals( 0, ScaleSpaceGUI.defaultResolutionChoice( 1, 1, false ) );
+		assertEquals( 2, ScaleSpaceGUI.defaultResolutionChoice( 3, 7, false ) );
+		assertEquals( 3, ScaleSpaceGUI.defaultResolutionChoice( 3, 1, true ) );
+
+		// the simulated data has no resolution levels
+		final SpimData2 spimData = SimulateUtil.setUp();
+		final ArrayList< ViewId > views = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		final String[] simulated = DownsampleTools.availableDownsamplings( spimData, views.get( 0 ) );
+
+		assertEquals( 1, simulated.length );
+		assertEquals( 0, ScaleSpaceGUI.defaultResolutionChoice( simulated.length, ScaleSpaceGUI.defaultResolutionIndex, false ) );
+		assertTrue( ScaleSpaceGUI.sameResolutionLevels( spimData, views ) );
 	}
 
 	public static Img< FloatType > blobs( final long[] dim, final double[][] centers, final double[] stds )

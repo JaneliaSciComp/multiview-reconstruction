@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -35,6 +36,7 @@ import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
+import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
@@ -42,6 +44,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 /**
  * Scale-space DoG detection on views (the counterpart of DoG for the single-scale DoG): opens each
@@ -79,11 +82,13 @@ public class ScaleSpace
 
 				final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
 
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Scale space of " + Group.pvid( vd ) + " starting at downsampling " + Util.printCoordinates( p.downsampling ) );
+
 				final Pair< RandomAccessibleInterval, AffineTransform3D > input =
 						DownsampleTools.openAndDownsample(
 								p.imgloader,
 								vd,
-								new long[] { p.downsampleXY, p.downsampleXY, p.downsampleZ },
+								p.downsampling,
 								false );
 
 				// the intensity range is defined per detection (InterestPointParameters), as for the DoG

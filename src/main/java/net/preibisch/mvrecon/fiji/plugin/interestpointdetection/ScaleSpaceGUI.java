@@ -23,18 +23,21 @@
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
 import ij.ImagePlus;
 import ij.gui.GenericDialog;
+import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.VoxelDimensions;
+import net.imglib2.util.Util;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive.InteractiveDoG;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive.InteractiveDoGParams;
@@ -66,6 +69,12 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	public static int defaultOctaves = defaults.octaves;
 	public static boolean defaultDetectFinestLevel = defaults.detectFinestLevel;
 
+	// the starting resolution: a precomputed resolution level (by default the second one) or manually typed factors
+	public static final String manualResolution = "Manually (powers of two) ...";
+	public static int defaultResolutionIndex = 1;
+	public static boolean defaultManual = false;
+	public static long[] defaultManualDownsampling = null;
+
 	protected double sigma;
 	protected double threshold;
 	protected boolean findMin;
@@ -74,6 +83,12 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	protected int steps;
 	protected int octaves;
 	protected boolean detectFinestLevel;
+
+	/** the starting resolution (octave 0) as downsampling in x, y, z */
+	protected long[] downsampling;
+
+	/** the precomputed resolution levels of the first view ("fx, fy, fz"), the entries of the drop-down */
+	protected String[] resolutions;
 
 	public ScaleSpaceGUI( final SpimData2 spimData, final List< ViewId > viewIdsToProcess )
 	{
@@ -105,13 +120,15 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 			p.put( "minIntensity", Double.toString( minIntensity ) );
 		if ( !Double.isNaN( maxIntensity ) )
 			p.put( "maxIntensity", Double.toString( maxIntensity ) );
-		// see DifferenceOfGaussianGUI: the "match Z resolution" modes resolve the factor per view
-		final LinkedHashSet< Integer > resolved = resolvedDownsampleXYs();
-		if ( resolved.size() == 1 )
-			p.put( "downsampleXY", Integer.toString( resolved.iterator().next() ) );
-		else if ( resolved.size() > 1 )
-			p.put( "downsampleXYVaries", resolved.toString() );
-		p.put( "downsampleZ", Integer.toString( downsampleZ ) );
+		// Spark knows one factor for x and y (-dsxy)
+		if ( downsampling[ 0 ] == downsampling[ 1 ] )
+			p.put( "downsampleXY", Long.toString( downsampling[ 0 ] ) );
+		else
+		{
+			p.put( "downsampleX", Long.toString( downsampling[ 0 ] ) );
+			p.put( "downsampleY", Long.toString( downsampling[ 1 ] ) );
+		}
+		p.put( "downsampleZ", Long.toString( downsampling[ 2 ] ) );
 		if ( limitDetections )
 		{
 			final String mode;
@@ -140,7 +157,10 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		p.imgloader = spimData.getSequenceDescription().getImgLoader();
 		p.toProcess = new ArrayList< ViewDescription >();
 
-		p.downsampleZ = this.downsampleZ;
+		// the starting resolution (the inherited downsampleXY/downsampleZ are not used by the scale space)
+		p.downsampling = this.downsampling.clone();
+		p.downsampleXY = (int)downsampling[ 0 ];
+		p.downsampleZ = (int)downsampling[ 2 ];
 
 		p.minIntensity = this.minIntensity;
 		p.maxIntensity = this.maxIntensity;
@@ -170,13 +190,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 
 				p.toProcess.clear();
 				p.toProcess.add( vd );
-
-				// downsampleXY == 0 : a bit less then z-resolution
-				// downsampleXY == -1 : a bit more then z-resolution
-				if ( downsampleXYIndex < 1 )
-					p.downsampleXY = DownsampleTools.downsampleFactor( downsampleXYIndex, downsampleZ, vd.getViewSetup().getVoxelSize() );
-				else
-					p.downsampleXY = downsampleXYIndex;
 
 				ScaleSpace.addInterestPoints( interestPoints, p );
 			}
@@ -305,43 +318,156 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	public String getParameters()
 	{
 		return "DOG-SS s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + detectFinestLevel + " t=" + threshold + " min=" + findMin + " max=" + findMax +
-				" downsampleXY=" + resolvedDownsampleXY() + " downsampleXYIndex=" + downsampleXYIndex +
-				" downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
+				" downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] +
+				" minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 	}
 
 	/**
-	 * @return the downsampling in xy of all views being processed (one entry if they agree); the
-	 * "match z resolution" modes compute it per view from the calibration
+	 * The starting resolution: a drop-down of the precomputed resolution levels plus the manual entry
 	 */
-	protected LinkedHashSet< Integer > resolvedDownsampleXYs()
+	@Override
+	protected void addDownsamplingParameters( final GenericDialog gd )
 	{
-		final LinkedHashSet< Integer > resolved = new LinkedHashSet<>();
+		final ViewId firstView = viewIdsToProcess.get( 0 );
 
-		if ( downsampleXYIndex >= 1 )
+		resolutions = DownsampleTools.availableDownsamplings( spimData, firstView );
+
+		if ( !sameResolutionLevels( spimData, viewIdsToProcess ) )
 		{
-			resolved.add( downsampleXYIndex );
-			return resolved;
+			IOFunctions.println( "WARNING: The resolution levels differ between the views to process, listing those of " + Group.pvid( firstView ) + ". Each view is opened at its closest level with factors <= the chosen ones." );
+			gd.addMessage( "The resolution levels differ between the views, listing those of the first view", GUIHelper.smallStatusFont, GUIHelper.warning );
 		}
 
-		for ( final ViewId v : viewIdsToProcess )
-		{
-			final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( v.getTimePointId(), v.getViewSetupId() );
+		final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( firstView.getTimePointId(), firstView.getViewSetupId() );
+		final VoxelDimensions voxelSize = vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null;
+		final String[] choices = resolutionChoices( resolutions, voxelSize );
 
-			if ( vd.isPresent() )
-				resolved.add( DownsampleTools.downsampleFactor( downsampleXYIndex, downsampleZ, vd.getViewSetup().getVoxelSize() ) );
+		gd.addChoice( "Starting_resolution (downsampling x, y, z)", choices, choices[ defaultResolutionChoice( resolutions.length, defaultResolutionIndex, defaultManual ) ] );
+	}
+
+	@Override
+	protected boolean queryDownsamplingParameters( final GenericDialog gd )
+	{
+		final int choice = gd.getNextChoiceIndex();
+
+		if ( choice == resolutions.length )
+		{
+			// the manual entry, pre-filled with the last manual choice or the default level
+			if ( defaultManualDownsampling == null )
+				defaultManualDownsampling = DownsampleTools.parseDownsampleChoice( resolutions[ defaultResolutionChoice( resolutions.length, defaultResolutionIndex, false ) ] );
+
+			final GenericDialog gdManual = new GenericDialog( "Starting resolution" );
+
+			gdManual.addMessage( "Downsampling of the image that the scale space starts at (powers of two)", GUIHelper.smallStatusFont );
+			gdManual.addNumericField( "Downsample_X", defaultManualDownsampling[ 0 ], 0 );
+			gdManual.addNumericField( "Downsample_Y", defaultManualDownsampling[ 1 ], 0 );
+			gdManual.addNumericField( "Downsample_Z", defaultManualDownsampling[ 2 ], 0 );
+
+			gdManual.showDialog();
+
+			if ( gdManual.wasCanceled() )
+				return false;
+
+			final long[] ds = new long[ 3 ];
+
+			for ( int d = 0; d < 3; ++d )
+			{
+				ds[ d ] = Math.round( gdManual.getNextNumber() );
+
+				if ( !isPowerOfTwo( ds[ d ] ) )
+				{
+					IOFunctions.println( "ERROR: The downsampling factors must be powers of two >= 1, but the factor for dimension " + d + " is " + ds[ d ] + "." );
+					return false;
+				}
+			}
+
+			downsampling = ds;
+			defaultManualDownsampling = ds.clone();
+			defaultManual = true;
+		}
+		else
+		{
+			downsampling = DownsampleTools.parseDownsampleChoice( resolutions[ choice ] );
+			defaultResolutionIndex = choice;
+			defaultManual = false;
+
+			for ( int d = 0; d < 3; ++d )
+				if ( !isPowerOfTwo( downsampling[ d ] ) )
+					IOFunctions.println( "WARNING: The resolution level (" + resolutions[ choice ] + ") is not a power of two, the closest level with powers of two <= these factors is used." );
 		}
 
-		return resolved;
+		IOFunctions.println( "Scale space: starting resolution (downsampling x, y, z) = " + Util.printCoordinates( downsampling ) );
+
+		// the interactive previews (DifferenceOfGUI) open the views with these
+		downsampleXYIndex = (int)downsampling[ 0 ];
+		downsampleZ = (int)downsampling[ 2 ];
+
+		return true;
 	}
 
 	/**
-	 * @return the downsampling in xy that is applied to all views being processed, or -1 if it differs between views
+	 * @return the entries of the drop-down: one per precomputed resolution level ("fx, fy, fz" plus the
+	 * resulting voxel size if known) and the manual entry last
 	 */
-	protected int resolvedDownsampleXY()
+	public static String[] resolutionChoices( final String[] resolutions, final VoxelDimensions voxelSize )
 	{
-		final LinkedHashSet< Integer > resolved = resolvedDownsampleXYs();
+		final String[] choices = new String[ resolutions.length + 1 ];
 
-		return resolved.size() == 1 ? resolved.iterator().next() : -1;
+		for ( int i = 0; i < resolutions.length; ++i )
+		{
+			choices[ i ] = resolutions[ i ];
+
+			if ( voxelSize != null )
+			{
+				final long[] ds = DownsampleTools.parseDownsampleChoice( resolutions[ i ] );
+
+				choices[ i ] += "  (" + round( ds[ 0 ] * voxelSize.dimension( 0 ) ) + " x " + round( ds[ 1 ] * voxelSize.dimension( 1 ) ) + " x " + round( ds[ 2 ] * voxelSize.dimension( 2 ) ) + " " + voxelSize.unit() + ")";
+			}
+		}
+
+		choices[ resolutions.length ] = manualResolution;
+
+		return choices;
+	}
+
+	/**
+	 * @return the index of the default entry: the manual entry if it was used last, otherwise the last
+	 * used level (initially the second one), limited to the levels that exist
+	 */
+	public static int defaultResolutionChoice( final int numResolutions, final int defaultIndex, final boolean manual )
+	{
+		if ( manual )
+			return numResolutions;
+		else
+			return Math.max( 0, Math.min( defaultIndex, numResolutions - 1 ) );
+	}
+
+	/**
+	 * @return whether all views have the same precomputed resolution levels (true if not multi-resolution)
+	 */
+	public static boolean sameResolutionLevels( final SpimData2 spimData, final List< ViewId > views )
+	{
+		if ( !MultiResolutionImgLoader.class.isInstance( spimData.getSequenceDescription().getImgLoader() ) )
+			return true;
+
+		final MultiResolutionImgLoader loader = (MultiResolutionImgLoader)spimData.getSequenceDescription().getImgLoader();
+		final double[][] first = loader.getSetupImgLoader( views.get( 0 ).getViewSetupId() ).getMipmapResolutions();
+
+		for ( final ViewId view : views )
+			if ( !Arrays.deepEquals( first, loader.getSetupImgLoader( view.getViewSetupId() ).getMipmapResolutions() ) )
+				return false;
+
+		return true;
+	}
+
+	protected static boolean isPowerOfTwo( final long value )
+	{
+		return value >= 1 && ( value & ( value - 1 ) ) == 0;
+	}
+
+	protected static double round( final double value )
+	{
+		return Math.round( value * 100.0 ) / 100.0;
 	}
 
 	@Override

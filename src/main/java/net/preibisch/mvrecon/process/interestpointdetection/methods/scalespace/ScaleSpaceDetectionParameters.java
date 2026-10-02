@@ -44,6 +44,13 @@ public class ScaleSpaceDetectionParameters extends InterestPointParameters
 	 */
 	public final ScaleSpaceParameters scaleSpace = new ScaleSpaceParameters();
 
+	/**
+	 * the starting resolution (octave 0) as downsampling in x, y, z of the full-resolution view, e.g.
+	 * one of the precomputed resolution levels; the scale space does not use the inherited
+	 * downsampleXY/downsampleZ
+	 */
+	public long[] downsampling = new long[] { 1, 1, 1 };
+
 	public ScaleSpaceDetectionParameters() { super(); }
 
 	public ScaleSpaceDetectionParameters(

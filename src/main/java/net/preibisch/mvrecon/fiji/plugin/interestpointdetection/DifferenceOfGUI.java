@@ -184,14 +184,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		gd.addChoice( "Subpixel_localization", localizationChoice, localizationChoice[ defaultLocalization ] );
 		gd.addChoice( "Interest_point_specification", brightnessChoice, brightnessChoice[ defaultBrightness ] );
 
-		final String[] ds = DownsampleTools.availableDownsamplings( spimData, viewIdsToProcess.get( 0 ) );
-		String out = "(" + ds[ 0 ].replaceAll( " ", "" ) + ")";
-		for ( int i = 1; i < ds.length; ++i )
-			out += ", (" + ds[ i ].replaceAll( " ", "" ) + ")";
-		gd.addMessage( "Precomputed Resolutions:       " + out, GUIHelper.smallStatusFont );
-
-		gd.addChoice( "Downsample_XY", downsampleChoiceXY, downsampleChoiceXY[ defaultDownsampleXYIndex ] );
-		gd.addChoice( "Downsample_Z", downsampleChoiceZ, downsampleChoiceZ[ defaultDownsampleZIndex ] );
+		addDownsamplingParameters( gd );
 
 		if ( setMinMax )
 		{
@@ -233,36 +226,8 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 		final int brightness = defaultBrightness = gd.getNextChoiceIndex();
 
-		int dsxy = defaultDownsampleXYIndex = gd.getNextChoiceIndex();
-		int dsz = defaultDownsampleZIndex = gd.getNextChoiceIndex();
-
-		if ( dsz == 0 )
-			downsampleZ = 1;
-		else if ( dsz == 1 )
-			downsampleZ = 2;
-		else if ( dsz == 2 )
-			downsampleZ = 4;
-		else
-			downsampleZ = 8;
-
-		if ( dsxy == 0 )
-			downsampleXYIndex = 1;
-		else if ( dsxy == 1 )
-			downsampleXYIndex = 2;
-		else if ( dsxy == 2 )
-			downsampleXYIndex = 4;
-		else if ( dsxy == 3 )
-			downsampleXYIndex = 8;
-		else if ( dsxy == 4 )
-			downsampleXYIndex = 16;
-		else if ( dsxy == 5 )
-			downsampleXYIndex = 32;
-		else if ( dsxy == 6 )
-			downsampleXYIndex = 64;
-		else if ( dsxy == 7 )
-			downsampleXYIndex = 0;
-		else
-			downsampleXYIndex = -1;
+		if ( !queryDownsamplingParameters( gd ) )
+			return false;
 
 		if ( setMinMax )
 		{
@@ -313,6 +278,64 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			return false;
 		else
 			return true;
+	}
+
+	/**
+	 * Adds the downsampling choices to the dialog (overridden by the scale space, which lets the user
+	 * pick a resolution level); queryDownsamplingParameters reads them back in the same order
+	 */
+	protected void addDownsamplingParameters( final GenericDialog gd )
+	{
+		final String[] ds = DownsampleTools.availableDownsamplings( spimData, viewIdsToProcess.get( 0 ) );
+		String out = "(" + ds[ 0 ].replaceAll( " ", "" ) + ")";
+		for ( int i = 1; i < ds.length; ++i )
+			out += ", (" + ds[ i ].replaceAll( " ", "" ) + ")";
+		gd.addMessage( "Precomputed Resolutions:       " + out, GUIHelper.smallStatusFont );
+
+		gd.addChoice( "Downsample_XY", downsampleChoiceXY, downsampleChoiceXY[ defaultDownsampleXYIndex ] );
+		gd.addChoice( "Downsample_Z", downsampleChoiceZ, downsampleChoiceZ[ defaultDownsampleZIndex ] );
+	}
+
+	/**
+	 * Reads the downsampling choices and sets downsampleXYIndex (the factor, 0 or -1 for the "match z"
+	 * modes) and downsampleZ
+	 *
+	 * @return false if the dialog should be aborted
+	 */
+	protected boolean queryDownsamplingParameters( final GenericDialog gd )
+	{
+		int dsxy = defaultDownsampleXYIndex = gd.getNextChoiceIndex();
+		int dsz = defaultDownsampleZIndex = gd.getNextChoiceIndex();
+
+		if ( dsz == 0 )
+			downsampleZ = 1;
+		else if ( dsz == 1 )
+			downsampleZ = 2;
+		else if ( dsz == 2 )
+			downsampleZ = 4;
+		else
+			downsampleZ = 8;
+
+		if ( dsxy == 0 )
+			downsampleXYIndex = 1;
+		else if ( dsxy == 1 )
+			downsampleXYIndex = 2;
+		else if ( dsxy == 2 )
+			downsampleXYIndex = 4;
+		else if ( dsxy == 3 )
+			downsampleXYIndex = 8;
+		else if ( dsxy == 4 )
+			downsampleXYIndex = 16;
+		else if ( dsxy == 5 )
+			downsampleXYIndex = 32;
+		else if ( dsxy == 6 )
+			downsampleXYIndex = 64;
+		else if ( dsxy == 7 )
+			downsampleXYIndex = 0;
+		else
+			downsampleXYIndex = -1;
+
+		return true;
 	}
 
 	/*
