@@ -23,14 +23,12 @@
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -62,12 +60,13 @@ import org.janelia.saalfeldlab.n5.DoubleArrayDataBlock;
 import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
 import org.janelia.saalfeldlab.n5.IntArrayDataBlock;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
-import org.janelia.saalfeldlab.n5.LockedChannel;
 import org.janelia.saalfeldlab.n5.LongArrayDataBlock;
 import org.janelia.saalfeldlab.n5.N5Exception;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.RawCompression;
+import org.janelia.saalfeldlab.n5.readdata.ReadData;
+import org.janelia.saalfeldlab.n5.readdata.VolatileReadData;
 import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
@@ -388,7 +387,7 @@ public class InterestPointsZarrStore
 	 * Everything that exists once for the points and once for the correspondences: the changes staged in this JVM, the
 	 * payloads in staging files, how a staging payload is decoded, and where the index keeps the entry.
 	 */
-	private abstract class Side< T >
+	private abstract static class Side< T >
 	{
 		final Map< Key, T > staged = new HashMap<>(); // guarded by lock
 		final Set< Key > removed = new HashSet<>(); // guarded by lock
@@ -1009,15 +1008,13 @@ public class InterestPointsZarrStore
 	/**
 	 * Writes one staging file with all given entries, without a commit. Other JVMs can read it at once; the next commit
 	 * folds it into the arrays.
-	 *
-	 * @return the file name, or null if there was nothing to write
 	 */
-	public String writeStagingFile( final Map< Key, Points > points, final Map< Key, List< CorrespondingInterestPoints > > correspondences )
+	public void writeStagingFile( final Map< Key, Points > points, final Map< Key, List< CorrespondingInterestPoints > > correspondences )
 	{
 		final TreeSet< Key > keys = new TreeSet<>( points.keySet() );
 		keys.addAll( correspondences.keySet() );
 		if ( keys.isEmpty() )
-			return null;
+			return;
 
 		try
 		{
@@ -1061,13 +1058,11 @@ public class InterestPointsZarrStore
 			final String name = stagingFileName();
 			final KeyValueAccess kva = keyValueAccess( container.writer() );
 			kva.createDirectories( kva.compose( containerURI, STAGING ) );
-			try ( final LockedChannel channel = kva.lockForWriting( stagingPath( kva, name ) );
-					final OutputStream out = new BufferedOutputStream( channel.newOutputStream() ) )
-			{
-				out.write( header );
-				for ( final byte[] payload : payloads )
-					out.write( payload );
-			}
+			final ByteArrayOutputStream file = new ByteArrayOutputStream( (int) offset );
+			file.write( header );
+			for ( final byte[] payload : payloads )
+				file.write( payload );
+			kva.write( stagingPath( kva, name ), ReadData.from( file.toByteArray() ) );
 
 			// the file now has these entries: drop older versions staged in memory and add the file to the listing
 			final List< StagingEntry > entries = parseHeader( name, new DataInputStream( new ByteArrayInputStream( header ) ) );
@@ -1084,7 +1079,6 @@ public class InterestPointsZarrStore
 				parsedStagingFiles.put( name, entries );
 				rebuildStagingMaps();
 			}
-			return name;
 		}
 		catch ( final IOException e )
 		{
@@ -1228,11 +1222,11 @@ public class InterestPointsZarrStore
 		return correspondences;
 	}
 
-	/** Opens a staging file for reading; closing the stream also releases the file lock. */
+	/** Opens a staging file for reading; closing the stream also releases the underlying data. */
 	private DataInputStream openStagingFile( final KeyValueAccess kva, final String name ) throws IOException
 	{
-		final LockedChannel channel = kva.lockForReading( stagingPath( kva, name ) );
-		return new DataInputStream( new BufferedInputStream( channel.newInputStream() ) )
+		final VolatileReadData data = kva.createReadData( stagingPath( kva, name ) );
+		return new DataInputStream( new BufferedInputStream( data.inputStream() ) )
 		{
 			@Override
 			public void close() throws IOException
@@ -1243,7 +1237,7 @@ public class InterestPointsZarrStore
 				}
 				finally
 				{
-					channel.close();
+					data.close();
 				}
 			}
 		};
@@ -1334,7 +1328,7 @@ public class InterestPointsZarrStore
 			container.retryReader();
 			relistStagingFiles();
 			final Index old = index();
-			final List< String > stagingFiles = new ArrayList<>( parsedStagingFiles.keySet() ); // all obsolete after this commit
+			final Set< String > stagingFiles = new HashSet<>( parsedStagingFiles.keySet() ); // all obsolete after this commit
 
 			final long foldStart = System.currentTimeMillis();
 			final int foldedEntries = foldStagingFiles();
@@ -1690,7 +1684,7 @@ public class InterestPointsZarrStore
 	}
 
 	/** Deletes the staging files that this commit folded in or replaced. */
-	private void deleteStagingFiles( final N5Writer zarr, final List< String > files )
+	private void deleteStagingFiles( final N5Writer zarr, final Set< String > files )
 	{
 		if ( files.isEmpty() )
 			return;
@@ -1777,21 +1771,21 @@ public class InterestPointsZarrStore
 				.dataCodecInfos( new Crc32cChecksumCodec() ); // damaged chunks fail instead of decoding to garbage
 	}
 
-	/** Creates the array, or only sets the new (longer) shape of an existing one. @return the attributes */
-	private static DatasetAttributes prepareDataset( final N5Writer zarr, final String dataset, final DatasetAttributes attributes, final boolean create )
+	/** Creates the array (replacing a stale one), or only sets the new (longer) shape of an existing one. */
+	private static void prepareDataset( final N5Writer zarr, final String dataset, final DatasetAttributes attributes, final boolean create )
 	{
-		if ( create )
-			zarr.createDataset( dataset, attributes );
-		else
+		if ( !create )
+		{
 			zarr.setDatasetAttributes( dataset, attributes );
-		return attributes;
+			return;
+		}
+		removeIfExists( zarr, dataset );
+		zarr.createDataset( dataset, attributes );
 	}
 
-	/** @return the existing chunk that an append from {@code start} lands in; null for a new array or a {@code start} on a chunk border */
-	private < C > C partialFirstChunk( final Index old, final String dataset, final DatasetAttributes attributes, final long start )
+	/** @return the existing chunk that an append from {@code start} lands in, or null if {@code start} is on a chunk border */
+	private < C > C partialFirstChunk( final String dataset, final DatasetAttributes attributes, final long start )
 	{
-		if ( old == null )
-			return null;
 		final int chunkSize = attributes.getChunkSize()[ 1 ];
 		final long firstChunk = start / chunkSize;
 		return firstChunk * chunkSize < start ? readChunk( dataset, attributes, firstChunk ) : null;
@@ -1846,14 +1840,14 @@ public class InterestPointsZarrStore
 			final long end, final int shardSize, final int chunkSize, final List< String > attributeNames )
 	{
 		final int columns = 3 + attributeNames.size();
-		if ( old == null )
-			removeIfExists( zarr, group );
-		final DatasetAttributes locAttributes = prepareDataset( zarr, group + "/loc", arrayAttributes( columns, end, DataType.FLOAT64, shardSize, chunkSize ), old == null );
-		final DatasetAttributes idAttributes = prepareDataset( zarr, group + "/id", arrayAttributes( 1, end, DataType.INT32, shardSize, chunkSize ), old == null );
+		final DatasetAttributes locAttributes = arrayAttributes( columns, end, DataType.FLOAT64, shardSize, chunkSize );
+		final DatasetAttributes idAttributes = arrayAttributes( 1, end, DataType.INT32, shardSize, chunkSize );
+		prepareDataset( zarr, group + "/loc", locAttributes, old == null );
+		prepareDataset( zarr, group + "/id", idAttributes, old == null );
 
 		final long[] offsets = entryOffsets( entries, start, Points::size );
-		final double[] oldLoc = partialFirstChunk( old, old == null ? null : old.pointsData + "/loc", old == null ? null : old.locAttributes, start );
-		final int[] oldIds = partialFirstChunk( old, old == null ? null : old.pointsData + "/id", old == null ? null : old.idAttributes, start );
+		final double[] oldLoc = old == null ? null : partialFirstChunk( old.pointsData + "/loc", old.locAttributes, start );
+		final int[] oldIds = old == null ? null : partialFirstChunk( old.pointsData + "/id", old.idAttributes, start );
 
 		writeRange( zarr, group + "/loc", locAttributes, start, end, ( chunkStart, count ) -> {
 			final double[] buffer = new double[ count * columns ];
@@ -1942,12 +1936,11 @@ public class InterestPointsZarrStore
 	private void writeCorrespondences( final N5Writer zarr, final String group, final Index old, final long start, final List< int[][] > pairs,
 			final long end, final int shardSize, final int chunkSize )
 	{
-		if ( old == null )
-			removeIfExists( zarr, group );
-		final DatasetAttributes attributes = prepareDataset( zarr, group + "/data", arrayAttributes( 3, end, DataType.INT32, shardSize, chunkSize ), old == null );
+		final DatasetAttributes attributes = arrayAttributes( 3, end, DataType.INT32, shardSize, chunkSize );
+		prepareDataset( zarr, group + "/data", attributes, old == null );
 
 		final long[] offsets = entryOffsets( pairs, start, rows -> rows[ 0 ].length );
-		final int[] oldData = partialFirstChunk( old, old == null ? null : old.correspondencesData + "/data", old == null ? null : old.correspondenceAttributes, start );
+		final int[] oldData = old == null ? null : partialFirstChunk( old.correspondencesData + "/data", old.correspondenceAttributes, start );
 
 		writeRange( zarr, group + "/data", attributes, start, end, ( chunkStart, count ) -> {
 			final int[] buffer = new int[ count * 3 ];
