@@ -131,7 +131,7 @@ public class Split_Views implements PlugIn
 			final String fakeLabel,
 			final Set< Integer > driveByChannelIds )
 	{
-		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, fakeLabel, null, null, driveByChannelIds );
+		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, fakeLabel, null, null, driveByChannelIds ); // no savers: the XML save stores the result
 
 		if ( display )
 		{

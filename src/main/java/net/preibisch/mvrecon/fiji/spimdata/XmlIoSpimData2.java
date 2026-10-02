@@ -351,17 +351,20 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		spimData.getViewInterestPoints().getViewInterestPoints().values().forEach( vipl ->
 			allIPs.addAll( vipl.getHashMap().values() ) );
 
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
 		if ( allIPs.isEmpty() )
 		{
-			InterestPointsZarrStore.get( baseDir ).commit(); // staged deletes of the last lists still need a commit
+			store.commit(); // deletes of the last lists are staged and still need a commit
 			return;
 		}
 
 		final ForkJoinPool pool = new ForkJoinPool( numThreads );
-		InterestPointsZarrStore.get( baseDir ).beginBatch(); // InterestPointsZarr saves below stage in memory; commit() at the end
-		// the shared legacy writer is only needed for InterestPointsN5 lists (paths the store cannot hold); do not create interestpoints.n5 otherwise
-		final boolean needLegacyWriter = allIPs.stream().anyMatch( ipl -> ipl instanceof InterestPointsN5 );
-		try ( final N5Writer n5Writer = needLegacyWriter ? URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) : null )
+		store.beginBatch(); // the saves below stay in memory until the commit at the end
+
+		// only InterestPointsN5 lists need the legacy writer; otherwise do not create interestpoints.n5
+		final boolean needLegacyWriter = allIPs.stream().anyMatch( list -> list instanceof InterestPointsN5 );
+		final URI legacyURI = URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) );
+		try ( final N5Writer n5Writer = needLegacyWriter ? URITools.instantiateN5Writer( StorageFormat.N5, legacyURI ) : null )
 		{
 			pool.submit( () ->
 				allIPs.parallelStream().forEach( ipl ->
@@ -389,8 +392,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 				})
 			).get();
 
-			// InterestPointsZarr entries were staged in memory by the loop above; write them into the arrays in one go
-			InterestPointsZarrStore.get( baseDir ).commit();
+			store.commit();
 		}
 		catch ( final Exception e )
 		{

@@ -493,7 +493,7 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	@Override
 	public void saveXML()
 	{
-		// deletes first: the packed store only stages them, the XML save below commits them
+		// deletes first, so that the XML save below commits them
 		for ( final SelectedViewDescriptionListener< AS > l : listeners )
 			l.save(); // e.g. delete interest points
 

@@ -23,15 +23,15 @@
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.net.URI;
-import java.util.Collection;
-import net.imglib2.util.Pair;
-import net.imglib2.util.ValuePair;
-import java.util.Set;
-import java.util.HashSet;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 
 /**
  * A list of interest points for a certain label, can save and load from textfile as specified in the XML
@@ -53,7 +53,7 @@ public abstract class InterestPoints
 		this.modifiedCorrespondingInterestPoints = false;
 	}
 
-	/** Zarr store for every (timepoint, setup, label) entry (it reads not yet converted legacy groups); N5 only for other paths */
+	/** @return an {@link InterestPointsZarr} for paths of the form {@code tpId_X_viewSetupId_Y/label}, else an {@link InterestPointsN5} */
 	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo )
 	{
 		if ( fromXMLInfo.trim().toLowerCase().startsWith("interestpoints/") )
@@ -112,28 +112,25 @@ public abstract class InterestPoints
 	 */
 	public abstract Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy();
 
-	/**
-	 * @return only the correspondences to one other (view, label); backends with a pair index override this so it
-	 * does not load or copy the whole list
-	 */
-	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId correspondingViewId, final String correspondingLabel )
+	/** @return the correspondences to one partner (view, label); a backend with a pair index reads only those */
+	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId partnerView, final String partnerLabel )
 	{
-		final ArrayList< CorrespondingInterestPoints > out = new ArrayList<>();
-		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
-			if ( c.getCorrespodingLabel().equals( correspondingLabel ) && c.getCorrespondingViewId().equals( correspondingViewId ) )
-				out.add( c );
-		return out;
+		final ArrayList< CorrespondingInterestPoints > pair = new ArrayList<>();
+		for ( final CorrespondingInterestPoints correspondence : getCorrespondingInterestPointsCopy() )
+			if ( correspondence.getCorrespodingLabel().equals( partnerLabel ) && correspondence.getCorrespondingViewId().equals( partnerView ) )
+				pair.add( correspondence );
+
+		return pair;
 	}
 
-	/**
-	 * @return the (view, label)s this list has correspondences with; lets callers iterate actual partners instead of all view pairs
-	 */
+	/** @return the (view, label)s this list has correspondences with */
 	public Set< Pair< ViewId, String > > getCorrespondingViews()
 	{
-		final Set< Pair< ViewId, String > > out = new HashSet<>();
-		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
-			out.add( new ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
-		return out;
+		final Set< Pair< ViewId, String > > partners = new HashSet<>();
+		for ( final CorrespondingInterestPoints correspondence : getCorrespondingInterestPointsCopy() )
+			partners.add( new ValuePair<>( correspondence.getCorrespondingViewId(), correspondence.getCorrespodingLabel() ) );
+
+		return partners;
 	}
 
 	public void setInterestPoints( final Collection< InterestPoint > list )
