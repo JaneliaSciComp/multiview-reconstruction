@@ -53,15 +53,14 @@ public abstract class InterestPoints
 		this.modifiedCorrespondingInterestPoints = false;
 	}
 
-	/** @return an {@link InterestPointsZarr} for paths of the form {@code tpId_X_viewSetupId_Y/label}, else an {@link InterestPointsN5} */
+	/** @return an {@link InterestPointsZarr} for the XML text {@code tpId_X_viewSetupId_Y/label}, the only form in use */
 	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo )
 	{
 		if ( fromXMLInfo.trim().toLowerCase().startsWith("interestpoints/") )
 			throw new RuntimeException( "text-file based interest points not supported anymore.");
-		else if ( InterestPointsZarr.supports( fromXMLInfo ) )
-			return new InterestPointsZarr( baseDir, fromXMLInfo );
-		else
-			return new InterestPointsN5( baseDir, fromXMLInfo );
+		if ( !InterestPointsZarr.supports( fromXMLInfo ) )
+			throw new RuntimeException( "interest point path not of the form tpId_X_viewSetupId_Y/label: " + fromXMLInfo );
+		return new InterestPointsZarr( baseDir, fromXMLInfo );
 	}
 
 	public static InterestPoints newInstance( final URI baseDir, final ViewId viewId, final String label )

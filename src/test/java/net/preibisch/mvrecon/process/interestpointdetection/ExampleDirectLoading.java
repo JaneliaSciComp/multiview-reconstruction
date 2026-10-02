@@ -28,7 +28,7 @@ import java.util.Map;
 
 import mpicbg.spim.data.SpimDataException;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 
 public class ExampleDirectLoading
 {
@@ -39,7 +39,7 @@ public class ExampleDirectLoading
 		//
 		// works without the XML, just loads the N5 directly
 		//
-		final InterestPointsN5 ip = new InterestPointsN5(
+		final InterestPoints ip = InterestPoints.instantiatefromXML(
 				URI.create("/nrs/saalfeld/john/for/keller/danio_1_488/dataset-orig-tifs/3/"),
 				"tpId_0_viewSetupId_" + viewSetupId  + "/beads8v2" );
 
