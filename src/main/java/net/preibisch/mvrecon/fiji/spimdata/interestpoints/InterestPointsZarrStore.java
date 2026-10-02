@@ -171,7 +171,7 @@ public class InterestPointsZarrStore
 			if ( attributes == null )
 				attributes = Map.of();
 
-			checkAttributes( attributes, ids.length );
+			checkAttrs( attributes, ids.length );
 		}
 
 		public Points( final int[] ids, final double[] loc ) { this( ids, loc, null ); }
@@ -185,11 +185,11 @@ public class InterestPointsZarrStore
 			for ( int i = 0; i < ids.length; ++i )
 				System.arraycopy( locations[ i ], 0, loc, i * 3, 3 );
 
-			final TreeMap< String, double[] > attributesCopy = new TreeMap<>();
+			final TreeMap< String, double[] > attrsCopy = new TreeMap<>();
 			if ( attributes != null )
-				attributes.forEach( ( name, values ) -> attributesCopy.put( name, values.clone() ) );
+				attributes.forEach( ( name, values ) -> attrsCopy.put( name, values.clone() ) );
 
-			return new Points( ids.clone(), loc, attributesCopy );
+			return new Points( ids.clone(), loc, attrsCopy );
 		}
 
 		public int size() { return ids.length; }
@@ -205,7 +205,7 @@ public class InterestPointsZarrStore
 	}
 
 	/** Checks that names use only letters, digits, '_', '.', '-', and that every attribute has one value per point. */
-	static void checkAttributes( final Map< String, double[] > attributes, final int pointCount )
+	static void checkAttrs( final Map< String, double[] > attributes, final int pointCount )
 	{
 		for ( final Map.Entry< String, double[] > attribute : attributes.entrySet() )
 		{
@@ -227,15 +227,15 @@ public class InterestPointsZarrStore
 			int generation,
 			List< String > labels,
 			String pointsData,
-			String correspondencesData,
+			String corrData,
 			Map< Key, long[] > points, // key -> { offset, count }
 			Map< Key, List< PairRow > > pairs,
 			long pointCount,
-			long correspondenceCount,
-			DatasetAttributes locAttributes,
-			DatasetAttributes idAttributes,
-			DatasetAttributes correspondenceAttributes,
-			List< String > attributeNames ) // loc columns 3, 4, ...
+			long corrCount,
+			DatasetAttributes locAttrs,
+			DatasetAttributes idAttrs,
+			DatasetAttributes corrAttrs,
+			List< String > attrNames ) // loc columns 3, 4, ...
 	{
 		static Index empty() { return new Index( -1, List.of(), null, null, Map.of(), Map.of(), 0, 0, null, null, null, List.of() ); }
 
@@ -249,7 +249,7 @@ public class InterestPointsZarrStore
 	record StagingEntry( Key key, StagingRef points, StagingRef correspondences ) {}
 
 	/** One row of an entry table while it is written: indices into the payload list, -1 = none. */
-	private record StagingRow( Key key, int pointsPayload, int pointCount, int correspondencesPayload, int correspondenceCount ) {}
+	private record StagingRow( Key key, int pointsPayload, int pointCount, int corrPayload, int corrCount ) {}
 
 	/** One payload that a commit reads from a staging file. */
 	private record FoldRef< T >( Key key, StagingRef ref, Side< T > side )
@@ -269,10 +269,10 @@ public class InterestPointsZarrStore
 	private record KeptPair( Key a, Key b, PairRow row ) {}
 
 	/** What a commit wrote for the points. */
-	private record PointsCommit( String data, boolean appended, TreeMap< Key, long[] > ranges, long total, List< String > attributeNames ) {}
+	private record PointsCommit( String data, boolean appended, TreeMap< Key, long[] > ranges, long total, List< String > attrNames ) {}
 
 	/** What a commit wrote for the correspondences. */
-	private record CorrespondencesCommit( String data, boolean appended, Map< Key, List< PairRow > > pairs, long total ) {}
+	private record CorrsCommit( String data, boolean appended, Map< Key, List< PairRow > > pairs, long total ) {}
 
 	/**
 	 * An N5 / Zarr container opened on first use. The reader is null while the container does not exist (cached until
@@ -411,21 +411,19 @@ public class InterestPointsZarrStore
 		@Override Points reload( final Key key ) { return points( key ); }
 	};
 
-	private final Side< List< CorrespondingInterestPoints > > correspondenceSide = new Side<>()
+	private final Side< List< CorrespondingInterestPoints > > corrSide = new Side<>()
 	{
 		@Override StagingRef ref( final StagingEntry entry ) { return entry.correspondences; }
 		@Override boolean indexed( final Index index, final Key key ) { return index.pairs.containsKey( key ); }
 		@Override List< CorrespondingInterestPoints > snapshot( final List< CorrespondingInterestPoints > value ) { return new ArrayList<>( value ); }
-		@Override List< CorrespondingInterestPoints > decode( final DataInputStream in, final int count ) throws IOException { return decodeCorrespondences( in, count ); }
+		@Override List< CorrespondingInterestPoints > decode( final DataInputStream in, final int count ) throws IOException { return decodeCorrs( in, count ); }
 		@Override List< CorrespondingInterestPoints > reload( final Key key ) { return correspondences( key ); }
 	};
 
-	private final List< Side< ? > > sides = List.of( pointSide, correspondenceSide );
+	private final List< Side< ? > > sides = List.of( pointSide, corrSide );
 
 	private final LinkedHashMap< String, Object > chunkCache = new LinkedHashMap<>( 64, 0.75f, true )
 	{
-		private static final long serialVersionUID = 1L;
-
 		@Override
 		protected boolean removeEldestEntry( final Map.Entry< String, Object > eldest ) { return size() > chunkCacheSize; }
 	};
@@ -477,9 +475,9 @@ public class InterestPointsZarrStore
 		@SuppressWarnings( "unchecked" )
 		final List< String > labels = new ArrayList<>( zarr.getAttribute( "/", ATTR_LABELS, List.class ) );
 		final String pointsData = zarr.getAttribute( "/", ATTR_POINTS_DATA, String.class );
-		final String correspondencesData = zarr.getAttribute( "/", ATTR_CORRESPONDENCES_DATA, String.class );
+		final String corrData = zarr.getAttribute( "/", ATTR_CORRESPONDENCES_DATA, String.class );
 		@SuppressWarnings( "unchecked" )
-		final List< String > attributeNames = zarr.getAttribute( "/", ATTR_POINT_ATTRIBUTES, List.class );
+		final List< String > attrNames = zarr.getAttribute( "/", ATTR_POINT_ATTRIBUTES, List.class );
 
 		final long[] entryRows = readLongs( zarr, indexGroup( generation ) + "/entries", 5 );
 		final Map< Key, long[] > pointRanges = new HashMap<>();
@@ -503,15 +501,15 @@ public class InterestPointsZarrStore
 			pairs.put( readKey( viewRows, row, labels ), partners );
 		}
 
-		final DatasetAttributes locAttributes = zarr.getDatasetAttributes( pointsData + "/loc" );
-		final DatasetAttributes idAttributes = zarr.getDatasetAttributes( pointsData + "/id" );
-		final DatasetAttributes correspondenceAttributes = zarr.getDatasetAttributes( correspondencesData + "/data" );
+		final DatasetAttributes locAttrs = zarr.getDatasetAttributes( pointsData + "/loc" );
+		final DatasetAttributes idAttrs = zarr.getDatasetAttributes( pointsData + "/id" );
+		final DatasetAttributes corrAttrs = zarr.getDatasetAttributes( corrData + "/data" );
 
 		return new Index(
-				generation, labels, pointsData, correspondencesData, pointRanges, pairs,
-				locAttributes.getDimensions()[ 1 ], correspondenceAttributes.getDimensions()[ 1 ],
-				locAttributes, idAttributes, correspondenceAttributes,
-				List.copyOf( attributeNames ) );
+				generation, labels, pointsData, corrData, pointRanges, pairs,
+				locAttrs.getDimensions()[ 1 ], corrAttrs.getDimensions()[ 1 ],
+				locAttrs, idAttrs, corrAttrs,
+				List.copyOf( attrNames ) );
 	}
 
 	static String indexGroup( final int generation ) { return "index/g" + generation; }
@@ -726,7 +724,7 @@ public class InterestPointsZarrStore
 	/** @param partner only correspondences to this partner, or null for all */
 	private List< CorrespondingInterestPoints > correspondences( final Key key, final Key partner )
 	{
-		final Where< List< CorrespondingInterestPoints > > where = where( correspondenceSide, key );
+		final Where< List< CorrespondingInterestPoints > > where = where( corrSide, key );
 		if ( where == null )
 			return null;
 		if ( where.index != null )
@@ -739,7 +737,7 @@ public class InterestPointsZarrStore
 			return result;
 		}
 
-		final List< CorrespondingInterestPoints > all = where.staged != null ? where.staged : readStaged( correspondenceSide, where.stagingRef, key );
+		final List< CorrespondingInterestPoints > all = where.staged != null ? where.staged : readStaged( corrSide, where.stagingRef, key );
 		if ( all == null || partner == null )
 			return all;
 
@@ -759,7 +757,7 @@ public class InterestPointsZarrStore
 	/** @return the (view, label)s this entry has correspondences with; null if this store does not know the entry */
 	public Set< Pair< ViewId, String > > correspondingViews( final Key key )
 	{
-		final Where< List< CorrespondingInterestPoints > > where = where( correspondenceSide, key );
+		final Where< List< CorrespondingInterestPoints > > where = where( corrSide, key );
 		if ( where == null )
 			return null;
 		final Set< Pair< ViewId, String > > partners = new HashSet<>();
@@ -870,15 +868,15 @@ public class InterestPointsZarrStore
 	{
 		final int[] ids = new int[ count ];
 		final double[] loc = new double[ count * 3 ];
-		final int attributeCount = index.attributeNames.size();
-		final int columns = 3 + attributeCount;
-		final double[][] attributeValues = new double[ attributeCount ][ count ];
+		final int attrCount = index.attrNames.size();
+		final int columns = 3 + attrCount;
+		final double[][] attrValues = new double[ attrCount ][ count ];
 
-		forChunks( index.pointsData + "/id", index.idAttributes, index.pointCount, offset, count, ( final int[] chunk, final long chunkStart, final long from, final long to ) ->
+		forChunks( index.pointsData + "/id", index.idAttrs, index.pointCount, offset, count, ( final int[] chunk, final long chunkStart, final long from, final long to ) ->
 				System.arraycopy( chunk, (int) ( from - chunkStart ), ids, (int) ( from - offset ), (int) ( to - from ) ) );
 
-		forChunks( index.pointsData + "/loc", index.locAttributes, index.pointCount, offset, count, ( final double[] chunk, final long chunkStart, final long from, final long to ) -> {
-			if ( attributeCount == 0 )
+		forChunks( index.pointsData + "/loc", index.locAttrs, index.pointCount, offset, count, ( final double[] chunk, final long chunkStart, final long from, final long to ) -> {
+			if ( attrCount == 0 )
 			{
 				System.arraycopy( chunk, (int) ( from - chunkStart ) * 3, loc, (int) ( from - offset ) * 3, (int) ( to - from ) * 3 );
 				return;
@@ -888,15 +886,15 @@ public class InterestPointsZarrStore
 				final int source = (int) ( point - chunkStart ) * columns;
 				final int target = (int) ( point - offset );
 				System.arraycopy( chunk, source, loc, target * 3, 3 );
-				for ( int a = 0; a < attributeCount; ++a )
-					attributeValues[ a ][ target ] = chunk[ source + 3 + a ];
+				for ( int a = 0; a < attrCount; ++a )
+					attrValues[ a ][ target ] = chunk[ source + 3 + a ];
 			}
 		} );
 
 		final TreeMap< String, double[] > attributes = new TreeMap<>();
-		for ( int a = 0; a < attributeCount; ++a )
-			if ( hasValue( attributeValues[ a ] ) )
-				attributes.put( index.attributeNames.get( a ), attributeValues[ a ] );
+		for ( int a = 0; a < attrCount; ++a )
+			if ( hasValue( attrValues[ a ] ) )
+				attributes.put( index.attrNames.get( a ), attrValues[ a ] );
 
 		return new Points( ids, loc, attributes );
 	}
@@ -914,7 +912,7 @@ public class InterestPointsZarrStore
 	private void readPairRows( final Index index, final PairRow row, final List< CorrespondingInterestPoints > result )
 	{
 		final ViewId partnerView = row.partner.viewId();
-		forChunks( index.correspondencesData + "/data", index.correspondenceAttributes, index.correspondenceCount, row.offset, row.count, ( final int[] data, final long chunkStart, final long from, final long to ) -> {
+		forChunks( index.corrData + "/data", index.corrAttrs, index.corrCount, row.offset, row.count, ( final int[] data, final long chunkStart, final long from, final long to ) -> {
 			for ( long rowIndex = from; rowIndex < to; ++rowIndex )
 			{
 				final int first = (int) ( rowIndex - chunkStart ) * 3;
@@ -971,7 +969,7 @@ public class InterestPointsZarrStore
 			copy.add( new CorrespondingInterestPoints( correspondence ) );
 
 		if ( batchOpen )
-			stage( correspondenceSide, key, copy );
+			stage( corrSide, key, copy );
 		else
 			writeStagingFile( Map.of(), Map.of( key, copy ) );
 	}
@@ -1023,7 +1021,7 @@ public class InterestPointsZarrStore
 			for ( final Key key : keys )
 			{
 				final Points entryPoints = points.get( key );
-				final List< CorrespondingInterestPoints > entryCorrespondences = correspondences.get( key );
+				final List< CorrespondingInterestPoints > entryCorrs = correspondences.get( key );
 
 				int pointsPayload = -1;
 				if ( entryPoints != null )
@@ -1032,17 +1030,17 @@ public class InterestPointsZarrStore
 					payloads.add( encodePoints( entryPoints ) );
 				}
 
-				int correspondencesPayload = -1;
-				if ( entryCorrespondences != null )
+				int corrPayload = -1;
+				if ( entryCorrs != null )
 				{
-					correspondencesPayload = payloads.size();
-					payloads.add( encodeCorrespondences( entryCorrespondences ) );
+					corrPayload = payloads.size();
+					payloads.add( encodeCorrs( entryCorrs ) );
 				}
 
 				rows.add( new StagingRow(
 						key,
 						pointsPayload, entryPoints == null ? 0 : entryPoints.size(),
-						correspondencesPayload, entryCorrespondences == null ? 0 : entryCorrespondences.size() ) );
+						corrPayload, entryCorrs == null ? 0 : entryCorrs.size() ) );
 			}
 
 			// the header length does not depend on the offsets, so a first encoding measures it
@@ -1099,7 +1097,7 @@ public class InterestPointsZarrStore
 			out.writeInt( row.key.setup );
 			out.writeUTF( row.key.label );
 			writeStagingRef( out, row.pointsPayload, offsets, row.pointCount );
-			writeStagingRef( out, row.correspondencesPayload, offsets, row.correspondenceCount );
+			writeStagingRef( out, row.corrPayload, offsets, row.corrCount );
 		}
 		out.flush();
 		return bytes.toByteArray();
@@ -1142,8 +1140,8 @@ public class InterestPointsZarrStore
 		final double[] loc = readDoubles( in, count * 3, "locations" );
 
 		final TreeMap< String, double[] > attributes = new TreeMap<>();
-		final int attributeCount = in.readInt();
-		for ( int a = 0; a < attributeCount; ++a )
+		final int attrCount = in.readInt();
+		for ( int a = 0; a < attrCount; ++a )
 		{
 			final String name = in.readUTF();
 			attributes.put( name, readDoubles( in, count, "attribute " + name ) );
@@ -1175,7 +1173,7 @@ public class InterestPointsZarrStore
 	}
 
 	/** The partner labels once, then per correspondence: detection, partner tp, setup, label index, detection, consensus set. */
-	private static byte[] encodeCorrespondences( final List< CorrespondingInterestPoints > correspondences ) throws IOException
+	private static byte[] encodeCorrs( final List< CorrespondingInterestPoints > correspondences ) throws IOException
 	{
 		final ByteArrayOutputStream bytes = new ByteArrayOutputStream( 64 + correspondences.size() * 24 );
 		final DataOutputStream out = new DataOutputStream( bytes );
@@ -1202,7 +1200,7 @@ public class InterestPointsZarrStore
 		return bytes.toByteArray();
 	}
 
-	private static List< CorrespondingInterestPoints > decodeCorrespondences( final DataInputStream in, final int count ) throws IOException
+	private static List< CorrespondingInterestPoints > decodeCorrs( final DataInputStream in, final int count ) throws IOException
 	{
 		final String[] labels = new String[ in.readInt() ];
 		for ( int i = 0; i < labels.length; ++i )
@@ -1344,25 +1342,25 @@ public class InterestPointsZarrStore
 				labelIds.put( labels.get( i ), i );
 
 			// existing arrays keep their grid, a new store gets the defaults
-			final int chunkSize = old.exists() ? old.locAttributes.getChunkSize()[ 1 ] : Math.max( 1, defaultChunkPoints );
-			final int shardSize = old.exists() ? old.locAttributes.getBlockSize()[ 1 ] : roundUp( Math.max( chunkSize, defaultShardPoints ), chunkSize );
+			final int chunkSize = old.exists() ? old.locAttrs.getChunkSize()[ 1 ] : Math.max( 1, defaultChunkPoints );
+			final int shardSize = old.exists() ? old.locAttrs.getBlockSize()[ 1 ] : roundUp( Math.max( chunkSize, defaultShardPoints ), chunkSize );
 
 			final long pointsStart = System.currentTimeMillis();
 			final PointsCommit points = commitPoints( zarr, old, chunkSize, shardSize );
 			final long pointsMs = System.currentTimeMillis() - pointsStart;
 
-			final long correspondencesStart = System.currentTimeMillis();
-			final CorrespondencesCommit correspondences = commitCorrespondences( zarr, old, chunkSize, shardSize, labels, labelIds );
-			final long correspondencesMs = System.currentTimeMillis() - correspondencesStart;
+			final long corrStart = System.currentTimeMillis();
+			final CorrsCommit correspondences = commitCorrs( zarr, old, chunkSize, shardSize, labels, labelIds );
+			final long corrMs = System.currentTimeMillis() - corrStart;
 
 			// every entry with points or staged correspondences gets a views row, even without pairs
 			final Map< Key, List< PairRow > > pairs = correspondences.pairs;
 			for ( final Key key : points.ranges.keySet() )
 				pairs.putIfAbsent( key, new ArrayList<>() );
-			for ( final Key key : correspondenceSide.staged.keySet() )
-				if ( !correspondenceSide.removed.contains( key ) )
+			for ( final Key key : corrSide.staged.keySet() )
+				if ( !corrSide.removed.contains( key ) )
 					pairs.putIfAbsent( key, new ArrayList<>() );
-			for ( final Key key : correspondenceSide.removed )
+			for ( final Key key : corrSide.removed )
 				pairs.remove( key );
 			for ( final Key key : pairs.keySet() )
 				addLabel( labels, labelIds, key.label );
@@ -1371,16 +1369,16 @@ public class InterestPointsZarrStore
 			final int generation = old.generation + 1;
 			writeIndex( zarr, generation, points.ranges, pairs, labelIds );
 
-			final Map< String, Object > rootAttributes = new HashMap<>();
-			rootAttributes.put( ATTR_VERSION, VERSION );
-			rootAttributes.put( ATTR_GENERATION, generation );
-			rootAttributes.put( ATTR_POINTS_DATA, points.data );
-			rootAttributes.put( ATTR_CORRESPONDENCES_DATA, correspondences.data );
-			rootAttributes.put( ATTR_LABELS, labels );
-			rootAttributes.put( ATTR_CHUNK_SIZE, chunkSize );
-			rootAttributes.put( ATTR_SHARD_SIZE, shardSize );
-			rootAttributes.put( ATTR_POINT_ATTRIBUTES, points.attributeNames );
-			zarr.setAttributes( "/", rootAttributes ); // the commit point
+			final Map< String, Object > rootAttrs = new HashMap<>();
+			rootAttrs.put( ATTR_VERSION, VERSION );
+			rootAttrs.put( ATTR_GENERATION, generation );
+			rootAttrs.put( ATTR_POINTS_DATA, points.data );
+			rootAttrs.put( ATTR_CORRESPONDENCES_DATA, correspondences.data );
+			rootAttrs.put( ATTR_LABELS, labels );
+			rootAttrs.put( ATTR_CHUNK_SIZE, chunkSize );
+			rootAttrs.put( ATTR_SHARD_SIZE, shardSize );
+			rootAttrs.put( ATTR_POINT_ATTRIBUTES, points.attrNames );
+			zarr.setAttributes( "/", rootAttrs ); // the commit point
 			final long indexMs = System.currentTimeMillis() - indexStart;
 
 			final long cleanupStart = System.currentTimeMillis();
@@ -1389,7 +1387,7 @@ public class InterestPointsZarrStore
 			final long cleanupMs = System.currentTimeMillis() - cleanupStart;
 
 			final int stagedPointEntries = pointSide.staged.size();
-			final int stagedCorrespondenceEntries = correspondenceSide.staged.size();
+			final int stagedCorrEntries = corrSide.staged.size();
 			for ( final Side< ? > side : sides )
 			{
 				side.staged.clear();
@@ -1403,15 +1401,15 @@ public class InterestPointsZarrStore
 					zarr.getDatasetAttributes( points.data + "/loc" ),
 					zarr.getDatasetAttributes( points.data + "/id" ),
 					zarr.getDatasetAttributes( correspondences.data + "/data" ),
-					List.copyOf( points.attributeNames ) );
+					List.copyOf( points.attrNames ) );
 
 			IOFunctions.println( "InterestPointsZarrStore: committed generation " + generation
-					+ " (" + stagedPointEntries + " point entries, " + stagedCorrespondenceEntries + " correspondence entries"
+					+ " (" + stagedPointEntries + " point entries, " + stagedCorrEntries + " correspondence entries"
 					+ ", points " + ( points.appended ? "appended" : "rewritten" )
 					+ ", correspondences " + ( correspondences.appended ? "appended" : "rewritten" )
 					+ ", " + points.ranges.size() + " entries / " + points.total + " points / " + correspondences.total + " correspondences total"
 					+ ", chunk " + chunkSize + " / shard " + shardSize + ") in " + ( System.currentTimeMillis() - startTime ) + " ms"
-					+ " [fold " + foldedEntries + " entries " + foldMs + " ms, points " + pointsMs + " ms, correspondences " + correspondencesMs
+					+ " [fold " + foldedEntries + " entries " + foldMs + " ms, points " + pointsMs + " ms, correspondences " + corrMs
 					+ " ms, index " + indexMs + " ms, cleanup of old generation and " + stagingFiles.size() + " staging files " + cleanupMs + " ms]" );
 		}
 	}
@@ -1463,7 +1461,7 @@ public class InterestPointsZarrStore
 		for ( final Points entry : pointSide.staged.values() )
 		{
 			newPoints += entry.size();
-			newColumns |= !old.attributeNames.containsAll( entry.attributes().keySet() );
+			newColumns |= !old.attrNames.containsAll( entry.attributes().keySet() );
 		}
 
 		final boolean append = !newColumns && canAppend( old.pointsData, keptPoints, newPoints, old.pointCount );
@@ -1499,32 +1497,32 @@ public class InterestPointsZarrStore
 		}
 
 		// loc columns 3, 4, ...: an append keeps the columns, a rewrite uses those that some entry has (sorted)
-		final List< String > attributeNames;
+		final List< String > attrNames;
 		if ( append )
 		{
-			attributeNames = old.attributeNames;
+			attrNames = old.attrNames;
 		}
 		else
 		{
 			final TreeSet< String > used = new TreeSet<>();
 			for ( final Points points : toWritePoints )
 				used.addAll( points.attributes().keySet() );
-			attributeNames = new ArrayList<>( used );
+			attrNames = new ArrayList<>( used );
 		}
 
-		writePoints( zarr, data, append ? old : null, start, toWritePoints, end, shardSize, chunkSize, attributeNames );
-		return new PointsCommit( data, append, ranges, end, attributeNames );
+		writePoints( zarr, data, append ? old : null, start, toWritePoints, end, shardSize, chunkSize, attrNames );
+		return new PointsCommit( data, append, ranges, end, attrNames );
 	}
 
 	/**
 	 * Writes the correspondences of all staged entries; a rewrite also copies the kept pairs. A staged or removed entry
 	 * replaces every pair it is part of.
 	 */
-	private CorrespondencesCommit commitCorrespondences( final N5Writer zarr, final Index old, final int chunkSize, final int shardSize,
+	private CorrsCommit commitCorrs( final N5Writer zarr, final Index old, final int chunkSize, final int shardSize,
 			final List< String > labels, final Map< String, Integer > labelIds )
 	{
-		final Set< Key > replaced = new HashSet<>( correspondenceSide.staged.keySet() );
-		replaced.addAll( correspondenceSide.removed );
+		final Set< Key > replaced = new HashSet<>( corrSide.staged.keySet() );
+		replaced.addAll( corrSide.removed );
 
 		// existing pairs (each once, from the A side) that no staged or removed entry is part of
 		final List< KeptPair > keptPairs = new ArrayList<>();
@@ -1540,17 +1538,17 @@ public class InterestPointsZarrStore
 		// staged pairs by A < B, as rows with A's detection in column 0
 		final TreeMap< Key, TreeMap< Key, int[][] > > stagedPairs = new TreeMap<>();
 		long stagedRows = 0;
-		for ( final Map.Entry< Key, List< CorrespondingInterestPoints > > entry : correspondenceSide.staged.entrySet() )
+		for ( final Map.Entry< Key, List< CorrespondingInterestPoints > > entry : corrSide.staged.entrySet() )
 		{
 			final Key key = entry.getKey();
 			for ( final Map.Entry< Key, List< CorrespondingInterestPoints > > byPartner : groupByPartner( entry.getValue() ).entrySet() )
 			{
 				final Key partner = byPartner.getKey();
-				if ( correspondenceSide.removed.contains( partner ) )
+				if ( corrSide.removed.contains( partner ) )
 					continue;
 
 				final boolean keyIsA = key.compareTo( partner ) <= 0;
-				if ( !keyIsA && correspondenceSide.staged.containsKey( partner ) )
+				if ( !keyIsA && corrSide.staged.containsKey( partner ) )
 					continue; // both sides are staged: the A side defines the pair
 
 				final Key a = keyIsA ? key : partner;
@@ -1563,9 +1561,9 @@ public class InterestPointsZarrStore
 			}
 		}
 
-		final boolean append = canAppend( old.correspondencesData, keptRows, stagedRows, old.correspondenceCount );
-		final String data = append ? old.correspondencesData : "correspondences/g" + ( old.generation + 1 );
-		final long start = append ? old.correspondenceCount : 0;
+		final boolean append = canAppend( old.corrData, keptRows, stagedRows, old.corrCount );
+		final String data = append ? old.corrData : "correspondences/g" + ( old.generation + 1 );
+		final long start = append ? old.corrCount : 0;
 
 		final Map< Key, List< PairRow > > pairs = new HashMap<>();
 		final List< int[][] > toWrite = new ArrayList<>();
@@ -1593,8 +1591,8 @@ public class InterestPointsZarrStore
 				end += count;
 			}
 
-		writeCorrespondences( zarr, data, append ? old : null, start, toWrite, end, shardSize, chunkSize );
-		return new CorrespondencesCommit( data, append, pairs, end );
+		writeCorrs( zarr, data, append ? old : null, start, toWrite, end, shardSize, chunkSize );
+		return new CorrsCommit( data, append, pairs, end );
 	}
 
 	private static Map< Key, List< CorrespondingInterestPoints > > groupByPartner( final List< CorrespondingInterestPoints > correspondences )
@@ -1680,7 +1678,7 @@ public class InterestPointsZarrStore
 		if ( !pointsAppended )
 			removeIfExists( zarr, old.pointsData );
 		if ( !correspondencesAppended )
-			removeIfExists( zarr, old.correspondencesData );
+			removeIfExists( zarr, old.corrData );
 	}
 
 	/** Deletes the staging files that this commit folded in or replaced. */
@@ -1754,7 +1752,7 @@ public class InterestPointsZarrStore
 	// ------------------------------------------------------------------------------------------------
 
 	/** A sharded array [columns, rows]: raw bytes, with a crc32c on every chunk and on the shard index. */
-	static DatasetAttributes arrayAttributes( final int columns, final long rows, final DataType type, final int shardSize, final int chunkSize )
+	static DatasetAttributes arrayAttrs( final int columns, final long rows, final DataType type, final int shardSize, final int chunkSize )
 	{
 		return rawChecksummed( columns, rows, type, shardSize )
 				.chunkSize( new int[] { columns, chunkSize } )
@@ -1826,7 +1824,7 @@ public class InterestPointsZarrStore
 			for ( long chunkStart = Math.max( shardStart, ( start / chunkSize ) * chunkSize ); chunkStart < writeEnd; chunkStart += chunkSize )
 				chunks.add( filler.chunk( chunkStart, (int) ( Math.min( chunkStart + chunkSize, shardEnd ) - chunkStart ) ) );
 
-			@SuppressWarnings( "unchecked" )
+			@SuppressWarnings( { "unchecked", "rawtypes" } )
 			final DataBlock< T >[] chunkArray = chunks.toArray( new DataBlock[ 0 ] );
 			zarr.writeChunks( dataset, attributes, chunkArray );
 		} ) );
@@ -1834,32 +1832,32 @@ public class InterestPointsZarrStore
 
 	/**
 	 * Writes the entries one after another from {@code start}. Creates the arrays if {@code old} is null, else appends to
-	 * them. loc gets x, y, z and then the {@code attributeNames} columns.
+	 * them. loc gets x, y, z and then the {@code attrNames} columns.
 	 */
 	private void writePoints( final N5Writer zarr, final String group, final Index old, final long start, final List< Points > entries,
-			final long end, final int shardSize, final int chunkSize, final List< String > attributeNames )
+			final long end, final int shardSize, final int chunkSize, final List< String > attrNames )
 	{
-		final int columns = 3 + attributeNames.size();
-		final DatasetAttributes locAttributes = arrayAttributes( columns, end, DataType.FLOAT64, shardSize, chunkSize );
-		final DatasetAttributes idAttributes = arrayAttributes( 1, end, DataType.INT32, shardSize, chunkSize );
-		prepareDataset( zarr, group + "/loc", locAttributes, old == null );
-		prepareDataset( zarr, group + "/id", idAttributes, old == null );
+		final int columns = 3 + attrNames.size();
+		final DatasetAttributes locAttrs = arrayAttrs( columns, end, DataType.FLOAT64, shardSize, chunkSize );
+		final DatasetAttributes idAttrs = arrayAttrs( 1, end, DataType.INT32, shardSize, chunkSize );
+		prepareDataset( zarr, group + "/loc", locAttrs, old == null );
+		prepareDataset( zarr, group + "/id", idAttrs, old == null );
 
 		final long[] offsets = entryOffsets( entries, start, Points::size );
-		final double[] oldLoc = old == null ? null : partialFirstChunk( old.pointsData + "/loc", old.locAttributes, start );
-		final int[] oldIds = old == null ? null : partialFirstChunk( old.pointsData + "/id", old.idAttributes, start );
+		final double[] oldLoc = old == null ? null : partialFirstChunk( old.pointsData + "/loc", old.locAttrs, start );
+		final int[] oldIds = old == null ? null : partialFirstChunk( old.pointsData + "/id", old.idAttrs, start );
 
-		writeRange( zarr, group + "/loc", locAttributes, start, end, ( chunkStart, count ) -> {
+		writeRange( zarr, group + "/loc", locAttrs, start, end, ( chunkStart, count ) -> {
 			final double[] buffer = new double[ count * columns ];
 			keepOldRows( oldLoc, buffer, chunkStart, start, columns );
 
 			forEntries( entries, offsets, chunkStart, count, Points::size, ( points, entryStart, from, to ) ->
-					copyLocRows( points, entryStart, from, to, chunkStart, buffer, attributeNames ) );
+					copyLocRows( points, entryStart, from, to, chunkStart, buffer, attrNames ) );
 
 			return new DoubleArrayDataBlock( new int[] { columns, count }, new long[] { 0, chunkStart / chunkSize }, buffer );
 		} );
 
-		writeRange( zarr, group + "/id", idAttributes, start, end, ( chunkStart, count ) -> {
+		writeRange( zarr, group + "/id", idAttrs, start, end, ( chunkStart, count ) -> {
 			final int[] buffer = new int[ count ];
 			keepOldRows( oldIds, buffer, chunkStart, start, 1 );
 
@@ -1872,26 +1870,26 @@ public class InterestPointsZarrStore
 
 	/** Copies the rows [from, to) of an entry into a loc chunk: x, y, z, then the attributes (-1 where the entry has none). */
 	private static void copyLocRows( final Points points, final long entryStart, final long from, final long to, final long chunkStart,
-			final double[] buffer, final List< String > attributeNames )
+			final double[] buffer, final List< String > attrNames )
 	{
-		final int attributeCount = attributeNames.size();
-		if ( attributeCount == 0 )
+		final int attrCount = attrNames.size();
+		if ( attrCount == 0 )
 		{
 			System.arraycopy( points.loc, (int) ( from - entryStart ) * 3, buffer, (int) ( from - chunkStart ) * 3, (int) ( to - from ) * 3 );
 			return;
 		}
 
-		final int columns = 3 + attributeCount;
-		final double[][] values = new double[ attributeCount ][];
-		for ( int a = 0; a < attributeCount; ++a )
-			values[ a ] = points.attributes().get( attributeNames.get( a ) );
+		final int columns = 3 + attrCount;
+		final double[][] values = new double[ attrCount ][];
+		for ( int a = 0; a < attrCount; ++a )
+			values[ a ] = points.attributes().get( attrNames.get( a ) );
 
 		for ( long row = from; row < to; ++row )
 		{
 			final int source = (int) ( row - entryStart );
 			final int target = (int) ( row - chunkStart ) * columns;
 			System.arraycopy( points.loc, source * 3, buffer, target, 3 );
-			for ( int a = 0; a < attributeCount; ++a )
+			for ( int a = 0; a < attrCount; ++a )
 				buffer[ target + 3 + a ] = values[ a ] == null ? NO_VALUE : values[ a ][ source ];
 		}
 	}
@@ -1933,14 +1931,14 @@ public class InterestPointsZarrStore
 	}
 
 	/** Writes pairs (each as rows [3][n]) one after another from {@code start}, like {@link #writePoints}. */
-	private void writeCorrespondences( final N5Writer zarr, final String group, final Index old, final long start, final List< int[][] > pairs,
+	private void writeCorrs( final N5Writer zarr, final String group, final Index old, final long start, final List< int[][] > pairs,
 			final long end, final int shardSize, final int chunkSize )
 	{
-		final DatasetAttributes attributes = arrayAttributes( 3, end, DataType.INT32, shardSize, chunkSize );
+		final DatasetAttributes attributes = arrayAttrs( 3, end, DataType.INT32, shardSize, chunkSize );
 		prepareDataset( zarr, group + "/data", attributes, old == null );
 
 		final long[] offsets = entryOffsets( pairs, start, rows -> rows[ 0 ].length );
-		final int[] oldData = old == null ? null : partialFirstChunk( old.correspondencesData + "/data", old.correspondenceAttributes, start );
+		final int[] oldData = old == null ? null : partialFirstChunk( old.corrData + "/data", old.corrAttrs, start );
 
 		writeRange( zarr, group + "/data", attributes, start, end, ( chunkStart, count ) -> {
 			final int[] buffer = new int[ count * 3 ];

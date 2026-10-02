@@ -165,14 +165,14 @@ public class InterestPointsZarr extends InterestPoints
 	 */
 	public synchronized void setInterestPoints( final Collection< InterestPoint > points, final Map< String, double[] > attributes )
 	{
-		final TreeMap< String, double[] > attributesCopy = new TreeMap<>();
+		final TreeMap< String, double[] > attrsCopy = new TreeMap<>();
 		if ( attributes != null )
 		{
-			InterestPointsZarrStore.checkAttributes( attributes, points == null ? 0 : points.size() );
-			attributes.forEach( ( name, values ) -> attributesCopy.put( name, values.clone() ) );
+			InterestPointsZarrStore.checkAttrs( attributes, points == null ? 0 : points.size() );
+			attributes.forEach( ( name, values ) -> attrsCopy.put( name, values.clone() ) );
 		}
 		setInterestPoints( points );
-		this.attributes = attributesCopy;
+		this.attributes = attrsCopy;
 	}
 
 	@Override
