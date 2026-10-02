@@ -22,7 +22,6 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
-import java.util.Set;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -32,8 +31,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -48,11 +45,8 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.position.FunctionRandomAccessible;
-import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedLongType;
 import net.imglib2.type.numeric.real.DoubleType;
-import net.imglib2.util.Cast;
-import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
@@ -64,18 +58,10 @@ public class InterestPointsN5 extends InterestPoints
 	public static int defaultBlockSize = 300_000;
 	public static final String baseN5 = "interestpoints.n5";
 
-	/** per-point attribute holding the image intensity at each point (BigStitcher-Spark detection --storeIntensities) */
-	public static final String INTENSITY = "intensity";
-	/** legacy per-view dataset of the intensities, next to id and loc: tpId_X_viewSetupId_Y/label/interestpoints/intensities */
-	static final String LEGACY_INTENSITIES = "intensities";
-
 	final String n5dataset;
-	final PackedInterestPointStore.Key key; // null if n5dataset is not of the form tpId_X_viewSetupId_Y/label
 
 	int[] ids = null;
 	double[][] locations = null;
-	/** named per-point attributes, one value per point in the order of ids; part of the points: loaded, set and saved with them */
-	TreeMap< String, double[] > attributes = new TreeMap<>();
 
 	ArrayList< CorrespondingInterestPoints > correspondingInterestPoints;
 
@@ -83,11 +69,7 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		super(basePath);
 		this.n5dataset = n5dataset;
-		this.key = PackedInterestPointStore.Key.parse( n5dataset );
 	}
-
-	/** the shared packed store of this dataset (points + correspondences of all views in a few arrays), or null if this entry cannot be addressed by (tp, setup, label) */
-	PackedInterestPointStore store() { return key == null ? null : PackedInterestPointStore.get( basePath ); }
 
 	public String getN5dataset() { return n5dataset; }
 
@@ -131,52 +113,9 @@ public class InterestPointsN5 extends InterestPoints
 		return list;
 	}
 
-	/** @return the names of the per-point attributes of this list (loads the points if needed) */
-	public synchronized Set< String > getAttributeNames()
-	{
-		if ( this.locations == null || this.ids == null )
-			loadInterestPoints();
-		return new TreeSet<>( attributes.keySet() );
-	}
-
-	/** @return a copy of the values of a per-point attribute, in the order of the points, or null if the list does not have it */
-	public synchronized double[] getAttributeCopy( final String name )
-	{
-		if ( this.locations == null || this.ids == null )
-			loadInterestPoints();
-		final double[] v = attributes.get( name );
-		return v == null ? null : v.clone();
-	}
-
-	/**
-	 * Sets new points together with their per-point attributes (one value per point, in the order of {@code points}).
-	 * Attributes belong to the points: they change only with the points, so there is no way to set them on their own, and
-	 * {@link #setInterestPoints(Collection)} drops them. Values that are all {@link PackedInterestPointStore#NO_VALUE} (-1)
-	 * are not stored (-1 means "no value").
-	 *
-	 * @param attributes name -> values, may be null
-	 */
-	public synchronized void setInterestPoints( final Collection< InterestPoint > points, final Map< String, double[] > attributes )
-	{
-		final int n = points == null ? 0 : points.size();
-		final TreeMap< String, double[] > a = new TreeMap<>();
-		if ( attributes != null )
-			for ( final Map.Entry< String, double[] > e : attributes.entrySet() )
-			{
-				PackedInterestPointStore.checkAttributeName( e.getKey() );
-				if ( e.getValue().length != n )
-					throw new IllegalArgumentException( "attribute '" + e.getKey() + "' has " + e.getValue().length + " values for " + n + " points" );
-				a.put( e.getKey(), e.getValue().clone() );
-			}
-		setInterestPoints( points );
-		this.attributes = a;
-	}
-
 	@Override
 	protected void setInterestPointsLocal( final Collection< InterestPoint > collection )
 	{
-		this.attributes = new TreeMap<>(); // per-point values do not survive new points
-
 		if ( collection == null || collection.size() == 0 )
 		{
 			this.ids = new int[0];
@@ -212,122 +151,82 @@ public class InterestPointsN5 extends InterestPoints
 	public static String ipDataset( final String n5dataset ) { return n5dataset + "/interestpoints"; }
 	public static String corrDataset( final String n5dataset  ) { return n5dataset + "/correspondences"; }
 
-	/** @return true if this list is backed by the interest point store (dataset name of the form tpId_X_viewSetupId_Y/label) */
-	public boolean usesStore() { return store() != null; }
-
-	/**
-	 * Saves the modified points and correspondences of many lists into ONE staging file per store (one file per Spark task
-	 * instead of one per entry; see PackedInterestPointStore.writeStagingFile). Lists of datasets without a store fall back
-	 * to the per-entry legacy save. Nothing is committed: the next XML save folds the file in.
-	 */
-	public static void saveStaged( final Collection< ? extends InterestPoints > lists )
+	@Override
+	public boolean saveInterestPoints( final boolean forceWrite )
 	{
-		final Map< PackedInterestPointStore, Map< PackedInterestPointStore.Key, PackedInterestPointStore.Points > > pts = new HashMap<>();
-		final Map< PackedInterestPointStore, Map< PackedInterestPointStore.Key, List< CorrespondingInterestPoints > > > corr = new HashMap<>();
-		final List< InterestPointsN5 > written = new ArrayList<>();
-		for ( final InterestPoints ip : lists )
-		{
-			final InterestPointsN5 l = (InterestPointsN5) ip;
-			final PackedInterestPointStore store = l.store();
-			if ( store == null )
-			{
-				l.saveInterestPoints( false );
-				l.saveCorrespondingInterestPoints( false );
-				continue;
-			}
-			if ( l.modifiedInterestPoints && l.ids != null && l.locations != null )
-				pts.computeIfAbsent( store, x -> new HashMap<>() ).put( l.key, PackedInterestPointStore.Points.of( l.ids, l.locations, l.attributes ) );
-			if ( l.modifiedCorrespondingInterestPoints && l.correspondingInterestPoints != null )
-				corr.computeIfAbsent( store, x -> new HashMap<>() ).put( l.key, new ArrayList<>( l.correspondingInterestPoints ) );
-			written.add( l );
-		}
-		final Set< PackedInterestPointStore > stores = new HashSet<>( pts.keySet() );
-		stores.addAll( corr.keySet() );
-		for ( final PackedInterestPointStore store : stores )
-			store.writeStagingFile( pts.getOrDefault( store, Map.of() ), corr.getOrDefault( store, Map.of() ) );
-		for ( final InterestPointsN5 l : written ) { l.modifiedInterestPoints = false; l.modifiedCorrespondingInterestPoints = false; }
+		if ( !modifiedInterestPoints && !forceWrite )
+			return true;
+
+		if ( ids == null || locations == null )
+			return false;
+
+		final boolean success = saveInterestPointsStatic( basePath, n5dataset, ids, locations );
+
+		if ( success )
+			modifiedInterestPoints = false;
+
+		return success;
 	}
 
 	@Override
-	public boolean saveInterestPoints( final boolean forceWrite ) { return saveInterestPoints( forceWrite, null ); }
+	public boolean saveCorrespondingInterestPoints(boolean forceWrite)
+	{
+		if ( !modifiedCorrespondingInterestPoints && !forceWrite )
+			return true;
 
-	@Override
-	public boolean saveCorrespondingInterestPoints( final boolean forceWrite ) { return saveCorrespondingInterestPoints( forceWrite, null ); }
+		if ( correspondingInterestPoints == null )
+			return false;
+
+		final boolean success = saveCorrespondencesStatic( basePath, n5dataset, correspondingInterestPoints );
+
+		if ( success )
+			modifiedCorrespondingInterestPoints = false;
+
+		return success;
+	}
 
 	/**
-	 * With a store: in memory while a batch is open (XmlIoSpimData2.saveInterestPointsInParallel commits right after its
-	 * loop), else one durable staging file (no commit will follow in this JVM, e.g. a Spark executor). Without a store
-	 * (legacy dataset name): the per-view N5 group, through {@code n5Writer} if given (avoids one open/close per view).
+	 * Save interest points using an already-open N5Writer, clearing the modified flag on success.
+	 * Use when saving many views to avoid per-view open/close overhead.
 	 */
 	public boolean saveInterestPoints( final boolean forceWrite, final N5Writer n5Writer )
 	{
 		if ( !modifiedInterestPoints && !forceWrite )
 			return true;
+
 		if ( ids == null || locations == null )
 			return false;
-		final PackedInterestPointStore store = store();
-		if ( store != null )
-		{
-			final PackedInterestPointStore.Points p = PackedInterestPointStore.Points.of( ids, locations, attributes );
-			if ( store.inBatch() ) store.stagePoints( key, p ); else store.writePointsBlob( key, p );
-		}
-		else
-		{
-			if ( !attributes.isEmpty() )
-				IOFunctions.println( "InterestPointsN5: WARNING " + n5dataset + " is not stored in " + PackedInterestPointStore.ZARR_CONTAINER + ", its point attributes " + attributes.keySet() + " are not saved" );
-			if ( !( n5Writer == null ? saveInterestPointsStatic( basePath, n5dataset, ids, locations ) : saveInterestPointsStatic( n5Writer, n5dataset, ids, locations ) ) )
-				return false;
-		}
-		modifiedInterestPoints = false;
-		return true;
+
+		final boolean success = saveInterestPointsStatic( n5Writer, n5dataset, ids, locations );
+
+		if ( success )
+			modifiedInterestPoints = false;
+
+		return success;
 	}
 
-	/** correspondences; same dispatch as {@link #saveInterestPoints(boolean, N5Writer)} */
+	/**
+	 * Save correspondences using an already-open N5Writer, clearing the modified flag on success.
+	 * Use when saving many views to avoid per-view open/close overhead.
+	 */
 	public boolean saveCorrespondingInterestPoints( final boolean forceWrite, final N5Writer n5Writer )
 	{
 		if ( !modifiedCorrespondingInterestPoints && !forceWrite )
 			return true;
+
 		if ( correspondingInterestPoints == null )
 			return false;
-		final PackedInterestPointStore store = store();
-		if ( store != null )
-		{
-			if ( store.inBatch() ) store.stageCorrespondences( key, correspondingInterestPoints ); else store.writeCorrespondencesBlob( key, correspondingInterestPoints );
-		}
-		else if ( !( n5Writer == null ? saveCorrespondencesStatic( basePath, n5dataset, correspondingInterestPoints ) : saveCorrespondencesStatic( n5Writer, n5dataset, correspondingInterestPoints ) ) )
-			return false;
-		modifiedCorrespondingInterestPoints = false;
-		return true;
+
+		final boolean success = saveCorrespondencesStatic( n5Writer, n5dataset, correspondingInterestPoints );
+
+		if ( success )
+			modifiedCorrespondingInterestPoints = false;
+
+		return success;
 	}
 
 	@Override
 	protected boolean loadInterestPoints()
-	{
-		final PackedInterestPointStore store = store();
-		if ( store != null )
-		{
-			final PackedInterestPointStore.Points p = store.points( key );
-			if ( p != null )
-			{
-				this.ids = p.ids().clone();
-				this.locations = p.locations(); // ponytail: keep the double[][] layout of this class for now, flat arrays would halve memory
-				this.attributes = new TreeMap<>();
-				p.attributes().forEach( ( name, v ) -> attributes.put( name, v.clone() ) );
-				modifiedInterestPoints = false;
-				return true;
-			}
-		}
-		final boolean ok = loadLegacyInterestPoints();
-		if ( ids == null || locations == null ) // nothing anywhere (e.g. deleted): behave as empty instead of failing later
-		{
-			ids = new int[ 0 ];
-			locations = new double[ 0 ][ 0 ];
-		}
-		return ok;
-	}
-
-	/** reads the legacy per-view group {@code tpId_X_viewSetupId_Y/label/interestpoints} */
-	boolean loadLegacyInterestPoints()
 	{
 		try
 		{
@@ -408,11 +307,6 @@ public class InterestPointsN5 extends InterestPoints
 				}
 			}
 
-			this.attributes = new TreeMap<>();
-			final double[] intensities = loadLegacyIntensities( n5, dataset + "/" + LEGACY_INTENSITIES, ids.length );
-			if ( intensities != null )
-				attributes.put( INTENSITY, intensities );
-
 			n5.close();
 			modifiedInterestPoints = false;
 			return true;
@@ -421,68 +315,14 @@ public class InterestPointsN5 extends InterestPoints
 		{
 			this.ids = new int[0];
 			this.locations = new double[0][0];
-			this.attributes = new TreeMap<>();
 			IOFunctions.println( "InterestPointsN5.loadInterestPoints(): " + e );
 			e.printStackTrace();
 			return false;
 		}
 	}
 
-	/** the 1 x N float32 intensities BigStitcher-Spark wrote next to the legacy points, or null if absent or of another size */
-	private static double[] loadLegacyIntensities( final N5Reader n5, final String dataset, final int size )
-	{
-		if ( size == 0 || !n5.exists( dataset ) )
-			return null;
-		final RandomAccessibleInterval< RealType< ? > > data = Cast.unchecked( N5Utils.open( n5, dataset ) );
-		if ( Intervals.numElements( data ) != size )
-		{
-			IOFunctions.println( "InterestPointsN5: WARNING ignoring " + dataset + " (" + Intervals.numElements( data ) + " values for " + size + " points)" );
-			return null;
-		}
-		final double[] v = new double[ size ];
-		int i = 0;
-		for ( final RealType< ? > t : Views.flatIterable( data ) )
-			v[ i++ ] = t.getRealDouble();
-		return v;
-	}
-
 	@Override
 	protected boolean loadCorrespondences()
-	{
-		final PackedInterestPointStore store = store();
-		if ( store != null )
-		{
-			final List< CorrespondingInterestPoints > l = store.correspondences( key );
-			if ( l != null )
-			{
-				this.correspondingInterestPoints = new ArrayList<>( l );
-				modifiedCorrespondingInterestPoints = false;
-				return true;
-			}
-		}
-		final boolean ok = loadLegacyCorrespondences();
-		if ( correspondingInterestPoints == null )
-			correspondingInterestPoints = new ArrayList<>();
-		return ok;
-	}
-
-	/** not loaded in memory: one range read of the pair from the store instead of copying the whole list */
-	@Override
-	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId correspondingViewId, final String correspondingLabel )
-	{
-		final List< CorrespondingInterestPoints > l = store() != null && correspondingInterestPoints == null ? store().correspondences( key, correspondingViewId, correspondingLabel ) : null;
-		return l != null ? l : super.getCorrespondingInterestPointsCopy( correspondingViewId, correspondingLabel );
-	}
-
-	@Override
-	public Set< Pair< ViewId, String > > getCorrespondingViews()
-	{
-		final Set< Pair< ViewId, String > > s = store() != null && correspondingInterestPoints == null ? store().correspondingViews( key ) : null;
-		return s != null ? s : super.getCorrespondingViews();
-	}
-
-	/** reads the legacy per-view group {@code tpId_X_viewSetupId_Y/label/correspondences} */
-	boolean loadLegacyCorrespondences()
 	{
 		try
 		{
@@ -710,35 +550,48 @@ public class InterestPointsN5 extends InterestPoints
 		return quickLookup;
 	}
 
-	/** with a store: points AND correspondences of the entry go at the next commit (they are one entry there) */
 	@Override
-	public boolean deleteInterestPoints() { return delete( ipDataset() ); }
-
-	@Override
-	public boolean deleteCorrespondingInterestPoints() { return delete( corrDataset() ); }
-
-	private boolean delete( final String legacyDataset )
+	public boolean deleteInterestPoints()
 	{
 		try
 		{
-			final PackedInterestPointStore store = store();
-			if ( store != null )
-			{
-				store.remove( key ); // committed with the next save
-				store.removeLegacyGroup( legacyDataset ); // cached legacy reader/writer, nothing is opened per view
-				return true;
-			}
-			try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) ) )
-			{
-				if ( n5Writer.exists( legacyDataset ) )
-					n5Writer.remove( legacyDataset );
-			}
+			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
+
+			if (n5Writer.exists(ipDataset()))
+				n5Writer.remove(ipDataset());
+	
+			n5Writer.close();
+
 			return true;
 		}
 		catch ( Exception e )
 		{
-			IOFunctions.println( "InterestPointsN5.delete(" + legacyDataset + "): " + e );
+			IOFunctions.println( "InterestPointsN5.deleteInterestPoints(): " + e );
 			e.printStackTrace();
+
+			return false;
+		}
+	}
+
+	@Override
+	public boolean deleteCorrespondingInterestPoints()
+	{
+		try
+		{
+			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
+
+			if (n5Writer.exists(corrDataset()))
+				n5Writer.remove(corrDataset());
+
+			n5Writer.close();
+
+			return true;
+		}
+		catch ( Exception e )
+		{
+			IOFunctions.println( "InterestPointsN5.deleteCorrespondingInterestPoints(): " + e );
+			e.printStackTrace();
+
 			return false;
 		}
 	}
