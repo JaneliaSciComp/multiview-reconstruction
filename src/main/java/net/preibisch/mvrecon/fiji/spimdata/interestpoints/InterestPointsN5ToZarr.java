@@ -66,48 +66,15 @@ public class InterestPointsN5ToZarr
 	}
 
 	final URI containerURI;
-	private N5Reader reader = null;
-	private N5Writer writer = null;
-	private boolean readerTried = false;
+	/** A missing container stays missing: nothing creates one for entries that the store can hold. */
+	private final InterestPointsZarrStore.LazyN5Container container;
 
 	private InterestPointsN5ToZarr( final URI baseDir )
 	{
 		this.containerURI = URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) );
+		this.container = new InterestPointsZarrStore.LazyN5Container( StorageFormat.N5, containerURI );
 	}
 
-	/**
-	 * @return the reader, or null if the dataset has no legacy container. A missing container is cached, because nothing
-	 * creates one for entries that the store can hold.
-	 */
-	private synchronized N5Reader reader()
-	{
-		if ( writer != null )
-			return writer;
-
-		if ( !readerTried )
-		{
-			readerTried = true;
-			try
-			{
-				reader = URITools.instantiateN5Reader( StorageFormat.N5, containerURI );
-			}
-			catch ( final Exception e )
-			{
-				reader = null;
-			}
-		}
-		return reader;
-	}
-
-	private synchronized N5Writer writer()
-	{
-		if ( writer == null )
-		{
-			writer = URITools.instantiateN5Writer( StorageFormat.N5, containerURI );
-			reader = null;
-		}
-		return writer;
-	}
 
 	/**
 	 * Reads the points of an entry, with its intensities as attribute {@link InterestPointsZarr#INTENSITY}.
@@ -117,12 +84,12 @@ public class InterestPointsN5ToZarr
 	 */
 	InterestPointsZarrStore.Points points( final String path )
 	{
-		final N5Reader n5 = reader();
+		final N5Reader n5 = container.reader();
 		final String dataset = InterestPointsN5.ipDataset( path );
 		if ( n5 == null || !n5.exists( dataset ) )
 			return null;
 
-		final RandomAccessibleInterval< RealType< ? > > locData = Cast.unchecked( N5Utils.open( n5, dataset + "/loc" ) );
+		final RandomAccessibleInterval< RealType< ? > > locData = open( n5, dataset + "/loc" );
 		if ( locData.numDimensions() < 2 || locData.dimension( 0 ) == 0 )
 			return new InterestPointsZarrStore.Points( new int[ 0 ], new double[ 0 ] ); // an empty list is stored as [0]
 
@@ -130,7 +97,7 @@ public class InterestPointsN5ToZarr
 			throw new IllegalArgumentException( dataset + "/loc has " + locData.dimension( 0 ) + " coordinates per point, expected 3" );
 
 		final double[] loc = flatValues( locData );
-		final double[] idValues = flatValues( Cast.unchecked( N5Utils.open( n5, dataset + "/id" ) ) );
+		final double[] idValues = flatValues( open( n5, dataset + "/id" ) );
 		if ( idValues.length * 3 != loc.length )
 			throw new IllegalArgumentException( dataset + ": " + idValues.length + " ids for " + loc.length / 3 + " locations" );
 
@@ -142,7 +109,7 @@ public class InterestPointsN5ToZarr
 		final String intensitiesDataset = dataset + "/" + LEGACY_INTENSITIES;
 		if ( n5.exists( intensitiesDataset ) )
 		{
-			final double[] intensities = flatValues( Cast.unchecked( N5Utils.open( n5, intensitiesDataset ) ) );
+			final double[] intensities = flatValues( open( n5, intensitiesDataset ) );
 			if ( intensities.length == ids.length )
 				attributes.put( InterestPointsZarr.INTENSITY, intensities );
 			else
@@ -155,7 +122,7 @@ public class InterestPointsN5ToZarr
 	/** @return the correspondences of an entry, or null if the legacy container does not have them */
 	List< CorrespondingInterestPoints > correspondences( final String path )
 	{
-		final N5Reader n5 = reader();
+		final N5Reader n5 = container.reader();
 		final String dataset = InterestPointsN5.corrDataset( path );
 		if ( n5 == null || !n5.exists( dataset ) )
 			return null;
@@ -166,9 +133,14 @@ public class InterestPointsN5ToZarr
 	/** Removes the legacy group of an entry, if there is one. */
 	void remove( final String path )
 	{
-		final N5Reader n5 = reader();
+		final N5Reader n5 = container.reader();
 		if ( n5 != null && n5.exists( path ) )
-			writer().remove( path );
+			container.writer().remove( path );
+	}
+
+	private static RandomAccessibleInterval< RealType< ? > > open( final N5Reader n5, final String dataset )
+	{
+		return Cast.unchecked( N5Utils.open( n5, dataset ) );
 	}
 
 	/** @return all values in flat iteration order (dimension 0 fastest) */
@@ -192,7 +164,7 @@ public class InterestPointsN5ToZarr
 	public static int convert( final URI baseDir )
 	{
 		final InterestPointsN5ToZarr legacy = get( baseDir );
-		final N5Reader n5 = legacy.reader();
+		final N5Reader n5 = legacy.container.reader();
 		if ( n5 == null )
 			return 0;
 
@@ -229,7 +201,7 @@ public class InterestPointsN5ToZarr
 		for ( final String path : paths )
 			viewGroups.add( path.substring( 0, path.indexOf( '/' ) ) );
 
-		final N5Writer n5Writer = legacy.writer();
+		final N5Writer n5Writer = legacy.container.writer();
 		InterestPointsZarrStore.parallel( "removing legacy interest point groups", () -> viewGroups.parallelStream().forEach( n5Writer::remove ) );
 		IOFunctions.println( "InterestPointsN5ToZarr: removed " + viewGroups.size() + " legacy view groups" );
 		return paths.size();
