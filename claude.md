@@ -56,9 +56,10 @@ All points and correspondences of a dataset live in a few sharded Zarr v3 arrays
 (one instance per dataset dir, `PackedInterestPointStore.get(baseDir)`). `InterestPointsN5` keeps its XML text and API.
 
 ```
-interestpoints.zarr/zarr.json        root attrs: generation G, pointsData, corrData, labels, chunkPoints, shardPoints
+interestpoints.zarr/zarr.json        root attrs: generation G, pointsData, corrData, labels, chunkPoints, shardPoints, pointAttributes
   index/gG/{entries,views,pairs}     INT64: (tp,setup,label,offset,count) / (tp,setup,label,pairStart,pairCount) / (partner tp,setup,label,offset,count,swapped)
-  points/gk/{loc,id}                 FLOAT64 [3,N] + INT32 [1,N]; ids are sparse for *_split labels
+  points/gk/{loc,id}                 FLOAT64 [3+k,N] + INT32 [1,N]; ids are sparse for *_split labels; loc columns 3.. are the
+                                     optional per-point attributes named by pointAttributes (-1 = no value)
   correspondences/gk/data            INT32 [3,M] (detA, detB, consensusSet), stored once per pair (A = smaller key)
   staging/<millis>_<nanos>_<rnd>.stage   one raw file per Spark task (entry table + payloads), folded in by the next commit
 interestpoints.n5/tpId_X_viewSetupId_Y/label/   legacy per-view groups: readable, removed by conversion
@@ -84,7 +85,14 @@ GCLocker stall below. The zstd variant was never in production, nothing reads it
 - n5 4.0.1: write inner chunks per shard with `writeChunks`; never `writeBlock` a truncated last shard (corrupts `readChunk`).
 
 **Conversion**: `java -cp <fat jar> ...interestpoints.PackedInterestPointStore <dataset.xml> [chunk shard]`. Never implicit; mixed
-legacy + zarr datasets read fine. `--storeIntensities` detection keeps the old in-memory path.
+legacy + zarr datasets read fine; conversion packs legacy `interestpoints/intensities` into the `intensity` attribute.
+
+**Point attributes**: part of the point, like its location: they change iff the points change. Set only together with the
+points, `InterestPointsN5.setInterestPoints(points, Map<name, double[]>)`; read with `getAttributeCopy(name)`;
+`setInterestPoints(points)` drops them. Stored as extra `loc` columns, -1 = no value (like the single-consensus set id); an
+entry whose column is all -1 has no such attribute. A new attribute name changes the shape of `loc`, so that commit rewrites
+the points arrays; a rewrite drops columns no entry uses. Staging files v2 carry attributes (v1 still read).
+BigStitcher-Spark `--storeIntensities` writes `intensity` through the normal staging path.
 
 **Lessons (2026-09-21, ExpID99 pipeline)**
 - Executor-side saves must be durable: the split's phase-3 saver once staged in executor memory and every `beads_split`

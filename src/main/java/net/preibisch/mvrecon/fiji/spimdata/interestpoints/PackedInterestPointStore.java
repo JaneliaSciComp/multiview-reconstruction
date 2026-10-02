@@ -90,20 +90,22 @@ import util.URITools;
  * per pair of (view, label)s and addressed through a pair index. Layout (G = index generation, k = data generation):
  *
  * <pre>
- * interestpoints.zarr/zarr.json      root attributes: "interestpoints": "1.0.0", "generation": G, "pointsData", "corrData", "labels", "chunkPoints", "shardPoints"
+ * interestpoints.zarr/zarr.json      root attributes: "interestpoints": "1.0.0", "generation": G, "pointsData", "corrData", "labels", "chunkPoints", "shardPoints", "pointAttributes"
  *   index/gG/entries    INT64 [5, E]   (tp, setup, labelId, offset, count) per (view, label)
  *   index/gG/views      INT64 [5, E]   (tp, setup, labelId, pairStart, pairCount) into pairs
  *   index/gG/pairs      INT64 [6, P]   (tpB, setupB, labelIdB, offset, count, swapped), grouped by owner
- *   points/gk/loc       FLOAT64 [3, N] shard [3, shardPoints], chunk [3, chunkPoints], raw + crc32c per chunk and shard index
+ *   points/gk/loc       FLOAT64 [3+k, N] x, y, z, then k optional per-point attributes ("pointAttributes" names them in column
+ *                       order, -1 = no value); shard [3+k, shardPoints], chunk [3+k, chunkPoints], raw + crc32c per chunk and shard index
  *   points/gk/id        INT32 [1, N]   detection ids (sparse for *_split labels), same grid
  *   correspondences/gk/data INT32 [3, M] (detA, detB, consensusSetId) once per pair, A = smaller key, same grid
- *   staging/tp_setup_label.points|.corr   raw blobs from per-entry saves (durable, JVM-independent), folded in at the next commit
+ *   staging/MILLIS_NANOS_RND.stage    one raw file per Spark task (entry table + payloads), folded in at the next commit
  * interestpoints.n5/tpId_X_viewSetupId_Y/label/...   legacy per-view groups, readable, removed by {@link #convertLegacy(URI)}
  * </pre>
  *
  * Writes are staged in memory ({@link #stagePoints}, {@link #stageCorrespondences}, {@link #remove}) and made durable by
  * one {@link #commit()} (called from {@code XmlIoSpimData2.saveInterestPointsInParallel}). A commit appends when at least
- * {@link #minLiveFractionForAppend} of the arrays stays live, otherwise it rewrites them (compaction). New index arrays
+ * {@link #minLiveFractionForAppend} of the arrays stays live and the new points bring no new attribute name (that changes the
+ * shape of loc), otherwise it rewrites them (compaction; columns no entry uses any more are dropped). New index arrays
  * are written first and the root attributes are flipped last, so a crash leaves the previous generation intact.
  * Saves outside a batch write staging files ({@link #writeStagingFile}): one raw file per Spark task (or per entry for
  * single saves) with an entry table, durable immediately and readable from other JVMs; readers prefer them until the next
@@ -130,9 +132,12 @@ public class PackedInterestPointStore
 
 	static final String STAGING = "staging";
 	static final String STAGING_EXT = ".stage";
-	static final int STAGING_MAGIC = 0x49505354, STAGING_VERSION = 1;
+	static final int STAGING_MAGIC = 0x49505354, STAGING_VERSION = 2; // 2: points payloads carry per-point attributes (1 is still read)
 	static final String ATTR_VERSION = "interestpoints", ATTR_GEN = "generation", ATTR_POINTS = "pointsData", ATTR_CORR = "corrData", ATTR_LABELS = "labels",
-			ATTR_CHUNK = "chunkPoints", ATTR_SHARD = "shardPoints";
+			ATTR_CHUNK = "chunkPoints", ATTR_SHARD = "shardPoints", ATTR_POINT_ATTRIBUTES = "pointAttributes";
+	/** stored for points without a value for an attribute column (like the consensus set id -1 of single-consensus matches) */
+	public static final double NO_VALUE = -1;
+	private static final Pattern ATTRIBUTE_NAME = Pattern.compile( "[A-Za-z0-9_.-]+" );
 
 	/** identifies one (timepoint, setup, label) entry */
 	public record Key( int tp, int setup, String label ) implements Comparable< Key >
@@ -156,15 +161,33 @@ public class PackedInterestPointStore
 		public int compareTo( final Key o ) { return ORDER.compare( this, o ); }
 	}
 
-	/** points of one entry: ids and flat xyz coordinates */
-	public record Points( int[] ids, double[] loc )
+	/**
+	 * points of one entry: ids, flat xyz coordinates, and optional named per-point attributes (one value per point, e.g.
+	 * "intensity"); an attribute whose values are all {@link #NO_VALUE} is the same as no attribute (that is how absence is stored)
+	 */
+	public record Points( int[] ids, double[] loc, Map< String, double[] > attributes )
 	{
+		public Points
+		{
+			attributes = attributes == null ? Map.of() : attributes;
+			for ( final Map.Entry< String, double[] > a : attributes.entrySet() )
+			{
+				checkAttributeName( a.getKey() );
+				if ( a.getValue().length != ids.length )
+					throw new IllegalArgumentException( "attribute '" + a.getKey() + "' has " + a.getValue().length + " values for " + ids.length + " points" );
+			}
+		}
+		public Points( final int[] ids, final double[] loc ) { this( ids, loc, null ); }
 		public int size() { return ids.length; }
-		public static Points of( final int[] ids, final double[][] locations )
+		public static Points of( final int[] ids, final double[][] locations ) { return of( ids, locations, null ); }
+		/** copies everything */
+		public static Points of( final int[] ids, final double[][] locations, final Map< String, double[] > attributes )
 		{
 			final double[] loc = new double[ ids.length * 3 ];
 			for ( int i = 0; i < ids.length; ++i ) System.arraycopy( locations[ i ], 0, loc, i * 3, 3 );
-			return new Points( ids.clone(), loc );
+			final TreeMap< String, double[] > a = new TreeMap<>();
+			if ( attributes != null ) attributes.forEach( ( name, v ) -> a.put( name, v.clone() ) );
+			return new Points( ids.clone(), loc, a );
 		}
 		public double[][] locations()
 		{
@@ -174,13 +197,20 @@ public class PackedInterestPointStore
 		}
 	}
 
+	/** attribute names are listed in the root attributes: letters, digits, '_', '.', '-' only */
+	public static void checkAttributeName( final String name )
+	{
+		if ( name == null || !ATTRIBUTE_NAME.matcher( name ).matches() )
+			throw new IllegalArgumentException( "invalid interest point attribute name '" + name + "' (allowed: letters, digits, '_', '.', '-')" );
+	}
+
 	record PairRow( Key partner, long offset, int count, boolean swapped ) {}
 
 	/** immutable snapshot of one generation; points = offset/count per entry, pairs = owner -> rows (every key with points has an entry) */
 	record Index( int generation, List< String > labels, String pointsData, String corrData, Map< Key, long[] > points, Map< Key, List< PairRow > > pairs,
-			long nPoints, long nCorr, DatasetAttributes locAttrs, DatasetAttributes idAttrs, DatasetAttributes corrAttrs )
+			long nPoints, long nCorr, DatasetAttributes locAttrs, DatasetAttributes idAttrs, DatasetAttributes corrAttrs, List< String > attributes )
 	{
-		static Index empty() { return new Index( -1, List.of(), null, null, Map.of(), Map.of(), 0, 0, null, null, null ); }
+		static Index empty() { return new Index( -1, List.of(), null, null, Map.of(), Map.of(), 0, 0, null, null, null, List.of() ); }
 		boolean exists() { return generation >= 0; }
 	}
 
@@ -214,7 +244,7 @@ public class PackedInterestPointStore
 	private final Map< Key, List< CorrespondingInterestPoints > > stagedCorr = new HashMap<>();
 	private final Set< Key > removedPoints = new HashSet<>(), removedCorr = new HashSet<>();
 	/** location of one entry's payload inside a staging file */
-	record BlobRef( String file, long offset, int count ) {}
+	record BlobRef( String file, long offset, int count, int version ) {}
 	record BlobEntry( Key key, BlobRef points, BlobRef corr ) {}
 	/** one row of a staging file's entry table while it is being written (payload indices into the payload list, -1 = none) */
 	private record StagingRow( Key key, int pointsIdx, int pointsCount, int corrIdx, int corrCount ) {}
@@ -326,6 +356,8 @@ public class PackedInterestPointStore
 		final List< String > labels = new ArrayList<>( z.getAttribute( "/", ATTR_LABELS, List.class ) );
 		final String pointsData = z.getAttribute( "/", ATTR_POINTS, String.class );
 		final String corrData = z.getAttribute( "/", ATTR_CORR, String.class );
+		@SuppressWarnings( "unchecked" )
+		final List< String > attributes = z.getAttribute( "/", ATTR_POINT_ATTRIBUTES, List.class ); // loc columns 3, 4, ...
 
 		final long[] idx = readLongs( z, indexGroup( gen ) + "/entries", 5 );
 		final Map< Key, long[] > points = new HashMap<>();
@@ -347,7 +379,8 @@ public class PackedInterestPointStore
 		}
 
 		final DatasetAttributes loc = z.getDatasetAttributes( pointsData + "/loc" ), id = z.getDatasetAttributes( pointsData + "/id" ), corr = z.getDatasetAttributes( corrData + "/data" );
-		return new Index( gen, labels, pointsData, corrData, points, pairs, loc.getDimensions()[ 1 ], corr.getDimensions()[ 1 ], loc, id, corr );
+		return new Index( gen, labels, pointsData, corrData, points, pairs, loc.getDimensions()[ 1 ], corr.getDimensions()[ 1 ], loc, id, corr,
+				attributes == null ? List.of() : List.copyOf( attributes ) );
 	}
 
 	static String indexGroup( final int gen ) { return "index/g" + gen; }
@@ -408,7 +441,7 @@ public class PackedInterestPointStore
 	{
 		if ( in.readInt() != STAGING_MAGIC ) throw new IOException( "not a staging file" );
 		final int version = in.readInt();
-		if ( version != STAGING_VERSION ) throw new IOException( "unsupported staging file version " + version );
+		if ( version < 1 || version > STAGING_VERSION ) throw new IOException( "unsupported staging file version " + version );
 		final int n = in.readInt();
 		final List< BlobEntry > out = new ArrayList<>( n );
 		for ( int i = 0; i < n; ++i )
@@ -416,7 +449,7 @@ public class PackedInterestPointStore
 			final Key k = new Key( in.readInt(), in.readInt(), in.readUTF() );
 			final boolean hasP = in.readBoolean(); final long pOff = in.readLong(); final int pCount = in.readInt();
 			final boolean hasC = in.readBoolean(); final long cOff = in.readLong(); final int cCount = in.readInt();
-			out.add( new BlobEntry( k, hasP ? new BlobRef( name, pOff, pCount ) : null, hasC ? new BlobRef( name, cOff, cCount ) : null ) );
+			out.add( new BlobEntry( k, hasP ? new BlobRef( name, pOff, pCount, version ) : null, hasC ? new BlobRef( name, cOff, cCount, version ) : null ) );
 		}
 		return out;
 	}
@@ -574,16 +607,35 @@ public class PackedInterestPointStore
 	{
 		final int[] ids = new int[ n ];
 		final double[] loc = new double[ n * 3 ];
+		final int k = idx.attributes.size(), cols = 3 + k;
+		final double[][] attr = new double[ k ][ n ];
 		final int C = idx.locAttrs.getChunkSize()[ 1 ];
 		for ( long c = off / C; c * C < off + n; ++c )
 		{
 			final double[] lchunk = (double[]) chunk( idx.pointsData + "/loc", idx.locAttrs, c );
 			final int[] ichunk = (int[]) chunk( idx.pointsData + "/id", idx.idAttrs, c );
 			final long cs0 = c * C, cs = Math.max( cs0, off ), ce = Math.min( Math.min( cs0 + C, idx.nPoints ), off + n );
-			System.arraycopy( lchunk, (int) ( cs - cs0 ) * 3, loc, (int) ( cs - off ) * 3, (int) ( ce - cs ) * 3 );
+			if ( k == 0 )
+				System.arraycopy( lchunk, (int) ( cs - cs0 ) * 3, loc, (int) ( cs - off ) * 3, (int) ( ce - cs ) * 3 );
+			else
+				for ( long j = cs; j < ce; ++j )
+				{
+					final int src = (int) ( j - cs0 ) * cols, dst = (int) ( j - off );
+					System.arraycopy( lchunk, src, loc, dst * 3, 3 );
+					for ( int a = 0; a < k; ++a ) attr[ a ][ dst ] = lchunk[ src + 3 + a ];
+				}
 			System.arraycopy( ichunk, (int) ( cs - cs0 ), ids, (int) ( cs - off ), (int) ( ce - cs ) );
 		}
-		return new Points( ids, loc );
+		final TreeMap< String, double[] > attributes = new TreeMap<>();
+		for ( int a = 0; a < k; ++a )
+			if ( hasValue( attr[ a ] ) ) attributes.put( idx.attributes.get( a ), attr[ a ] );
+		return new Points( ids, loc, attributes );
+	}
+
+	private static boolean hasValue( final double[] v )
+	{
+		for ( final double d : v ) if ( d != NO_VALUE ) return true;
+		return false;
 	}
 
 	private void appendRange( final Index idx, final PairRow row, final List< CorrespondingInterestPoints > out )
@@ -626,9 +678,10 @@ public class PackedInterestPointStore
 	// staging (in memory) and per-entry blobs (durable)
 	// ------------------------------------------------------------------------------------------------
 
-	public void stagePoints( final Key k, final int[] ids, final double[][] locations )
+	public void stagePoints( final Key k, final int[] ids, final double[][] locations ) { stagePoints( k, Points.of( ids, locations ) ); }
+
+	public void stagePoints( final Key k, final Points p )
 	{
-		final Points p = Points.of( ids, locations );
 		synchronized ( lock ) { stagedPoints.put( k, p ); removedPoints.remove( k ); }
 	}
 
@@ -670,7 +723,7 @@ public class PackedInterestPointStore
 	public boolean inBatch() { return batch; }
 
 	/** single-entry convenience: one staging file holding the points of one entry */
-	public void writePointsBlob( final Key k, final int[] ids, final double[][] locations ) { writeStagingFile( Map.of( k, Points.of( ids, locations ) ), Map.of() ); }
+	public void writePointsBlob( final Key k, final Points p ) { writeStagingFile( Map.of( k, p ), Map.of() ); }
 
 	/** single-entry convenience: one staging file holding the correspondences of one entry */
 	public void writeCorrespondencesBlob( final Key k, final Collection< CorrespondingInterestPoints > list ) { writeStagingFile( Map.of(), Map.of( k, new ArrayList<>( list ) ) ); }
@@ -744,27 +797,57 @@ public class PackedInterestPointStore
 		return bytes.toByteArray();
 	}
 
-	/** ids as int32, then locations as float64, big-endian (bulk copies; same byte layout as DataOutputStream) */
-	private static byte[] encodePoints( final Points p )
+	/**
+	 * ids as int32, then locations as float64, then (version 2) the number of attributes and per attribute its name (UTF)
+	 * and n float64 values; big-endian (bulk copies; same byte layout as DataOutputStream)
+	 */
+	private static byte[] encodePoints( final Points p ) throws IOException
 	{
-		final ByteBuffer b = ByteBuffer.allocate( p.size() * 28 );
+		final int n = p.size();
+		final ByteArrayOutputStream bytes = new ByteArrayOutputStream( n * 28 + 4 + p.attributes().size() * ( 16 + n * 8 ) );
+		final ByteBuffer b = ByteBuffer.allocate( n * 28 );
 		b.asIntBuffer().put( p.ids );
-		b.position( p.size() * 4 );
+		b.position( n * 4 );
 		b.asDoubleBuffer().put( p.loc );
-		return b.array();
+		bytes.write( b.array() );
+		final DataOutputStream out = new DataOutputStream( bytes );
+		out.writeInt( p.attributes().size() );
+		for ( final Map.Entry< String, double[] > a : p.attributes().entrySet() )
+		{
+			out.writeUTF( a.getKey() );
+			final ByteBuffer v = ByteBuffer.allocate( n * 8 );
+			v.asDoubleBuffer().put( a.getValue() );
+			out.write( v.array() );
+		}
+		out.flush();
+		return bytes.toByteArray();
 	}
 
-	private static Points decodePoints( final DataInputStream in, final int n ) throws IOException
+	private static Points decodePoints( final DataInputStream in, final int n, final int version ) throws IOException
 	{
-		final byte[] bytes = in.readNBytes( n * 28 );
-		if ( bytes.length < n * 28 ) throw new EOFException( "truncated points payload (" + bytes.length + " of " + n * 28 + " bytes)" );
-		final ByteBuffer b = ByteBuffer.wrap( bytes );
+		final ByteBuffer b = ByteBuffer.wrap( readFully( in, n * 28, "points" ) );
 		final int[] ids = new int[ n ];
 		final double[] loc = new double[ n * 3 ];
 		b.asIntBuffer().get( ids );
 		b.position( n * 4 );
 		b.asDoubleBuffer().get( loc );
-		return new Points( ids, loc );
+		final TreeMap< String, double[] > attributes = new TreeMap<>();
+		if ( version >= 2 )
+			for ( int a = in.readInt(); a > 0; --a )
+			{
+				final String name = in.readUTF();
+				final double[] v = new double[ n ];
+				ByteBuffer.wrap( readFully( in, n * 8, "attribute " + name ) ).asDoubleBuffer().get( v );
+				attributes.put( name, v );
+			}
+		return new Points( ids, loc, attributes );
+	}
+
+	private static byte[] readFully( final DataInputStream in, final int n, final String what ) throws IOException
+	{
+		final byte[] bytes = in.readNBytes( n );
+		if ( bytes.length < n ) throw new EOFException( "truncated " + what + " payload (" + bytes.length + " of " + n + " bytes)" );
+		return bytes;
 	}
 
 	private static byte[] encodeCorr( final List< CorrespondingInterestPoints > list ) throws IOException
@@ -815,7 +898,7 @@ public class PackedInterestPointStore
 
 	private Points readPointsBlob( final BlobRef r, final Key k )
 	{
-		try ( final DataInputStream in = openPayload( r ) ) { return decodePoints( in, r.count ); }
+		try ( final DataInputStream in = openPayload( r ) ) { return decodePoints( in, r.count, r.version ); }
 		catch ( final IOException | N5Exception e )
 		{
 			if ( !isMissingFile( e ) ) throw new RuntimeException( "could not read staging file " + r.file + " for " + k, e );
@@ -848,7 +931,7 @@ public class PackedInterestPointStore
 			if ( r.offset > bytes.length ) throw new RuntimeException( "staging file " + file + " is truncated (" + bytes.length + " bytes, entry " + f.key + " at " + r.offset + ")" );
 			try ( final DataInputStream in = new DataInputStream( new ByteArrayInputStream( bytes, (int) r.offset, bytes.length - (int) r.offset ) ) )
 			{
-				if ( f.points ) fp.put( f.key, decodePoints( in, r.count ) ); else fc.put( f.key, decodeCorr( in, r.count ) );
+				if ( f.points ) fp.put( f.key, decodePoints( in, r.count, r.version ) ); else fc.put( f.key, decodeCorr( in, r.count ) );
 			}
 			catch ( final IOException e ) { throw new RuntimeException( "could not decode " + f.key + " from staging file " + file, e ); }
 		}
@@ -919,9 +1002,10 @@ public class PackedInterestPointStore
 			long keptCount = 0, newCount = 0;
 			for ( final Map.Entry< Key, long[] > e : old.points.entrySet() )
 				if ( !stagedPoints.containsKey( e.getKey() ) && !removedPoints.contains( e.getKey() ) ) { kept.add( e.getKey() ); keptCount += e.getValue()[ 1 ]; }
-			for ( final Points p : stagedPoints.values() ) newCount += p.size();
+			boolean newColumns = false; // a new attribute name changes the shape of loc: rewrite
+			for ( final Points p : stagedPoints.values() ) { newCount += p.size(); newColumns |= !old.attributes.containsAll( p.attributes().keySet() ); }
 
-			final boolean appendPts = old.pointsData != null && ( keptCount + newCount ) >= minLiveFractionForAppend * ( old.nPoints + newCount );
+			final boolean appendPts = old.pointsData != null && !newColumns && ( keptCount + newCount ) >= minLiveFractionForAppend * ( old.nPoints + newCount );
 			final String pointsData;
 			final long ptsStart;
 			final List< Key > toWrite = new ArrayList<>( stagedPoints.keySet() );
@@ -949,8 +1033,18 @@ public class PackedInterestPointStore
 				off += toWriteData.get( i ).size();
 			}
 			final long nPointsNew = off;
+			// loc columns 3, 4, ...: an appended group keeps its columns, a rewritten one gets those some entry uses (sorted)
+			final List< String > attrNames;
+			if ( appendPts )
+				attrNames = old.attributes;
+			else
+			{
+				final TreeSet< String > used = new TreeSet<>();
+				for ( final Points p : toWriteData ) used.addAll( p.attributes().keySet() );
+				attrNames = new ArrayList<>( used );
+			}
 			final long tPts = System.currentTimeMillis();
-			writePoints( w, pointsData, appendPts ? old : null, ptsStart, toWriteData, nPointsNew, shard, chunk );
+			writePoints( w, pointsData, appendPts ? old : null, ptsStart, toWriteData, nPointsNew, shard, chunk, attrNames );
 			final long ptsMs = System.currentTimeMillis() - tPts;
 
 			// ---------------- correspondences ----------------
@@ -1071,7 +1165,7 @@ public class PackedInterestPointStore
 
 			final Map< String, Object > attrs = new HashMap<>();
 			attrs.put( ATTR_VERSION, VERSION ); attrs.put( ATTR_GEN, gen ); attrs.put( ATTR_POINTS, pointsData ); attrs.put( ATTR_CORR, corrData ); attrs.put( ATTR_LABELS, labels );
-			attrs.put( ATTR_CHUNK, chunk ); attrs.put( ATTR_SHARD, shard );
+			attrs.put( ATTR_CHUNK, chunk ); attrs.put( ATTR_SHARD, shard ); attrs.put( ATTR_POINT_ATTRIBUTES, attrNames );
 			w.setAttributes( "/", attrs ); // the commit point
 			final long tFlip = System.currentTimeMillis();
 
@@ -1098,7 +1192,7 @@ public class PackedInterestPointStore
 			batch = false;
 			clearCache();
 			final DatasetAttributes loc = w.getDatasetAttributes( pointsData + "/loc" ), id = w.getDatasetAttributes( pointsData + "/id" ), corr = w.getDatasetAttributes( corrData + "/data" );
-			index = new Index( gen, labels, pointsData, corrData, newPoints, newPairs, nPointsNew, nCorrNew, loc, id, corr );
+			index = new Index( gen, labels, pointsData, corrData, newPoints, newPairs, nPointsNew, nCorrNew, loc, id, corr, List.copyOf( attrNames ) );
 
 			IOFunctions.println( "PackedInterestPointStore: committed generation " + gen + " (" + nStaged + " point entries, " + nStagedCorr + " correspondence entries, points "
 					+ ( appendPts ? "appended" : "rewritten" ) + ", correspondences " + ( appendCorr ? "appended" : "rewritten" ) + ", " + newPoints.size() + " entries / " + nPointsNew
@@ -1172,9 +1266,11 @@ public class PackedInterestPointStore
 
 
 	/** writes entries consecutively from {@code start}; creates the arrays if {@code old == null}, else appends */
-	private void writePoints( final N5Writer w, final String group, final Index old, final long start, final List< Points > entries, final long total, final int shard, final int chunk )
+	private void writePoints( final N5Writer w, final String group, final Index old, final long start, final List< Points > entries, final long total, final int shard, final int chunk,
+			final List< String > attrNames )
 	{
-		final DatasetAttributes loc = arrayAttrs( 3, total, DataType.FLOAT64, shard, chunk ), id = arrayAttrs( 1, total, DataType.INT32, shard, chunk );
+		final int k = attrNames.size(), cols = 3 + k; // x, y, z, then the attributes; an append never changes the columns
+		final DatasetAttributes loc = arrayAttrs( cols, total, DataType.FLOAT64, shard, chunk ), id = arrayAttrs( 1, total, DataType.INT32, shard, chunk );
 		if ( old == null )
 		{
 			if ( w.exists( group ) ) w.remove( group );
@@ -1197,10 +1293,20 @@ public class PackedInterestPointStore
 		final int[] oldId = partial ? (int[]) chunk( old.pointsData + "/id", old.idAttrs, firstChunk / chunk ) : null;
 
 		writeRange( w, group + "/loc", loc, start, end, ( cs, n ) -> {
-			final double[] buf = new double[ n * 3 ];
-			if ( cs < start ) System.arraycopy( oldLoc, 0, buf, 0, (int) ( start - cs ) * 3 );
-			forEntries( entries, offsets, cs, n, Points::size, ( e, es, from, to ) -> System.arraycopy( e.loc, (int) ( from - es ) * 3, buf, (int) ( from - cs ) * 3, (int) ( to - from ) * 3 ) );
-			return new DoubleArrayDataBlock( new int[] { 3, n }, new long[] { 0, cs / chunk }, buf );
+			final double[] buf = new double[ n * cols ];
+			if ( cs < start ) System.arraycopy( oldLoc, 0, buf, 0, (int) ( start - cs ) * cols );
+			forEntries( entries, offsets, cs, n, Points::size, ( e, es, from, to ) -> {
+				if ( k == 0 ) { System.arraycopy( e.loc, (int) ( from - es ) * 3, buf, (int) ( from - cs ) * 3, (int) ( to - from ) * 3 ); return; }
+				final double[][] a = new double[ k ][];
+				for ( int i = 0; i < k; ++i ) a[ i ] = e.attributes().get( attrNames.get( i ) );
+				for ( long j = from; j < to; ++j )
+				{
+					final int src = (int) ( j - es ), dst = (int) ( j - cs ) * cols;
+					System.arraycopy( e.loc, src * 3, buf, dst, 3 );
+					for ( int i = 0; i < k; ++i ) buf[ dst + 3 + i ] = a[ i ] == null ? NO_VALUE : a[ i ][ src ];
+				}
+			} );
+			return new DoubleArrayDataBlock( new int[] { cols, n }, new long[] { 0, cs / chunk }, buf );
 		} );
 		writeRange( w, group + "/id", id, start, end, ( cs, n ) -> {
 			final int[] buf = new int[ n ];
@@ -1307,7 +1413,7 @@ public class PackedInterestPointStore
 				if ( k == null ) return;
 				final InterestPointsN5 ip = new InterestPointsN5( baseDir, path );
 				if ( n5.exists( InterestPointsN5.ipDataset( path ) ) && ip.loadLegacyInterestPoints() )
-					store.stagePoints( k, ip.ids, ip.locations );
+					store.stagePoints( k, Points.of( ip.ids, ip.locations, ip.attributes ) ); // incl. legacy intensities
 				if ( n5.exists( InterestPointsN5.corrDataset( path ) ) && ip.loadLegacyCorrespondences() )
 					store.stageCorrespondences( k, ip.correspondingInterestPoints );
 			}) );
