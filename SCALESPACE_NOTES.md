@@ -11,21 +11,22 @@ BigStitcher-Spark, the noise-floor threshold, Python (brief sections 5.3, 5.4, 7
 | Class / file | What it does |
 |---|---|
 | `process/interestpointdetection/methods/scalespace/DoGScaleSpace.java` (new) | The scale space: mpicbg's octave bookkeeping (`FloatArray2DScaleOctave`, `FloatArray2DScaleOctaveDoGDetector`) generalized to n-D and lazy blocks. `computeDoGScaleSpace( input, imageInterval, processInterval, mask, params, service )` returns `InterestPointSS` in pixels of octave 0. `buildScaleSpace` (lazy Gaussians/DoGs per octave), `detectOctave` (4D extrema + 4D refinement), `detectFinestLevel`, `detectSpatialExtrema` (legacy path on one level, for tests), `mergeDuplicates`, `octaveInterval` (block partition), `autoOctaves`, `sigmaBase`. |
-| `.../scalespace/ScaleSpaceParameters.java` (new) | `sigmaMin, steps, octaves (-1 = auto), threshold, findMin/findMax, detectFinestLevel, localization, min/maxIntensity, imageSigma (0.5), cellSize, combineDistance (0.5), refineMargin (2)`. |
+| `.../scalespace/ScaleSpaceParameters.java` (new) | `sigmaMin, steps, octaves (-1 = auto), threshold, findMin/findMax, detectFinestLevel, localization, min/maxIntensity, imageSigma (0.5), anisotropy (per dimension relative to x, null = isotropic in pixels), cellSize, combineDistance (0.5), refineMargin (2)`. |
 | `.../lazygauss/LazyDoG.java` (new) | Lazy, cached `( gauss2 - gauss1 ) * 1/(k-1)` in the shape of `LazyGauss`. |
 | `fiji/spimdata/interestpoints/InterestPointSS.java` (new) | `extends InterestPointValue`: response == intensity, plus `sigma` (full-resolution xy pixels after `correctForDownsampling`). |
 | `InterestPointsN5.java` | Writes `response` (FLOAT32, 1xN) and `sigma` (FLOAT64, 1xN) next to `id`/`loc` (Gzip, block 300000) whenever ALL points of a list are `InterestPointSS`; loads them transparently (`getInterestPointsCopy()` returns `InterestPointSS`); static `loadResponses( n5, ipDataset )` / `loadSigmas(...)`; `InterestPointData` DTO carries them. Old labels load unchanged. Mixed lists are rejected. |
 | `DownsampleTools.correctForDownsampling` | Takes `List< ? extends InterestPoint >` and additionally scales `InterestPointSS.sigma` by `sqrt( |m00 * m11| )` of the mipmap transform. One call for positions and sigma, for GUI and Spark. |
-| `.../scalespace/ScaleSpaceDetectionParameters.java` (new) | `extends InterestPointParameters` (views, imgloader, intensity range, limit of detections) plus `long[] downsampling` = the starting resolution in x, y, z (the inherited `downsampleXY/downsampleZ` are not used) and `final ScaleSpaceParameters scaleSpace` — the only place that defines the scale-space defaults. |
+| `.../scalespace/ScaleSpaceDetectionParameters.java` (new) | `extends InterestPointParameters` (views, imgloader, intensity range, limit of detections) plus `long[] downsampling` = the starting resolution in x, y, z (the inherited `downsampleXY/downsampleZ` are not used), `anisotropyZ` (z voxel / x voxel of the raw data, NaN = calibration) and `final ScaleSpaceParameters scaleSpace` — the only place that defines the scale-space defaults. |
 | `.../scalespace/ScaleSpace.java` (new) | The driver, mirrors `DoG.java`: per view `openAndDownsample`, `DoGScaleSpace.computeDoGScaleSpace( extendMirrorSingle( img ), img, img, null, p.scaleSpace, service )`, `limitList`, `correctForDownsampling` (positions and sigma). BigStitcher-Spark later calls `DoGScaleSpace.computeDoGScaleSpace` per block directly. |
-| `fiji/plugin/interestpointdetection/ScaleSpaceGUI.java` (new) | Second entry of `Interest_Point_Detection.staticAlgorithms` ("Scale-space Difference-of-Gaussian", DoG stays preselected: `defaultAlgorithm = 0`). Extends `DifferenceOfGUI` like the DoG dialog (localization, bead presets, Advanced, Interactive preview at the finest scale, min/max, limit of detections) plus `Steps_per_octave`, `Octaves (-1 = as many as the image allows)`, `Detect_finest_level`. The starting resolution is a drop-down `Starting_resolution (downsampling x, y, z)` of the precomputed resolution levels of the first view (with the resulting voxel size), default the second level, last entry "Manually (powers of two) ..." which opens a dialog with `Downsample_X/Y/Z` (validated powers of two >= 1); the two hooks `addDownsamplingParameters`/`queryDownsamplingParameters` in `DifferenceOfGUI` carry the DoG's old widgets unchanged. Its persisted defaults come from `new ScaleSpaceParameters()`. No CUDA. Params string `DOG-SS s= steps= octaves= finestLevel= t= min= max= downsampleX= downsampleY= downsampleZ= minIntensity= maxIntensity=`; `describeParameters` records `detectionMethod=SCALE_SPACE` and `downsampleXY` (when x == y) / `downsampleZ`. |
+| `fiji/plugin/interestpointdetection/ScaleSpaceGUI.java` (new) | Second entry of `Interest_Point_Detection.staticAlgorithms` ("Scale-space Difference-of-Gaussian", DoG stays preselected: `defaultAlgorithm = 0`). Extends `DifferenceOfGUI` like the DoG dialog (localization, bead presets, Advanced, Interactive preview at the finest scale, min/max, limit of detections) plus `Steps_per_octave`, `Octaves (-1 = as many as the image allows)`, `Detect_finest_level`, and `Anisotropy_z` (default the calibration ratio z/x of the first view, remembered while the calibration stays the same). The starting resolution is a drop-down `Starting_resolution (downsampling x, y, z)` of the precomputed resolution levels of the first view (with the resulting voxel size), default the second level, last entry "Manually (powers of two) ..." which opens a dialog with `Downsample_X/Y/Z` (validated powers of two >= 1); the two hooks `addDownsamplingParameters`/`queryDownsamplingParameters` in `DifferenceOfGUI` carry the DoG's old widgets unchanged. Its persisted defaults come from `new ScaleSpaceParameters()`. No CUDA. Params string `DOG-SS s= steps= octaves= finestLevel= t= min= max= downsampleX= downsampleY= downsampleZ= anisotropy= minIntensity= maxIntensity=`; `describeParameters` records `detectionMethod=SCALE_SPACE`, `downsampleXY` (when x == y) / `downsampleZ` and `anisotropy`. |
 | `ActionToSparkCli` | `detectionMethod=SCALE_SPACE` is an unsupported value: the recorded detection step is skipped with a comment instead of rendering a single-scale Spark command. |
 | `DifferenceOfGUI` | One-token fix: the view-selection dialog of the interactive preview uses the header that is passed in (DoG passes the same string as before). |
 | `tests/TestDoGScaleSpace.java`, `tests/TestInterestPointSSSaveLoad.java` (new) | 7 + 7 tests, see section 4. |
 
 ## 2. Conventions (decided with Stephan, 2026-09-30/10-01)
 
-- **Starting position**: octave 0 is the image at the chosen downsampling (`downsampleXY/downsampleZ`); every further octave halves all three axes. The anisotropy chosen by the starting position stays constant.
+- **Starting position**: octave 0 is the image at the chosen resolution level (`ScaleSpaceDetectionParameters.downsampling`); every further octave halves all three axes.
+- **Anisotropy** (2026-10-02): one number `A` = z voxel / x voxel of the raw data (default: the calibration ratio of the first view, editable upwards because the PSF blurs z more). Per view `ScaleSpace.anisotropy( vd, mipmapTransform, A )` gives the voxel size of the opened image per dimension relative to x, `aniso = { 1, (vy*sy)/(vx*sx), (A*sz)/sx }` (s = diagonal of the mipmap transform), and the sigma of every level in dimension d is `sigma_i / aniso[d]` so that the Gaussians are isotropic in physical units (`sigmaMin` stays the x pixel sigma; z may be better resolved than x after downsampling, then `aniso[z] < 1` and z is blurred more). The blur the input of octave o carries per dimension has the closed form `in_0 = imageSigma`, `in_o = max( sigma_0 / aniso[d], imageSigma / 2^o )`; applied is `sqrt( max( 0, (sigma_i/aniso[d])^2 - in_o^2 ) )`, i.e. where the target is below the blur the image carries nothing is applied in that dimension (the finest levels then act slice-wise in z; such a DoG level has ~2/3 of the 3D response). Halos and the octave count are per dimension (few z slices no longer limit the octaves when the z sigmas are small). `anisotropy == null` is bit-identical to the pixel-isotropic code. The stored sigma stays the x sigma; the z sigma is `sigma / A` in full-resolution z pixels. The merge radius and the interactive preview remain pixel-isotropic.
 - **Levels**: Gaussians `sigma_i = sigmaMin * k^(i-1)`, i = 0..steps+2, k = 2^(1/steps); DoG `d_i = ( g_(i+1) - g_i ) / ( k - 1 )`, i = 0..steps+1; extrema possible on levels 1..steps. So **level 1 is sigmaMin = today's `s`**, and `d_1` is exactly the single-scale DoG (with steps = 4 even bit-identical, same float chain as `DoGImgLib2.computeSigmas`). Level 0 (`sigmaMin / k`) exists only as the scale neighbour.
 - **Hand-over**: the level `steps` (sigma = 2 * sigma_0) is decimated by taking every second pixel (no offset, no extra blur, as mpicbg); pixel p of octave o sits at `2^o * p` in octave 0. The input of octave o >= 1 is materialized where it is needed; everything else is lazy (`LazyGauss`, `LazyDoG`, cached cells).
 - **Block partition**: `octaveInterval( block, o ) = [ ceil( min / 2^o ), ceil( ( max + 1 ) / 2^o ) - 1 ]`; adjacent blocks stay adjacent at every octave (no gaps, no duplicates). Octave count and domains always derive from the whole image, never from the block. The halo of coarser octaves is implicit (cells are computed where touched); it compounds to ~92 px per side at base resolution for 3 octaves (section 1.11 of the plan), which only matters for Spark blocks, not for whole views.
@@ -146,9 +147,36 @@ Reading:
   duplicate filter needed 35 min per view; the scale space needed 2 s. A noise floor (brief 5.1) matters
   as soon as sigmaMin gets small.
 
+### 3.4 Anisotropy on ds1 (2026-10-02)
+
+ds1 copy, s = 1.8, t = 0.008, steps 4, finest level on, starting resolution (2, 2, 1). The ds1 XML calibration
+is 1.1 x 1.1 x 3.512 um (the true voxel size is 0.45 x 0.45 x 2.0 um, see the brief), so the calibration
+anisotropy is 3.19 and at (2, 2, 1) the z voxel is 1.6x the x voxel: the finest level is blurred with
+(1.8, 1.8, 1.13) px instead of (1.8, 1.8, 1.8) px. `anisotropy=2.0` reproduces the pixel-isotropic run.
+
+| anisotropy A | z sigma of level 1 (px) | points view 0 | stored beads within 0.5 px | within 1 px | within 2 px | median distance |
+|---|---|---|---|---|---|---|
+| 2.0 (pixel-isotropic, as before) | 1.8 | 4167 | 0.997 | 1.000 | 1.000 | 0.00 |
+| 3.19 (calibration, the default) | 1.13 | 6785 | 0.24 | 0.57 | 0.83 | 0.88 |
+
+Reading: with physically isotropic Gaussians the finest level is a different filter than the stored label's
+(z is smoothed with 2.3 um instead of 3.6 um), so the stored beads are only partially reproduced (83% within
+2 px, positions shift in z) and 60% more points pass the same threshold (less z smoothing suppresses less
+noise, and beads that merged in z before separate). This is the intended physics, not a regression; the
+threshold and the "same as today" comparison are only meaningful at the same anisotropy. With the true
+calibration (4.44) the z sigma of the finest level would be 0.81 px.
+
+Sampling limit (same as the finest-octave effect in 3.2/3.3): where the z sigma of a level drops below ~1 px,
+the point-sampled Gaussian kernels overestimate the response by 10-20%; `testAnisotropy` therefore verifies
+the anisotropy handling with sigmaMin 3 (z sigmas >= 1.5 px at the detecting octave), where the responses of
+physically identical blobs on isotropic and 2x anisotropic grids agree within 1%, the sigmas within 1%, while
+pixel-isotropic Gaussians select a 20-24% smaller scale for the same blobs.
+
 ## 4. Verification
 
-- `TestDoGScaleSpace`: partition arithmetic and tiling; with steps = 4 the Gaussian levels 1 and 2 and
+- `TestDoGScaleSpace`: `testAnisotropy` (physically identical blobs on isotropic and 2x anisotropic grids), `testAutoOctavesAnisotropic` (a thin
+  stack allows more octaves with small z sigmas), `testSigmaDiffAnisotropic` (anisotropy 1 bit-identical to isotropic, the closed form of
+  the input blur incl. the clamped regime, the hand-over recurrence); partition arithmetic and tiling; with steps = 4 the Gaussian levels 1 and 2 and
   DoG level 1 of octave 0 are **bit-identical** to `computeDoG`'s images (with a different cell size), and
   `detectSpatialExtrema( octave 0, level 1 )` gives the **identical** 162 peaks of the simulated beads
   (after applying the legacy duplicate filter); synthetic blobs of sigma 2, 4, 8, 16 are each found once
