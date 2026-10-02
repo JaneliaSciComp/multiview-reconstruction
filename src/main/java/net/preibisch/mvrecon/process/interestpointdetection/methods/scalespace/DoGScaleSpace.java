@@ -23,7 +23,6 @@
 package net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -80,7 +79,14 @@ import util.ImgLib2Tools;
  * dimensions, so pixel p of octave o sits at 2^o * p in octave 0 and the sigmas continue seamlessly.
  * Peaks are refined by a quadratic fit in space and scale (Localization.computeQuadraticLocalization).
  * Each point carries the refined DoG response and the lower sigma of its DoG level,
- * sigmaMin * k^(level-1) * 2^octave, in pixels of octave 0.
+ * sigmaMin * k^(level-1) * 2^octave, in x pixels of octave 0.
+ *
+ * Anisotropic voxels: with ScaleSpaceParameters.anisotropy (voxel size per dimension relative to x)
+ * the sigma of every level in dimension d is sigma_i / anisotropy[ d ], i.e. the less resolved
+ * dimensions are blurred less so that the Gaussians are isotropic in physical units. The input of
+ * octave o carries, per dimension, max( sigma_0 / anisotropy[ d ], imageSigma / 2^o ) of blur and
+ * only the difference to the target is applied; where the target is below that, nothing is applied
+ * in that dimension (the finest levels then act slice-wise).
  *
  * All Gaussians and DoGs are lazy (LazyGauss, LazyDoG) and only computed where they are needed, which
  * makes it possible to process a block (processInterval) of a large image (imageInterval); the halo
@@ -117,8 +123,8 @@ public class DoGScaleSpace
 		/** where the input of this octave has to be present */
 		public FinalInterval need;
 
-		/** sigma of the Gaussian that is applied to the input of this octave to obtain each level */
-		public float[] sigmaDiff;
+		/** sigma of the Gaussian that is applied to the input of this octave to obtain each level, per dimension and level */
+		public float[][] sigmaDiff;
 
 		public RandomAccessible< FloatType > input, mask;
 
@@ -313,8 +319,7 @@ public class DoGScaleSpace
 		if ( !( sigma[ 0 ] > p.imageSigma ) )
 			throw new IllegalArgumentException( "sigmaMin/k (" + sigma[ 0 ] + ") must be larger than the image sigma (" + p.imageSigma + ")" );
 
-		final float[] sigmaDiff0 = LaPlaceFunctions.computeSigmaDiff( sigma, (float)p.imageSigma ); // octave 0: the image carries imageSigma
-		final float[] sigmaDiffO = LaPlaceFunctions.computeSigmaDiff( sigma, sigma[ 0 ] ); // octave > 0: the input carries sigma_0 already
+		final double[] anisotropy = validateAnisotropy( p, n );
 
 		//
 		// octaves and their intervals
@@ -330,7 +335,7 @@ public class DoGScaleSpace
 			if ( Intervals.isEmpty( octave.block ) || minDimension( octave.det ) < 3 )
 				break;
 
-			octave.sigmaDiff = o == 0 ? sigmaDiff0 : sigmaDiffO;
+			octave.sigmaDiff = computeSigmaDiff( sigma, anisotropy, (float)p.imageSigma, o, n );
 			octaves.add( octave );
 		}
 
@@ -339,8 +344,8 @@ public class DoGScaleSpace
 		{
 			final Octave octave = octaves.get( o );
 
-			final int haloMax = Gauss3.halfkernelsize( octave.sigmaDiff[ p.steps + 2 ] );
-			final int haloS = Gauss3.halfkernelsize( octave.sigmaDiff[ p.steps ] );
+			final long[] haloMax = halfKernelSizes( octave.sigmaDiff, p.steps + 2 );
+			final long[] haloS = halfKernelSizes( octave.sigmaDiff, p.steps );
 
 			if ( o == octaves.size() - 1 )
 				octave.domS = octave.ref;
@@ -352,11 +357,27 @@ public class DoGScaleSpace
 
 		if ( !DoGImgLib2.silent )
 		{
-			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): computing scale space DoG with (sigmaMin=" + p.sigmaMin + ", steps=" + p.steps + ", k=" + k + ", octaves=" + octaves.size() + ", threshold=" + p.threshold + ")" );
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): computing scale space DoG with (sigmaMin=" + p.sigmaMin + ", steps=" + p.steps + ", k=" + k + ", octaves=" + octaves.size() + ", threshold=" + p.threshold +
+					( anisotropy == null ? ", isotropic in pixels)" : ", anisotropy (voxel size per dimension relative to x)=" + Util.printCoordinates( anisotropy ) + ")" ) );
 
 			for ( final Octave octave : octaves )
+			{
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): octave " + octave.o + ": domain=" + Util.printInterval( octave.domain ) + ", block=" + Util.printInterval( octave.block ) +
-						", sigmas (in pixels of octave 0)=" + Util.printCoordinates( sigmasInBasePixels( sigma, octave.f ) ) );
+						", sigmas (in x pixels of octave 0)=" + Util.printCoordinates( sigmasInBasePixels( sigma, octave.f ) ) );
+
+				// levels that are not blurred at all in a dimension (the input carries more blur than the target)
+				for ( int d = 0; d < n; ++d )
+				{
+					String clamped = "";
+
+					for ( int i = octave.o == 0 ? 0 : 1; i < sigma.length; ++i )
+						if ( octave.sigmaDiff[ d ][ i ] == 0 )
+							clamped += ( clamped.isEmpty() ? "" : ", " ) + i;
+
+					if ( !clamped.isEmpty() )
+						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): octave " + octave.o + ": no additional blur in dimension " + d + " for the Gaussian levels " + clamped + " (the image carries more blur than the target there)." );
+				}
+			}
 		}
 
 		//
@@ -411,7 +432,9 @@ public class DoGScaleSpace
 			else
 			{
 				final double[] sigma = new double[ n ];
-				Arrays.fill( sigma, octave.sigmaDiff[ i ] );
+
+				for ( int d = 0; d < n; ++d )
+					sigma[ d ] = octave.sigmaDiff[ d ][ i ];
 
 				if ( octave.mask == null )
 					gauss = LazyGauss.init( octave.input, region, new FloatType(), sigma, p.cellSize );
@@ -790,25 +813,122 @@ public class DoGScaleSpace
 	 */
 	public static int autoOctaves( final Interval imageInterval, final ScaleSpaceParameters p )
 	{
+		final int n = imageInterval.numDimensions();
 		final float k = LaPlaceFunctions.computeK( p.steps );
 		final float[] sigma = computeSigmas( p.sigmaMin, k, p.steps );
-		final float[] sigmaDiff0 = LaPlaceFunctions.computeSigmaDiff( sigma, (float)p.imageSigma );
-		final float[] sigmaDiffO = LaPlaceFunctions.computeSigmaDiff( sigma, sigma[ 0 ] );
+		final double[] anisotropy = validateAnisotropy( p, n );
 
 		int o = 0;
 
 		while ( true )
 		{
 			final FinalInterval domain = octaveInterval( imageInterval, o );
-			final int kernelSize = 2 * Gauss3.halfkernelsize( ( o == 0 ? sigmaDiff0 : sigmaDiffO )[ p.steps + 2 ] ) - 1;
 
-			if ( Intervals.isEmpty( domain ) || minDimension( domain ) <= kernelSize )
+			if ( Intervals.isEmpty( domain ) )
+				break;
+
+			// the octave must be larger than its longest Gaussian kernel in every dimension
+			final float[][] sigmaDiff = computeSigmaDiff( sigma, anisotropy, (float)p.imageSigma, o, n );
+			boolean fits = true;
+
+			for ( int d = 0; d < n; ++d )
+				if ( domain.dimension( d ) <= 2 * Gauss3.halfkernelsize( sigmaDiff[ d ][ p.steps + 2 ] ) - 1 )
+					fits = false;
+
+			if ( !fits )
 				break;
 
 			++o;
 		}
 
 		return Math.max( 1, o );
+	}
+
+	/**
+	 * @return p.anisotropy (null = isotropic in pixels), checked to have n positive, finite entries
+	 */
+	public static double[] validateAnisotropy( final ScaleSpaceParameters p, final int n )
+	{
+		if ( p.anisotropy == null )
+			return null;
+
+		if ( p.anisotropy.length != n )
+			throw new IllegalArgumentException( "anisotropy has " + p.anisotropy.length + " entries, the image " + n + " dimensions." );
+
+		for ( int d = 0; d < n; ++d )
+			if ( !( p.anisotropy[ d ] > 0 ) || Double.isInfinite( p.anisotropy[ d ] ) )
+				throw new IllegalArgumentException( "anisotropy must be positive and finite, but is " + Util.printCoordinates( p.anisotropy ) );
+
+		return p.anisotropy;
+	}
+
+	/**
+	 * @return the blur that the input of an octave carries in a dimension (in pixels of the octave): the image
+	 * blur for octave 0, otherwise what the decimated hand-over level of the previous octave carries,
+	 * max( sigma_0 / anisotropy, imageSigma / 2^octave )
+	 */
+	public static float inputSigma( final float[] sigma, final double anisotropy, final float imageSigma, final int octave )
+	{
+		if ( octave == 0 )
+			return imageSigma;
+		else
+			return Math.max( (float)( sigma[ 0 ] / anisotropy ), imageSigma / ( 1L << octave ) );
+	}
+
+	/**
+	 * The Gaussian blur that is applied to the input of an octave to obtain each level, per dimension
+	 * and level (0 = none, the input carries that much blur in that dimension already).
+	 *
+	 * @param sigma - the sigmas of the levels in x pixels (computeSigmas)
+	 * @param anisotropy - voxel size per dimension relative to x, null = isotropic in pixels
+	 * @param imageSigma - the blur the image carries (octave 0)
+	 * @param octave - the octave
+	 * @param n - number of dimensions
+	 */
+	public static float[][] computeSigmaDiff( final float[] sigma, final double[] anisotropy, final float imageSigma, final int octave, final int n )
+	{
+		final float[][] sigmaDiff = new float[ n ][];
+
+		if ( anisotropy == null )
+		{
+			// the same float arithmetic as DoGImgLib2.computeSigmas (bit-identical to the single-scale DoG)
+			final float[] diff = LaPlaceFunctions.computeSigmaDiff( sigma, octave == 0 ? imageSigma : sigma[ 0 ] );
+
+			for ( int d = 0; d < n; ++d )
+				sigmaDiff[ d ] = diff;
+		}
+		else
+		{
+			for ( int d = 0; d < n; ++d )
+			{
+				final float in = inputSigma( sigma, anisotropy[ d ], imageSigma, octave );
+
+				sigmaDiff[ d ] = new float[ sigma.length ];
+
+				for ( int i = 0; i < sigma.length; ++i )
+				{
+					final float target = (float)( sigma[ i ] / anisotropy[ d ] );
+					final float diff = target * target - in * in;
+
+					sigmaDiff[ d ][ i ] = diff > 0 ? (float)Math.sqrt( diff ) : 0f;
+				}
+			}
+		}
+
+		return sigmaDiff;
+	}
+
+	/**
+	 * @return the half kernel size of the Gaussian of a level per dimension (the halo that it reads)
+	 */
+	public static long[] halfKernelSizes( final float[][] sigmaDiff, final int level )
+	{
+		final long[] hks = new long[ sigmaDiff.length ];
+
+		for ( int d = 0; d < hks.length; ++d )
+			hks[ d ] = Gauss3.halfkernelsize( sigmaDiff[ d ][ level ] );
+
+		return hks;
 	}
 
 	/**

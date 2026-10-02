@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService;
 import ij.IJ;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
@@ -64,6 +65,37 @@ public class ScaleSpace
 		return interestPoints;
 	}
 
+	/**
+	 * @param vd - the view
+	 * @param mipmapTransform - the transform of the opened (downsampled) image to full resolution (DownsampleTools.openAndDownsample)
+	 * @param anisotropyZ - z voxel / x voxel at FULL resolution, NaN = the ratio of the calibration
+	 * @return the voxel size of the OPENED image per dimension relative to x (ScaleSpaceParameters.anisotropy)
+	 */
+	public static double[] anisotropy( final ViewDescription vd, final AffineTransform3D mipmapTransform, final double anisotropyZ )
+	{
+		final double vx, vy, vz;
+
+		if ( vd.getViewSetup().hasVoxelSize() )
+		{
+			final VoxelDimensions voxelSize = vd.getViewSetup().getVoxelSize();
+			vx = voxelSize.dimension( 0 );
+			vy = voxelSize.dimension( 1 );
+			vz = voxelSize.dimension( 2 );
+		}
+		else
+		{
+			vx = vy = vz = 1.0;
+		}
+
+		final double a = Double.isNaN( anisotropyZ ) ? vz / vx : anisotropyZ;
+
+		final double sx = Math.abs( mipmapTransform.get( 0, 0 ) );
+		final double sy = Math.abs( mipmapTransform.get( 1, 1 ) );
+		final double sz = Math.abs( mipmapTransform.get( 2, 2 ) );
+
+		return new double[] { 1.0, ( vy * sy ) / ( vx * sx ), ( a * sz ) / sx };
+	}
+
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static void addInterestPoints( final HashMap< ViewId, List< InterestPoint > > interestPoints, final ScaleSpaceDetectionParameters p )
 	{
@@ -94,6 +126,12 @@ public class ScaleSpace
 				// the intensity range is defined per detection (InterestPointParameters), as for the DoG
 				p.scaleSpace.minIntensity = p.minIntensity;
 				p.scaleSpace.maxIntensity = p.maxIntensity;
+
+				// the voxel size of the opened image per dimension relative to x, the Gaussians become isotropic in physical units
+				p.scaleSpace.anisotropy = anisotropy( vd, input.getB(), p.anisotropyZ );
+
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): anisotropy of the opened image (voxel size per dimension relative to x) = " + Util.printCoordinates( p.scaleSpace.anisotropy ) +
+						", sigma of the finest level in pixels = (" + p.scaleSpace.sigmaMin / p.scaleSpace.anisotropy[ 0 ] + ", " + p.scaleSpace.sigmaMin / p.scaleSpace.anisotropy[ 1 ] + ", " + p.scaleSpace.sigmaMin / p.scaleSpace.anisotropy[ 2 ] + ")" );
 
 				final ArrayList< InterestPointSS > peaks = DoGScaleSpace.computeDoGScaleSpace(
 						(RandomAccessible)Views.extendMirrorSingle( input.getA() ),

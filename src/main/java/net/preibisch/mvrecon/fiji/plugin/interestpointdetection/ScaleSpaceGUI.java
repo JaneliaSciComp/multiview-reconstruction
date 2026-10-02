@@ -75,6 +75,10 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	public static boolean defaultManual = false;
 	public static long[] defaultManualDownsampling = null;
 
+	// anisotropy at full resolution (z voxel / x voxel), by default the calibration ratio; remembered while the calibration is the same
+	public static double defaultAnisotropyZ = Double.NaN;
+	public static double defaultAnisotropyCalibration = Double.NaN;
+
 	protected double sigma;
 	protected double threshold;
 	protected boolean findMin;
@@ -86,6 +90,9 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 
 	/** the starting resolution (octave 0) as downsampling in x, y, z */
 	protected long[] downsampling;
+
+	/** z voxel / x voxel at full resolution (increase if the PSF blurs z more); converted to the starting resolution per view */
+	protected double anisotropyZ;
 
 	/** the precomputed resolution levels of the first view ("fx, fy, fz"), the entries of the drop-down */
 	protected String[] resolutions;
@@ -129,6 +136,7 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 			p.put( "downsampleY", Long.toString( downsampling[ 1 ] ) );
 		}
 		p.put( "downsampleZ", Long.toString( downsampling[ 2 ] ) );
+		p.put( "anisotropy", Double.toString( anisotropyZ ) );
 		if ( limitDetections )
 		{
 			final String mode;
@@ -161,6 +169,7 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		p.downsampling = this.downsampling.clone();
 		p.downsampleXY = (int)downsampling[ 0 ];
 		p.downsampleZ = (int)downsampling[ 2 ];
+		p.anisotropyZ = this.anisotropyZ;
 
 		p.minIntensity = this.minIntensity;
 		p.maxIntensity = this.maxIntensity;
@@ -318,7 +327,7 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	public String getParameters()
 	{
 		return "DOG-SS s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + detectFinestLevel + " t=" + threshold + " min=" + findMin + " max=" + findMax +
-				" downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] +
+				" downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] + " anisotropy=" + anisotropyZ +
 				" minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 	}
 
@@ -343,12 +352,43 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		final String[] choices = resolutionChoices( resolutions, voxelSize );
 
 		gd.addChoice( "Starting_resolution (downsampling x, y, z)", choices, choices[ defaultResolutionChoice( resolutions.length, defaultResolutionIndex, defaultManual ) ] );
+
+		final double calibration = calibrationAnisotropy( voxelSize );
+
+		if ( Double.isNaN( defaultAnisotropyZ ) || defaultAnisotropyCalibration != calibration )
+		{
+			defaultAnisotropyZ = calibration;
+			defaultAnisotropyCalibration = calibration;
+		}
+
+		gd.addNumericField( "Anisotropy_z (z voxel / xy voxel at full resolution)", defaultAnisotropyZ, 3 );
+	}
+
+	/**
+	 * @return z voxel / x voxel of the calibration (1 if unknown)
+	 */
+	public static double calibrationAnisotropy( final VoxelDimensions voxelSize )
+	{
+		if ( voxelSize == null )
+			return 1.0;
+		else
+			return voxelSize.dimension( 2 ) / voxelSize.dimension( 0 );
 	}
 
 	@Override
 	protected boolean queryDownsamplingParameters( final GenericDialog gd )
 	{
 		final int choice = gd.getNextChoiceIndex();
+
+		this.anisotropyZ = gd.getNextNumber();
+
+		if ( !( anisotropyZ > 0 ) || Double.isInfinite( anisotropyZ ) )
+		{
+			IOFunctions.println( "ERROR: The anisotropy must be a positive number, but is " + anisotropyZ + "." );
+			return false;
+		}
+
+		defaultAnisotropyZ = anisotropyZ;
 
 		if ( choice == resolutions.length )
 		{

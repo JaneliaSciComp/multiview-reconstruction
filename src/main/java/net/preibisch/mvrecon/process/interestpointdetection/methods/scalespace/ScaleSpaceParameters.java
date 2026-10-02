@@ -90,6 +90,13 @@ public class ScaleSpaceParameters
 	public double imageSigma = 0.5;
 
 	/**
+	 * voxel size of octave 0 (the image handed in, NOT full resolution) per dimension relative to x,
+	 * e.g. { 1, 1, 1.6 }; the sigma of each level in dimension d is sigma_i / anisotropy[ d ] so that
+	 * the Gaussians are isotropic in physical units; null = isotropic in pixels
+	 */
+	public double[] anisotropy = null;
+
+	/**
 	 * cell size of the lazy Gaussian and DoG levels
 	 */
 	public int[] cellSize = DoGImgLib2.blockSize.clone();

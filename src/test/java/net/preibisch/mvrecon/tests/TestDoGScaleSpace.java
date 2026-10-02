@@ -498,6 +498,7 @@ public class TestDoGScaleSpace
 		{{
 			localization = 1;
 			downsampling = new long[] { 2, 2, 1 };
+			anisotropyZ = 1.0;
 			minIntensity = 0.0;
 			maxIntensity = 1137.0;
 			setDefaultValues( 1 ); // sigma 1.8, threshold 0.008, maxima only
@@ -506,7 +507,7 @@ public class TestDoGScaleSpace
 			detectFinestLevel = true;
 		}};
 
-		assertEquals( "DOG-SS s=1.8 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
+		assertEquals( "DOG-SS s=1.8 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=1.0 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
 
 		final Map< String, String > d = gui.describeParameters();
 		assertEquals( "SCALE_SPACE", d.get( "detectionMethod" ) );
@@ -516,12 +517,14 @@ public class TestDoGScaleSpace
 		assertEquals( "MAX", d.get( "type" ) );
 		assertEquals( "QUADRATIC", d.get( "localization" ) );
 		assertEquals( "2", d.get( "downsampleXY" ) );
+		assertEquals( "1.0", d.get( "anisotropy" ) );
 
 		final HashMap< ViewId, List< InterestPoint > > viaGUI = gui.findInterestPoints( tp );
 
 		// the same through the driver
 		final ScaleSpaceDetectionParameters p = new ScaleSpaceDetectionParameters( SpimData2.getAllViewIdsForTimePointSorted( spimData, views, tp ), spimData.getSequenceDescription().getImgLoader() );
 		p.downsampling = new long[] { 2, 2, 1 };
+		p.anisotropyZ = 1.0;
 		p.minIntensity = 0.0;
 		p.maxIntensity = 1137.0;
 		p.scaleSpace.sigmaMin = 1.8;
@@ -543,6 +546,185 @@ public class TestDoGScaleSpace
 				assertArrayEquals( viaDriver.get( viewId ).get( i ).getL(), viaGUI.get( viewId ).get( i ).getL(), 0.0 );
 			}
 		}
+	}
+
+	/**
+	 * Physically isotropic blobs on a grid with twice the z voxel size are found with the same response,
+	 * sigma and position (in physical units) as on an isotropic grid when the anisotropy is given; with
+	 * pixel-isotropic Gaussians the response differs. The sigmas are chosen such that the z sigmas stay
+	 * above ~1.5 pixels at the detecting octave: below ~1 pixel the point-sampled Gaussian kernels
+	 * overestimate the response by 10-20% (the same effect as in the finest octave of an isotropic
+	 * scale space with sigmaMin ~1), which is a limit of the sampling, not of the anisotropy handling.
+	 */
+	@Test
+	public void testAnisotropy()
+	{
+		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
+
+		final double a = 2.0;
+		final double[] s = new double[] { 8, 16 };
+		final double[][] isoCenters = new double[][] { { 90.3, 128.2, 127.6 }, { 260.7, 126.4, 128.3 } };
+		final double[][] anisoCenters = new double[][] { { 90.3, 128.2, 127.6 / a }, { 260.7, 126.4, 128.3 / a } };
+
+		// the same physical blobs; the image carries 0.5 px of blur per axis by definition, so the rendered
+		// z sigma of the anisotropic grid is sqrt( ( s^2 - 0.25 ) / a^2 + 0.25 )
+		final double[][] isoStds = new double[ 2 ][];
+		final double[][] anisoStds = new double[ 2 ][];
+
+		for ( int i = 0; i < 2; ++i )
+		{
+			isoStds[ i ] = new double[] { s[ i ], s[ i ], s[ i ] };
+			anisoStds[ i ] = new double[] { s[ i ], s[ i ], Math.sqrt( ( s[ i ] * s[ i ] - 0.25 ) / ( a * a ) + 0.25 ) };
+		}
+
+		final Img< FloatType > iso = blobs( new long[] { 384, 256, 256 }, isoCenters, isoStds );
+		final Img< FloatType > aniso = blobs( new long[] { 384, 256, 128 }, anisoCenters, anisoStds );
+
+		final ScaleSpaceParameters p = new ScaleSpaceParameters( 3.0, 4, -1, 0.1 );
+		p.minIntensity = 0;
+		p.maxIntensity = 1;
+
+		p.anisotropy = null;
+		final ArrayList< InterestPointSS > isoPeaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( iso ), iso, iso, null, p, service );
+
+		p.anisotropy = new double[] { 1, 1, a };
+		final ArrayList< InterestPointSS > anisoPeaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( aniso ), aniso, aniso, null, p, service );
+
+		p.anisotropy = null;
+		final ArrayList< InterestPointSS > pixelIsoPeaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( aniso ), aniso, aniso, null, p, service );
+
+		service.shutdown();
+
+		for ( final InterestPointSS peak : isoPeaks )
+			IOFunctions.println( "isotropic grid: " + Util.printCoordinates( peak.getL() ) + " response=" + peak.getResponse() + " sigma=" + peak.getSigma() );
+		for ( final InterestPointSS peak : anisoPeaks )
+			IOFunctions.println( "anisotropic grid, anisotropy " + a + ": " + Util.printCoordinates( peak.getL() ) + " response=" + peak.getResponse() + " sigma=" + peak.getSigma() );
+		for ( final InterestPointSS peak : pixelIsoPeaks )
+			IOFunctions.println( "anisotropic grid, pixel-isotropic: " + Util.printCoordinates( peak.getL() ) + " response=" + peak.getResponse() + " sigma=" + peak.getSigma() );
+
+		assertEquals( 2, isoPeaks.size() );
+		assertEquals( 2, anisoPeaks.size() );
+
+		isoPeaks.sort( Comparator.comparingDouble( peak -> peak.getL()[ 0 ] ) );
+		anisoPeaks.sort( Comparator.comparingDouble( peak -> peak.getL()[ 0 ] ) );
+
+		double maxSigmaDifference = 0;
+
+		for ( int i = 0; i < 2; ++i )
+		{
+			final InterestPointSS pi = isoPeaks.get( i );
+			final InterestPointSS pa = anisoPeaks.get( i );
+			final double f = 1L << ( i + 1 ); // blob 8 is found in octave 1, blob 16 in octave 2
+
+			assertEquals( pi.getResponse(), pa.getResponse(), 0.1 * Math.abs( pi.getResponse() ), "response of blob " + i );
+			assertEquals( pi.getSigma(), pa.getSigma(), 0.05 * pi.getSigma(), "sigma of blob " + i );
+			assertEquals( pi.getL()[ 0 ], pa.getL()[ 0 ], 0.1 * f, "x of blob " + i );
+			assertEquals( pi.getL()[ 1 ], pa.getL()[ 1 ], 0.1 * f, "y of blob " + i );
+			assertEquals( pi.getL()[ 2 ], pa.getL()[ 2 ] * a, 0.2 * f, "z of blob " + i );
+
+			// pixel-isotropic Gaussians see a blob that is squeezed in z and select a smaller scale
+			InterestPointSS nearest = null;
+
+			for ( final InterestPointSS q : pixelIsoPeaks )
+				if ( nearest == null || distance( q, pa ) < distance( nearest, pa ) )
+					nearest = q;
+
+			if ( nearest != null && distance( nearest, pa ) < 3 * f )
+				maxSigmaDifference = Math.max( maxSigmaDifference, Math.abs( nearest.getSigma() - pi.getSigma() ) / pi.getSigma() );
+			else
+				maxSigmaDifference = 1;
+		}
+
+		assertTrue( maxSigmaDifference > 0.1, "pixel-isotropic sigma differs by " + maxSigmaDifference );
+	}
+
+	/**
+	 * Few z slices do not limit the octaves when the z sigmas are small
+	 */
+	@Test
+	public void testAutoOctavesAnisotropic()
+	{
+		final FinalInterval thin = new FinalInterval( 256, 256, 40 );
+		final ScaleSpaceParameters p = new ScaleSpaceParameters( 1.5, 4, -1, 0.1 );
+
+		p.anisotropy = null;
+		assertEquals( 1, DoGScaleSpace.autoOctaves( thin, p ) );
+
+		p.anisotropy = new double[] { 1, 1, 4 };
+		assertEquals( 3, DoGScaleSpace.autoOctaves( thin, p ) );
+	}
+
+	/**
+	 * The per-dimension sigmas: identical to the isotropic ones for anisotropy 1, the closed form of the
+	 * blur the input of an octave carries, also when the hand-over level is not blurred in z at all
+	 */
+	@Test
+	public void testSigmaDiffAnisotropic()
+	{
+		final float k4 = net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions.computeK( 4 );
+
+		// anisotropy { 1, 1, 1 } is bit-identical to null
+		final float[] sigma = DoGScaleSpace.computeSigmas( 1.8, k4, 4 );
+
+		for ( int o = 0; o < 4; ++o )
+		{
+			final float[][] iso = DoGScaleSpace.computeSigmaDiff( sigma, null, 0.5f, o, 3 );
+			final float[][] one = DoGScaleSpace.computeSigmaDiff( sigma, new double[] { 1, 1, 1 }, 0.5f, o, 3 );
+
+			for ( int d = 0; d < 3; ++d )
+				assertArrayEquals( iso[ d ], one[ d ], 0.0f );
+		}
+
+		// a strongly anisotropic z: no blur in z at octave 0 and 1 (except the top level of octave 1), standard formula from octave 3 on
+		final float[] sigma1 = DoGScaleSpace.computeSigmas( 1.0, k4, 4 );
+		final double[] anisotropy = new double[] { 1, 1, 8 };
+
+		final float[][] o0 = DoGScaleSpace.computeSigmaDiff( sigma1, anisotropy, 0.5f, 0, 3 );
+		final float[][] o1 = DoGScaleSpace.computeSigmaDiff( sigma1, anisotropy, 0.5f, 1, 3 );
+		final float[][] o3 = DoGScaleSpace.computeSigmaDiff( sigma1, anisotropy, 0.5f, 3, 3 );
+
+		for ( int i = 0; i < sigma1.length; ++i )
+			assertEquals( 0f, o0[ 2 ][ i ], 0f, "octave 0, level " + i );
+
+		for ( int i = 0; i < sigma1.length - 1; ++i )
+			assertEquals( 0f, o1[ 2 ][ i ], 0f, "octave 1, level " + i );
+
+		assertEquals( Math.sqrt( Math.pow( sigma1[ 6 ] / 8, 2 ) - 0.25 * 0.25 ), o1[ 2 ][ 6 ], 1e-6, "octave 1, top level" );
+		assertEquals( 0.25f, DoGScaleSpace.inputSigma( sigma1, 8, 0.5f, 1 ), 0f );
+		assertEquals( sigma1[ 0 ] / 8, DoGScaleSpace.inputSigma( sigma1, 8, 0.5f, 3 ), 1e-6 );
+
+		for ( int i = 1; i < sigma1.length; ++i )
+			assertEquals( Math.sqrt( Math.pow( sigma1[ i ] / 8, 2 ) - Math.pow( sigma1[ 0 ] / 8, 2 ) ), o3[ 2 ][ i ], 1e-6, "octave 3, level " + i );
+
+		// the blur of the decimated hand-over level is the input of the next octave, and level 0 of an octave > 0 is never blurred
+		for ( final double[] an : new double[][] { { 1, 1, 2 }, { 1, 1, 8 }, { 1, 1, 0.5 } } )
+		{
+			for ( int o = 0; o < 4; ++o )
+			{
+				final float[][] diff = DoGScaleSpace.computeSigmaDiff( sigma1, an, 0.5f, o, 3 );
+
+				for ( int d = 0; d < 3; ++d )
+				{
+					final float in = DoGScaleSpace.inputSigma( sigma1, an[ d ], 0.5f, o );
+					final float next = DoGScaleSpace.inputSigma( sigma1, an[ d ], 0.5f, o + 1 );
+
+					assertEquals( next, Math.sqrt( in * in + diff[ d ][ 4 ] * diff[ d ][ 4 ] ) / 2, 1e-6, "hand-over of octave " + o + ", dimension " + d );
+
+					if ( o > 0 )
+						assertEquals( 0f, diff[ d ][ 0 ], 0f );
+				}
+			}
+		}
+	}
+
+	protected static double distance( final InterestPoint a, final InterestPoint b )
+	{
+		double sum = 0;
+
+		for ( int d = 0; d < 3; ++d )
+			sum += ( a.getL()[ d ] - b.getL()[ d ] ) * ( a.getL()[ d ] - b.getL()[ d ] );
+
+		return Math.sqrt( sum );
 	}
 
 	/**
@@ -581,20 +763,32 @@ public class TestDoGScaleSpace
 
 	public static Img< FloatType > blobs( final long[] dim, final double[][] centers, final double[] stds )
 	{
+		final double[][] stdsPerAxis = new double[ stds.length ][];
+
+		for ( int i = 0; i < stds.length; ++i )
+			stdsPerAxis[ i ] = new double[] { stds[ i ], stds[ i ], stds[ i ] };
+
+		return blobs( dim, centers, stdsPerAxis );
+	}
+
+	/**
+	 * Gaussian blobs of unit peak with a sigma per axis
+	 */
+	public static Img< FloatType > blobs( final long[] dim, final double[][] centers, final double[][] stds )
+	{
 		final Img< FloatType > img = ArrayImgs.floats( dim );
-		final RandomAccess< FloatType > ra = img.randomAccess();
 
 		for ( int i = 0; i < stds.length; ++i )
 		{
-			final double s = stds[ i ];
+			final double[] s = stds[ i ];
 			final double[] c = centers[ i ];
 			final long[] min = new long[ 3 ];
 			final long[] max = new long[ 3 ];
 
 			for ( int d = 0; d < 3; ++d )
 			{
-				min[ d ] = Math.max( 0, Math.round( c[ d ] - 4 * s ) );
-				max[ d ] = Math.min( dim[ d ] - 1, Math.round( c[ d ] + 4 * s ) );
+				min[ d ] = Math.max( 0, Math.round( c[ d ] - 4 * s[ d ] ) );
+				max[ d ] = Math.min( dim[ d ] - 1, Math.round( c[ d ] + 4 * s[ d ] ) );
 			}
 
 			final Cursor< FloatType > cursor = Views.interval( img, new FinalInterval( min, max ) ).localizingCursor();
@@ -607,11 +801,11 @@ public class TestDoGScaleSpace
 
 				for ( int d = 0; d < 3; ++d )
 				{
-					final double diff = cursor.getDoublePosition( d ) - c[ d ];
+					final double diff = ( cursor.getDoublePosition( d ) - c[ d ] ) / s[ d ];
 					r2 += diff * diff;
 				}
 
-				cursor.get().set( cursor.get().get() + (float)Math.exp( -r2 / ( 2 * s * s ) ) );
+				cursor.get().set( cursor.get().get() + (float)Math.exp( -r2 / 2 ) );
 			}
 		}
 

@@ -33,9 +33,10 @@ public class InterestPointSS extends InterestPointValue
 	private static final long serialVersionUID = 2905481226397218331L;
 
 	/**
-	 * the lower sigma of the DoG level, in pixels of the image the point was detected in; once the
+	 * the lower sigma of the DoG level, in x pixels of the image the point was detected in; once the
 	 * point is mapped to full resolution (DownsampleTools.correctForDownsampling) in full-resolution
-	 * pixels of the view (geometric mean over x and y)
+	 * pixels of the view (geometric mean over x and y). The sigma in z is this value divided by the
+	 * anisotropy the scale space was computed with (z voxel / x voxel), in z pixels.
 	 */
 	private double sigma;
 
