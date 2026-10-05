@@ -22,9 +22,13 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive;
 
+import java.awt.Component;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
+import java.awt.GridLayout;
 import java.awt.Insets;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
@@ -35,7 +39,12 @@ import java.util.Locale;
 
 import javax.swing.JButton;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JSpinner;
+import javax.swing.SpinnerNumberModel;
 
 import bdv.tools.brightness.SliderPanelDouble;
 import bdv.tools.transformation.TransformedSource;
@@ -65,6 +74,7 @@ import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interactive.MultiResolutionSource;
 import net.preibisch.mvrecon.fiji.plugin.interactive.MultiResolutionTools;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.ScaleSpaceGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
@@ -74,7 +84,8 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  * Interactive estimation of the anisotropy of a view (z voxel / xy voxel at full resolution) in
  * BigDataViewer: the view is shown on its raw pixel grid, one slider scales it in z in real time,
  * the anisotropy is right when round structures (beads) look round in a side view (shift+X, shift+Y).
- * Self-contained; the confirmed value is logged and kept in {@link #lastAnisotropy}.
+ * The confirmed value is logged, kept in {@link #lastAnisotropy} and set as the default of the
+ * scale-space detection dialog (ScaleSpaceGUI).
  *
  * @author Stephan Preibisch
  */
@@ -172,7 +183,11 @@ public class InteractiveAnisotropy
 		finished = true;
 		lastAnisotropy = anisotropy;
 
-		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): anisotropy (z / xy voxel at full resolution) of " + Group.pvid( vd ) + " = " + anisotropy + " (calibration: " + calibration + ")" );
+		// pre-fill the anisotropy of the scale-space detection dialog (it keeps the value while the calibration stays the same)
+		ScaleSpaceGUI.defaultAnisotropyZ = anisotropy;
+		ScaleSpaceGUI.defaultAnisotropyCalibration = calibration;
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): anisotropy (z / xy voxel at full resolution) of " + Group.pvid( vd ) + " = " + anisotropy + " (calibration: " + calibration + "), set as default of the scale-space detection." );
 
 		if ( close )
 			bdv.getBdvHandle().close();
@@ -190,11 +205,26 @@ public class InteractiveAnisotropy
 		c.gridwidth = 2;
 		c.insets = new Insets( 2, 2, 2, 2 );
 
-		panel.add( new JLabel( "<html>shift+X, shift+Y, shift+Z: look along an axis<br>beads should look round at the right value</html>" ), c );
+		panel.add( new JLabel( "<html>shift+X, shift+Y, shift+Z: look along an axis<br>beads should look round at the right value<br>right-click the slider to set its bounds</html>" ), c );
 
 		final SliderPanelDouble slider = new SliderPanelDouble( "z / xy", model, 0.01 );
 		slider.setDecimalFormat( "0.000" );
 		slider.setNumColummns( 7 );
+
+		// as the brightness slider of BigDataViewer: a right-click sets the bounds
+		final MouseAdapter popupListener = new MouseAdapter()
+		{
+			@Override
+			public void mousePressed( final MouseEvent e ) { if ( e.isPopupTrigger() ) createPopupMenu().show( e.getComponent(), e.getX(), e.getY() ); }
+
+			@Override
+			public void mouseReleased( final MouseEvent e ) { if ( e.isPopupTrigger() ) createPopupMenu().show( e.getComponent(), e.getX(), e.getY() ); }
+		};
+
+		slider.addMouseListener( popupListener );
+
+		for ( final Component component : slider.getComponents() )
+			component.addMouseListener( popupListener );
 
 		++c.gridy;
 		panel.add( slider, c );
@@ -215,6 +245,74 @@ public class InteractiveAnisotropy
 		panel.add( done, c );
 
 		return panel;
+	}
+
+	protected JPopupMenu createPopupMenu()
+	{
+		final JPopupMenu menu = new JPopupMenu();
+
+		final JMenuItem setBounds = new JMenuItem( "set bounds ..." );
+		setBounds.addActionListener( e -> setBoundsDialog() );
+		menu.add( setBounds );
+
+		final JMenuItem bounds1 = new JMenuItem( "set bounds 0.5 .. 10" );
+		bounds1.addActionListener( e -> setBounds( 0.5, 10 ) );
+		menu.add( bounds1 );
+
+		final JMenuItem bounds2 = new JMenuItem( "set bounds " + String.format( Locale.US, "%.3f .. %.3f", 0.5 * calibration, 2 * calibration ) + " (calibration / 2 .. x 2)" );
+		bounds2.addActionListener( e -> setBounds( 0.5 * calibration, 2 * calibration ) );
+		menu.add( bounds2 );
+
+		final JMenuItem narrow = new JMenuItem( "narrow bounds around the current value (/ 1.5 .. x 1.5)" );
+		narrow.addActionListener( e -> setBounds( anisotropy / 1.5, anisotropy * 1.5 ) );
+		menu.add( narrow );
+
+		return menu;
+	}
+
+	/**
+	 * Sets the bounds of the slider (the current value is kept if inside, otherwise clamped)
+	 */
+	public void setBounds( final double min, final double max )
+	{
+		final double lower = Math.max( 0.001, Math.min( min, max ) );
+		final double upper = Math.max( lower + 0.001, Math.max( min, max ) );
+
+		model.setRange( lower, upper );
+
+		// setRange clamps the value without calling setCurrentValue
+		setAnisotropy( model.getCurrentValue() );
+	}
+
+	/**
+	 * The "Set Bounds" dialog of the brightness slider of BigDataViewer
+	 */
+	protected void setBoundsDialog()
+	{
+		final JSpinner minSpinner = new JSpinner( new SpinnerNumberModel( model.getRangeMin(), 0.001, 1000.0, 0.1 ) );
+		final JSpinner maxSpinner = new JSpinner( new SpinnerNumberModel( model.getRangeMax(), 0.001, 1000.0, 0.1 ) );
+
+		minSpinner.setEditor( new JSpinner.NumberEditor( minSpinner, "0.000" ) );
+		maxSpinner.setEditor( new JSpinner.NumberEditor( maxSpinner, "0.000" ) );
+
+		minSpinner.addChangeListener( e -> {
+			if ( (Double)minSpinner.getValue() > (Double)maxSpinner.getValue() )
+				maxSpinner.setValue( minSpinner.getValue() );
+		} );
+
+		maxSpinner.addChangeListener( e -> {
+			if ( (Double)maxSpinner.getValue() < (Double)minSpinner.getValue() )
+				minSpinner.setValue( maxSpinner.getValue() );
+		} );
+
+		final JPanel panel = new JPanel( new GridLayout( 2, 2, 4, 4 ) );
+		panel.add( new JLabel( "min", JLabel.RIGHT ) );
+		panel.add( minSpinner );
+		panel.add( new JLabel( "max", JLabel.RIGHT ) );
+		panel.add( maxSpinner );
+
+		if ( JOptionPane.showConfirmDialog( null, panel, "Set Bounds", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE ) == JOptionPane.OK_OPTION )
+			setBounds( (Double)minSpinner.getValue(), (Double)maxSpinner.getValue() );
 	}
 
 	/**
