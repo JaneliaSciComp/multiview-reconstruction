@@ -95,12 +95,11 @@ public class InterestPointsN5ToZarr
 	 */
 	InterestPointsZarrStore.Points points( final String path )
 	{
-		final N5Reader n5 = reader;
 		final String dataset = InterestPointsN5.ipDataset( path );
-		if ( n5 == null || !n5.exists( dataset ) )
+		if ( reader == null || !reader.exists( dataset ) )
 			return null;
 
-		final RandomAccessibleInterval< RealType< ? > > locData = open( n5, dataset + "/loc" );
+		final RandomAccessibleInterval< RealType< ? > > locData = open( reader, dataset + "/loc" );
 		if ( locData.numDimensions() < 2 || locData.dimension( 0 ) == 0 )
 			return new InterestPointsZarrStore.Points( new int[ 0 ], new double[ 0 ] ); // an empty list is stored as [0]
 
@@ -108,7 +107,7 @@ public class InterestPointsN5ToZarr
 			throw new IllegalArgumentException( dataset + "/loc has " + locData.dimension( 0 ) + " coordinates per point, expected 3" );
 
 		final double[] loc = flatValues( locData );
-		final double[] idValues = flatValues( open( n5, dataset + "/id" ) );
+		final double[] idValues = flatValues( open( reader, dataset + "/id" ) );
 		if ( idValues.length * 3 != loc.length )
 			throw new IllegalArgumentException( dataset + ": " + idValues.length + " ids for " + loc.length / 3 + " locations" );
 
@@ -118,9 +117,9 @@ public class InterestPointsN5ToZarr
 
 		final TreeMap< String, double[] > attributes = new TreeMap<>();
 		final String intensitiesDataset = dataset + "/" + LEGACY_INTENSITIES;
-		if ( n5.exists( intensitiesDataset ) )
+		if ( reader.exists( intensitiesDataset ) )
 		{
-			final double[] intensities = flatValues( open( n5, intensitiesDataset ) );
+			final double[] intensities = flatValues( open( reader, intensitiesDataset ) );
 			if ( intensities.length == ids.length )
 				attributes.put( InterestPointsZarr.INTENSITY, intensities );
 			else
@@ -133,19 +132,17 @@ public class InterestPointsN5ToZarr
 	/** @return the correspondences of an entry, or null if the legacy container does not have them */
 	List< CorrespondingInterestPoints > correspondences( final String path )
 	{
-		final N5Reader n5 = reader;
 		final String dataset = InterestPointsN5.corrDataset( path );
-		if ( n5 == null || !n5.exists( dataset ) )
+		if ( reader == null || !reader.exists( dataset ) )
 			return null;
 
-		return InterestPointsN5.readCorrespondences( n5, dataset );
+		return InterestPointsN5.readCorrespondences( reader, dataset );
 	}
 
 	/** Removes the legacy group of an entry, if there is one. */
 	void remove( final String path )
 	{
-		final N5Reader n5 = reader;
-		if ( n5 != null && n5.exists( path ) )
+		if ( reader != null && reader.exists( path ) )
 			writer().remove( path );
 	}
 
@@ -175,14 +172,14 @@ public class InterestPointsN5ToZarr
 	public static int convert( final URI baseDir )
 	{
 		final InterestPointsN5ToZarr legacy = get( baseDir );
-		final N5Reader n5 = legacy.reader;
-		if ( n5 == null )
+		final N5Reader reader = legacy.reader;
+		if ( reader == null )
 			return 0;
 
 		final List< String > paths = new ArrayList<>();
-		for ( final String viewGroup : n5.list( "/" ) )
+		for ( final String viewGroup : reader.list( "/" ) )
 			if ( viewGroup.startsWith( "tpId_" ) && viewGroup.contains( "_viewSetupId_" ) )
-				for ( final String label : n5.list( viewGroup ) )
+				for ( final String label : reader.list( viewGroup ) )
 					paths.add( viewGroup + "/" + label );
 
 		if ( paths.isEmpty() )
