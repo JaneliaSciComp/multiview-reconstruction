@@ -479,7 +479,7 @@ public class InterestPointsZarrStore
 				generation, labels, pointsData, corrData, pointRanges, pairs,
 				locAttrs.getDimensions()[ 1 ], corrAttrs.getDimensions()[ 1 ],
 				locAttrs, idAttrs, corrAttrs,
-				List.copyOf( attrNames ) );
+				attrNames == null ? List.of() : List.copyOf( attrNames ) ); // stores written before point attributes existed have no list
 	}
 
 	static String indexGroup( final int generation ) { return "index/g" + generation; }
