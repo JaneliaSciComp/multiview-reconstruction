@@ -23,15 +23,12 @@
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
-import net.imglib2.util.ValuePair;
 
 /**
  * A list of interest points for a certain label, can save and load from textfile as specified in the XML
@@ -111,26 +108,11 @@ public abstract class InterestPoints
 	 */
 	public abstract Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy();
 
-	/** @return the correspondences to one partner (view, label); a backend with a pair index reads only those */
-	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId partnerView, final String partnerLabel )
-	{
-		final ArrayList< CorrespondingInterestPoints > pair = new ArrayList<>();
-		for ( final CorrespondingInterestPoints correspondence : getCorrespondingInterestPointsCopy() )
-			if ( correspondence.getCorrespodingLabel().equals( partnerLabel ) && correspondence.getCorrespondingViewId().equals( partnerView ) )
-				pair.add( correspondence );
-
-		return pair;
-	}
+	/** @return the correspondences to one partner (view, label), read without loading the other partners where possible */
+	public abstract Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( ViewId partnerView, String partnerLabel );
 
 	/** @return the (view, label)s this list has correspondences with */
-	public Set< Pair< ViewId, String > > getCorrespondingViews()
-	{
-		final Set< Pair< ViewId, String > > partners = new HashSet<>();
-		for ( final CorrespondingInterestPoints correspondence : getCorrespondingInterestPointsCopy() )
-			partners.add( new ValuePair<>( correspondence.getCorrespondingViewId(), correspondence.getCorrespodingLabel() ) );
-
-		return partners;
-	}
+	public abstract Set< Pair< ViewId, String > > getCorrespondingViews();
 
 	public void setInterestPoints( final Collection< InterestPoint > list )
 	{
