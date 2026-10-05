@@ -275,22 +275,17 @@ public class InterestPointsZarrStore
 	private record CorrsCommit( String data, boolean appended, Map< Key, List< PairRow > > pairs, long total ) {}
 
 	/**
-	 * An N5 / Zarr container opened on first use. The reader is null while the container does not exist (cached until
+	 * The Zarr container, opened on first use. The reader is null while the container does not exist (cached until
 	 * {@link #retryReader()}); the writer, once opened, serves as the reader.
 	 */
-	static final class LazyN5Container
+	private static final class LazyContainer
 	{
-		private final StorageFormat format;
 		private final URI uri;
 		private N5Reader reader = null;
 		private N5Writer writer = null;
 		private boolean readerTried = false;
 
-		LazyN5Container( final StorageFormat format, final URI uri )
-		{
-			this.format = format;
-			this.uri = uri;
-		}
+		LazyContainer( final URI uri ) { this.uri = uri; }
 
 		/** @return the reader, or null if there is no container */
 		synchronized N5Reader reader()
@@ -303,7 +298,7 @@ public class InterestPointsZarrStore
 				readerTried = true;
 				try
 				{
-					reader = URITools.instantiateN5Reader( format, uri );
+					reader = URITools.instantiateN5Reader( StorageFormat.ZARR, uri );
 				}
 				catch ( final Exception e )
 				{
@@ -325,7 +320,7 @@ public class InterestPointsZarrStore
 		{
 			if ( writer == null )
 			{
-				writer = URITools.instantiateN5Writer( format, uri );
+				writer = URITools.instantiateN5Writer( StorageFormat.ZARR, uri );
 				reader = null;
 			}
 			return writer;
@@ -341,7 +336,7 @@ public class InterestPointsZarrStore
 				return null;
 			try
 			{
-				return URITools.instantiateN5Reader( format, uri );
+				return URITools.instantiateN5Reader( StorageFormat.ZARR, uri );
 			}
 			catch ( final Exception e )
 			{
@@ -374,7 +369,7 @@ public class InterestPointsZarrStore
 	final URI baseDir;
 	final URI containerURI;
 
-	private final LazyN5Container container;
+	private final LazyContainer container;
 	private volatile Index index = null;
 
 	private final Object lock = new Object();
@@ -433,7 +428,7 @@ public class InterestPointsZarrStore
 	{
 		this.baseDir = baseDir;
 		this.containerURI = URITools.toURI( URITools.appendName( baseDir, ZARR_CONTAINER ) );
-		this.container = new LazyN5Container( StorageFormat.ZARR, containerURI );
+		this.container = new LazyContainer( containerURI );
 	}
 
 	// ------------------------------------------------------------------------------------------------

@@ -66,15 +66,26 @@ public class InterestPointsN5ToZarr
 	}
 
 	final URI containerURI;
-	/** A missing container stays missing: nothing creates one for entries that the store can hold. */
-	private final InterestPointsZarrStore.LazyN5Container container;
+	/** Null if the dataset has no legacy container; decided once, because nothing creates one any more. */
+	private final N5Reader reader;
 
 	private InterestPointsN5ToZarr( final URI baseDir )
 	{
 		this.containerURI = URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) );
-		this.container = new InterestPointsZarrStore.LazyN5Container( StorageFormat.N5, containerURI );
+		N5Reader legacyReader;
+		try
+		{
+			legacyReader = URITools.instantiateN5Reader( StorageFormat.N5, containerURI );
+		}
+		catch ( final Exception e )
+		{
+			legacyReader = null;
+		}
+		this.reader = legacyReader;
 	}
 
+	/** @return a writer on the existing legacy container; callers check {@link #reader} first */
+	private N5Writer writer() { return URITools.instantiateN5Writer( StorageFormat.N5, containerURI ); }
 
 	/**
 	 * Reads the points of an entry, with its intensities as attribute {@link InterestPointsZarr#INTENSITY}.
@@ -84,7 +95,7 @@ public class InterestPointsN5ToZarr
 	 */
 	InterestPointsZarrStore.Points points( final String path )
 	{
-		final N5Reader n5 = container.reader();
+		final N5Reader n5 = reader;
 		final String dataset = InterestPointsN5.ipDataset( path );
 		if ( n5 == null || !n5.exists( dataset ) )
 			return null;
@@ -122,7 +133,7 @@ public class InterestPointsN5ToZarr
 	/** @return the correspondences of an entry, or null if the legacy container does not have them */
 	List< CorrespondingInterestPoints > correspondences( final String path )
 	{
-		final N5Reader n5 = container.reader();
+		final N5Reader n5 = reader;
 		final String dataset = InterestPointsN5.corrDataset( path );
 		if ( n5 == null || !n5.exists( dataset ) )
 			return null;
@@ -133,9 +144,9 @@ public class InterestPointsN5ToZarr
 	/** Removes the legacy group of an entry, if there is one. */
 	void remove( final String path )
 	{
-		final N5Reader n5 = container.reader();
+		final N5Reader n5 = reader;
 		if ( n5 != null && n5.exists( path ) )
-			container.writer().remove( path );
+			writer().remove( path );
 	}
 
 	private static RandomAccessibleInterval< RealType< ? > > open( final N5Reader n5, final String dataset )
@@ -164,7 +175,7 @@ public class InterestPointsN5ToZarr
 	public static int convert( final URI baseDir )
 	{
 		final InterestPointsN5ToZarr legacy = get( baseDir );
-		final N5Reader n5 = legacy.container.reader();
+		final N5Reader n5 = legacy.reader;
 		if ( n5 == null )
 			return 0;
 
@@ -201,7 +212,7 @@ public class InterestPointsN5ToZarr
 		for ( final String path : paths )
 			viewGroups.add( path.substring( 0, path.indexOf( '/' ) ) );
 
-		final N5Writer n5Writer = legacy.container.writer();
+		final N5Writer n5Writer = legacy.writer();
 		InterestPointsZarrStore.parallel( "removing legacy interest point groups", () -> viewGroups.parallelStream().forEach( n5Writer::remove ) );
 		IOFunctions.println( "InterestPointsN5ToZarr: removed " + viewGroups.size() + " legacy view groups" );
 		return paths.size();
