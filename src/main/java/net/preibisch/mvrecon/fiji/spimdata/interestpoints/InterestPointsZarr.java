@@ -33,6 +33,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -121,37 +123,37 @@ public class InterestPointsZarr extends InterestPoints
 	@Override
 	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId partnerView, final String partnerLabel )
 	{
-		if ( correspondingInterestPoints == null )
-		{
-			final List< CorrespondingInterestPoints > pair = store().correspondences( key, partnerView, partnerLabel );
-			if ( pair != null )
-				return pair;
-		}
-
-		final ArrayList< CorrespondingInterestPoints > pair = new ArrayList<>();
-		for ( final CorrespondingInterestPoints correspondence : getCorrespondingInterestPointsCopy() )
-			if ( correspondence.getCorrespodingLabel().equals( partnerLabel ) && correspondence.getCorrespondingViewId().equals( partnerView ) )
-				pair.add( correspondence );
-
-		return pair;
+		return fromStoreOrLoaded(
+				() -> store().correspondences( key, partnerView, partnerLabel ),
+				loaded -> loaded.stream()
+						.filter( c -> c.getCorrespondingViewId().equals( partnerView ) && c.getCorrespodingLabel().equals( partnerLabel ) )
+						.collect( Collectors.toList() ) );
 	}
 
 	/** If the list is not loaded, reads the partners from the store index; else derives them from the loaded list. */
 	@Override
 	public Set< Pair< ViewId, String > > getCorrespondingViews()
 	{
+		return fromStoreOrLoaded(
+				() -> store().correspondingViews( key ),
+				loaded -> loaded.stream()
+						.map( c -> (Pair< ViewId, String >) new ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) )
+						.collect( Collectors.toSet() ) );
+	}
+
+	/**
+	 * A correspondence query answered by the store while the list is not loaded (the store's index serves it without
+	 * reading the whole list), else derived from the loaded list, which may hold unsaved changes.
+	 */
+	private < T > T fromStoreOrLoaded( final Supplier< T > fromStore, final Function< Collection< CorrespondingInterestPoints >, T > fromLoaded )
+	{
 		if ( correspondingInterestPoints == null )
 		{
-			final Set< Pair< ViewId, String > > partners = store().correspondingViews( key );
-			if ( partners != null )
-				return partners;
+			final T answer = fromStore.get();
+			if ( answer != null )
+				return answer;
 		}
-
-		final Set< Pair< ViewId, String > > partners = new HashSet<>();
-		for ( final CorrespondingInterestPoints correspondence : getCorrespondingInterestPointsCopy() )
-			partners.add( new ValuePair<>( correspondence.getCorrespondingViewId(), correspondence.getCorrespodingLabel() ) );
-
-		return partners;
+		return fromLoaded.apply( getCorrespondingInterestPointsCopy() );
 	}
 
 	public synchronized Set< String > getAttributeNames()
