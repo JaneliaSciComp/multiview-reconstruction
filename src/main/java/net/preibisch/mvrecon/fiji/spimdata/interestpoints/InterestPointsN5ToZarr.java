@@ -32,16 +32,12 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.janelia.saalfeldlab.n5.DataBlock;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
-import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.type.numeric.RealType;
-import net.imglib2.util.Cast;
-import net.imglib2.util.Intervals;
-import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import util.URITools;
 
@@ -99,31 +95,34 @@ public class InterestPointsN5ToZarr
 		if ( reader == null || !reader.exists( dataset ) )
 			return null;
 
-		final RandomAccessibleInterval< RealType< ? > > locData = open( reader, dataset + "/loc" );
-		if ( locData.numDimensions() < 2 || locData.dimension( 0 ) == 0 )
+		final long[] locDims = reader.getDatasetAttributes( dataset + "/loc" ).getDimensions();
+		if ( locDims.length < 2 || locDims[ 0 ] == 0 )
 			return new InterestPointsZarrStore.Points( new int[ 0 ], new double[ 0 ] ); // an empty list is stored as [0]
 
-		if ( locData.dimension( 0 ) != 3 )
-			throw new IllegalArgumentException( dataset + "/loc has " + locData.dimension( 0 ) + " coordinates per point, expected 3" );
+		if ( locDims[ 0 ] != 3 )
+			throw new IllegalArgumentException( dataset + "/loc has " + locDims[ 0 ] + " coordinates per point, expected 3" );
 
-		final double[] loc = flatValues( locData );
-		final double[] idValues = flatValues( open( reader, dataset + "/id" ) );
-		if ( idValues.length * 3 != loc.length )
-			throw new IllegalArgumentException( dataset + ": " + idValues.length + " ids for " + loc.length / 3 + " locations" );
+		// the legacy writer's types: loc FLOAT64 [3, n], id UINT64 [1, n], intensities FLOAT32 [n]
+		final int n = (int) locDims[ 1 ];
+		final double[] loc = new double[ 3 * n ];
+		forBlocks( reader, dataset + "/loc", ( final double[] data, final int offset, final int count ) -> System.arraycopy( data, 0, loc, offset, count ) );
 
-		final int[] ids = new int[ idValues.length ];
-		for ( int i = 0; i < ids.length; ++i )
-			ids[ i ] = (int) idValues[ i ];
+		final int[] ids = new int[ n ];
+		forBlocks( reader, dataset + "/id", ( final long[] data, final int offset, final int count ) -> {
+			for ( int i = 0; i < count; ++i )
+				ids[ offset + i ] = (int) data[ i ];
+		} );
 
 		final TreeMap< String, double[] > attributes = new TreeMap<>();
 		final String intensitiesDataset = dataset + "/" + LEGACY_INTENSITIES;
 		if ( reader.exists( intensitiesDataset ) )
 		{
-			final double[] intensities = flatValues( open( reader, intensitiesDataset ) );
-			if ( intensities.length == ids.length )
-				attributes.put( InterestPointsZarr.INTENSITY, intensities );
-			else
-				IOFunctions.println( "InterestPointsN5ToZarr: WARNING ignoring " + intensitiesDataset + " (" + intensities.length + " values for " + ids.length + " points)" );
+			final double[] intensities = new double[ n ];
+			forBlocks( reader, intensitiesDataset, ( final float[] data, final int offset, final int count ) -> {
+				for ( int i = 0; i < count; ++i )
+					intensities[ offset + i ] = data[ i ];
+			} );
+			attributes.put( InterestPointsZarr.INTENSITY, intensities );
 		}
 
 		return new InterestPointsZarrStore.Points( ids, loc, attributes );
@@ -146,20 +145,28 @@ public class InterestPointsN5ToZarr
 			writer().remove( path );
 	}
 
-	private static RandomAccessibleInterval< RealType< ? > > open( final N5Reader n5, final String dataset )
-	{
-		return Cast.unchecked( N5Utils.open( n5, dataset ) );
-	}
+	/** Receives one block's raw array and where its values go in the flat target (dimension 0 fastest). */
+	private interface BlockVisitor< T > { void visit( T data, int offset, int count ); }
 
-	/** @return all values in flat iteration order (dimension 0 fastest) */
-	private static double[] flatValues( final RandomAccessibleInterval< RealType< ? > > image )
+	/**
+	 * Walks the blocks of a {@code [columns, rows]} (or 1-D) dataset in row order. The block arrays are flat with
+	 * dimension 0 fastest, so {@code offset} and {@code count} are in values, not rows. A missing block is skipped.
+	 */
+	@SuppressWarnings( "unchecked" )
+	private static < T > void forBlocks( final N5Reader n5, final String dataset, final BlockVisitor< T > visitor )
 	{
-		final double[] values = new double[ (int) Intervals.numElements( image ) ];
-		int i = 0;
-		for ( final RealType< ? > value : Views.flatIterable( image ) )
-			values[ i++ ] = value.getRealDouble();
+		final DatasetAttributes attrs = n5.getDatasetAttributes( dataset );
+		final long[] dims = attrs.getDimensions();
+		final int rowDim = dims.length - 1;
+		final int columns = rowDim == 0 ? 1 : (int) dims[ 0 ];
+		final int rowsPerBlock = attrs.getBlockSize()[ rowDim ];
 
-		return values;
+		for ( long gridRow = 0; gridRow * rowsPerBlock < dims[ rowDim ]; ++gridRow )
+		{
+			final DataBlock< ? > block = rowDim == 0 ? n5.readBlock( dataset, attrs, gridRow ) : n5.readBlock( dataset, attrs, 0, gridRow );
+			if ( block != null )
+				visitor.visit( (T) block.getData(), (int) ( gridRow * rowsPerBlock ) * columns, block.getNumElements() );
+		}
 	}
 
 	/**
