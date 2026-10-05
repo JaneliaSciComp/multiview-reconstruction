@@ -77,6 +77,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DeconvolutionPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DetectInterestPointsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DisplayFusedImagesPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DisplayRawImagesPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.EstimateAnisotropyPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ExplorerWindowSetable;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.FlatFieldCorrectionPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.FusionPopup;
@@ -688,6 +689,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		popups.add( new LabelPopUp( " Display/Verify" ) );
 		popups.add( BDVPopup.useLazyMode ? new LazyBDVPopup() : new BDVPopup() );
 		popups.add( new DisplayRawImagesPopup() );
+		popups.add( new EstimateAnisotropyPopup() );
 		popups.add( new DisplayFusedImagesPopup() );
 		popups.add( new VisualizeNonRigid() );
 		popups.add( new MaxProjectPopup() );
