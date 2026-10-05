@@ -67,8 +67,8 @@ All points and correspondences of a dataset live in a few sharded Zarr v3 arrays
   the three calls in `InterestPointsZarr` (marked `legacy: goes with InterestPointsN5`).
 
 ```
-interestpoints.zarr/zarr.json        root attrs: generation G, pointsData, corrData, labels, chunkPoints, shardPoints, pointAttributes
-  index/gG/{entries,views,pairs}     INT64: (tp,setup,label,offset,count) / (tp,setup,label,pairStart,pairCount) / (partner tp,setup,label,offset,count,swapped)
+interestpoints.zarr/zarr.json        root attrs: interestpoints (version), generation G, pointsData, corrData, labels, chunkPoints, shardPoints, pointAttributes
+  index/gG/{entries,views,pairs}     INT64 (label = id into the root `labels`): (tp,setup,label,offset,count) / (tp,setup,label,pairStart,pairCount) / (partner tp,setup,label,offset,count,swapped)
   points/gk/{loc,id}                 FLOAT64 [3+k,N] + INT32 [1,N]; ids are sparse for *_split labels; loc columns 3.. are the
                                      optional per-point attributes named by pointAttributes (-1 = no value)
   correspondences/gk/data            INT32 [3,M] (detA, detB, consensusSet), stored once per pair (A = smaller key)
@@ -82,7 +82,7 @@ GCLocker stall below. The zstd variant was never in production, nothing reads it
 
 **Writing**
 - The driver's XML save is the only commit: `XmlIoSpimData2.saveInterestPointsInParallel` opens a batch, the per-entry saves stage
-  in memory, `commit()` writes the arrays, the next index generation, then flips the root attrs (atomic), then deletes the old one.
+  in memory, `commit()` writes the arrays, the next index generation, then flips the root attrs (atomic), then deletes the old generation and the staging files it folded in.
 - Outside a batch every save writes a durable staging file. Spark tasks use `InterestPointsZarr.saveStaged(lists)`: one file per task.
   The newest file wins for a key (split phase 3 overrides phase 2). Deletes are staged (`store.remove`) until the next commit.
 - Commit appends when ≥ 75 % of an array stays live (counted in points / correspondence rows), else rewrites it.
@@ -102,7 +102,7 @@ legacy + zarr datasets read fine; conversion packs legacy `interestpoints/intens
 points, `InterestPointsZarr.setInterestPoints(points, Map<name, double[]>)`; read with `getAttributeCopy(name)`;
 `setInterestPoints(points)` drops them. Stored as extra `loc` columns, -1 = no value (like the single-consensus set id); an
 entry whose column is all -1 has no such attribute. A new attribute name changes the shape of `loc`, so that commit rewrites
-the points arrays; a rewrite drops columns no entry uses. Staging files v2 carry attributes (v1 still read).
+the points arrays; a rewrite drops columns no entry uses. Staging files carry them in the points payload (count, then name + values per attribute); the file format is still `STAGING_VERSION = 1`, no other version is read.
 BigStitcher-Spark `--storeIntensities` writes `intensity` through the normal staging path.
 
 **Lessons (2026-09-21, ExpID99 pipeline)**
@@ -111,7 +111,7 @@ BigStitcher-Spark `--storeIntensities` writes `intensity` through the normal sta
 - Never cache "does not exist" for something another JVM may create: an executor's stale staging listing dropped partner views.
 - Per-entry staging files are too many: deleting 1,780 of them took 9 s on /nrs even in parallel (unlinks serialize per directory).
 - Shard files read through the macOS SMB mount showed a 5 MB page-aligned hole of zeros twice; on a cluster node the same
-  files were intact (`tools/check_store.sh`, md5). Never judge data on /nrs through the Mac mount; the fsync + read-back
+  files were intact (md5 of the shard files on both sides; the check script is not in the repo). Never judge data on /nrs through the Mac mount; the fsync + read-back
   code written for this phantom was removed. Every chunk carries a crc32c, so real damage fails loudly.
 - The fat jar must be built with `mvn clean package -Pfatjar`; without `clean`, shade reuses the previous jar's classes.
 - `InterestPointsZarrStore.get()` must key by normalized directory: `file:/x/` and `file:///x` once gave two instances per JVM, the second
@@ -287,7 +287,7 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
   together with its descriptor `TranslationInvariantLocalCoordinateSystemPointDescriptor`, whose `localize(double[])` had
   filled only 6 of 9 components since 2017. RGLDM in AUTO mode is faster and exact. BigStitcher-Spark still references the
   removed classes and must map `FAST_TRANSLATION` to RGLDM/AUTO (or drop it) before it bumps its multiview-reconstruction
-  dependency past 9.0.13.
+  dependency to 9.0.15 (the first release without them).
 
 ## BDV Performance — Use Batch APIs
 
