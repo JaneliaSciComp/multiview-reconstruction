@@ -314,9 +314,7 @@ public class TestInterestPointsZarr
 		assertEquals( 1, new File( zarr, "staging" ).list().length, "one staging file per saveStaged call" );
 		assertTrue( storeB.hasPoints( late9 ), "B must find a staging file written after its listing" );
 		assertEquals( checksum( correspondences( 3, "beads" ) ), checksum( storeB.correspondences( late10 ) ) );
-		final double[] expectedLoc = InterestPointsZarrStore.Points.of(
-				points( 2, "beads" ).stream().mapToInt( InterestPoint::getId ).toArray(),
-				points( 2, "beads" ).stream().map( InterestPoint::getL ).toArray( double[][]::new ) ).loc();
+		final double[] expectedLoc = points( 2, "beads" ).stream().flatMapToDouble( p -> java.util.Arrays.stream( p.getL() ) ).toArray();
 		assertArrayEquals( expectedLoc, storeB.points( late9 ).loc(), 0.0 );
 
 		store.commit(); // A folds the staging file into a new generation and deletes it

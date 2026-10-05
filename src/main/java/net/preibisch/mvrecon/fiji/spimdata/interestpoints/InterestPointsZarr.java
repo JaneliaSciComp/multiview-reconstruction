@@ -24,10 +24,10 @@ package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,10 +58,8 @@ public class InterestPointsZarr extends InterestPoints
 	final String path; // XML text
 	final InterestPointsZarrStore.Key key;
 
-	int[] ids = null;
-	double[][] locations = null;
-	/** Named per-point attributes, one value per point in the order of {@code ids}; they change only with the points. */
-	TreeMap< String, double[] > attributes = new TreeMap<>();
+	/** The points in the store's layout (ids, flat x y z, attributes); null until loaded. Replaced as a whole, never mutated. */
+	InterestPointsZarrStore.Points points = null;
 	ArrayList< CorrespondingInterestPoints > correspondingInterestPoints;
 
 	/** @param path the XML text {@code tpId_X_viewSetupId_Y/label} (see {@link #supports(String)}) */
@@ -89,7 +87,7 @@ public class InterestPointsZarr extends InterestPoints
 
 	private void ensurePointsLoaded()
 	{
-		if ( locations == null || ids == null )
+		if ( points == null )
 			loadInterestPoints();
 	}
 
@@ -97,12 +95,14 @@ public class InterestPointsZarr extends InterestPoints
 	public synchronized Map< Integer, InterestPoint > getInterestPointsCopy()
 	{
 		ensurePointsLoaded();
+		final int[] ids = points.ids();
+		final double[] loc = points.loc();
 		if ( ids.length == 0 )
 			return new HashMap<>();
 
 		return IntStream.range( 0, ids.length )
 				.parallel()
-				.mapToObj( i -> new InterestPoint( ids[ i ], locations[ i ].clone() ) )
+				.mapToObj( i -> new InterestPoint( ids[ i ], Arrays.copyOfRange( loc, 3 * i, 3 * i + 3 ) ) )
 				.collect( Collectors.toMap( InterestPoint::getId, point -> point ) );
 	}
 
@@ -159,14 +159,14 @@ public class InterestPointsZarr extends InterestPoints
 	public synchronized Set< String > getAttributeNames()
 	{
 		ensurePointsLoaded();
-		return new TreeSet<>( attributes.keySet() );
+		return new TreeSet<>( points.attributes().keySet() );
 	}
 
 	/** @return a copy of an attribute's values, in the order of the points, or null if the list does not have it */
 	public synchronized double[] getAttributeCopy( final String name )
 	{
 		ensurePointsLoaded();
-		final double[] values = attributes.get( name );
+		final double[] values = points.attributes().get( name );
 		return values == null ? null : values.clone();
 	}
 
@@ -179,37 +179,36 @@ public class InterestPointsZarr extends InterestPoints
 	 */
 	public synchronized void setInterestPoints( final Collection< InterestPoint > points, final Map< String, double[] > attributes )
 	{
-		final TreeMap< String, double[] > attrsCopy = new TreeMap<>();
-		if ( attributes != null )
-		{
-			InterestPointsZarrStore.checkAttrs( attributes, points == null ? 0 : points.size() );
-			attributes.forEach( ( name, values ) -> attrsCopy.put( name, values.clone() ) );
-		}
-		setInterestPoints( points );
-		this.attributes = attrsCopy;
+		modifiedInterestPoints = true;
+		this.points = toPoints( points, attributes );
 	}
 
 	@Override
 	protected void setInterestPointsLocal( final Collection< InterestPoint > points )
 	{
-		attributes = new TreeMap<>(); // attributes do not survive new points
+		this.points = toPoints( points, null ); // attributes do not survive new points
+	}
 
-		if ( points == null || points.isEmpty() )
-		{
-			ids = new int[ 0 ];
-			locations = new double[ 0 ][ 0 ];
-			return;
-		}
+	/** Copies the points (local coordinates) and the attribute arrays into the store's layout. */
+	static InterestPointsZarrStore.Points toPoints( final Collection< InterestPoint > points, final Map< String, double[] > attributes )
+	{
+		final int n = points == null ? 0 : points.size();
+		final int[] ids = new int[ n ];
+		final double[] loc = new double[ 3 * n ];
+		int i = 0;
+		if ( points != null )
+			for ( final InterestPoint point : points )
+			{
+				ids[ i ] = point.getId();
+				System.arraycopy( point.getL(), 0, loc, 3 * i, 3 );
+				++i;
+			}
 
-		ids = new int[ points.size() ];
-		locations = new double[ points.size() ][];
-		final Iterator< InterestPoint > iterator = points.iterator();
-		for ( int i = 0; i < ids.length; ++i )
-		{
-			final InterestPoint point = iterator.next();
-			ids[ i ] = point.getId();
-			locations[ i ] = point.getL().clone();
-		}
+		final TreeMap< String, double[] > attrsCopy = new TreeMap<>();
+		if ( attributes != null )
+			attributes.forEach( ( name, values ) -> attrsCopy.put( name, values.clone() ) );
+
+		return new InterestPointsZarrStore.Points( ids, loc, attrsCopy );
 	}
 
 	@Override
@@ -235,11 +234,8 @@ public class InterestPointsZarr extends InterestPoints
 		{
 			final InterestPointsZarr zarrList = (InterestPointsZarr) list; // the only InterestPoints implementation
 			final InterestPointsZarrStore store = zarrList.store();
-			if ( zarrList.modifiedInterestPoints && zarrList.ids != null && zarrList.locations != null )
-			{
-				final InterestPointsZarrStore.Points points = InterestPointsZarrStore.Points.of( zarrList.ids, zarrList.locations, zarrList.attributes );
-				pointsByStore.computeIfAbsent( store, s -> new HashMap<>() ).put( zarrList.key, points );
-			}
+			if ( zarrList.modifiedInterestPoints && zarrList.points != null )
+				pointsByStore.computeIfAbsent( store, s -> new HashMap<>() ).put( zarrList.key, zarrList.points );
 			if ( zarrList.modifiedCorrespondingInterestPoints && zarrList.correspondingInterestPoints != null )
 			{
 				final List< CorrespondingInterestPoints > correspondences = new ArrayList<>( zarrList.correspondingInterestPoints );
@@ -266,10 +262,10 @@ public class InterestPointsZarr extends InterestPoints
 	{
 		if ( !modifiedInterestPoints && !forceWrite )
 			return true;
-		if ( ids == null || locations == null )
+		if ( points == null )
 			return false;
 
-		store().savePoints( key, InterestPointsZarrStore.Points.of( ids, locations, attributes ) );
+		store().savePoints( key, points );
 		modifiedInterestPoints = false;
 		return true;
 	}
@@ -291,18 +287,12 @@ public class InterestPointsZarr extends InterestPoints
 	@Override
 	protected boolean loadInterestPoints()
 	{
-		InterestPointsZarrStore.Points points = store().points( key );
-		if ( points == null )
-			points = InterestPointsN5ToZarr.get( basePath ).points( path ); // legacy: goes with InterestPointsN5
+		InterestPointsZarrStore.Points loaded = store().points( key );
+		if ( loaded == null )
+			loaded = InterestPointsN5ToZarr.get( basePath ).points( path ); // legacy: goes with InterestPointsN5
 
-		final boolean found = points != null;
-		if ( !found )
-			points = new InterestPointsZarrStore.Points( new int[ 0 ], new double[ 0 ] );
-
-		ids = points.ids().clone();
-		locations = points.locations(); // ponytail: keeps the double[][] layout; flat arrays would halve memory
-		attributes = new TreeMap<>();
-		points.attributes().forEach( ( name, values ) -> attributes.put( name, values.clone() ) );
+		final boolean found = loaded != null;
+		points = found ? loaded : new InterestPointsZarrStore.Points( new int[ 0 ], new double[ 0 ] );
 		modifiedInterestPoints = false;
 		return found;
 	}

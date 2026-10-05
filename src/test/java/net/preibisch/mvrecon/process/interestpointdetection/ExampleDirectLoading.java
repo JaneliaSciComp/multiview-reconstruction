@@ -48,9 +48,9 @@ public class ExampleDirectLoading
 		}
 
 		final int[] ids = points.ids();
-		final double[][] locations = points.locations();
+		final double[] loc = points.loc();
 		for ( int i = 0; i < ids.length; ++i )
-			System.out.println( ids[ i ] + " " + Arrays.toString( locations[ i ] ) );
+			System.out.println( ids[ i ] + " " + Arrays.toString( Arrays.copyOfRange( loc, 3 * i, 3 * i + 3 ) ) );
 
 		for ( final Map.Entry< String, double[] > attribute : points.attributes().entrySet() )
 			System.out.println( attribute.getKey() + ": " + attribute.getValue().length + " values" );
