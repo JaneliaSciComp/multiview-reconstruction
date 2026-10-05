@@ -38,6 +38,7 @@ import java.util.stream.IntStream;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
 
 /**
@@ -116,7 +117,7 @@ public class InterestPointsZarr extends InterestPoints
 		return copy;
 	}
 
-	/** If the list is not loaded, reads only this pair's rows from the store. */
+	/** If the list is not loaded, reads only this pair's rows from the store; else filters the loaded list. */
 	@Override
 	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId partnerView, final String partnerLabel )
 	{
@@ -126,10 +127,16 @@ public class InterestPointsZarr extends InterestPoints
 			if ( pair != null )
 				return pair;
 		}
-		return super.getCorrespondingInterestPointsCopy( partnerView, partnerLabel );
+
+		final ArrayList< CorrespondingInterestPoints > pair = new ArrayList<>();
+		for ( final CorrespondingInterestPoints correspondence : getCorrespondingInterestPointsCopy() )
+			if ( correspondence.getCorrespodingLabel().equals( partnerLabel ) && correspondence.getCorrespondingViewId().equals( partnerView ) )
+				pair.add( correspondence );
+
+		return pair;
 	}
 
-	/** If the list is not loaded, reads the partners from the store index. */
+	/** If the list is not loaded, reads the partners from the store index; else derives them from the loaded list. */
 	@Override
 	public Set< Pair< ViewId, String > > getCorrespondingViews()
 	{
@@ -139,7 +146,12 @@ public class InterestPointsZarr extends InterestPoints
 			if ( partners != null )
 				return partners;
 		}
-		return super.getCorrespondingViews();
+
+		final Set< Pair< ViewId, String > > partners = new HashSet<>();
+		for ( final CorrespondingInterestPoints correspondence : getCorrespondingInterestPointsCopy() )
+			partners.add( new ValuePair<>( correspondence.getCorrespondingViewId(), correspondence.getCorrespodingLabel() ) );
+
+		return partners;
 	}
 
 	public synchronized Set< String > getAttributeNames()
