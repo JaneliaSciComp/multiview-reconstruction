@@ -163,7 +163,7 @@ public class InterestPointsZarrStore
 		public int compareTo( final Key other ) { return ORDER.compare( this, other ); }
 	}
 
-	/** The points of one entry: ids, flat x, y, z coordinates, and named attributes with one value per point. */
+	/** The points of one entry: ids, flat x, y, z coordinates, and named attributes with one value per point. Treated as immutable. */
 	public record Points( int[] ids, double[] loc, Map< String, double[] > attributes )
 	{
 		public Points
@@ -176,32 +176,7 @@ public class InterestPointsZarrStore
 
 		public Points( final int[] ids, final double[] loc ) { this( ids, loc, null ); }
 
-		public static Points of( final int[] ids, final double[][] locations ) { return of( ids, locations, null ); }
-
-		/** Copies all arrays. */
-		public static Points of( final int[] ids, final double[][] locations, final Map< String, double[] > attributes )
-		{
-			final double[] loc = new double[ ids.length * 3 ];
-			for ( int i = 0; i < ids.length; ++i )
-				System.arraycopy( locations[ i ], 0, loc, i * 3, 3 );
-
-			final TreeMap< String, double[] > attrsCopy = new TreeMap<>();
-			if ( attributes != null )
-				attributes.forEach( ( name, values ) -> attrsCopy.put( name, values.clone() ) );
-
-			return new Points( ids.clone(), loc, attrsCopy );
-		}
-
 		public int size() { return ids.length; }
-
-		public double[][] locations()
-		{
-			final double[][] locations = new double[ ids.length ][];
-			for ( int i = 0; i < ids.length; ++i )
-				locations[ i ] = Arrays.copyOfRange( loc, i * 3, i * 3 + 3 );
-
-			return locations;
-		}
 	}
 
 	/** Checks that names use only letters, digits, '_', '.', '-', and that every attribute has one value per point. */
