@@ -30,10 +30,9 @@ import java.util.Collection;
 import ij.ImagePlus;
 import ij.gui.OvalRoi;
 import ij.gui.Overlay;
-import net.imglib2.Point;
 import net.imglib2.RealLocalizable;
-import net.imglib2.algorithm.localextrema.RefinedPeak;
 import net.imglib2.util.Util;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
 
 public class HelperFunctions {
 
@@ -60,35 +59,32 @@ public class HelperFunctions {
 		final float x = peak.getFloatPosition(0);
 		final float y = peak.getFloatPosition(1);
 
-		boolean res = (x >= (rectangle.x) && y >= (rectangle.y) && x < (rectangle.width + rectangle.x - 1)
-				&& y < (rectangle.height + rectangle.y - 1));
+		// the last row and column belong to the rectangle (pixel i covers [i, i+1))
+		boolean res = (x >= (rectangle.x) && y >= (rectangle.y) && x < (rectangle.width + rectangle.x)
+				&& y < (rectangle.height + rectangle.y));
 
 		return res;
 	}
 
-	public static ArrayList<RefinedPeak<Point>> filterPeaks(final ArrayList<RefinedPeak<Point>> peaks,
+	/**
+	 * @return the peaks inside the rectangle whose |value| exceeds the threshold (the test of the detection)
+	 */
+	public static ArrayList<InterestPointValue> filterPeaks(final Collection<InterestPointValue> peaks,
 			final Rectangle rectangle, final double threshold) {
-		final ArrayList<RefinedPeak<Point>> filtered = new ArrayList<>();
+		final ArrayList<InterestPointValue> filtered = new ArrayList<>();
 
-		for (final RefinedPeak<Point> peak : peaks)
-			if (HelperFunctions.isInside(peak, rectangle) && (Math.abs(peak.getValue()) > threshold)) 
-				// I guess the peak.getValue function returns the value in scale-space
+		for (final InterestPointValue peak : peaks)
+			if (HelperFunctions.isInside(peak, rectangle) && (Math.abs(peak.getIntensity()) > threshold))
 				filtered.add(peak);
 
 		return filtered;
 	}
 
-	// TODO: code might be reused instead of copy\pasting
-	public static ArrayList<RefinedPeak<Point>> filterPeaks(final ArrayList<RefinedPeak<Point>> peaks, final double threshold) {
-		final ArrayList<RefinedPeak<Point>> filtered = new ArrayList<>();
-		
-		for (final RefinedPeak<Point> peak : peaks)
-			if (-peak.getValue() > threshold)
-				filtered.add(peak);
-		
-		return filtered;
-	}
-
+	/**
+	 * Draws every peak as the cross-section of a ball of the given radius (pixels, isotropic) with the current slice, as the
+	 * scale-space preview does: radius sqrt( r^2 - dz^2 ), at least 1 px on the peak's own slice, nothing once the ball does not
+	 * reach the slice any more; centered on the peak (pixel i covers [i, i+1))
+	 */
 	public static <L extends RealLocalizable> void drawRealLocalizable(final Collection<L> peaks, final ImagePlus imp,
 			final double radius, final Color col, final boolean clearFirst) {
 		// extract peaks to show
@@ -107,20 +103,24 @@ public class HelperFunctions {
 
 		// 'channel', 'slice' and 'frame' are one-based indexes
 		final int currentSlice = imp.getZ() - 1;
+		final double r = Math.max( 1.0, radius );
 
 		for (final L peak : peaks) {
 
-			// determine Z distance from peak center and adjust scale radius
-			final float x = peak.getFloatPosition(0);
-			final float y = peak.getFloatPosition(1);
+			final double x = peak.getDoublePosition(0);
+			final double y = peak.getDoublePosition(1);
 			// 2d peaks have no z coordinate, so treat them as being on the current slice
-			final float zDistance = ( peak.numDimensions() > 2 ? Math.abs(peak.getFloatPosition(2) - currentSlice) : 0 ) + 1;
-			double drawRadius = 1.5 * radius / Math.sqrt( zDistance );
+			final double dz = peak.numDimensions() > 2 ? peak.getDoublePosition(2) - currentSlice : 0;
+			final double rs2 = r * r - dz * dz;
 
-			// only draw nearby peaks
-			if ( drawRadius > 0.67 )
+			if ( rs2 <= 0 )
+				continue;
+
+			final double rs = Math.sqrt( rs2 );
+
+			if ( rs >= 0.5 )
 			{
-				final OvalRoi or = new OvalRoi(x - radius + 0.5, y - radius + 0.5, drawRadius * 2, drawRadius * 2);
+				final OvalRoi or = new OvalRoi(x - rs + 0.5, y - rs + 0.5, rs * 2, rs * 2);
 				or.setStrokeColor(col);
 				overlay.add(or);
 			}

@@ -398,7 +398,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 				" Channel=" + vd1.getViewSetup().getChannel().getName();
 
 		if ( !groupIllums )
-			name += " Illum=" + vd1.getViewSetup().getChannel().getName();
+			name += " Illum=" + vd1.getViewSetup().getIllumination().getName();
 
 		if ( !groupTiles )
 			name += " Tile=" + vd1.getViewSetup().getTile().getName();

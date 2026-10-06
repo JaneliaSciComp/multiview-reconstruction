@@ -23,7 +23,6 @@
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -293,22 +292,13 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		params.findMaxima = defaultFindMax;
 		params.findMinima = defaultFindMin;
 
-		final double min, max;
+		// the user's intensity range, otherwise the exact one of this image (what the detection computes for every view)
+		final InteractiveDoG idog;
 
 		if ( Double.isNaN( minIntensity ) || Double.isNaN( maxIntensity ) )
-		{
-			min = imp.getDisplayRangeMin();
-			max = imp.getDisplayRangeMax();
-
-			IOFunctions.println( "(" + new Date(System.currentTimeMillis() ) + "): Using approximate min [" + min + "]/max[" + max + "] intensity values ... to have a more accurate preview your can manually set min/max intensity." );
-		}
+			idog = new InteractiveDoG( imp, params );
 		else
-		{
-			min = minIntensity;
-			max = maxIntensity;
-		}
-
-		final InteractiveDoG idog = new InteractiveDoG( imp, params, min, max );
+			idog = new InteractiveDoG( imp, params, minIntensity, maxIntensity );
 		do
 		{
 			try

@@ -49,15 +49,8 @@ public class ThresholdListener implements AdjustmentListener {
 				
 		label.setText("Threshold = " + String.format(java.util.Locale.US, "%.5f", parent.params.threshold));
 
-		if (!parent.isComputing) {
+		// filtering only, cheap; the preview computes on the event thread, so this can only be re-entered by an update it triggers itself
+		if (!parent.isComputing)
 			parent.updatePreview(ValueChange.THRESHOLD);
-		} else if (!event.getValueIsAdjusting()) {
-			while (parent.isComputing) {
-				try {
-					Thread.sleep( 10 );
-				} catch (InterruptedException e) {}
-			}
-			parent.updatePreview(ValueChange.THRESHOLD);
-		}
 	}
 }
