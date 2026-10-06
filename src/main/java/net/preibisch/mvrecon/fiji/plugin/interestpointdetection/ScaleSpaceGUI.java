@@ -302,8 +302,8 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		if ( groupIllums || groupTiles )
 			IOFunctions.println( "Scale space: the interactive preview always shows a single view (the detection groups the views as selected)." );
 
-		// the intensity range: the same for all views if requested (as for the single-scale DoG), otherwise the one
-		// of the preview image, which is then used for all views so that the threshold transfers
+		// the intensity range: the user's, the same for all views if requested, otherwise every image (the preview's
+		// and each view's in the detection) computes its own
 		if ( sameMinMax || groupIllums || groupTiles )
 			preprocess();
 
@@ -333,8 +333,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		this.findMax = defaultFindMax = session.getFindMax();
 		this.steps = defaultSteps = session.getSteps();
 		this.octaves = defaultOctaves = session.getOctaves();
-		this.minIntensity = session.getMin();
-		this.maxIntensity = session.getMax();
 
 		// the starting resolution of the window Done was pressed in
 		this.downsampling = session.getDownsampling().clone();

@@ -289,7 +289,6 @@ public class TestInteractiveScaleSpace
 		assertEquals( "all", InteractiveScaleSpace.octaveChoices[ 0 ] );
 		assertEquals( "3", InteractiveScaleSpace.octaveChoices[ 3 ] );
 		assertNull( session.getDownsampling() );
-		assertTrue( Double.isNaN( session.getMin() ) );
 
 		// without windows cancel finishes the session, waitUntilFinished returns
 		session.cancel();

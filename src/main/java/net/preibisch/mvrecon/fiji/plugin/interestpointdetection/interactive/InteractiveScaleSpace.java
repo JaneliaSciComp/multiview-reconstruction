@@ -169,12 +169,9 @@ public class InteractiveScaleSpace
 		/** the precomputed resolution levels offered ("fx, fy, fz"), see DownsampleTools.availableDownsamplings */
 		final String[] resolutions;
 
-		/** the parameters of the dialog, the initial threshold, flags and intensity range */
+		/** the parameters of the dialog, the initial threshold, flags and intensity range (NaN = computed from every image, as the detection does per view) */
 		final ScaleSpaceParameters base;
 		final double anisotropyZ;
-
-		/** the intensity range used by all windows (NaN until the first window has opened its image) */
-		double min, max;
 
 		final ArrayList< InteractiveScaleSpace > windows = new ArrayList<>();
 		int opening = 0;
@@ -196,8 +193,6 @@ public class InteractiveScaleSpace
 			this.resolutions = resolutions;
 			this.base = new ScaleSpaceParameters( base );
 			this.anisotropyZ = anisotropyZ;
-			this.min = base.minIntensity;
-			this.max = base.maxIntensity;
 			this.threshold = base.threshold;
 			this.detectFinestLevel = base.detectFinestLevel;
 			this.findMin = base.findMin;
@@ -244,15 +239,6 @@ public class InteractiveScaleSpace
 					}
 				}
 			}, "InteractiveScaleSpace" ).start();
-		}
-
-		synchronized void setRange( final double min, final double max )
-		{
-			if ( Double.isNaN( this.min ) || Double.isNaN( this.max ) )
-			{
-				this.min = min;
-				this.max = max;
-			}
 		}
 
 		synchronized void register( final InteractiveScaleSpace window )
@@ -353,10 +339,6 @@ public class InteractiveScaleSpace
 
 		/** the index of the adopted resolution in resolutions, -1 if typed manually */
 		public int getResolutionIndex() { return resolutionIndex; }
-
-		public double getMin() { return min; }
-
-		public double getMax() { return max; }
 	}
 
 	final Session session;
@@ -418,22 +400,20 @@ public class InteractiveScaleSpace
 		this.img = toFloat( input.getA() );
 		this.mipmapTransform = input.getB();
 
-		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
-
-		// the intensity range: the one of the dialog, otherwise the one of the first opened image (as the detection would compute it), the same for all windows
-		if ( Double.isNaN( session.getMin() ) || Double.isNaN( session.getMax() ) )
-		{
-			final float[] minmax = FusionTools.minMax( img, service );
-			session.setRange( minmax[ 0 ], minmax[ 1 ] );
-
-			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Scale-space preview: intensity range of the image [" + session.getMin() + ", " + session.getMax() + "], it is used for all views of the detection." );
-		}
-
-		service.shutdown();
-
 		this.p = new ScaleSpaceParameters( session.base );
-		this.p.minIntensity = session.getMin();
-		this.p.maxIntensity = session.getMax();
+
+		// the intensity range: the one of the dialog, otherwise the one of this image, exactly as the detection computes it for this view
+		if ( Double.isNaN( p.minIntensity ) || Double.isNaN( p.maxIntensity ) )
+		{
+			final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
+			final float[] minmax = FusionTools.minMax( img, service );
+			service.shutdown();
+
+			this.p.minIntensity = minmax[ 0 ];
+			this.p.maxIntensity = minmax[ 1 ];
+
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Scale-space preview: intensity range computed from the image [" + minmax[ 0 ] + ", " + minmax[ 1 ] + "] (the detection computes it per view the same way)." );
+		}
 		this.p.anisotropy = ScaleSpace.anisotropy( session.vd, mipmapTransform, session.anisotropyZ );
 		this.p.findMin = findMin;
 		this.p.findMax = findMax;
@@ -442,7 +422,7 @@ public class InteractiveScaleSpace
 		this.p.steps = steps;
 		this.p.octaves = octaves;
 
-		this.imp = FusionTools.getImagePlusInstance( img, Intervals.numElements( img ) > maxVoxelsInMemory, name, session.getMin(), session.getMax(), null );
+		this.imp = FusionTools.getImagePlusInstance( img, Intervals.numElements( img ) > maxVoxelsInMemory, name, p.minIntensity, p.maxIntensity, null );
 		this.imp.setDimensions( 1, imp.getStackSize(), 1 );
 		this.imp.show();
 		this.imp.setSlice( Math.max( 1, imp.getStackSize() / 2 ) );
