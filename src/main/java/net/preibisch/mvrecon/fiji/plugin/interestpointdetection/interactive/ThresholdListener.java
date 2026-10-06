@@ -22,30 +22,33 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive;
 
-import java.awt.Label;
-import java.awt.event.AdjustmentEvent;
-import java.awt.event.AdjustmentListener;
+import javax.swing.JLabel;
+import javax.swing.JSlider;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
 
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive.InteractiveDoG.ValueChange;
 
-public class ThresholdListener implements AdjustmentListener {
+public class ThresholdListener implements ChangeListener {
 	final InteractiveDoG parent;
-	final Label label;
+	final JLabel label;
+	final JSlider slider;
 	final float min, max;
 	final float log1001 = (float) Math.log10(1001);
 
 	public ThresholdListener(
 			final InteractiveDoG parent,
-			final Label label, final float min, final float max) {
+			final JLabel label, final float min, final float max, final JSlider slider) {
 		this.parent = parent;
 		this.label = label;
 		this.min = min;
 		this.max = max;
+		this.slider = slider;
 	}
 
 	@Override
-	public void adjustmentValueChanged(final AdjustmentEvent event) {
-		parent.params.threshold = min + ((log1001 - (float) Math.log10(1001 - event.getValue())) / log1001) * (max - min);
+	public void stateChanged(final ChangeEvent event) {
+		parent.params.threshold = min + ((log1001 - (float) Math.log10(1001 - slider.getValue())) / log1001) * (max - min);
 				
 		label.setText("Threshold = " + String.format(java.util.Locale.US, "%.5f", parent.params.threshold));
 

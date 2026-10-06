@@ -22,115 +22,113 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive;
 
-import java.awt.Button;
-import java.awt.Checkbox;
-import java.awt.Frame;
+import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.awt.Label;
-import java.awt.Scrollbar;
+
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JSlider;
+import javax.swing.SwingConstants;
 
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive.InteractiveDoG.ValueChange;
 
+/**
+ * The window of the interactive DoG: sliders for sigma and threshold, minima/maxima, Done and Cancel (Swing, packed to its content)
+ */
 public class DoGWindow
 {
 	final InteractiveDoG parent;
-	final Frame doGFrame;
+	final JFrame doGFrame;
 
 	public DoGWindow( final InteractiveDoG parent )
 	{
 		this.parent = parent;
-		this.doGFrame = new Frame( "Adjust difference-of-gaussian values" );
-		doGFrame.setSize(360, 200);
+		this.doGFrame = new JFrame( "Adjust difference-of-gaussian values" );
+		this.doGFrame.setDefaultCloseOperation( JFrame.DO_NOTHING_ON_CLOSE );
 
 		/* Instantiation */
-		final GridBagLayout layout = new GridBagLayout();
-		final GridBagConstraints c = new GridBagConstraints();
-
-		int scrollbarInitialPosition = HelperFunctions.computeScrollbarPositionFromValue(parent.params.sigma, InteractiveDoG.sigmaMin, InteractiveDoG.sigmaMax, parent.scrollbarSize);
-		final Scrollbar sigma1Bar = new Scrollbar(Scrollbar.HORIZONTAL, scrollbarInitialPosition, 10, 0,
-				10 + parent.scrollbarSize);
+		int sliderInitialPosition = HelperFunctions.computeScrollbarPositionFromValue(parent.params.sigma, InteractiveDoG.sigmaMin, InteractiveDoG.sigmaMax, parent.scrollbarSize);
+		final JSlider sigma1Bar = new JSlider( SwingConstants.HORIZONTAL, 0, parent.scrollbarSize, sliderInitialPosition );
 
 		final float log1001 = (float) Math.log10(parent.scrollbarSize + 1);
-		scrollbarInitialPosition = (int) Math
+		sliderInitialPosition = (int) Math
 				.round(1001 - Math.pow(10, (InteractiveDoG.thresholdMax - parent.params.threshold) / (InteractiveDoG.thresholdMax - InteractiveDoG.thresholdMin) * log1001));
-		final Scrollbar thresholdBar = new Scrollbar(Scrollbar.HORIZONTAL, scrollbarInitialPosition, 10, 0,
-				10 + parent.scrollbarSize);
+		final JSlider thresholdBar = new JSlider( SwingConstants.HORIZONTAL, 0, parent.scrollbarSize, Math.max( 0, Math.min( parent.scrollbarSize, sliderInitialPosition ) ) );
 
-		final Label sigmaText1 = new Label("Sigma = " + String.format(java.util.Locale.US, "%.3f", parent.params.sigma),
-				Label.CENTER);
+		for ( final JSlider slider : new JSlider[] { sigma1Bar, thresholdBar } )
+		{
+			slider.setFocusable( false );
+			slider.setPreferredSize( new Dimension( 440, slider.getPreferredSize().height ) );
+		}
 
-		final Label thresholdText = new Label(
-				"Threshold = " + String.format(java.util.Locale.US, "%.5f", parent.params.threshold), Label.CENTER);
+		final JLabel sigmaText1 = new JLabel("Sigma = " + String.format(java.util.Locale.US, "%.3f", parent.params.sigma), SwingConstants.CENTER);
+		final JLabel thresholdText = new JLabel("Threshold = " + String.format(java.util.Locale.US, "%.5f", parent.params.threshold), SwingConstants.CENTER);
 
-		final Button button = new Button("Done");
-		final Button cancel = new Button("Cancel");
-		final Checkbox maxima = new Checkbox("Find DoG maxima (red)", parent.params.findMaxima);
-		final Checkbox minima = new Checkbox("Find DoG minima (green)", parent.params.findMinima);
+		final JButton button = new JButton("Done");
+		final JButton cancel = new JButton("Cancel");
+		final JCheckBox maxima = new JCheckBox("Find DoG maxima (red)", parent.params.findMaxima);
+		final JCheckBox minima = new JCheckBox("Find DoG minima (green)", parent.params.findMinima);
 
-		/* Location */
-		doGFrame.setLayout(layout);
-
-		// insets constants
-		int inTop = 0;
-		int inRight = 5;
-		int inBottom = 0;
-		int inLeft = inRight;
+		/* Layout */
+		final JPanel panel = new JPanel( new GridBagLayout() );
+		final GridBagConstraints c = new GridBagConstraints();
 
 		c.fill = GridBagConstraints.HORIZONTAL;
 		c.gridx = 0;
 		c.gridy = 0;
+		c.gridwidth = 2;
 		c.weightx = 1;
-		doGFrame.add(sigmaText1, c);
+		c.insets = new Insets( 4, 8, 0, 8 );
+		panel.add(sigmaText1, c);
 
 		++c.gridy;
-		c.insets = new Insets(inTop, inLeft, inBottom, inRight);
-		doGFrame.add(sigma1Bar, c);
+		c.insets = new Insets( 0, 8, 4, 8 );
+		panel.add(sigma1Bar, c);
 
 		++c.gridy;
-		doGFrame.add(thresholdText, c);
+		c.insets = new Insets( 4, 8, 0, 8 );
+		panel.add(thresholdText, c);
 
 		++c.gridy;
-		doGFrame.add(thresholdBar, c);
+		c.insets = new Insets( 0, 8, 4, 8 );
+		panel.add(thresholdBar, c);
 
-		c.fill = GridBagConstraints.CENTER;
-		++c.gridy;
-		doGFrame.add(maxima, c);
-
-		++c.gridy;
-		doGFrame.add(minima, c);
-
-		// insets for buttons
-		int bInTop = 0;
-		int bInRight = 120;
-		int bInBottom = 0;
-		int bInLeft = bInRight;
-		c.fill = GridBagConstraints.HORIZONTAL;
-
-		 ++c.gridy;
-		 c.insets = new Insets(bInTop, bInLeft, bInBottom, bInRight);
-		 doGFrame.add(button, c);
+		final JPanel checkboxes = new JPanel();
+		checkboxes.add( maxima );
+		checkboxes.add( minima );
 
 		++c.gridy;
-		c.insets = new Insets(bInTop, bInLeft, bInBottom, bInRight);
-		doGFrame.add(cancel, c);
+		c.insets = new Insets( 0, 8, 0, 8 );
+		panel.add( checkboxes, c );
+
+		++c.gridy;
+		c.gridwidth = 1;
+		c.insets = new Insets( 4, 8, 8, 4 );
+		panel.add( button, c );
+		c.gridx = 1;
+		c.insets = new Insets( 4, 4, 8, 8 );
+		panel.add( cancel, c );
+
+		doGFrame.setContentPane( panel );
+		doGFrame.pack();
 
 		/* On screen positioning */
-		/* Screen positioning */
-		int xOffset = 20; 
-		int yOffset = 20;
-		doGFrame.setLocation(xOffset, yOffset);
+		doGFrame.setLocation( 20, 20 );
 
 		/* Configuration */
-		sigma1Bar.addAdjustmentListener(new SigmaListener(parent,sigmaText1, InteractiveDoG.sigmaMin, InteractiveDoG.sigmaMax, parent.scrollbarSize, sigma1Bar));
-		thresholdBar.addAdjustmentListener(new ThresholdListener(parent,thresholdText, InteractiveDoG.thresholdMin, InteractiveDoG.thresholdMax));
-		maxima.addItemListener( l -> {parent.params.findMaxima = maxima.getState(); parent.updatePreview(ValueChange.MINMAX);} );
-		minima.addItemListener( l -> {parent.params.findMinima = minima.getState(); parent.updatePreview(ValueChange.MINMAX);} );
+		sigma1Bar.addChangeListener(new SigmaListener(parent, sigmaText1, InteractiveDoG.sigmaMin, InteractiveDoG.sigmaMax, parent.scrollbarSize, sigma1Bar));
+		thresholdBar.addChangeListener(new ThresholdListener(parent, thresholdText, InteractiveDoG.thresholdMin, InteractiveDoG.thresholdMax, thresholdBar));
+		maxima.addItemListener( l -> {parent.params.findMaxima = maxima.isSelected(); parent.updatePreview(ValueChange.MINMAX);} );
+		minima.addItemListener( l -> {parent.params.findMinima = minima.isSelected(); parent.updatePreview(ValueChange.MINMAX);} );
 		button.addActionListener(new FinishedButtonListener(parent, false));
 		cancel.addActionListener(new FinishedButtonListener(parent, true));
 		doGFrame.addWindowListener(new FrameListener(parent));
 	}
 
-	public Frame getFrame() { return doGFrame; }
+	public JFrame getFrame() { return doGFrame; }
 }
