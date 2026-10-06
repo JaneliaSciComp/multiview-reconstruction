@@ -502,18 +502,27 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		//IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Caching input image ... "  );
 		//img = FusionTools.cacheRandomAccessibleInterval( img, FusionGUI.maxCacheSize, new FloatType(), FusionGUI.cellDim );
 
+		final double min, max;
+
 		if ( sameMinMax )
 		{
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Determining same Min & Max for all views... " );
 			preprocess();
+			min = minIntensity;
+			max = maxIntensity;
 		}
 		else if ( Double.isNaN( minIntensity ) || Double.isNaN( maxIntensity ) )
 		{
-			// only auto-detect when the user did not provide min/max in the dialog
+			// the preview needs a range when the user did not provide one: approximate it from this view, but the
+			// fields stay NaN so that the detection computes the range of every view itself
 			final double[] minmax = FusionTools.minMaxApprox1( img );
-
-			minIntensity = minmax[ 0 ];
-			maxIntensity = minmax[ 1 ];
+			min = minmax[ 0 ];
+			max = minmax[ 1 ];
+		}
+		else
+		{
+			min = minIntensity;
+			max = maxIntensity;
 		}
 
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Wrapping ImagePlus around input image ... " );
@@ -521,7 +530,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		return FusionTools.getImagePlusInstance(
 				img, false,
 				"tp: " + viewDescription.getTimePoint().getName() + " viewSetup: " + viewDescription.getViewSetupId(),
-				minIntensity, maxIntensity, null );
+				min, max, null );
 	}
 
 	protected ImagePlus getGroupedImagePlusForInteractive( final String dialogHeader )
