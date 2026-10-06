@@ -35,8 +35,12 @@ public class FrameListener extends WindowAdapter {
 		this.parent = parent;
 	}
 
+	/**
+	 * Closing the window cancels (Done is the button)
+	 */
 	@Override
 	public void windowClosing(WindowEvent e) {
+		parent.wasCanceled = true;
 		parent.dispose();
 	}
 }

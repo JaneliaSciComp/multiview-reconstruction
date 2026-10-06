@@ -65,15 +65,8 @@ public class ROIListener implements MouseListener {
 			source.setRoi( parent.rectangle );
 		}
 
-		// TODO: might put the update part for the roi here instead of the updatePreview
-		while (parent.isComputing)
-		{
-			try {
-				Thread.sleep( 10 );
-			} catch (InterruptedException e1) {}
-		}
-
-		parent.updatePreview(ValueChange.ROI);
+		if (!parent.isComputing)
+			parent.updatePreview(ValueChange.ROI);
 
 	}
 }

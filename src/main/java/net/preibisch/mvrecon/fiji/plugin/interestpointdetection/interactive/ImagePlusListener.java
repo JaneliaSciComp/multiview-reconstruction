@@ -37,14 +37,7 @@ public class ImagePlusListener implements SliceListener
 
 	@Override
 	public void sliceChanged(ImagePlus arg0) {
-		if (parent.isStarted) {
-			// System.out.println("Slice changed!");
-			while (parent.isComputing) {
-				try {
-					Thread.sleep( 10 );
-				} catch (InterruptedException e) {}
-			}
+		if (parent.isStarted && !parent.isComputing)
 			parent.updatePreview(ValueChange.SLICE);
-		}
 	}
 }

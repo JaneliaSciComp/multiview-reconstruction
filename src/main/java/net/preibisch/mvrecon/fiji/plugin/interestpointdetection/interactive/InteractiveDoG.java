@@ -24,29 +24,37 @@ package net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive;
 
 import java.awt.Color;
 import java.awt.Rectangle;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.concurrent.ExecutorService;
 
 import fiji.tool.SliceObserver;
 import ij.ImageJ;
 import ij.ImagePlus;
+import ij.gui.ImageCanvas;
+import ij.gui.ImageWindow;
+import ij.gui.Overlay;
 import ij.gui.Roi;
 import ij.io.Opener;
 import ij.process.ImageProcessor;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
-import net.imglib2.Point;
-import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.dog.DogDetection;
-import net.imglib2.algorithm.localextrema.RefinedPeak;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.imageplus.ImagePlusImgs;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
+import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 
 public class InteractiveDoG
 {
@@ -61,20 +69,24 @@ public class InteractiveDoG
 	ROIListener roiListener;
 
 	final ImagePlus imagePlus;
-	//final boolean normalize; // do we normalize intensities?
-	//final double min, max; // intensity of the imageplus
 
+	/** the image as it is, the detection normalizes it with min and max (as the final detection does) */
 	final RandomAccessibleInterval< FloatType > img;
+	final double min, max;
 
 	final long[] dim;
 	//final int type;
 	Rectangle rectangle;
 
-	ArrayList<RefinedPeak<Point>> peaksMin = null, peaksMax = null;
+	/** the detections of DoGImgLib2.computeDoG in the current region down to thresholdMin (maxima and minima of the image), filtered by the threshold slider */
+	ArrayList< InterestPointValue > peaksMax = null, peaksMin = null;
 
 	// TODO: always process only this part of the initial image READ ONLY
 	RandomAccessibleInterval<FloatType> imgTmp;
 	Interval extendedRoi;
+
+	final ExecutorService service = Threads.createFixedExecutorService();
+	WindowAdapter imageWindowListener;
 
 	boolean isComputing = false;
 	boolean isStarted = false;
@@ -120,18 +132,26 @@ public class InteractiveDoG
 		return wasCanceled;
 	}
 
+	/**
+	 * The intensity range is computed from the image (its exact min and max, as the final detection does for every view)
+	 */
 	public InteractiveDoG( final ImagePlus imp, final InteractiveDoGParams params )
 	{
-		this( imp, params, Double.NaN, Double.NaN );
+		this( imp, params, minMax( imp ) );
 	}
-	
+
+	private InteractiveDoG( final ImagePlus imp, final InteractiveDoGParams params, final double[] minmax )
+	{
+		this( imp, params, minmax[ 0 ], minmax[ 1 ] );
+	}
+
 	/**
-	 * Triggers the interactive radial symmetry plugin
+	 * Triggers the interactive DoG
 	 * Single-channel imageplus, 2d or 3d or 4d
 	 * 
 	 * @param imp - intial image
-	 * @param params - parameters for the computation of the radial symmetry
-	 * @param min - min intensity of the image
+	 * @param params - parameters for the computation of the DoG
+	 * @param min - min intensity of the image (the detection normalizes with it)
 	 * @param max - max intensity of the image
 	 */
 	@SuppressWarnings("unchecked")
@@ -140,22 +160,11 @@ public class InteractiveDoG
 		this.imagePlus = imp;
 
 		if ( Double.isNaN( min ) || Double.isNaN( max ) )
-		{
-			throw new RuntimeException( "min/max not set for interactive DoG." );
-			//this.img = Converters.convert( (RandomAccessibleInterval<RealType>)(Object)ImagePlusImgs.from( imp ), (i,o) -> o.set(i.getRealFloat()), new FloatType() );
-		}
-		else
-		{
-			final double range = max - min;
+			throw new IllegalArgumentException( "min/max not set for interactive DoG." );
 
-			this.img = Converters.convert(
-					(RandomAccessibleInterval<RealType<?>>)(Object)ImagePlusImgs.from( imp ),
-					(i,o) ->
-					{
-						o.set( (float)( ( i.getRealFloat() - min ) / range ) );
-					},
-					new FloatType() );
-		}
+		this.min = min;
+		this.max = max;
+		this.img = Converters.convert( (RandomAccessibleInterval<RealType<?>>)(Object)ImagePlusImgs.from( imp ), (i,o) -> o.set( i.getRealFloat() ), new FloatType() );
 
 		this.params = params;
 		this.dim = new long[]{ imp.getWidth(), imp.getHeight() };
@@ -197,7 +206,29 @@ public class InteractiveDoG
 		isStarted = true;
 		// check whenever roi is modified to update accordingly
 		roiListener = new ROIListener( this, imagePlus );
-		imagePlus.getCanvas().addMouseListener( roiListener );
+
+		final ImageCanvas canvas = imagePlus.getCanvas();
+
+		if ( canvas != null )
+			canvas.addMouseListener( roiListener );
+
+		// closing the image cancels (otherwise the caller waits forever)
+		final ImageWindow window = imagePlus.getWindow();
+
+		if ( window != null )
+		{
+			imageWindowListener = new WindowAdapter()
+			{
+				@Override
+				public void windowClosed( final WindowEvent e )
+				{
+					wasCanceled = true;
+					dispose();
+				}
+			};
+
+			window.addWindowListener( imageWindowListener );
+		}
 	}
 
 	// TODO: fix the check: "==" must not be used with floats
@@ -213,7 +244,24 @@ public class InteractiveDoG
 	 * Updates the Preview with the current parameters (sigma, threshold, roi, slice number + RANSAC parameters)
 	 * @param change - what did change
 	 */
-	protected void updatePreview(final ValueChange change) {
+	protected void updatePreview(final ValueChange change)
+	{
+		if ( isFinished )
+			return;
+
+		isComputing = true;
+
+		try
+		{
+			update( change );
+		}
+		finally
+		{
+			isComputing = false;
+		}
+	}
+
+	protected void update(final ValueChange change) {
 		// set up roi 
 		boolean roiChanged = false;
 		Roi roi = imagePlus.getRoi();
@@ -290,90 +338,100 @@ public class InteractiveDoG
 		}
 
 		// only recalculate DOG & gradient image if: sigma, roi (also through support region), slider
-		if (roiChanged || peaksMin == null || peaksMax == null || change == ValueChange.SIGMA || change == ValueChange.SLICE || change == ValueChange.MINMAX || change == ValueChange.ALL )
+		if (roiChanged || peaksMax == null || peaksMin == null || change == ValueChange.SIGMA || change == ValueChange.SLICE || change == ValueChange.MINMAX || change == ValueChange.ALL )
 		{
 			dogDetection( Views.extendMirrorSingle( imgTmp ), extendedRoi );
 		}
 
-		final double radius = ( ( params.sigma + HelperFunctions.computeSigma2( params.sigma, sensitivity ) ) / 2.0 );
-		final ArrayList< RefinedPeak< Point > > filteredPeaksMax = HelperFunctions.filterPeaks( peaksMax, rectangle, params.threshold / 2.5 ); // correction factor of 2.5 applied to match thresholding in final DoG IP detection
-		final ArrayList< RefinedPeak< Point > > filteredPeaksMin = HelperFunctions.filterPeaks( peaksMin, rectangle, params.threshold / 2.5 ); // correction factor of 2.5 applied to match thresholding in
+		// the detections at the threshold of the slider (the detection applies |value| > threshold the same way), drawn as
+		// the scale-space preview draws them: the ball of maximal response, radius sqrt(3) sigma, cut by the current slice
+		final double radius = Math.sqrt( 3 ) * params.sigma;
 
-		HelperFunctions.drawRealLocalizable( filteredPeaksMax, imagePlus, radius, Color.RED, true );
-		HelperFunctions.drawRealLocalizable( filteredPeaksMin, imagePlus, radius, Color.GREEN, false );
-
-		isComputing = false;
+		HelperFunctions.drawRealLocalizable( HelperFunctions.filterPeaks( peaksMax, rectangle, params.threshold ), imagePlus, radius, Color.RED, true );
+		HelperFunctions.drawRealLocalizable( HelperFunctions.filterPeaks( peaksMin, rectangle, params.threshold ), imagePlus, radius, Color.GREEN, false );
 	}
 
-	protected void dogDetection( final RandomAccessibleInterval <FloatType> image )
-	{
-		dogDetection( image, image );
-	}
-
+	/**
+	 * The detection itself (DoGImgLib2.computeDoG, sigma and k as in the final run) on the region, down to thresholdMin
+	 * so that the threshold slider only filters. Maxima and minima are detected separately: the detector decides the type
+	 * before the sub-pixel refinement, so the sign of the refined value does not tell it reliably.
+	 */
 	protected void dogDetection( final RandomAccessible<FloatType> image, final Interval interval )
 	{
-		final double sigma2 = HelperFunctions.computeSigma2( params.sigma, sensitivity );
+		this.peaksMax = params.findMaxima ? detect( image, interval, false, true ) : new ArrayList<>();
+		this.peaksMin = params.findMinima ? detect( image, interval, true, false ) : new ArrayList<>();
+	}
 
-		double[] calibration = new double[ image.numDimensions() ];
-		calibration[ 0 ] = 1.0;
-		calibration[ 1 ] = 1.0;
-		if ( calibration.length == 3 )
-			calibration[ 2 ] = 1.0;
+	protected ArrayList< InterestPointValue > detect( final RandomAccessible<FloatType> image, final Interval interval, final boolean findMin, final boolean findMax )
+	{
+		final boolean silent = DoGImgLib2.silent;
+		DoGImgLib2.silent = true;
 
-		this.peaksMin = new ArrayList<>();
-		this.peaksMax = new ArrayList<>();
-
-		if ( params.findMaxima )
+		try
 		{
-			final DogDetection<FloatType> dog2 =
-					new DogDetection<>(image, interval, calibration, params.sigma, sigma2 , DogDetection.ExtremaType.MINIMA, InteractiveDoG.thresholdMin, false);
-	
-			ArrayList<Point> simplePeaks = dog2.getPeaks();
-			RandomAccess<?> dog = (Views.extendBorder(dog2.getTypedDogDetection().dogImg)).randomAccess();
-	
-			for ( final Point p : simplePeaks )
-			{
-				dog.setPosition( p );
-				peaksMax.add( new RefinedPeak<Point>( p, p, ((RealType<?>)dog.get()).getRealDouble(), true ) );
-			}
-			//IOFunctions.println("finMax true: " + peaksMax.size());
+			final ArrayList< InterestPointValue > peaks = new ArrayList<>();
+
+			for ( final InterestPoint point : DoGImgLib2.computeDoG( image, null, interval, params.sigma, thresholdMin, 1, findMin, findMax, min, max, service ) )
+				if ( InterestPointValue.class.isInstance( point ) )
+					peaks.add( (InterestPointValue)point );
+
+			return peaks;
 		}
-		//peaks = dog2.getSubpixelPeaks(); 
-
-		if ( params.findMinima )
+		finally
 		{
-			final DogDetection<FloatType> dog2 =
-					new DogDetection<>(image, interval, calibration, params.sigma, sigma2 , DogDetection.ExtremaType.MAXIMA, InteractiveDoG.thresholdMin, false);
-
-			ArrayList<Point> simplePeaks = dog2.getPeaks();
-			RandomAccess<?> dog = (Views.extendBorder(dog2.getTypedDogDetection().dogImg)).randomAccess();
-	
-			for ( final Point p : simplePeaks )
-			{
-				dog.setPosition( p );
-				peaksMin.add( new RefinedPeak<Point>( p, p, ((RealType<?>)dog.get()).getRealDouble(), true ) );
-			}
-			//IOFunctions.println("finMin true: " + peaksMin.size());
+			DoGImgLib2.silent = silent;
 		}
 	}
 
 	protected final void dispose()
 	{
-		if ( dogWindow.getFrame() != null)
+		if ( isFinished )
+			return;
+
+		isFinished = true;
+
+		if ( dogWindow != null && dogWindow.getFrame() != null)
 			dogWindow.getFrame().dispose();
 
 		if (sliceObserver != null)
 			sliceObserver.unregister();
 
-		if ( imagePlus != null) {
-			if (roiListener != null)
-				imagePlus.getCanvas().removeMouseListener(roiListener);
+		if ( imagePlus != null)
+		{
+			// the image window might be gone already (closing it cancels the preview)
+			final ImageCanvas canvas = imagePlus.getCanvas();
 
-			imagePlus.getOverlay().clear();
-			imagePlus.updateAndDraw();
+			if ( roiListener != null && canvas != null )
+				canvas.removeMouseListener( roiListener );
+
+			final ImageWindow window = imagePlus.getWindow();
+
+			if ( imageWindowListener != null && window != null )
+				window.removeWindowListener( imageWindowListener );
+
+			final Overlay overlay = imagePlus.getOverlay();
+
+			if ( overlay != null )
+			{
+				overlay.clear();
+				imagePlus.updateAndDraw();
+			}
 		}
 
-		isFinished = true;
+		service.shutdown();
+	}
+
+	/**
+	 * @return the exact min and max of the image (what the detection computes for a view without a given range)
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public static double[] minMax( final ImagePlus imp )
+	{
+		final float[] minmax = FusionTools.minMax( (RandomAccessibleInterval)ImagePlusImgs.from( imp ) );
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Interactive DoG: intensity range computed from the image [" + minmax[ 0 ] + ", " + minmax[ 1 ] + "] (the detection computes it per view the same way)." );
+
+		return new double[] { minmax[ 0 ], minmax[ 1 ] };
 	}
 
 	public static void main(String[] args)
