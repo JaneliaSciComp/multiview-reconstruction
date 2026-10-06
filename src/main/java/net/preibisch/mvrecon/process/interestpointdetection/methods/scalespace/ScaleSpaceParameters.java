@@ -34,11 +34,12 @@ import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLi
 public class ScaleSpaceParameters
 {
 	/**
-	 * the finest scale at which peaks are detected, in pixels of the image that is handed in (octave 0),
-	 * like the sigma of the single-scale DoG: the finest detectable DoG level is the one of sigmaMin
-	 * and k*sigmaMin, the DoG level below it (sigmaMin/k) exists only as its scale neighbor
+	 * the initial blur of the scale space in pixels of the image that is handed in (octave 0), i.e. the
+	 * finest scale at which peaks are detected (Lowe 2004: 1.6), like the sigma of the single-scale DoG:
+	 * the finest detectable DoG level is the one of sigmaMin and k*sigmaMin, the DoG level below it
+	 * (sigmaMin/k) exists only as its scale neighbor
 	 */
-	public double sigmaMin = 1.8;
+	public double sigmaMin = 1.6;
 
 	/**
 	 * intra-octave steps, k = 2^(1/steps); every octave has steps+3 Gaussians and steps+2 DoG levels,
@@ -113,7 +114,43 @@ public class ScaleSpaceParameters
 	 */
 	public int refineMargin = 2;
 
+	/**
+	 * estimate the size of the finest-level detections (they are no extremum in scale, so sigmaMin is only
+	 * an upper bound of their scale) by fitting a Gaussian blob to the responses of the first finestFitLevels
+	 * DoG levels at the peak (DoGScaleSpace.fitBlobSize); their sigma is then the scale of maximal response
+	 * of that blob, size * sqrt( 2 / n ) (never above sigmaMin); if the fit is unreliable (relative residual
+	 * above finestFitMaxResidual, or the size at the end of the tried range) they get finestFallbackSigma, a
+	 * best guess a bit below sigmaMin (also never above it)
+	 */
+	public boolean fitFinestSize = true;
+	public int finestFitLevels = 4;
+	public double finestFitMaxResidual = 0.5;
+	public double finestFallbackSigma = 1.4;
+
 	public ScaleSpaceParameters() {}
+
+	public ScaleSpaceParameters( final ScaleSpaceParameters p )
+	{
+		this.sigmaMin = p.sigmaMin;
+		this.steps = p.steps;
+		this.octaves = p.octaves;
+		this.threshold = p.threshold;
+		this.findMin = p.findMin;
+		this.findMax = p.findMax;
+		this.detectFinestLevel = p.detectFinestLevel;
+		this.localization = p.localization;
+		this.minIntensity = p.minIntensity;
+		this.maxIntensity = p.maxIntensity;
+		this.imageSigma = p.imageSigma;
+		this.anisotropy = p.anisotropy == null ? null : p.anisotropy.clone();
+		this.cellSize = p.cellSize.clone();
+		this.combineDistance = p.combineDistance;
+		this.refineMargin = p.refineMargin;
+		this.fitFinestSize = p.fitFinestSize;
+		this.finestFitLevels = p.finestFitLevels;
+		this.finestFitMaxResidual = p.finestFitMaxResidual;
+		this.finestFallbackSigma = p.finestFallbackSigma;
+	}
 
 	public ScaleSpaceParameters( final double sigmaMin, final double threshold )
 	{

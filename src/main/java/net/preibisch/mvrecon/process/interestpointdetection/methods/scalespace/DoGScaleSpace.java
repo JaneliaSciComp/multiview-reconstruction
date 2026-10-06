@@ -24,10 +24,12 @@ package net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace;
 
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
+import java.util.function.DoubleConsumer;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
@@ -40,10 +42,12 @@ import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealLocalizable;
+import net.imglib2.RealRandomAccess;
 import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.algorithm.localextrema.RefinedPeak;
 import net.imglib2.algorithm.localextrema.SubpixelLocalization;
 import net.imglib2.converter.Converters;
+import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
 import net.imglib2.iterator.IntervalIterator;
 import net.imglib2.neighborsearch.RadiusNeighborSearchOnKDTree;
 import net.imglib2.type.numeric.RealType;
@@ -57,7 +61,6 @@ import net.preibisch.legacy.segmentation.SimplePeak;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.Localization;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
@@ -154,12 +157,32 @@ public class DoGScaleSpace
 		final public double value, sigma;
 		final public int octave;
 
-		public ScaleSpacePeak( final double[] l, final double value, final double sigma, final int octave )
+		/** a maximum of the image (a minimum of the DoG, as DoGImgLib2.findPeaks reports it), otherwise a minimum; the refined value can have either sign */
+		final public boolean isMax;
+
+		/** found by the finest-level pass (detectFinestLevel), i.e. a spatial extremum of DoG level 1 that is no extremum in scale */
+		final public boolean finest;
+
+		/** key() of the integer position at which the peak was found at DoG level 1 of octave 0 (extrema in space and scale of level 1 and all finest-level peaks), -1 otherwise */
+		final public long level1Key;
+
+		/**
+		 * @param isMax - whether the peak is a maximum of the image (a minimum of the DoG, see DoGImgLib2.findPeaks), otherwise a minimum
+		 */
+		public ScaleSpacePeak( final double[] l, final double value, final double sigma, final int octave, final boolean isMax )
+		{
+			this( l, value, sigma, octave, isMax, false, -1 );
+		}
+
+		public ScaleSpacePeak( final double[] l, final double value, final double sigma, final int octave, final boolean isMax, final boolean finest, final long level1Key )
 		{
 			this.l = l;
 			this.value = value;
 			this.sigma = sigma;
 			this.octave = octave;
+			this.isMax = isMax;
+			this.finest = finest;
+			this.level1Key = level1Key;
 		}
 
 		@Override
@@ -249,6 +272,190 @@ public class DoGScaleSpace
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Found " + merged.size() + " final peaks (" + ( peaks.size() - merged.size() ) + " duplicates removed)." );
 
 		return merged;
+	}
+
+	/**
+	 * All candidate peaks of a scale space down to one threshold, before duplicates are removed: the
+	 * extrema in space and scale (regular) and all spatial extrema of the finest level (finest, whether
+	 * they are an extremum in scale or not), both for minima and maxima. filterCandidates() turns them
+	 * into the result of computeScaleSpacePeaks for any higher threshold, with or without the finest
+	 * level and for either type without computing anything again (the interactive preview).
+	 */
+	public static class Candidates
+	{
+		final public ArrayList< ScaleSpacePeak > regular, finest;
+
+		/** the threshold the candidates are complete down to: the one they were computed with, raised to the cut-off |value| if there were more than allowed */
+		final public double threshold;
+
+		/** sigma of the coarsest detectable level in pixels of octave 0 */
+		final public double sigmaMax;
+
+		final public int octaves;
+
+		public Candidates( final ArrayList< ScaleSpacePeak > regular, final ArrayList< ScaleSpacePeak > finest, final double threshold, final double sigmaMax, final int octaves )
+		{
+			this.regular = regular;
+			this.finest = finest;
+			this.threshold = threshold;
+			this.sigmaMax = sigmaMax;
+			this.octaves = octaves;
+		}
+
+		public int size() { return regular.size() + finest.size(); }
+	}
+
+	/**
+	 * Computes the candidates (see Candidates) down to p.threshold, minima and maxima.
+	 *
+	 * @param maxCandidates - if more candidates are found only the strongest maxCandidates are kept and Candidates.threshold is raised accordingly (0 = all)
+	 */
+	public static < T extends RealType< T >, M extends RealType< M > > Candidates computeScaleSpaceCandidates(
+			final RandomAccessible< T > input,
+			final Interval imageInterval,
+			final Interval processInterval,
+			final RandomAccessible< M > mask,
+			final ScaleSpaceParameters p,
+			final int maxCandidates,
+			final ExecutorService service )
+	{
+		return computeScaleSpaceCandidates( input, imageInterval, processInterval, mask, p, maxCandidates, service, null );
+	}
+
+	/**
+	 * @param progress - called with the progress 0..1 after the scale space is set up, after every octave and at the end (e.g. IJ::showProgress), can be null
+	 */
+	public static < T extends RealType< T >, M extends RealType< M > > Candidates computeScaleSpaceCandidates(
+			final RandomAccessible< T > input,
+			final Interval imageInterval,
+			final Interval processInterval,
+			final RandomAccessible< M > mask,
+			final ScaleSpaceParameters p,
+			final int maxCandidates,
+			final ExecutorService service,
+			final DoubleConsumer progress )
+	{
+		final ScaleSpaceParameters pBoth = new ScaleSpaceParameters( p );
+		pBoth.findMin = pBoth.findMax = true;
+
+		final List< Octave > octaves = buildScaleSpace( input, imageInterval, processInterval, mask, pBoth, service );
+
+		if ( progress != null )
+			progress.accept( 0.05 );
+
+		final float k = LaPlaceFunctions.computeK( pBoth.steps );
+		final ArrayList< ScaleSpacePeak > regular = new ArrayList<>();
+
+		// the finest octave dominates the work, the coarser ones are 1/8 each
+		double work = 0, totalWork = 0;
+
+		for ( final Octave octave : octaves )
+			totalWork += 1.0 / ( 1L << ( 3 * octave.o ) );
+
+		for ( final Octave octave : octaves )
+		{
+			regular.addAll( detectOctave( octave, pBoth, k, service, false ) );
+
+			work += 1.0 / ( 1L << ( 3 * octave.o ) );
+
+			if ( progress != null )
+				progress.accept( 0.05 + 0.85 * work / totalWork );
+		}
+
+		// no exclusion: all spatial extrema of the finest level, filterCandidates excludes those that are extrema in scale at a given threshold
+		final ArrayList< ScaleSpacePeak > finest = detectFinestLevel( octaves.get( 0 ), new HashSet<>(), pBoth, k, service );
+
+		if ( progress != null )
+			progress.accept( 0.95 );
+
+		final double sigmaMax = sigmaBase( pBoth.sigmaMin, k, octaves.size() - 1, pBoth.steps );
+		double threshold = pBoth.threshold;
+
+		if ( maxCandidates > 0 && regular.size() + finest.size() > maxCandidates )
+		{
+			final double[] values = new double[ regular.size() + finest.size() ];
+			int i = 0;
+
+			for ( final ScaleSpacePeak peak : regular )
+				values[ i++ ] = Math.abs( peak.value );
+
+			for ( final ScaleSpacePeak peak : finest )
+				values[ i++ ] = Math.abs( peak.value );
+
+			Arrays.sort( values );
+
+			// everything at or below the cut-off is dropped, so the candidates are complete down to it
+			threshold = values[ values.length - 1 - maxCandidates ];
+
+			final double cutoff = threshold;
+			regular.removeIf( peak -> !( Math.abs( peak.value ) > cutoff ) );
+			finest.removeIf( peak -> !( Math.abs( peak.value ) > cutoff ) );
+
+			if ( !DoGImgLib2.silent )
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): More than " + maxCandidates + " candidates, keeping the strongest ones, |response| > " + threshold );
+		}
+
+		if ( !DoGImgLib2.silent )
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): " + regular.size() + " candidates in space and scale, " + finest.size() + " at the finest level (|response| > " + threshold + ")." );
+
+		if ( progress != null )
+			progress.accept( 1.0 );
+
+		return new Candidates( regular, finest, threshold, sigmaMax, octaves.size() );
+	}
+
+	/**
+	 * The result of computeScaleSpacePeaks at a threshold &gt;= candidates.threshold, computed from the candidates
+	 * only (the only difference: the initial peaks were pre-filtered at candidates.threshold / 3 instead of threshold / 3).
+	 */
+	public static ArrayList< ScaleSpacePeak > filterCandidates( final Candidates candidates, final double threshold, final boolean detectFinestLevel, final boolean findMin, final boolean findMax, final int localization, final double combineDistance )
+	{
+		// the order of computeScaleSpacePeaks: octave 0, its finest level, the coarser octaves (matters for equal |values| in mergeDuplicates)
+		final ArrayList< ScaleSpacePeak > list = new ArrayList<>();
+		final ArrayList< ScaleSpacePeak > coarser = new ArrayList<>();
+		final HashSet< Long > level1 = new HashSet<>();
+
+		for ( final ScaleSpacePeak peak : candidates.regular )
+		{
+			if ( !accept( peak, threshold, findMin, findMax, localization ) )
+				continue;
+
+			if ( peak.octave == 0 )
+			{
+				list.add( peak );
+
+				if ( peak.level1Key >= 0 )
+					level1.add( peak.level1Key );
+			}
+			else
+			{
+				coarser.add( peak );
+			}
+		}
+
+		if ( detectFinestLevel )
+			for ( final ScaleSpacePeak peak : candidates.finest )
+				if ( accept( peak, threshold, findMin, findMax, localization ) && !level1.contains( peak.level1Key ) )
+					list.add( peak );
+
+		list.addAll( coarser );
+
+		return mergeDuplicates( list, combineDistance );
+	}
+
+	/**
+	 * @return whether a candidate passes the type and threshold tests of the detection (the type is the one of the extremum as found, the refined value can have either sign)
+	 */
+	protected static boolean accept( final ScaleSpacePeak peak, final double threshold, final boolean findMin, final boolean findMax, final int localization )
+	{
+		if ( ( peak.isMax && !findMax ) || ( !peak.isMax && !findMin ) )
+			return false;
+
+		// findPeaks keeps |value| >= threshold, the refinement > threshold
+		if ( localization == 0 )
+			return Math.abs( peak.value ) >= threshold;
+		else
+			return Math.abs( peak.value ) > threshold;
 	}
 
 	/**
@@ -452,9 +659,17 @@ public class DoGScaleSpace
 	}
 
 	/**
-	 * Extrema in space and scale of one octave, refined, mapped to pixels of octave 0
+	 * Extrema in space and scale of one octave, refined, mapped to pixels of octave 0 (plus the finest level for octave 0 if p.detectFinestLevel)
 	 */
 	public static ArrayList< ScaleSpacePeak > detectOctave( final Octave octave, final ScaleSpaceParameters p, final float k, final ExecutorService service )
+	{
+		return detectOctave( octave, p, k, service, p.detectFinestLevel );
+	}
+
+	/**
+	 * @param finestLevel - whether to add the finest level (detectFinestLevel) for octave 0, overrides p.detectFinestLevel
+	 */
+	public static ArrayList< ScaleSpacePeak > detectOctave( final Octave octave, final ScaleSpaceParameters p, final float k, final ExecutorService service, final boolean finestLevel )
 	{
 		final int n = octave.domain.numDimensions();
 
@@ -485,39 +700,47 @@ public class DoGScaleSpace
 		// the extrema in space and scale at level 1 that made it into the result (keyed by their integer position)
 		final HashSet< Long > level1 = new HashSet<>();
 
+		// the minima and/or maxima (the type of each peak is kept, the refined value can have either sign)
+		final ArrayList< SimplePeak > accepted = filterPolarity( peaks, p.findMin, p.findMax );
+
 		if ( p.localization == 0 )
 		{
 			final RandomAccess< FloatType > ra = octave.stack.randomAccess();
+			final ArrayList< InterestPoint > ips = Localization.noLocalization( accepted, true, true, true );
 
-			for ( final InterestPoint ip : Localization.noLocalization( peaks, p.findMin, p.findMax, true ) )
+			for ( int i = 0; i < ips.size(); ++i )
 			{
-				final double[] l = ip.getL();
+				final double[] l = ips.get( i ).getL();
 
 				// noLocalization stores |value|, we want the sign
 				for ( int d = 0; d <= n; ++d )
 					ra.setPosition( Math.round( l[ d ] ), d );
 
-				result.add( toScaleSpacePeak( l, ra.get().get(), octave, p, k ) );
+				final long key = Math.round( l[ n ] ) == 1 ? key( l, octave.det ) : -1;
 
-				if ( Math.round( l[ n ] ) == 1 )
-					level1.add( key( l, octave.det ) );
+				if ( key >= 0 )
+					level1.add( key );
+
+				result.add( toScaleSpacePeak( l, ra.get().get(), accepted.get( i ).isMax, octave, p, k, octave.o == 0 ? key : -1 ) );
 			}
 		}
 		else
 		{
 			final long[] min = octave.stack.minAsLongArray();
 
-			for ( final SimplePeak peak : peaks )
+			for ( final SimplePeak peak : accepted )
 				for ( int d = 0; d < peak.location.length; ++d )
 					peak.location[ d ] -= min[ d ];
 
 			final RandomAccessibleInterval< FloatType > stackZeroMin = Views.zeroMin( octave.stack );
 
-			// quadratic fit in space and scale (same settings as Localization.computeQuadraticLocalization), invalid fits are returned, too
-			final ArrayList< RefinedPeak< Point > > refined = refinePeaks( peaks, Views.extendMirrorDouble( stackZeroMin ), new FinalInterval( stackZeroMin ), p.findMin, p.findMax, service );
+			// quadratic fit in space and scale (same settings as Localization.computeQuadraticLocalization), invalid fits are returned, too (one per peak)
+			final ArrayList< RefinedPeak< Point > > refined = refinePeaks( accepted, Views.extendMirrorDouble( stackZeroMin ), new FinalInterval( stackZeroMin ), true, true, service );
 
-			for ( final RefinedPeak< Point > r : refined )
+			for ( int i = 0; i < refined.size(); ++i )
 			{
+				final RefinedPeak< Point > r = refined.get( i );
+
 				if ( !r.isValid() || !( Math.abs( r.getValue() ) > minPeakValue ) )
 					continue; // a failed fit at level 1 (e.g. a structure smaller than sigmaMin) is picked up by detectFinestLevel
 
@@ -526,7 +749,7 @@ public class DoGScaleSpace
 				for ( int d = 0; d <= n; ++d )
 					l[ d ] = r.getDoublePosition( d ) + min[ d ];
 
-				result.add( toScaleSpacePeak( l, r.getValue(), octave, p, k ) );
+				long key = -1;
 
 				if ( r.getOriginalPeak().getIntPosition( n ) == 1 )
 				{
@@ -535,8 +758,11 @@ public class DoGScaleSpace
 					for ( int d = 0; d < n; ++d )
 						original[ d ] = r.getOriginalPeak().getIntPosition( d ) + min[ d ];
 
-					level1.add( key( original, octave.det ) );
+					key = key( original, octave.det );
+					level1.add( key );
 				}
+
+				result.add( toScaleSpacePeak( l, r.getValue(), accepted.get( i ).isMax, octave, p, k, octave.o == 0 ? key : -1 ) );
 			}
 		}
 
@@ -544,7 +770,7 @@ public class DoGScaleSpace
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Octave " + octave.o + ": " + result.size() + " peaks after refinement." );
 
 		// structures smaller than sigmaMin are no extremum in scale, but we might want them anyways
-		if ( octave.o == 0 && p.detectFinestLevel )
+		if ( octave.o == 0 && finestLevel )
 		{
 			final ArrayList< ScaleSpacePeak > finest = detectFinestLevel( octave, level1, p, k, service );
 
@@ -558,8 +784,23 @@ public class DoGScaleSpace
 	}
 
 	/**
+	 * @return the peaks of the requested type(s) in their order
+	 */
+	public static ArrayList< SimplePeak > filterPolarity( final ArrayList< SimplePeak > peaks, final boolean findMin, final boolean findMax )
+	{
+		final ArrayList< SimplePeak > accepted = new ArrayList<>();
+
+		for ( final SimplePeak peak : peaks )
+			if ( ( peak.isMax && findMax ) || ( peak.isMin && findMin ) )
+				accepted.add( peak );
+
+		return accepted;
+	}
+
+	/**
 	 * Quadratic fit in space and scale with the settings of Localization.computeQuadraticLocalization,
-	 * but also returning the peaks whose fit failed (RefinedPeak.isValid() == false)
+	 * but also returning the peaks whose fit failed (RefinedPeak.isValid() == false), so the result has
+	 * one entry per peak of the requested type(s), in their order
 	 */
 	public static ArrayList< RefinedPeak< Point > > refinePeaks( final ArrayList< SimplePeak > peaks, final RandomAccessible< FloatType > img, final Interval validInterval, final boolean findMin, final boolean findMax, final ExecutorService service )
 	{
@@ -593,7 +834,15 @@ public class DoGScaleSpace
 	/**
 	 * @param l - refined position in the octave (n dimensions) and the refined level (index n)
 	 */
-	protected static ScaleSpacePeak toScaleSpacePeak( final double[] l, final double value, final Octave octave, final ScaleSpaceParameters p, final float k )
+	protected static ScaleSpacePeak toScaleSpacePeak( final double[] l, final double value, final boolean isMax, final Octave octave, final ScaleSpaceParameters p, final float k )
+	{
+		return toScaleSpacePeak( l, value, isMax, octave, p, k, -1 );
+	}
+
+	/**
+	 * @param level1Key - key() of the integer position if the peak was found at level 1 of octave 0, -1 otherwise
+	 */
+	protected static ScaleSpacePeak toScaleSpacePeak( final double[] l, final double value, final boolean isMax, final Octave octave, final ScaleSpaceParameters p, final float k, final long level1Key )
 	{
 		final int n = l.length - 1;
 		final double[] pos = new double[ n ];
@@ -601,7 +850,7 @@ public class DoGScaleSpace
 		for ( int d = 0; d < n; ++d )
 			pos[ d ] = l[ d ] * octave.f;
 
-		return new ScaleSpacePeak( pos, value, sigmaBase( p.sigmaMin, k, octave.o, l[ n ] ), octave.o );
+		return new ScaleSpacePeak( pos, value, sigmaBase( p.sigmaMin, k, octave.o, l[ n ] ), octave.o, isMax, false, level1Key );
 	}
 
 	/**
@@ -630,65 +879,272 @@ public class DoGScaleSpace
 			if ( !level1.contains( key( peak.location, octave.det ) ) )
 				candidates.add( peak );
 
-		// refine in space only, as the single-scale DoG does
-		final ArrayList< InterestPoint > refined;
+		// refine in space only, as the single-scale DoG does, keeping the type of each peak and the key of the integer position it was found at
+		final ArrayList< SimplePeak > accepted = filterPolarity( candidates, p.findMin, p.findMax );
+		final ArrayList< ScaleSpacePeak > result = new ArrayList<>();
+		final double sigma = sigmaBase( p.sigmaMin, k, octave.o, 1 );
 
 		if ( p.localization == 0 )
 		{
-			refined = Localization.noLocalization( candidates, p.findMin, p.findMax, true );
+			final RandomAccess< FloatType > ra1 = dog1.randomAccess();
+			final ArrayList< InterestPoint > ips = Localization.noLocalization( accepted, true, true, true );
+
+			for ( int i = 0; i < ips.size(); ++i )
+			{
+				final double[] l = ips.get( i ).getL();
+
+				// noLocalization stores |value|, we want the sign
+				for ( int d = 0; d < n; ++d )
+					ra1.setPosition( Math.round( l[ d ] ), d );
+
+				result.add( new ScaleSpacePeak( scale( l, octave.f ), ra1.get().get(), sigma, octave.o, accepted.get( i ).isMax, true, key( l, octave.det ) ) );
+			}
 		}
 		else
 		{
 			final long[] min = dog1.minAsLongArray();
 
-			for ( final SimplePeak peak : candidates )
+			for ( final SimplePeak peak : accepted )
 				for ( int d = 0; d < n; ++d )
 					peak.location[ d ] -= min[ d ];
 
 			final RandomAccessibleInterval< FloatType > dogZeroMin = Views.zeroMin( dog1 );
 
-			refined = Localization.computeQuadraticLocalization( candidates, Views.extendMirrorDouble( dogZeroMin ), new FinalInterval( dogZeroMin ), p.findMin, p.findMax, minPeakValue, true, service );
+			// the quadratic fit of Localization.computeQuadraticLocalization (same settings), failed fits are dropped as there
+			final ArrayList< RefinedPeak< Point > > refined = refinePeaks( accepted, Views.extendMirrorDouble( dogZeroMin ), new FinalInterval( dogZeroMin ), true, true, service );
 
-			for ( final InterestPoint ip : refined )
+			for ( int i = 0; i < refined.size(); ++i )
 			{
+				final RefinedPeak< Point > r = refined.get( i );
+
+				if ( !r.isValid() || !( Math.abs( r.getValue() ) > minPeakValue ) )
+					continue;
+
+				final double[] l = new double[ n ];
+				final int[] original = new int[ n ];
+
 				for ( int d = 0; d < n; ++d )
 				{
-					ip.getL()[ d ] += min[ d ];
-					ip.getW()[ d ] += min[ d ];
+					l[ d ] = r.getDoublePosition( d ) + min[ d ];
+					original[ d ] = r.getOriginalPeak().getIntPosition( d ) + (int)min[ d ];
+				}
+
+				result.add( new ScaleSpacePeak( scale( l, octave.f ), r.getValue(), sigma, octave.o, accepted.get( i ).isMax, true, key( original, octave.det ) ) );
+			}
+		}
+
+		// sigmaMin is only an upper bound of their scale, estimate it from the responses of the finest levels
+		if ( p.fitFinestSize && !result.isEmpty() )
+			fitFinestSizes( result, octave, p, k );
+
+		return result;
+	}
+
+	/**
+	 * Replaces the sigma of the finest-level peaks (sigmaMin, an upper bound as they are no extremum in scale) by the
+	 * scale of maximal response of a Gaussian blob fitted to the responses of the first p.finestFitLevels DoG levels at
+	 * the (refined) peak position, see fitBlobSize, or by p.finestFallbackSigma where the fit is unreliable; never above sigmaMin.
+	 */
+	protected static void fitFinestSizes( final ArrayList< ScaleSpacePeak > peaks, final Octave octave, final ScaleSpaceParameters p, final float k )
+	{
+		final int n = octave.domain.numDimensions();
+		final int m = Math.max( 2, Math.min( p.finestFitLevels, octave.dog.size() ) );
+		final float[] sigma = computeSigmas( p.sigmaMin, k, p.steps );
+		final double[][] totalSigma = totalSigmaOctave0( sigma, p.anisotropy, p.imageSigma, n );
+		final double kMin1Inv = LaPlaceFunctions.computeKWeight( k );
+		final double bMax = 2.5 * p.sigmaMin;
+
+		// the scale of maximal response of a Gaussian blob of size b in n dimensions is b * sqrt( 2 / n )
+		final double sigmaPerSize = Math.sqrt( 2.0 / n );
+
+		final ArrayList< RealRandomAccess< FloatType > > access = new ArrayList<>();
+
+		for ( int i = 0; i < m; ++i )
+			access.add( Views.interpolate( Views.extendMirrorSingle( octave.dog.get( i ) ), new NLinearInterpolatorFactory<>() ).realRandomAccess() );
+
+		final double[] responses = new double[ m ];
+		final double[] pos = new double[ n ];
+		int fitted = 0;
+
+		for ( int j = 0; j < peaks.size(); ++j )
+		{
+			final ScaleSpacePeak peak = peaks.get( j );
+
+			for ( int d = 0; d < n; ++d )
+				pos[ d ] = peak.l[ d ] / octave.f;
+
+			for ( int i = 0; i < m; ++i )
+			{
+				access.get( i ).setPosition( pos );
+				responses[ i ] = access.get( i ).get().get();
+			}
+
+			final double[] fit = fitBlobSize( responses, totalSigma, p.anisotropy, kMin1Inv, bMax );
+			final boolean reliable = fit[ 0 ] < 0.98 * bMax && fit[ 2 ] <= p.finestFitMaxResidual;
+			final double sigmaFit = Math.min( peak.sigma, reliable ? fit[ 0 ] * sigmaPerSize : p.finestFallbackSigma );
+
+			if ( reliable )
+				++fitted;
+
+			if ( sigmaFit != peak.sigma )
+				peaks.set( j, new ScaleSpacePeak( peak.l, peak.value, sigmaFit, peak.octave, peak.isMax, peak.finest, peak.level1Key ) );
+		}
+
+		if ( !DoGImgLib2.silent )
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Octave " + octave.o + ": size fitted for " + fitted + " of " + peaks.size() + " finest-level peaks (" + m + " levels), the others get sigma = " + Math.min( p.sigmaMin, p.finestFallbackSigma ) );
+	}
+
+	/**
+	 * @return the total blur (the image blur included) of the Gaussian levels of octave 0 per level and dimension, in
+	 * pixels of the respective dimension: max( sigma_i / anisotropy[ d ], imageSigma ), see computeSigmaDiff
+	 */
+	public static double[][] totalSigmaOctave0( final float[] sigma, final double[] anisotropy, final double imageSigma, final int n )
+	{
+		final double[][] t = new double[ sigma.length ][ n ];
+
+		for ( int i = 0; i < sigma.length; ++i )
+			for ( int d = 0; d < n; ++d )
+				t[ i ][ d ] = Math.max( sigma[ i ] / ( anisotropy == null ? 1.0 : anisotropy[ d ] ), imageSigma );
+
+		return t;
+	}
+
+	/**
+	 * The DoG responses at the center of a Gaussian blob of size b (in x pixels, isotropic in physical units, i.e.
+	 * b / anisotropy[ d ] in pixels of dimension d) up to a factor: the Gaussian level with total blur t has the
+	 * value prod_d ( b_d^2 + t_d^2 )^(-1/2) there (times the mass of the blob), the DoG is their difference / ( k - 1 )
+	 *
+	 * @param totalSigma - [level][dimension], one level more than responses are computed
+	 */
+	public static void modelResponses( final double b, final double[][] totalSigma, final double[] anisotropy, final double kMin1Inv, final double[] responses )
+	{
+		final int n = totalSigma[ 0 ].length;
+		final double[] g = new double[ responses.length + 1 ];
+
+		for ( int i = 0; i < g.length; ++i )
+		{
+			double v = 1;
+
+			for ( int d = 0; d < n; ++d )
+			{
+				final double bd = b / ( anisotropy == null ? 1.0 : anisotropy[ d ] );
+				v /= Math.sqrt( bd * bd + totalSigma[ i ][ d ] * totalSigma[ i ][ d ] );
+			}
+
+			g[ i ] = v;
+		}
+
+		for ( int i = 0; i < responses.length; ++i )
+			responses[ i ] = ( g[ i + 1 ] - g[ i ] ) * kMin1Inv;
+	}
+
+	/**
+	 * Fits a Gaussian blob to the responses of the finest DoG levels at a point: the finest-level detections are no
+	 * extremum in scale, so their scale is below the sampled levels, but the decay of the response over the first
+	 * levels still tells their size. Model: responses_i = C * modelResponses( b )_i; C is linear and solved for every
+	 * b, b is found by a grid search over [0, bMax] with a parabolic refinement of the minimum.
+	 *
+	 * @param responses - the DoG responses of levels 0..m-1 at the point
+	 * @param totalSigma - [level 0..m][dimension] total blur of the Gaussian levels (see totalSigmaOctave0)
+	 * @param anisotropy - voxel size per dimension relative to x (null = isotropic)
+	 * @param kMin1Inv - the weight of the DoG, 1 / ( k - 1 )
+	 * @param bMax - the largest size tried
+	 * @return { b (in x pixels), C, relative residual sqrt( sum( ( d - C m )^2 ) / sum( d^2 ) ) }; b == bMax means the minimum is at the end of the range
+	 */
+	public static double[] fitBlobSize( final double[] responses, final double[][] totalSigma, final double[] anisotropy, final double kMin1Inv, final double bMax )
+	{
+		final int m = responses.length;
+		final int grid = 250;
+		final double[] model = new double[ m ];
+		final double[] residual = new double[ grid + 1 ];
+
+		double sumD2 = 0;
+
+		for ( int i = 0; i < m; ++i )
+			sumD2 += responses[ i ] * responses[ i ];
+
+		int bestG = 0;
+		double bestC = 0;
+
+		for ( int g = 0; g <= grid; ++g )
+		{
+			modelResponses( bMax * g / grid, totalSigma, anisotropy, kMin1Inv, model );
+
+			double num = 0, den = 0;
+
+			for ( int i = 0; i < m; ++i )
+			{
+				num += responses[ i ] * model[ i ];
+				den += model[ i ] * model[ i ];
+			}
+
+			final double c = den > 0 ? num / den : 0;
+			double r = 0;
+
+			for ( int i = 0; i < m; ++i )
+			{
+				final double diff = responses[ i ] - c * model[ i ];
+				r += diff * diff;
+			}
+
+			residual[ g ] = r;
+
+			if ( r < residual[ bestG ] )
+			{
+				bestG = g;
+				bestC = c;
+			}
+		}
+
+		double b = bMax * bestG / grid;
+		double c = bestC;
+		double r = residual[ bestG ];
+
+		// parabolic refinement between the neighbors of the best grid point, C and the residual are recomputed there
+		if ( bestG > 0 && bestG < grid )
+		{
+			final double y0 = residual[ bestG - 1 ], y1 = residual[ bestG ], y2 = residual[ bestG + 1 ];
+			final double denom = y0 - 2 * y1 + y2;
+
+			if ( denom > 0 )
+			{
+				b += 0.5 * ( y0 - y2 ) / denom * bMax / grid;
+
+				modelResponses( b, totalSigma, anisotropy, kMin1Inv, model );
+
+				double num = 0, den = 0;
+
+				for ( int i = 0; i < m; ++i )
+				{
+					num += responses[ i ] * model[ i ];
+					den += model[ i ] * model[ i ];
+				}
+
+				c = den > 0 ? num / den : 0;
+				r = 0;
+
+				for ( int i = 0; i < m; ++i )
+				{
+					final double diff = responses[ i ] - c * model[ i ];
+					r += diff * diff;
 				}
 			}
 		}
 
-		final ArrayList< ScaleSpacePeak > result = new ArrayList<>();
-		final double sigma = sigmaBase( p.sigmaMin, k, octave.o, 1 );
-		final RandomAccess< FloatType > ra1 = dog1.randomAccess();
+		return new double[] { b, c, sumD2 > 0 ? Math.sqrt( r / sumD2 ) : 1.0 };
+	}
 
-		for ( final InterestPoint ip : refined )
-		{
-			final double[] l = ip.getL();
-			final double[] pos = new double[ n ];
+	/**
+	 * @return the position in pixels of octave 0
+	 */
+	protected static double[] scale( final double[] l, final long f )
+	{
+		final double[] pos = new double[ l.length ];
 
-			for ( int d = 0; d < n; ++d )
-				pos[ d ] = l[ d ] * octave.f;
+		for ( int d = 0; d < l.length; ++d )
+			pos[ d ] = l[ d ] * f;
 
-			final double value;
-
-			if ( p.localization == 0 )
-			{
-				for ( int d = 0; d < n; ++d )
-					ra1.setPosition( Math.round( l[ d ] ), d );
-
-				value = ra1.get().get();
-			}
-			else
-			{
-				value = ( (InterestPointValue)ip ).getIntensity();
-			}
-
-			result.add( new ScaleSpacePeak( pos, value, sigma, octave.o ) );
-		}
-
-		return result;
+		return pos;
 	}
 
 	protected static long key( final int[] location, final Interval interval )

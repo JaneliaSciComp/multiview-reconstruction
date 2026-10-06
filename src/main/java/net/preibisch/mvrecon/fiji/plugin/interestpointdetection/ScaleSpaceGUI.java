@@ -24,13 +24,11 @@ package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import ij.ImagePlus;
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.TimePoint;
@@ -39,8 +37,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.util.Util;
 import net.preibisch.legacy.io.IOFunctions;
-import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive.InteractiveDoG;
-import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive.InteractiveDoGParams;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive.InteractiveScaleSpace;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -52,7 +49,12 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 
 /**
  * The scale-space Difference-of-Gaussian as a second detection method next to the single-scale
- * Difference-of-Gaussian: sigma is the finest scale, the threshold the minimal response at any scale.
+ * Difference-of-Gaussian: the initial blur (sigma, Lowe: 1.6 pixels at the starting resolution) is the
+ * finest scale, the threshold the minimal response at any scale. The main dialog asks for the starting
+ * resolution, the anisotropy and the initial blur (queried before the brightness is dispatched, so that
+ * the interactive preview, {@link InteractiveScaleSpace}, knows them); threshold, steps per octave, octaves,
+ * finest structures and the sign are set in the preview or the "Advanced ..." dialog (otherwise the last
+ * choice is kept, the presets set the threshold only).
  *
  * @author Stephan Preibisch
  */
@@ -67,7 +69,8 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	public static boolean defaultFindMax = defaults.findMax;
 	public static int defaultSteps = defaults.steps;
 	public static int defaultOctaves = defaults.octaves;
-	public static boolean defaultDetectFinestLevel = defaults.detectFinestLevel;
+	/** the finest structures as last chosen in the interactive preview or the advanced dialog, null = not chosen yet (then off at full resolution, on otherwise, see defaultDetectFinestLevel) */
+	public static Boolean lastDetectFinestLevel = null;
 
 	// the starting resolution: a precomputed resolution level (by default the second one) or manually typed factors
 	public static final String manualResolution = "Manually (powers of two) ...";
@@ -216,7 +219,7 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	@Override
 	protected boolean setDefaultValues( final int brightness )
 	{
-		this.sigma = defaultSigma;
+		// the initial blur (sigma) is a field of the main dialog
 		this.findMin = false;
 		this.findMax = true;
 
@@ -234,13 +237,18 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		return true;
 	}
 
+	/**
+	 * Everything the interactive preview can set, as a dialog
+	 */
 	@Override
 	protected boolean setAdvancedValues()
 	{
 		final GenericDialog gd = new GenericDialog( "Advanced values" );
 
-		gd.addNumericField( "Sigma (finest scale)", defaultSigma, 5 );
-		gd.addNumericField( "Threshold (minimal response)", defaultThreshold, 5 );
+		gd.addNumericField( "Threshold (minimal |response| at any scale)", defaultThreshold, 5 );
+		gd.addNumericField( "Steps_per_octave", defaultSteps, 0 );
+		gd.addNumericField( "Octaves (-1 = as many as the image allows)", defaultOctaves, 0 );
+		gd.addCheckbox( "Finest_structures (also keep the extrema at the initial blur that are no extremum in scale)", defaultDetectFinestLevel( downsampling ) );
 		gd.addCheckbox( "Find_minima", defaultFindMin );
 		gd.addCheckbox( "Find_maxima", defaultFindMax );
 
@@ -249,76 +257,103 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		if ( gd.wasCanceled() )
 			return false;
 
-		this.sigma = defaultSigma = gd.getNextNumber();
-		this.threshold = defaultThreshold = gd.getNextNumber();
-		this.findMin = defaultFindMin = gd.getNextBoolean();
-		this.findMax = defaultFindMax = gd.getNextBoolean();
+		this.threshold = gd.getNextNumber();
+		this.steps = (int)Math.round( gd.getNextNumber() );
+		this.octaves = (int)Math.round( gd.getNextNumber() );
+		this.detectFinestLevel = gd.getNextBoolean();
+		this.findMin = gd.getNextBoolean();
+		this.findMax = gd.getNextBoolean();
+
+		if ( steps < 1 )
+		{
+			IOFunctions.println( "Scale space: the steps per octave must be >= 1." );
+			return false;
+		}
+
+		if ( octaves == 0 || octaves < -1 )
+		{
+			IOFunctions.println( "Scale space: the number of octaves must be -1 (as many as the image allows) or >= 1." );
+			return false;
+		}
+
+		defaultThreshold = threshold;
+		defaultSteps = steps;
+		defaultOctaves = octaves;
+		lastDetectFinestLevel = detectFinestLevel;
+		defaultFindMin = findMin;
+		defaultFindMax = findMax;
 
 		return true;
 	}
 
 	/**
-	 * The interactive single-scale DoG at the finest scale (these are exactly the detections of the
-	 * finest level), to pick sigma and threshold
+	 * The interactive scale-space preview (InteractiveScaleSpace) on one view at the starting resolution,
+	 * to pick the threshold, the finest structures, the sign, the steps per octave, the octaves and (by opening
+	 * previews at other resolutions) the starting resolution; the initial blur and the anisotropy are the ones of the dialog
 	 */
 	@Override
 	protected boolean setInteractiveValues()
 	{
-		final ImagePlus imp;
+		final ViewId viewId = getViewSelection( "Interactive scale space", "Please select view to use" );
 
-		if ( !groupIllums && !groupTiles )
-			imp = getImagePlusForInteractive( "Interactive Difference-of-Gaussian (finest scale)" );
-		else
-			imp = getGroupedImagePlusForInteractive( "Interactive Difference-of-Gaussian (finest scale)" );
-
-		if ( imp == null )
+		if ( viewId == null )
 			return false;
 
-		imp.setDimensions( 1, imp.getStackSize(), 1 );
-		imp.show();
-		imp.setSlice( imp.getStackSize() / 2 );
-		imp.setRoi( 0, 0, imp.getWidth()/3, imp.getHeight()/3 );
+		if ( groupIllums || groupTiles )
+			IOFunctions.println( "Scale space: the interactive preview always shows a single view (the detection groups the views as selected)." );
 
-		final InteractiveDoGParams params = new InteractiveDoGParams();
-		params.sigma = (float)defaultSigma;
-		params.threshold = (float)defaultThreshold;
-		params.findMaxima = defaultFindMax;
-		params.findMinima = defaultFindMin;
+		// the intensity range: the same for all views if requested (as for the single-scale DoG), otherwise the one
+		// of the preview image, which is then used for all views so that the threshold transfers
+		if ( sameMinMax || groupIllums || groupTiles )
+			preprocess();
 
-		final double min, max;
+		final ScaleSpaceParameters p = new ScaleSpaceParameters();
+		p.sigmaMin = sigma;
+		p.steps = steps;
+		p.octaves = octaves;
+		p.localization = localization;
+		p.threshold = defaultThreshold;
+		p.findMin = defaultFindMin;
+		p.findMax = defaultFindMax;
+		p.detectFinestLevel = detectFinestLevel;
+		p.minIntensity = minIntensity;
+		p.maxIntensity = maxIntensity;
 
-		if ( Double.isNaN( minIntensity ) || Double.isNaN( maxIntensity ) )
+		final InteractiveScaleSpace.Session session = new InteractiveScaleSpace.Session( spimData, spimData.getSequenceDescription().getViewDescription( viewId ), resolutions, p, anisotropyZ );
+
+		session.open( downsampling, defaultManual ? -1 : defaultResolutionIndex );
+		session.waitUntilFinished();
+
+		if ( session.isCancelled() )
+			return false;
+
+		this.threshold = defaultThreshold = session.getThreshold();
+		this.detectFinestLevel = lastDetectFinestLevel = session.getDetectFinestLevel();
+		this.findMin = defaultFindMin = session.getFindMin();
+		this.findMax = defaultFindMax = session.getFindMax();
+		this.steps = defaultSteps = session.getSteps();
+		this.octaves = defaultOctaves = session.getOctaves();
+		this.minIntensity = session.getMin();
+		this.maxIntensity = session.getMax();
+
+		// the starting resolution of the window Done was pressed in
+		this.downsampling = session.getDownsampling().clone();
+
+		if ( session.getResolutionIndex() < 0 )
 		{
-			min = imp.getDisplayRangeMin();
-			max = imp.getDisplayRangeMax();
-
-			IOFunctions.println( "(" + new Date(System.currentTimeMillis() ) + "): Using approximate min [" + min + "]/max[" + max + "] intensity values ... to have a more accurate preview your can manually set min/max intensity." );
+			defaultManual = true;
+			defaultManualDownsampling = downsampling.clone();
 		}
 		else
 		{
-			min = minIntensity;
-			max = maxIntensity;
+			defaultManual = false;
+			defaultResolutionIndex = session.getResolutionIndex();
 		}
 
-		final InteractiveDoG idog = new InteractiveDoG( imp, params, min, max );
-		do
-		{
-			try
-			{
-				Thread.sleep( 100 );
-			} catch (InterruptedException e) {}
-		}
-		while (!idog.isFinished());
+		downsampleXYIndex = (int)downsampling[ 0 ];
+		downsampleZ = (int)downsampling[ 2 ];
 
-		imp.close();
-
-		if (idog.wasCanceled())
-			return false;
-
-		this.sigma = defaultSigma = params.sigma;
-		this.threshold = defaultThreshold = params.threshold;
-		this.findMax = defaultFindMax = params.findMaxima;
-		this.findMin = defaultFindMin = params.findMinima;
+		IOFunctions.println( "Scale space: starting resolution (downsampling x, y, z) = " + Util.printCoordinates( downsampling ) + " (interactive)" );
 
 		return true;
 	}
@@ -332,7 +367,10 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	}
 
 	/**
-	 * The starting resolution: a drop-down of the precomputed resolution levels plus the manual entry
+	 * The starting resolution (a drop-down of the precomputed resolution levels plus the manual entry), the
+	 * anisotropy and the initial blur: they are added (and queried) here because the "Advanced ..." and
+	 * "Interactive ..." sub-dialogs, which DifferenceOfGUI opens right after the downsampling has been
+	 * queried, need them (the additional parameters are only queried afterwards).
 	 */
 	@Override
 	protected void addDownsamplingParameters( final GenericDialog gd )
@@ -362,6 +400,26 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		}
 
 		gd.addNumericField( "Anisotropy_z (z voxel / xy voxel at full resolution)", defaultAnisotropyZ, 3 );
+
+		gd.addMessage( "Scale space: the initial blur is the finest scale (Lowe: 1.6), the threshold the minimal |response| at any scale", GUIHelper.smallStatusFont );
+		gd.addNumericField( "Initial_blur sigma (px at the starting resolution, Lowe: 1.6)", defaultSigma, 3 );
+	}
+
+	/**
+	 * @return the initial state of the finest structures (detectFinestLevel) for a starting resolution: the state last
+	 * chosen in the interactive preview if there is one, otherwise off at full resolution (the structures are resolved
+	 * there) and on at any downsampling
+	 */
+	public static boolean defaultDetectFinestLevel( final long[] downsampling )
+	{
+		if ( lastDetectFinestLevel != null )
+			return lastDetectFinestLevel;
+
+		for ( final long d : downsampling )
+			if ( d > 1 )
+				return true;
+
+		return false;
 	}
 
 	/**
@@ -390,36 +448,36 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 
 		defaultAnisotropyZ = anisotropyZ;
 
+		this.sigma = gd.getNextNumber();
+
+		if ( !( sigma > 0 ) || Double.isInfinite( sigma ) )
+		{
+			IOFunctions.println( "Scale space: the initial blur must be a positive number, but is " + sigma + "." );
+			return false;
+		}
+
+		defaultSigma = sigma;
+
+		// steps and octaves are set in the interactive preview or the advanced dialog, otherwise the last choice is kept
+		this.steps = defaultSteps;
+		this.octaves = defaultOctaves;
+
+		if ( localization == 2 )
+		{
+			IOFunctions.println( "Scale space: the Gaussian mask localization is not supported, using the quadratic fit in space and scale." );
+			localization = defaultLocalization = 1;
+		}
+
 		if ( choice == resolutions.length )
 		{
 			// the manual entry, pre-filled with the last manual choice or the default level
 			if ( defaultManualDownsampling == null )
 				defaultManualDownsampling = DownsampleTools.parseDownsampleChoice( resolutions[ defaultResolutionChoice( resolutions.length, defaultResolutionIndex, false ) ] );
 
-			final GenericDialog gdManual = new GenericDialog( "Starting resolution" );
+			final long[] ds = queryManualResolution( defaultManualDownsampling );
 
-			gdManual.addMessage( "Downsampling of the image that the scale space starts at (powers of two)", GUIHelper.smallStatusFont );
-			gdManual.addNumericField( "Downsample_X", defaultManualDownsampling[ 0 ], 0 );
-			gdManual.addNumericField( "Downsample_Y", defaultManualDownsampling[ 1 ], 0 );
-			gdManual.addNumericField( "Downsample_Z", defaultManualDownsampling[ 2 ], 0 );
-
-			gdManual.showDialog();
-
-			if ( gdManual.wasCanceled() )
+			if ( ds == null )
 				return false;
-
-			final long[] ds = new long[ 3 ];
-
-			for ( int d = 0; d < 3; ++d )
-			{
-				ds[ d ] = Math.round( gdManual.getNextNumber() );
-
-				if ( !isPowerOfTwo( ds[ d ] ) )
-				{
-					IOFunctions.println( "ERROR: The downsampling factors must be powers of two >= 1, but the factor for dimension " + d + " is " + ds[ d ] + "." );
-					return false;
-				}
-			}
 
 			downsampling = ds;
 			defaultManualDownsampling = ds.clone();
@@ -436,13 +494,52 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 					IOFunctions.println( "WARNING: The resolution level (" + resolutions[ choice ] + ") is not a power of two, the closest level with powers of two <= these factors is used." );
 		}
 
-		IOFunctions.println( "Scale space: starting resolution (downsampling x, y, z) = " + Util.printCoordinates( downsampling ) );
+		// only the interactive preview decides about the finest structures: the last choice there, otherwise off at full resolution and on elsewhere
+		this.detectFinestLevel = defaultDetectFinestLevel( downsampling );
+
+		IOFunctions.println( "Scale space: starting resolution (downsampling x, y, z) = " + Util.printCoordinates( downsampling ) + ", finest structures = " + detectFinestLevel );
 
 		// the interactive previews (DifferenceOfGUI) open the views with these
 		downsampleXYIndex = (int)downsampling[ 0 ];
 		downsampleZ = (int)downsampling[ 2 ];
 
 		return true;
+	}
+
+	/**
+	 * The dialog for manually typed starting resolutions (powers of two)
+	 *
+	 * @param initial - the pre-filled factors
+	 * @return the factors, null if cancelled or not powers of two
+	 */
+	public static long[] queryManualResolution( final long[] initial )
+	{
+		final GenericDialog gd = new GenericDialog( "Starting resolution" );
+
+		gd.addMessage( "Downsampling of the image that the scale space starts at (powers of two)", GUIHelper.smallStatusFont );
+		gd.addNumericField( "Downsample_X", initial[ 0 ], 0 );
+		gd.addNumericField( "Downsample_Y", initial[ 1 ], 0 );
+		gd.addNumericField( "Downsample_Z", initial[ 2 ], 0 );
+
+		gd.showDialog();
+
+		if ( gd.wasCanceled() )
+			return null;
+
+		final long[] ds = new long[ 3 ];
+
+		for ( int d = 0; d < 3; ++d )
+		{
+			ds[ d ] = Math.round( gd.getNextNumber() );
+
+			if ( !isPowerOfTwo( ds[ d ] ) )
+			{
+				IOFunctions.println( "ERROR: The downsampling factors must be powers of two >= 1, but the factor for dimension " + d + " is " + ds[ d ] + "." );
+				return null;
+			}
+		}
+
+		return ds;
 	}
 
 	/**
@@ -510,40 +607,16 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		return Math.round( value * 100.0 ) / 100.0;
 	}
 
+	/**
+	 * All scale-space parameters are added with the downsampling (see addDownsamplingParameters)
+	 */
 	@Override
-	protected void addAddtionalParameters( final GenericDialog gd )
-	{
-		gd.addMessage( "Scale space: sigma is the finest scale, the threshold the minimal |response| at any scale", GUIHelper.smallStatusFont );
-		gd.addNumericField( "Steps_per_octave", defaultSteps, 0 );
-		gd.addNumericField( "Octaves (-1 = as many as the image allows)", defaultOctaves, 0 );
-		gd.addCheckbox( "Detect_finest_level (also keep all single-scale detections at sigma)", defaultDetectFinestLevel );
-	}
+	protected void addAddtionalParameters( final GenericDialog gd ) {}
 
 	@Override
 	protected boolean queryAdditionalParameters( final GenericDialog gd )
 	{
-		this.steps = defaultSteps = (int)Math.round( gd.getNextNumber() );
-		this.octaves = defaultOctaves = (int)Math.round( gd.getNextNumber() );
-		this.detectFinestLevel = defaultDetectFinestLevel = gd.getNextBoolean();
-
-		if ( steps < 1 )
-		{
-			IOFunctions.println( "Scale space: the steps per octave must be >= 1." );
-			return false;
-		}
-
-		if ( octaves == 0 || octaves < -1 )
-		{
-			IOFunctions.println( "Scale space: the number of octaves must be -1 (as many as the image allows) or >= 1." );
-			return false;
-		}
-
-		if ( localization == 2 )
-		{
-			IOFunctions.println( "Scale space: the Gaussian mask localization is not supported, using the quadratic fit in space and scale." );
-			localization = defaultLocalization = 1;
-		}
-
+		// the image sigmas are queried after the sub-dialogs, so the note stays here
 		if ( imageSigmaX != 0.5 || imageSigmaY != 0.5 || imageSigmaZ != 0.5 )
 			IOFunctions.println( "Scale space: the image sigmas are ignored, the scale space assumes an isotropic image blur of " + defaults.imageSigma + " px." );
 

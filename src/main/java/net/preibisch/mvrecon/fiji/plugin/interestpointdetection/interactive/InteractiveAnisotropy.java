@@ -22,23 +22,12 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive;
 
-import java.awt.Color;
 import java.awt.Component;
-import java.awt.Dimension;
-import java.awt.Font;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
-import java.awt.GridLayout;
 import java.awt.Insets;
-import java.awt.Rectangle;
-import java.awt.RenderingHints;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.awt.geom.Ellipse2D;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Date;
@@ -47,20 +36,11 @@ import java.util.Locale;
 
 import javax.swing.JButton;
 import javax.swing.JLabel;
-import javax.swing.JMenuItem;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
-import javax.swing.JSlider;
-import javax.swing.JSpinner;
-import javax.swing.SpinnerNumberModel;
-import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
-import javax.swing.plaf.basic.BasicSliderUI;
 
 import bdv.tools.transformation.TransformedSource;
 import bdv.ui.BdvDefaultCards;
-import bdv.ui.UIUtils;
 import bdv.util.Bdv;
 import bdv.util.BdvFunctions;
 import bdv.util.BdvHandle;
@@ -84,7 +64,6 @@ import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.miginfocom.swing.MigLayout;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interactive.MultiResolutionSource;
 import net.preibisch.mvrecon.fiji.plugin.interactive.MultiResolutionTools;
@@ -99,9 +78,9 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  * Interactive estimation of the anisotropy of a view (z voxel / xy voxel at full resolution) in
  * BigDataViewer: the view is shown on its raw pixel grid as a side view, one slider scales it in z in
  * real time, the anisotropy is right when round structures (beads) look round (shift+X, shift+Y).
- * The slider looks and behaves like the brightness slider of BigDataViewer: value textbox next to
- * it, the bounds stacked to the right (click them or right-click the slider to change them, a value
- * typed outside the bounds extends them). The confirmed value is logged, kept in
+ * The slider ({@link BoundedValueSlider}) looks and behaves like the brightness slider of BigDataViewer:
+ * value textbox next to it, the bounds stacked to the right (click them or right-click the slider to
+ * change them, a value typed outside the bounds extends them). The confirmed value is logged, kept in
  * {@link #lastAnisotropy} and set as the default of the scale-space detection dialog (ScaleSpaceGUI).
  *
  * @author Stephan Preibisch
@@ -111,30 +90,23 @@ public class InteractiveAnisotropy
 	/** the last value confirmed with Done or by closing the window, NaN if none yet */
 	public static double lastAnisotropy = Double.NaN;
 
-	protected static final int sliderLength = 10000;
-
 	final BasicViewDescription< ? > vd;
 	final double calibration;
 
 	final BdvStackSource< ? > bdv;
 	final TransformedSource< ? > transformedSource;
 
-	double anisotropy, lowerBound, upperBound;
+	double anisotropy;
 	boolean finished = false;
 
-	// the widgets of the card
-	JSlider slider;
-	JSpinner valueSpinner;
-	JLabel lowerBoundLabel, upperBoundLabel;
-	boolean updating = false;
+	// the slider of the card (the brightness slider of BigDataViewer for one value)
+	BoundedValueSlider slider;
 
 	public InteractiveAnisotropy( final AbstractSpimData< ? > data, final ViewId view )
 	{
 		this.vd = data.getSequenceDescription().getViewDescriptions().get( view );
 		this.calibration = calibrationAnisotropy( vd );
 		this.anisotropy = calibration;
-		this.lowerBound = 0.25;
-		this.upperBound = Math.max( 5, 2 * calibration );
 
 		final String name = Group.pvid( view );
 
@@ -231,36 +203,22 @@ public class InteractiveAnisotropy
 	}
 
 	/**
-	 * Sets the value (extends the bounds if necessary) and updates the slider, the textbox and the display
+	 * Sets the value through the slider (extends its bounds if necessary), which updates the display
 	 */
-	public void setValue( final double value )
-	{
-		if ( value < lowerBound || value > upperBound )
-			setBounds( Math.min( lowerBound, value ), Math.max( upperBound, value ) );
-
-		setAnisotropy( value );
-		updateWidgets();
-	}
+	public void setValue( final double value ) { slider.setValue( value ); }
 
 	/**
 	 * Sets the bounds of the slider (the value is kept if inside, otherwise clamped)
 	 */
-	public void setBounds( final double min, final double max )
-	{
-		lowerBound = Math.max( 0, Math.min( min, max ) );
-		upperBound = Math.max( lowerBound + 0.001, Math.max( min, max ) );
-
-		setAnisotropy( Math.min( Math.max( anisotropy, lowerBound ), upperBound ) );
-		updateWidgets();
-	}
+	public void setBounds( final double min, final double max ) { slider.setBounds( min, max ); }
 
 	public double getAnisotropy() { return anisotropy; }
 
 	public double getCalibration() { return calibration; }
 
-	public double getLowerBound() { return lowerBound; }
+	public double getLowerBound() { return slider.getLowerBound(); }
 
-	public double getUpperBound() { return upperBound; }
+	public double getUpperBound() { return slider.getUpperBound(); }
 
 	public boolean isFinished() { return finished; }
 
@@ -282,21 +240,6 @@ public class InteractiveAnisotropy
 
 		if ( close )
 			bdv.getBdvHandle().close();
-	}
-
-	protected void updateWidgets()
-	{
-		if ( slider == null )
-			return;
-
-		updating = true;
-
-		slider.setValue( (int)Math.round( ( anisotropy - lowerBound ) / ( upperBound - lowerBound ) * sliderLength ) );
-		valueSpinner.setValue( anisotropy );
-		lowerBoundLabel.setText( String.format( Locale.US, "%.3f", lowerBound ) );
-		upperBoundLabel.setText( String.format( Locale.US, "%.3f", upperBound ) );
-
-		updating = false;
 	}
 
 	protected JPanel createPanel()
@@ -321,8 +264,14 @@ public class InteractiveAnisotropy
 		l.setFont( GUIHelper.smallStatusFont );
 		panel.add( l, c);
 
+		// the brightness slider of BigDataViewer for one value, with presets for its bounds
+		slider = new BoundedValueSlider( anisotropy, 0.25, Math.max( 5, 2 * calibration ), false, "0.000", 0.01 );
+		slider.addPreset( "set bounds 0 .. 10", 0, 10 );
+		slider.addPreset( "set bounds " + String.format( Locale.US, "%.3f .. %.3f", 0.5 * calibration, 2 * calibration ) + " (calibration / 2 .. x 2)", 0.5 * calibration, 2 * calibration );
+		slider.addListener( this::setAnisotropy );
+
 		++c.gridy;
-		panel.add( createSliderPanel(), c );
+		panel.add( slider, c );
 
 		++c.gridy;
 		l = new JLabel( "<html>calibration (z/xy): <b>" + String.format( Locale.US, "%.3f", calibration ) + "</b>. Press 'Done' to update the ScaleSpace dialog.</html>");
@@ -342,157 +291,6 @@ public class InteractiveAnisotropy
 		panel.add( done, c );
 
 		return panel;
-	}
-
-	/**
-	 * The brightness slider of BigDataViewer for one value: slider, value textbox, the bounds stacked to the right
-	 */
-	protected JPanel createSliderPanel()
-	{
-		final JPanel panel = new JPanel( new MigLayout( "ins 5 5 5 10, fillx, filly, hidemode 3", "[grow][][]", "[]0[]" ) );
-
-		slider = new JSlider( SwingConstants.HORIZONTAL, 0, sliderLength, 0 );
-		slider.setUI( new SingleValueSliderUI( slider ) );
-		slider.setFocusable( false );
-		UIUtils.setPreferredWidth( slider, 50 );
-		slider.addChangeListener( e -> {
-			if ( !updating )
-				setValue( lowerBound + ( (double)slider.getValue() / sliderLength ) * ( upperBound - lowerBound ) );
-		} );
-
-		// no maximum: the editor then sizes the textbox for "0.000" and not for the maximum
-		valueSpinner = new JSpinner( new SpinnerNumberModel( anisotropy, 0.0, null, 0.01 ) );
-		valueSpinner.setEditor( new JSpinner.NumberEditor( valueSpinner, "0.000" ) );
-		valueSpinner.addChangeListener( e -> {
-			if ( !updating )
-				setValue( (Double)valueSpinner.getValue() );
-		} );
-
-		lowerBoundLabel = new JLabel( "", SwingConstants.RIGHT );
-		upperBoundLabel = new JLabel( "", SwingConstants.RIGHT );
-		final Font font = lowerBoundLabel.getFont().deriveFont( lowerBoundLabel.getFont().getSize2D() * 0.8f );
-		lowerBoundLabel.setFont( font );
-		upperBoundLabel.setFont( font );
-		lowerBoundLabel.setToolTipText( "click to change the bounds" );
-		upperBoundLabel.setToolTipText( "click to change the bounds" );
-
-		// as the brightness slider of BigDataViewer: click the bounds or right-click to set them
-		final MouseAdapter popupListener = new MouseAdapter()
-		{
-			@Override
-			public void mousePressed( final MouseEvent e )
-			{
-				if ( e.isPopupTrigger() || ( e.getButton() == MouseEvent.BUTTON1 && ( e.getComponent() == lowerBoundLabel || e.getComponent() == upperBoundLabel ) ) )
-					createPopupMenu().show( e.getComponent(), e.getX(), e.getY() );
-			}
-
-			@Override
-			public void mouseReleased( final MouseEvent e )
-			{
-				if ( e.isPopupTrigger() )
-					createPopupMenu().show( e.getComponent(), e.getX(), e.getY() );
-			}
-		};
-
-		for ( final Component component : new Component[] { panel, slider, lowerBoundLabel, upperBoundLabel } )
-			component.addMouseListener( popupListener );
-
-		panel.add( slider, "growx, sy 2" );
-		panel.add( valueSpinner, "sy 2" );
-		panel.add( lowerBoundLabel, "right, wrap" );
-		panel.add( upperBoundLabel, "right" );
-
-		updateWidgets();
-
-		return panel;
-	}
-
-	protected JPopupMenu createPopupMenu()
-	{
-		final JPopupMenu menu = new JPopupMenu();
-
-		final JMenuItem setBounds = new JMenuItem( "set bounds ..." );
-		setBounds.addActionListener( e -> setBoundsDialog() );
-		menu.add( setBounds );
-
-		final JMenuItem bounds1 = new JMenuItem( "set bounds 0 .. 10" );
-		bounds1.addActionListener( e -> setBounds( 0, 10 ) );
-		menu.add( bounds1 );
-
-		final JMenuItem bounds2 = new JMenuItem( "set bounds " + String.format( Locale.US, "%.3f .. %.3f", 0.5 * calibration, 2 * calibration ) + " (calibration / 2 .. x 2)" );
-		bounds2.addActionListener( e -> setBounds( 0.5 * calibration, 2 * calibration ) );
-		menu.add( bounds2 );
-
-		final JMenuItem narrow = new JMenuItem( "narrow bounds around the current value (/ 1.5 .. x 1.5)" );
-		narrow.addActionListener( e -> setBounds( anisotropy / 1.5, anisotropy * 1.5 ) );
-		menu.add( narrow );
-
-		return menu;
-	}
-
-	/**
-	 * The "Set Bounds" dialog of the brightness slider of BigDataViewer
-	 */
-	protected void setBoundsDialog()
-	{
-		final JSpinner minSpinner = new JSpinner( new SpinnerNumberModel( lowerBound, 0.0, 1000000.0, 0.1 ) );
-		final JSpinner maxSpinner = new JSpinner( new SpinnerNumberModel( upperBound, 0.0, 1000000.0, 0.1 ) );
-
-		minSpinner.setEditor( new JSpinner.NumberEditor( minSpinner, "0.000" ) );
-		maxSpinner.setEditor( new JSpinner.NumberEditor( maxSpinner, "0.000" ) );
-
-		minSpinner.addChangeListener( e -> {
-			if ( (Double)minSpinner.getValue() > (Double)maxSpinner.getValue() )
-				maxSpinner.setValue( minSpinner.getValue() );
-		} );
-
-		maxSpinner.addChangeListener( e -> {
-			if ( (Double)maxSpinner.getValue() < (Double)minSpinner.getValue() )
-				minSpinner.setValue( maxSpinner.getValue() );
-		} );
-
-		final JPanel panel = new JPanel( new GridLayout( 2, 2, 4, 4 ) );
-		panel.add( new JLabel( "min", SwingConstants.RIGHT ) );
-		panel.add( minSpinner );
-		panel.add( new JLabel( "max", SwingConstants.RIGHT ) );
-		panel.add( maxSpinner );
-
-		if ( JOptionPane.showConfirmDialog( null, panel, "Set Bounds", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE ) == JOptionPane.OK_OPTION )
-			setBounds( (Double)minSpinner.getValue(), (Double)maxSpinner.getValue() );
-	}
-
-	/**
-	 * The look of the range slider of BigDataViewer (bdv.ui.rangeslider.RangeSliderUI) for a single knob:
-	 * the plain track and a round, light gray knob with a dark gray outline
-	 */
-	protected static class SingleValueSliderUI extends BasicSliderUI
-	{
-		public SingleValueSliderUI( final JSlider slider ) { super( slider ); }
-
-		@Override
-		protected Dimension getThumbSize() { return new Dimension( 12, 12 ); }
-
-		@Override
-		public void paintFocus( final Graphics g ) {}
-
-		@Override
-		public void paintThumb( final Graphics g )
-		{
-			final Rectangle knobBounds = thumbRect;
-			final Graphics2D g2d = (Graphics2D)g.create();
-
-			g2d.setRenderingHint( RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON );
-			g2d.translate( knobBounds.x, knobBounds.y );
-
-			final Ellipse2D knob = new Ellipse2D.Double( 0, 0, knobBounds.width - 1, knobBounds.height - 1 );
-
-			g2d.setColor( slider.isEnabled() ? Color.lightGray : Color.white );
-			g2d.fill( knob );
-			g2d.setColor( slider.isEnabled() ? Color.darkGray : Color.lightGray );
-			g2d.draw( knob );
-
-			g2d.dispose();
-		}
 	}
 
 	/**

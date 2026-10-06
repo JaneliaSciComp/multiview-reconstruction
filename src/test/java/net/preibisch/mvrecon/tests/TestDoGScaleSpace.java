@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.tests;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -54,6 +55,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -64,6 +66,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace.Candidates;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace.Octave;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace.ScaleSpacePeak;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.ScaleSpaceParameters;
@@ -238,14 +241,128 @@ public class TestDoGScaleSpace
 		assertTrue( fractionWithFinest >= 0.95, "with finest level: " + fractionWithFinest );
 		assertTrue( fractionLowe < 0.5, "Lowe only: " + fractionLowe );
 
-		// the finest-level points carry sigma = sigmaMin
-		int atSigmaMin = 0;
+		// the finest-level points carry sigma <= sigmaMin (sigmaMin, or the fitted size below it)
+		int atMostSigmaMin = 0;
 
 		for ( final InterestPointSS peak : withFinest )
-			if ( Math.abs( peak.getSigma() - p.sigmaMin ) < 1e-6 )
-				++atSigmaMin;
+			if ( peak.getSigma() <= p.sigmaMin + 1e-6 )
+				++atMostSigmaMin;
 
-		assertTrue( atSigmaMin >= withFinest.size() - lowe.size(), "finest-level points have sigma = sigmaMin" );
+		assertTrue( atMostSigmaMin >= withFinest.size() - lowe.size(), "finest-level points have sigma <= sigmaMin" );
+	}
+
+	/**
+	 * The size of the finest-level detections (no extremum in scale) is fitted to the responses of the first levels:
+	 * exact for model responses, and within 15% for synthetic Gaussian blobs of 0.5 .. 1.5 px in a 3d image
+	 */
+	@Test
+	public void testFitBlobSize()
+	{
+		final int n = 3;
+		final float k = LaPlaceFunctions.computeK( 4 );
+		final float[] sigma = DoGScaleSpace.computeSigmas( 1.6, k, 4 );
+		final double kMin1Inv = LaPlaceFunctions.computeKWeight( k );
+
+		// model responses are recovered exactly, isotropic and anisotropic
+		for ( final double[] anisotropy : new double[][] { null, { 1, 1, 2.5 } } )
+		{
+			final double[][] totalSigma = DoGScaleSpace.totalSigmaOctave0( sigma, anisotropy, 0.5, n );
+
+			for ( final double b : new double[] { 0.3, 0.8, 1.5 } )
+			{
+				final double[] responses = new double[ 4 ];
+				DoGScaleSpace.modelResponses( b, totalSigma, anisotropy, kMin1Inv, responses );
+
+				for ( int i = 0; i < responses.length; ++i )
+					responses[ i ] *= -3.7; // the mass of the blob
+
+				final double[] fit = DoGScaleSpace.fitBlobSize( responses, totalSigma, anisotropy, kMin1Inv, 4.0 );
+
+				assertEquals( b, fit[ 0 ], 0.01, "b = " + b );
+				assertEquals( -3.7, fit[ 1 ], 0.05, "C for b = " + b );
+				assertTrue( fit[ 2 ] < 5e-3, "residual for b = " + b + ": " + fit[ 2 ] );
+			}
+		}
+
+		// synthetic isotropic Gaussian blobs (the assumed image blur of 0.5 px is part of their width), all of them are
+		// finest-level detections at sigmaMin 1.6 and their sigma is the fitted scale of maximal response, b * sqrt( 2 / 3 )
+		final double[] sizes = new double[] { 0.5, 1.0, 1.5 };
+		final double[][] centers = new double[][] { { 16.3, 20.6, 14.2 }, { 44.7, 18.4, 30.5 }, { 20.2, 50.1, 42.8 } };
+		final Img< FloatType > img = ArrayImgs.floats( 64, 64, 56 );
+		final Cursor< FloatType > c = img.localizingCursor();
+
+		while ( c.hasNext() )
+		{
+			c.fwd();
+			double v = 0;
+
+			for ( int j = 0; j < sizes.length; ++j )
+			{
+				final double s2 = sizes[ j ] * sizes[ j ] + 0.25;
+				double r2 = 0;
+
+				for ( int d = 0; d < n; ++d )
+					r2 += Math.pow( c.getDoublePosition( d ) - centers[ j ][ d ], 2 );
+
+				v += Math.exp( -r2 / ( 2 * s2 ) );
+			}
+
+			c.get().set( (float)v );
+		}
+
+		final ScaleSpaceParameters p = new ScaleSpaceParameters( 1.6, 4, -1, 0.001 );
+		p.minIntensity = 0;
+		p.maxIntensity = 1;
+
+		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
+		final ArrayList< ScaleSpacePeak > peaks = DoGScaleSpace.computeScaleSpacePeaks( Views.extendMirrorSingle( img ), new FinalInterval( img ), new FinalInterval( img ), null, p, service );
+		service.shutdown();
+
+		for ( int j = 0; j < sizes.length; ++j )
+		{
+			ScaleSpacePeak nearest = null;
+			double nearestDistance = Double.MAX_VALUE;
+
+			for ( final ScaleSpacePeak peak : peaks )
+			{
+				double dist = 0;
+
+				for ( int d = 0; d < n; ++d )
+					dist += Math.pow( peak.l[ d ] - centers[ j ][ d ], 2 );
+
+				if ( dist < nearestDistance )
+				{
+					nearestDistance = dist;
+					nearest = peak;
+				}
+			}
+
+			final double expected = sizes[ j ] * Math.sqrt( 2.0 / n );
+
+			IOFunctions.println( "blob size " + sizes[ j ] + ": peak at " + Util.printCoordinates( nearest.l ) + ", finest = " + nearest.finest + ", sigma = " + nearest.sigma + " (expected " + expected + ")" );
+
+			assertTrue( Math.sqrt( nearestDistance ) < 1.0, "blob " + j + " found" );
+			assertTrue( nearest.finest, "blob " + j + " is a finest-level detection" );
+			assertEquals( expected, nearest.sigma, Math.max( 0.2, 0.15 * expected ), "fitted sigma of blob size " + sizes[ j ] );
+		}
+
+		// an unreliable fit (here: no residual is accepted) gives the fallback, which is never above sigmaMin
+		p.finestFitMaxResidual = -1;
+		p.finestFallbackSigma = 1.4;
+
+		final ExecutorService service2 = Threads.createFixedExecutorService( Threads.numThreads() );
+
+		for ( final ScaleSpacePeak peak : DoGScaleSpace.computeScaleSpacePeaks( Views.extendMirrorSingle( img ), new FinalInterval( img ), new FinalInterval( img ), null, p, service2 ) )
+			if ( peak.finest )
+				assertEquals( 1.4, peak.sigma, 0.0 );
+
+		p.finestFallbackSigma = 2.0;
+
+		for ( final ScaleSpacePeak peak : DoGScaleSpace.computeScaleSpacePeaks( Views.extendMirrorSingle( img ), new FinalInterval( img ), new FinalInterval( img ), null, p, service2 ) )
+			if ( peak.finest )
+				assertEquals( p.sigmaMin, peak.sigma, 0.0 );
+
+		service2.shutdown();
 	}
 
 	/**
@@ -401,6 +518,108 @@ public class TestDoGScaleSpace
 	}
 
 	/**
+	 * The candidates (computed once down to a low threshold, minima and maxima, no finest-level exclusion)
+	 * filtered at a higher threshold, with or without the finest level, maxima only, are identical (in order)
+	 * to a direct run at that threshold, for both localizations: the interactive preview never recomputes.
+	 * The finest-level peaks, the types and the keys are marked, the cap keeps the strongest candidates.
+	 */
+	@Test
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public void testCandidatesMatchDirectRun()
+	{
+		final SpimData2 spimData = SpimData2.convert( SimulatedBeadsImgLoader.spimdataExample( new int[] { 0, 90 }, 0, 100, new double[] { 2, 2, 2 }, new FinalInterval( 128, 128, 64 ) ) );
+		final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( 0, 0 );
+		final RandomAccessibleInterval img = DownsampleTools.openAndDownsample( spimData.getSequenceDescription().getImgLoader(), vd, new long[] { 1, 1, 1 }, false ).getA();
+		final Interval interval = new FinalInterval( img );
+		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
+
+		for ( final int localization : new int[] { 1, 0 } )
+		{
+			final ScaleSpaceParameters p = new ScaleSpaceParameters( 1.5, 3, -1, 0.001 );
+			p.localization = localization;
+
+			final Candidates c = DoGScaleSpace.computeScaleSpaceCandidates( (RandomAccessible)Views.extendMirrorSingle( img ), interval, interval, null, p, 0, service );
+
+			assertEquals( 0.001, c.threshold, 0.0 );
+			assertTrue( c.regular.size() > 0 && c.finest.size() > 0, "candidates: " + c.regular.size() + " / " + c.finest.size() );
+
+			for ( final ScaleSpacePeak f : c.finest )
+			{
+				assertTrue( f.finest );
+				assertEquals( 0, f.octave );
+				assertTrue( f.sigma > 0 && f.sigma <= p.sigmaMin + 1e-9, "fitted sigma " + f.sigma + " <= sigmaMin" );
+				assertTrue( f.level1Key >= 0 );
+			}
+
+			int keyed = 0, minima = 0;
+
+			for ( final ScaleSpacePeak r : c.regular )
+			{
+				assertFalse( r.finest );
+
+				if ( r.octave > 0 )
+					assertEquals( -1, r.level1Key );
+				else if ( r.level1Key >= 0 )
+					++keyed;
+
+				if ( !r.isMax )
+					++minima;
+			}
+
+			assertTrue( keyed > 0, "level-1 peaks carry a key" );
+			assertTrue( minima > 0, "minima are candidates, too" );
+
+			for ( final double t : new double[] { 0.004, 0.02 } )
+				for ( final boolean finest : new boolean[] { true, false } )
+				{
+					final ScaleSpaceParameters pd = new ScaleSpaceParameters( p );
+					pd.threshold = t;
+					pd.detectFinestLevel = finest;
+
+					final ArrayList< ScaleSpacePeak > direct = DoGScaleSpace.computeScaleSpacePeaks( (RandomAccessible)Views.extendMirrorSingle( img ), interval, interval, null, pd, service );
+					final ArrayList< ScaleSpacePeak > filtered = DoGScaleSpace.filterCandidates( c, t, finest, pd.findMin, pd.findMax, localization, pd.combineDistance );
+
+					final String config = "localization " + localization + ", t = " + t + ", finest " + finest;
+
+					IOFunctions.println( config + ": direct " + direct.size() + " peaks, filtered candidates " + filtered.size() );
+
+					assertEquals( direct.size(), filtered.size(), config );
+					assertTrue( direct.size() > 0 || !finest, config );
+
+					for ( int i = 0; i < direct.size(); ++i )
+					{
+						final ScaleSpacePeak a = direct.get( i ), b = filtered.get( i );
+
+						for ( int d = 0; d < 3; ++d )
+							assertEquals( a.l[ d ], b.l[ d ], 1e-9, config + ", peak " + i );
+
+						assertEquals( a.value, b.value, 1e-9, config + ", peak " + i );
+						assertEquals( a.sigma, b.sigma, 1e-9, config + ", peak " + i );
+						assertEquals( a.octave, b.octave, config + ", peak " + i );
+						assertEquals( a.finest, b.finest, config + ", peak " + i );
+						assertEquals( a.isMax, b.isMax, config + ", peak " + i );
+						assertEquals( a.level1Key, b.level1Key, config + ", peak " + i );
+					}
+				}
+		}
+
+		// the cap keeps the strongest candidates and raises the threshold they are complete down to
+		final ScaleSpaceParameters p = new ScaleSpaceParameters( 1.5, 3, -1, 0.001 );
+		final Candidates capped = DoGScaleSpace.computeScaleSpaceCandidates( (RandomAccessible)Views.extendMirrorSingle( img ), interval, interval, null, p, 10, service );
+
+		assertTrue( capped.size() <= 10 && capped.size() > 0, "capped: " + capped.size() );
+		assertTrue( capped.threshold > 0.001, "threshold raised to " + capped.threshold );
+
+		for ( final ScaleSpacePeak peak : capped.regular )
+			assertTrue( Math.abs( peak.value ) > capped.threshold );
+
+		for ( final ScaleSpacePeak peak : capped.finest )
+			assertTrue( Math.abs( peak.value ) > capped.threshold );
+
+		service.shutdown();
+	}
+
+	/**
 	 * The whole-view driver (ScaleSpace.findInterestPoints) returns InterestPointSS mapped to full
 	 * resolution, identical to DoGScaleSpace.computeDoGScaleSpace plus DownsampleTools.correctForDownsampling
 	 */
@@ -501,13 +720,14 @@ public class TestDoGScaleSpace
 			anisotropyZ = 1.0;
 			minIntensity = 0.0;
 			maxIntensity = 1137.0;
-			setDefaultValues( 1 ); // sigma 1.8, threshold 0.008, maxima only
+			sigma = 1.6; // the initial blur is a field of the main dialog, the presets do not touch it
+			setDefaultValues( 1 ); // threshold 0.008, maxima only
 			steps = 4;
 			octaves = -1;
 			detectFinestLevel = true;
 		}};
 
-		assertEquals( "DOG-SS s=1.8 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=1.0 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
+		assertEquals( "DOG-SS s=1.6 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=1.0 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
 
 		final Map< String, String > d = gui.describeParameters();
 		assertEquals( "SCALE_SPACE", d.get( "detectionMethod" ) );
@@ -527,7 +747,7 @@ public class TestDoGScaleSpace
 		p.anisotropyZ = 1.0;
 		p.minIntensity = 0.0;
 		p.maxIntensity = 1137.0;
-		p.scaleSpace.sigmaMin = 1.8;
+		p.scaleSpace.sigmaMin = 1.6;
 		p.scaleSpace.threshold = 0.008;
 
 		final HashMap< ViewId, List< InterestPoint > > viaDriver = ScaleSpace.findInterestPoints( p );
