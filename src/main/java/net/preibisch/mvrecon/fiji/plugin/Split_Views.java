@@ -41,8 +41,6 @@ import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.splitting.SplitDistributeEvenly;
 import net.preibisch.mvrecon.process.splitting.SplitOctTree;
 import net.preibisch.mvrecon.process.splitting.SplitView;
@@ -60,7 +58,6 @@ public class Split_Views implements PlugIn
 	public static double defaultExclusionRadiusIP = 20;
 
 	public static boolean defaultAssignIlluminations = true;
-	public static boolean defaultSaveOnTheFly = false;
 
 	public static int defaultResultChoice = 0;
 	private static final String[] resultChoices = new String[] { "Display", "Save & Close" };
@@ -99,7 +96,7 @@ public class Split_Views implements PlugIn
 			final double excludeRadius,
 			final boolean display )
 	{
-		return split( data, saveAs, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, display, SplittingTools.defaultFakeLabel(), null, null );
+		return split( data, saveAs, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, display, SplittingTools.defaultFakeLabel() );
 	}
 
 	public static boolean split(
@@ -114,11 +111,9 @@ public class Split_Views implements PlugIn
 			final double error,
 			final double excludeRadius,
 			final boolean display,
-			final String fakeLabel,
-			final SplittingTools.InterestPointSaver saver,
-			final SplittingTools.CorrespondenceSaver corrSaver )
+			final String fakeLabel )
 	{
-		return split( data, saveAs, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, display, fakeLabel, saver, corrSaver, null );
+		return split( data, saveAs, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, display, fakeLabel, null );
 	}
 
 	public static boolean split(
@@ -134,11 +129,9 @@ public class Split_Views implements PlugIn
 			final double excludeRadius,
 			final boolean display,
 			final String fakeLabel,
-			final SplittingTools.InterestPointSaver saver,
-			final SplittingTools.CorrespondenceSaver corrSaver,
 			final Set< Integer > driveByChannelIds )
 	{
-		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, fakeLabel, saver, corrSaver, driveByChannelIds );
+		final SpimData2 newSD = SplittingTools.splitImages( data, splitting, assingIlluminationsFromTileIds, ipAdding, pointDensity, minPoints, maxPoints, error, excludeRadius, fakeLabel, null, null, driveByChannelIds ); // no savers: the XML save stores the result
 
 		if ( display )
 		{
@@ -228,7 +221,6 @@ public class Split_Views implements PlugIn
 
 		gd.addFileField("New_XML_File", suggestion, 30);
 		gd.addChoice( "Split_Result", resultChoices, resultChoices[ defaultResultChoice ] );
-		gd.addCheckbox( "Save_interest_points_on-the-fly (recommended for large datasets)", defaultSaveOnTheFly );
 
 		gd.showDialog();
 
@@ -254,7 +246,6 @@ public class Split_Views implements PlugIn
 
 		final String saveAs = gd.getNextString();
 		final int choice = defaultResultChoice = gd.getNextChoiceIndex();
-		final boolean saveOnTheFly = defaultSaveOnTheFly = gd.getNextBoolean();
 
 		double density = defaultDensity;
 		int minPoints = defaultMinPoints;
@@ -300,21 +291,7 @@ public class Split_Views implements PlugIn
 			}
 		}
 
-		final SplittingTools.InterestPointSaver saver = saveOnTheFly ? vipl -> {
-			for ( final ViewInterestPointLists v : vipl.values() )
-				for ( final InterestPoints ips : v.getHashMap().values() )
-				{
-					ips.saveInterestPoints( false );
-					ips.saveCorrespondingInterestPoints( false );
-				}
-		} : null;
-
-		final SplittingTools.CorrespondenceSaver corrSaver = saveOnTheFly ? vipl -> {
-			for ( final InterestPoints ips : vipl.getHashMap().values() )
-				ips.saveCorrespondingInterestPoints( false );
-		} : null;
-
-		return split( data, URITools.toURI( saveAs ), splittingMethod, assignIllum, ipAdding, density, minPoints, maxPoints, error, exclusionRadius, choice == 0, fakeLabel, saver, corrSaver, driveByChannelIds );
+		return split( data, URITools.toURI( saveAs ), splittingMethod, assignIllum, ipAdding, density, minPoints, maxPoints, error, exclusionRadius, choice == 0, fakeLabel, driveByChannelIds );
 	}
 
 	public static void main( String[] args ) throws SpimDataException

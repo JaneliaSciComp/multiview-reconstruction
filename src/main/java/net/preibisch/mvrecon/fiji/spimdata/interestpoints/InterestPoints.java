@@ -25,8 +25,10 @@ package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 import java.net.URI;
 import java.util.Collection;
 import java.util.Map;
+import java.util.Set;
 
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.util.Pair;
 
 /**
  * A list of interest points for a certain label, can save and load from textfile as specified in the XML
@@ -48,22 +50,19 @@ public abstract class InterestPoints
 		this.modifiedCorrespondingInterestPoints = false;
 	}
 
+	/** @return an {@link InterestPointsZarr} for the XML text {@code tpId_X_viewSetupId_Y/label}, the only form in use */
 	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo )
 	{
 		if ( fromXMLInfo.trim().toLowerCase().startsWith("interestpoints/") )
 			throw new RuntimeException( "text-file based interest points not supported anymore.");
-		else
-			return new InterestPointsN5( baseDir, fromXMLInfo );
+		if ( !InterestPointsZarr.supports( fromXMLInfo ) )
+			throw new RuntimeException( "interest point path not of the form tpId_X_viewSetupId_Y/label: " + fromXMLInfo );
+		return new InterestPointsZarr( baseDir, fromXMLInfo );
 	}
 
 	public static InterestPoints newInstance( final URI baseDir, final ViewId viewId, final String label )
 	{
-		final InterestPoints list;
-
-		final String n5dataset = InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label );
-		list = new InterestPointsN5( baseDir, n5dataset );
-
-		return list;
+		return new InterestPointsZarr( baseDir, viewId, label );
 	}
 
 	public boolean hasModifiedInterestPoints() { return modifiedInterestPoints; }
@@ -108,6 +107,12 @@ public abstract class InterestPoints
 	 * @return - the collection of corresponding interest points (copied), tries to load from disc if null
 	 */
 	public abstract Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy();
+
+	/** @return the correspondences to one partner (view, label), read without loading the other partners where possible */
+	public abstract Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( ViewId partnerView, String partnerLabel );
+
+	/** @return the (view, label)s this list has correspondences with */
+	public abstract Set< Pair< ViewId, String > > getCorrespondingViews();
 
 	public void setInterestPoints( final Collection< InterestPoint > list )
 	{

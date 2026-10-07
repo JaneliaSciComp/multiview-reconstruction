@@ -26,28 +26,33 @@ import java.net.URI;
 import java.util.Arrays;
 import java.util.Map;
 
-import mpicbg.spim.data.SpimDataException;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Key;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Points;
 
+/** Reads the interest points of one (view, label) straight from a dataset's {@code interestpoints.zarr}, without the XML. */
 public class ExampleDirectLoading
 {
-	public static void main( String[] args ) throws SpimDataException
+	public static void main( String[] args )
 	{
-		int viewSetupId = 1;
+		final URI dataset = URI.create( "/nrs/tavakoli/MirrorScope/20260831_ExpID99_BIS_0.03/intensity_correct_ipstore_zarr3/" );
+		final Key key = Key.of( new ViewId( 0, 124 ), "beads" );
 
-		//
-		// works without the XML, just loads the N5 directly
-		//
-		final InterestPointsN5 ip = new InterestPointsN5(
-				URI.create("/nrs/saalfeld/john/for/keller/danio_1_488/dataset-orig-tifs/3/"),
-				"tpId_0_viewSetupId_" + viewSetupId  + "/beads8v2" );
-
-		final Map< Integer, InterestPoint> points = ip.getInterestPointsCopy();
-
-		for ( final InterestPoint p : points.values() )
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( dataset );
+		final Points points = store.points( key );
+		if ( points == null )
 		{
-			System.out.println( p.getId() + " " + Arrays.toString( p.getL() ));
+			System.out.println( "no entry " + key.path() + " in " + dataset );
+			return;
 		}
+
+		final int[] ids = points.ids();
+		final double[] loc = points.loc();
+		for ( int i = 0; i < ids.length; ++i )
+			System.out.println( ids[ i ] + " " + Arrays.toString( Arrays.copyOfRange( loc, 3 * i, 3 * i + 3 ) ) );
+
+		for ( final Map.Entry< String, double[] > attribute : points.attributes().entrySet() )
+			System.out.println( attribute.getKey() + ": " + attribute.getValue().length + " values" );
 	}
 }

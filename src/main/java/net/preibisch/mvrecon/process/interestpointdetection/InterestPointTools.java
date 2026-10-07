@@ -206,6 +206,20 @@ public class InterestPointTools
 		return true;
 	}
 
+	/**
+	 * Adds empty list entries for a label whose data other JVMs already wrote as staging files (Spark detection). The next
+	 * XML save commits the data; the lists load it on first use.
+	 */
+	public static void addInterestPointEntries( final SpimData2 data, final String label, final Collection< ? extends ViewId > viewIds, final String parameters )
+	{
+		for ( final ViewId viewId : viewIds )
+		{
+			final InterestPoints list = InterestPoints.newInstance( data.getBasePathURI(), viewId, label );
+			list.setParameters( parameters == null ? "" : parameters );
+			data.getViewInterestPoints().getViewInterestPointLists( viewId ).addInterestPointList( label, list );
+		}
+	}
+
 	public static List< InterestPoint > limitList( final int maxDetections, final int maxDetectionsTypeIndex, final List< InterestPoint > list )
 	{
 		if ( list.size() <= maxDetections )
