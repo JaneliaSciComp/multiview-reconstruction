@@ -51,6 +51,20 @@ public class HelperFunctions {
 		return (int)Util.round(((sigma - min) / (max - min)) * scrollbarSize);
 	}
 
+	/** a value with the given number of decimals, small values that would lose their digits in scientific notation */
+	public static String formatValue(final double value, final int decimals) {
+		if (value != 0 && Math.abs(value) < Math.pow(10, -(decimals - 1)))
+			return String.format(java.util.Locale.US, "%.2e", value);
+		return String.format(java.util.Locale.US, "%." + decimals + "f", value);
+	}
+
+	/** inverse of the logarithmic mapping in ThresholdListener (scrollbar of size 1000), clamped to the scrollbar */
+	public static int computeThresholdScrollbarPositionFromValue(final double threshold, final double min, final double max) {
+		final double log1001 = Math.log10(1001);
+		final int position = (int) Math.round(1001 - Math.pow(10, (max - threshold) / (max - min) * log1001));
+		return Math.max(0, Math.min(1000, position));
+	}
+
 	// check if peak is inside of the rectangle
 	protected static <P extends RealLocalizable> boolean isInside(final P peak, final Rectangle rectangle) {
 		if (rectangle == null)

@@ -78,8 +78,11 @@ public class InteractiveDoG
 	//final int type;
 	Rectangle rectangle;
 
-	/** the detections of DoGImgLib2.computeDoG in the current region down to thresholdMin (maxima and minima of the image), filtered by the threshold slider */
+	/** the detections of DoGImgLib2.computeDoG in the current region down to detectionThreshold (maxima and minima of the image), filtered by the threshold slider */
 	ArrayList< InterestPointValue > peaksMax = null, peaksMin = null;
+
+	/** thresholdMin, or the threshold if a lower one was typed */
+	double detectionThreshold = thresholdMin;
 
 	// TODO: always process only this part of the initial image READ ONLY
 	RandomAccessibleInterval<FloatType> imgTmp;
@@ -338,7 +341,7 @@ public class InteractiveDoG
 		}
 
 		// only recalculate DOG & gradient image if: sigma, roi (also through support region), slider
-		if (roiChanged || peaksMax == null || peaksMin == null || change == ValueChange.SIGMA || change == ValueChange.SLICE || change == ValueChange.MINMAX || change == ValueChange.ALL )
+		if (roiChanged || peaksMax == null || peaksMin == null || change == ValueChange.SIGMA || change == ValueChange.SLICE || change == ValueChange.MINMAX || change == ValueChange.ALL || params.threshold < detectionThreshold )
 		{
 			dogDetection( Views.extendMirrorSingle( imgTmp ), extendedRoi );
 		}
@@ -353,11 +356,12 @@ public class InteractiveDoG
 
 	/**
 	 * The detection itself (DoGImgLib2.computeDoG, sigma and k as in the final run) on the region, down to thresholdMin
-	 * so that the threshold slider only filters. Maxima and minima are detected separately: the detector decides the type
+	 * (or a lower typed threshold) so that the threshold slider only filters. Maxima and minima are detected separately: the detector decides the type
 	 * before the sub-pixel refinement, so the sign of the refined value does not tell it reliably.
 	 */
 	protected void dogDetection( final RandomAccessible<FloatType> image, final Interval interval )
 	{
+		this.detectionThreshold = Math.min( thresholdMin, params.threshold );
 		this.peaksMax = params.findMaxima ? detect( image, interval, false, true ) : new ArrayList<>();
 		this.peaksMin = params.findMinima ? detect( image, interval, true, false ) : new ArrayList<>();
 	}
@@ -371,7 +375,7 @@ public class InteractiveDoG
 		{
 			final ArrayList< InterestPointValue > peaks = new ArrayList<>();
 
-			for ( final InterestPoint point : DoGImgLib2.computeDoG( image, null, interval, params.sigma, thresholdMin, 1, findMin, findMax, min, max, service ) )
+			for ( final InterestPoint point : DoGImgLib2.computeDoG( image, null, interval, params.sigma, detectionThreshold, 1, findMin, findMax, min, max, service ) )
 				if ( InterestPointValue.class.isInstance( point ) )
 					peaks.add( (InterestPointValue)point );
 
