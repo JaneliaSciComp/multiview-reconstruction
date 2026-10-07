@@ -64,6 +64,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
+import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace.Candidates;
@@ -533,10 +534,15 @@ public class TestDoGScaleSpace
 		final Interval interval = new FinalInterval( img );
 		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
 
+		// the range of the image, as the driver computes it per view
+		final float[] minmax = FusionTools.minMax( img );
+
 		for ( final int localization : new int[] { 1, 0 } )
 		{
 			final ScaleSpaceParameters p = new ScaleSpaceParameters( 1.5, 3, -1, 0.001 );
 			p.localization = localization;
+			p.minIntensity = minmax[ 0 ];
+			p.maxIntensity = minmax[ 1 ];
 
 			final Candidates c = DoGScaleSpace.computeScaleSpaceCandidates( (RandomAccessible)Views.extendMirrorSingle( img ), interval, interval, null, p, 0, service );
 
@@ -605,6 +611,8 @@ public class TestDoGScaleSpace
 
 		// the cap keeps the strongest candidates and raises the threshold they are complete down to
 		final ScaleSpaceParameters p = new ScaleSpaceParameters( 1.5, 3, -1, 0.001 );
+		p.minIntensity = minmax[ 0 ];
+		p.maxIntensity = minmax[ 1 ];
 		final Candidates capped = DoGScaleSpace.computeScaleSpaceCandidates( (RandomAccessible)Views.extendMirrorSingle( img ), interval, interval, null, p, 10, service );
 
 		assertTrue( capped.size() <= 10 && capped.size() > 0, "capped: " + capped.size() );
@@ -616,6 +624,34 @@ public class TestDoGScaleSpace
 		for ( final ScaleSpacePeak peak : capped.finest )
 			assertTrue( Math.abs( peak.value ) > capped.threshold );
 
+		service.shutdown();
+	}
+
+	/**
+	 * The algorithm refuses a missing intensity range (the driver computes it per view)
+	 */
+	@Test
+	public void testRangeRequired()
+	{
+		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
+		final RandomAccessibleInterval< FloatType > img = openSimulatedView();
+		final Interval interval = new FinalInterval( img );
+		final ScaleSpaceParameters p = new ScaleSpaceParameters();
+
+		assertTrue( Double.isNaN( p.minIntensity ) && Double.isNaN( p.maxIntensity ) );
+
+		boolean thrown = false;
+
+		try
+		{
+			DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( img ), interval, interval, null, p, service );
+		}
+		catch ( final IllegalArgumentException e )
+		{
+			thrown = true;
+		}
+
+		assertTrue( thrown, "a missing intensity range is refused" );
 		service.shutdown();
 	}
 

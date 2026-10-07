@@ -483,38 +483,18 @@ public class DoGScaleSpace
 			maskFloat = Converters.convert( mask, ( i, o ) -> o.set( i.getRealFloat() ), new FloatType() );
 
 		//
-		// intensity range (always of the entire image, never of the block)
+		// intensity range: given per view (the driver computes it over the whole view if the user did not set it), never computed here
+		// so that a block never scans the entire image and all blocks of a view normalize identically
 		//
-		final float min, max;
-		final boolean autoDetected;
-
 		if ( Double.isNaN( p.minIntensity ) || Double.isNaN( p.maxIntensity ) || Double.isInfinite( p.minIntensity ) || Double.isInfinite( p.maxIntensity ) || p.minIntensity == p.maxIntensity )
-		{
-			final float[] minmax;
+			throw new IllegalArgumentException( "The intensity range (minIntensity, maxIntensity) must be set, it is [" + p.minIntensity + ", " + p.maxIntensity + "]; compute it per view (e.g. FusionTools.minMax) before calling the scale space." );
 
-			if ( mask == null )
-				minmax = FusionTools.minMax( Views.interval( input, imageInterval ), service );
-			else
-				minmax = DoGImgLib2.minMax(
-						Views.interval( Converters.convert( input, ( i, o ) -> o.set( i.getRealFloat() ), new FloatType() ), imageInterval ),
-						Views.interval( maskFloat, imageInterval ),
-						service );
-
-			min = minmax[ 0 ];
-			max = minmax[ 1 ];
-			autoDetected = true;
-		}
-		else
-		{
-			min = (float)p.minIntensity;
-			max = (float)p.maxIntensity;
-			autoDetected = false;
-		}
+		final float min = (float)p.minIntensity;
+		final float max = (float)p.maxIntensity;
 
 		if ( !DoGImgLib2.silent )
-			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): min intensity = " + min + ", max intensity = " + max + ( autoDetected ? " [auto-detected over the entire image]" : " [provided]" ) );
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): intensity range [" + min + ", " + max + "], the image is normalized with it." );
 
-		// normalize image
 		final RandomAccessible< FloatType > inputFloat = ImgLib2Tools.normalizeVirtual( input, min, max );
 
 		//

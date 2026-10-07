@@ -44,6 +44,7 @@ import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
+import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -123,9 +124,21 @@ public class ScaleSpace
 								p.downsampling,
 								false );
 
-				// the intensity range is defined per detection (InterestPointParameters), as for the DoG
-				p.scaleSpace.minIntensity = p.minIntensity;
-				p.scaleSpace.maxIntensity = p.maxIntensity;
+				// the intensity range is the user's (InterestPointParameters, as for the DoG), otherwise the one of this view
+				if ( Double.isNaN( p.minIntensity ) || Double.isNaN( p.maxIntensity ) )
+				{
+					final float[] minmax = FusionTools.minMax( input.getA(), service );
+
+					p.scaleSpace.minIntensity = minmax[ 0 ];
+					p.scaleSpace.maxIntensity = minmax[ 1 ];
+
+					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): intensity range of the view = [" + minmax[ 0 ] + ", " + minmax[ 1 ] + "] (computed, not set by the user)" );
+				}
+				else
+				{
+					p.scaleSpace.minIntensity = p.minIntensity;
+					p.scaleSpace.maxIntensity = p.maxIntensity;
+				}
 
 				// the voxel size of the opened image per dimension relative to x, the Gaussians become isotropic in physical units
 				p.scaleSpace.anisotropy = anisotropy( vd, input.getB(), p.anisotropyZ );

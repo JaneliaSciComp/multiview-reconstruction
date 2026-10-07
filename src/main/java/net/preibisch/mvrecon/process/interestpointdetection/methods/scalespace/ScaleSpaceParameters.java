@@ -78,8 +78,9 @@ public class ScaleSpaceParameters
 	public int localization = 1;
 
 	/**
-	 * global intensity range used for the normalization to [0,1], NaN = compute from the image
-	 * (always from the entire image, never from the block that is processed)
+	 * the intensity range used for the normalization to [0,1]; it must be set before DoGScaleSpace runs
+	 * (the driver ScaleSpace computes it over the whole view when the user did not set one, so that all
+	 * blocks of a view normalize identically and a block never scans the entire image)
 	 */
 	public double minIntensity = Double.NaN;
 	public double maxIntensity = Double.NaN;
