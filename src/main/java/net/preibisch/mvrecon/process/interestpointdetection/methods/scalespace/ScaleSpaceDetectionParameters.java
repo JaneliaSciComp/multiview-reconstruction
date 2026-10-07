@@ -57,8 +57,13 @@ public class ScaleSpaceDetectionParameters extends InterestPointParameters
 	 */
 	public double anisotropyZ = Double.NaN;
 
+	/** All defaults: no views, no loader, starting resolution (1, 1, 1), anisotropy from the calibration */
 	public ScaleSpaceDetectionParameters() { super(); }
 
+	/**
+	 * @param toProcess - the views to detect in
+	 * @param imgloader - the loader that opens them
+	 */
 	public ScaleSpaceDetectionParameters(
 			final Collection< ViewDescription > toProcess,
 			final ImgLoader imgloader )

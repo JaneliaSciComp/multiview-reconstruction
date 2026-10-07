@@ -105,7 +105,10 @@ public class DoGScaleSpace
 	 */
 	public static class Octave
 	{
+		/** the index of the octave, 0 is the image that was handed in */
 		final public int o;
+
+		/** the subsampling factor of this octave relative to octave 0, 2^o */
 		final public long f;
 
 		/** the entire image at this octave */
@@ -129,14 +132,24 @@ public class DoGScaleSpace
 		/** sigma of the Gaussian that is applied to the input of this octave to obtain each level, per dimension and level */
 		public float[][] sigmaDiff;
 
+		/** the (normalized) image of this octave extended to infinity, and the mask (null if none), both subsampled by f */
 		public RandomAccessible< FloatType > input, mask;
 
+		/** the lazy Gaussian levels 0..steps+2 (sigma_i = sigmaMin * k^(i-1)) and the lazy DoG levels 0..steps+1 (d_i = (g_(i+1) - g_i) / (k-1)) */
 		final public ArrayList< RandomAccessibleInterval< FloatType > > gauss = new ArrayList<>();
 		final public ArrayList< RandomAccessibleInterval< FloatType > > dog = new ArrayList<>();
 
 		/** the DoG levels stacked, the last dimension is the scale */
 		public RandomAccessibleInterval< FloatType > stack;
 
+		/**
+		 * Sets up the intervals of the octave (domain, block, det, ref); the levels are added by buildLevels, domS and need by buildScaleSpace
+		 *
+		 * @param o - the octave
+		 * @param imageInterval - the entire image in pixels of octave 0
+		 * @param processInterval - the block in which peaks are searched, in pixels of octave 0
+		 * @param refineMargin - how far (in pixels of this octave) the refinement may move a peak out of the block
+		 */
 		public Octave( final int o, final Interval imageInterval, final Interval processInterval, final int refineMargin )
 		{
 			this.o = o;
@@ -174,6 +187,15 @@ public class DoGScaleSpace
 			this( l, value, sigma, octave, isMax, false, -1 );
 		}
 
+		/**
+		 * @param l - the refined position in pixels of octave 0 (kept by reference)
+		 * @param value - the refined DoG response (negative for maxima of the image, usually)
+		 * @param sigma - the lower sigma of the DoG level in pixels of octave 0, see sigmaBase (fitted for the finest level)
+		 * @param octave - the octave the peak was found in
+		 * @param isMax - whether the peak is a maximum of the image (a minimum of the DoG), otherwise a minimum
+		 * @param finest - whether the peak comes from the finest-level pass (no extremum in scale)
+		 * @param level1Key - key() of the integer position at DoG level 1 of octave 0 if the peak was found there, -1 otherwise
+		 */
 		public ScaleSpacePeak( final double[] l, final double value, final double sigma, final int octave, final boolean isMax, final boolean finest, final long level1Key )
 		{
 			this.l = l;
@@ -185,15 +207,19 @@ public class DoGScaleSpace
 			this.level1Key = level1Key;
 		}
 
+		/** @return the number of spatial dimensions of the position (the scale is not a dimension here) */
 		@Override
 		public int numDimensions() { return l.length; }
 
+		/** @return the position in dimension d in pixels of octave 0 */
 		@Override
 		public double getDoublePosition( final int d ) { return l[ d ]; }
 
+		/** @return the position in dimension d in pixels of octave 0 */
 		@Override
 		public float getFloatPosition( final int d ) { return (float)l[ d ]; }
 
+		/** Copies the position (pixels of octave 0) into the array */
 		@Override
 		public void localize( final double[] position )
 		{
@@ -201,6 +227,7 @@ public class DoGScaleSpace
 				position[ d ] = l[ d ];
 		}
 
+		/** Copies the position (pixels of octave 0) into the array */
 		@Override
 		public void localize( final float[] position )
 		{
@@ -283,6 +310,7 @@ public class DoGScaleSpace
 	 */
 	public static class Candidates
 	{
+		/** the extrema in space and scale of all octaves (regular) and all spatial extrema of DoG level 1 of octave 0 (finest), unmerged, minima and maxima */
 		final public ArrayList< ScaleSpacePeak > regular, finest;
 
 		/** the threshold the candidates are complete down to: the one they were computed with, raised to the cut-off |value| if there were more than allowed */
@@ -291,8 +319,16 @@ public class DoGScaleSpace
 		/** sigma of the coarsest detectable level in pixels of octave 0 */
 		final public double sigmaMax;
 
+		/** the number of octaves of the scale space */
 		final public int octaves;
 
+		/**
+		 * @param regular - the extrema in space and scale, unmerged
+		 * @param finest - all spatial extrema of DoG level 1 of octave 0, unmerged
+		 * @param threshold - the threshold the candidates are complete down to
+		 * @param sigmaMax - sigma of the coarsest detectable level in pixels of octave 0
+		 * @param octaves - the number of octaves
+		 */
 		public Candidates( final ArrayList< ScaleSpacePeak > regular, final ArrayList< ScaleSpacePeak > finest, final double threshold, final double sigmaMax, final int octaves )
 		{
 			this.regular = regular;
@@ -302,6 +338,7 @@ public class DoGScaleSpace
 			this.octaves = octaves;
 		}
 
+		/** @return the number of candidates, regular and finest together */
 		public int size() { return regular.size() + finest.size(); }
 	}
 
@@ -1127,6 +1164,11 @@ public class DoGScaleSpace
 		return pos;
 	}
 
+	/**
+	 * @param location - an integer position inside the interval
+	 * @param interval - the interval the position is keyed in (octave.det for the level-1 keys)
+	 * @return the row-major linear index of the position in the interval, a unique key per integer position
+	 */
 	protected static long key( final int[] location, final Interval interval )
 	{
 		long key = 0;
@@ -1137,6 +1179,9 @@ public class DoGScaleSpace
 		return key;
 	}
 
+	/**
+	 * @return key() of the position rounded to integers (only the first interval.numDimensions() entries are used, e.g. not the level)
+	 */
 	protected static long key( final double[] location, final Interval interval )
 	{
 		final int[] l = new int[ interval.numDimensions() ];
@@ -1411,6 +1456,9 @@ public class DoGScaleSpace
 		return sigmaMin * Math.pow( k, level - 1 ) * ( 1L << octave );
 	}
 
+	/**
+	 * @return sigmaBase( p.sigmaMin, k, octave, level ) with k = 2^(1/p.steps)
+	 */
 	public static double sigmaBase( final ScaleSpaceParameters p, final int octave, final double level )
 	{
 		return sigmaBase( p.sigmaMin, LaPlaceFunctions.computeK( p.steps ), octave, level );
@@ -1480,6 +1528,9 @@ public class DoGScaleSpace
 		}
 	}
 
+	/**
+	 * @return the sigmas of the levels of an octave with subsampling f, multiplied by f, i.e. in pixels of octave 0
+	 */
 	protected static double[] sigmasInBasePixels( final float[] sigma, final long f )
 	{
 		final double[] s = new double[ sigma.length ];
@@ -1490,6 +1541,9 @@ public class DoGScaleSpace
 		return s;
 	}
 
+	/**
+	 * @return the interval with min and max multiplied by f (an interval of an octave in pixels of octave 0; the max is the first pixel of the last octave pixel)
+	 */
 	protected static FinalInterval scale( final Interval interval, final long f )
 	{
 		final long[] min = new long[ interval.numDimensions() ];
@@ -1504,6 +1558,9 @@ public class DoGScaleSpace
 		return new FinalInterval( min, max );
 	}
 
+	/**
+	 * @return the smallest dimension of the interval
+	 */
 	protected static long minDimension( final Interval interval )
 	{
 		long min = Long.MAX_VALUE;
@@ -1514,11 +1571,17 @@ public class DoGScaleSpace
 		return min;
 	}
 
+	/**
+	 * @return a / b rounded up (also for negative a)
+	 */
 	protected static long ceilDiv( final long a, final long b )
 	{
 		return -Math.floorDiv( -a, b );
 	}
 
+	/**
+	 * @return the Euclidean distance of two positions (used by mergeDuplicates, in pixels of octave 0)
+	 */
 	protected static double distance( final RealLocalizable a, final RealLocalizable b )
 	{
 		double sum = 0;

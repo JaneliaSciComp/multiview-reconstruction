@@ -128,8 +128,12 @@ public class ScaleSpaceParameters
 	public double finestFitMaxResidual = 0.5;
 	public double finestFallbackSigma = 1.4;
 
+	/** The defaults (this class is the single source of them) */
 	public ScaleSpaceParameters() {}
 
+	/**
+	 * A copy of all fields (anisotropy and cellSize are cloned), e.g. to run with a different threshold without changing the original
+	 */
 	public ScaleSpaceParameters( final ScaleSpaceParameters p )
 	{
 		this.sigmaMin = p.sigmaMin;
@@ -153,12 +157,18 @@ public class ScaleSpaceParameters
 		this.finestFallbackSigma = p.finestFallbackSigma;
 	}
 
+	/**
+	 * The defaults with another initial blur and threshold
+	 */
 	public ScaleSpaceParameters( final double sigmaMin, final double threshold )
 	{
 		this.sigmaMin = sigmaMin;
 		this.threshold = threshold;
 	}
 
+	/**
+	 * The defaults with another initial blur, steps per octave, number of octaves (-1 = as many as the image allows) and threshold
+	 */
 	public ScaleSpaceParameters( final double sigmaMin, final int steps, final int octaves, final double threshold )
 	{
 		this.sigmaMin = sigmaMin;

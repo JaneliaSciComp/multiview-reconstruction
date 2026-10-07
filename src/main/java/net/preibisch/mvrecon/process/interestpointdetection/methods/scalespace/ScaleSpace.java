@@ -57,6 +57,11 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  */
 public class ScaleSpace
 {
+	/**
+	 * Detects the interest points of all views in p.toProcess, see addInterestPoints
+	 *
+	 * @return the interest points per view (InterestPointSS with response and sigma, in full-resolution pixels)
+	 */
 	public static HashMap< ViewId, List< InterestPoint >> findInterestPoints( final ScaleSpaceDetectionParameters p )
 	{
 		final HashMap< ViewId, List< InterestPoint >> interestPoints = new HashMap< ViewId, List< InterestPoint >>();
@@ -97,6 +102,17 @@ public class ScaleSpace
 		return new double[] { 1.0, ( vy * sy ) / ( vx * sx ), ( a * sz ) / sx };
 	}
 
+	/**
+	 * Detects the interest points of every present view in p.toProcess and adds them to the map: the view is opened
+	 * at the starting resolution p.downsampling (DownsampleTools.openAndDownsample), the intensity range is the
+	 * user's or the one of the opened view, the anisotropy of the opened image is derived from the calibration and
+	 * p.anisotropyZ, DoGScaleSpace.computeDoGScaleSpace runs on the entire view, the detections are limited if
+	 * requested and mapped (positions and sigma) to full resolution with the mipmap transform. A failing view is
+	 * logged and skipped. p.scaleSpace is mutated per view (intensity range, anisotropy).
+	 *
+	 * @param interestPoints - the map the detections are added to, one list per view
+	 * @param p - the parameters (views, loader, starting resolution, anisotropy, intensity range, limit, the scale space)
+	 */
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static void addInterestPoints( final HashMap< ViewId, List< InterestPoint > > interestPoints, final ScaleSpaceDetectionParameters p )
 	{
