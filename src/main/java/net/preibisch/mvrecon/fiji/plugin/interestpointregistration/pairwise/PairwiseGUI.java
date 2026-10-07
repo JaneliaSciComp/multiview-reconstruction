@@ -74,16 +74,19 @@ public abstract class PairwiseGUI implements DescribesParameters
 		final boolean multiConsensus = defaultMultiConsensus = gd.getNextBoolean();
 
 		final boolean advancedRANSAC = defaultAdvancedRANSAC = gd.getNextBoolean();
-		if ( !queryAdvancedRANSAC( advancedRANSAC ) )
+		if ( !queryAdvancedRANSAC( advancedRANSAC, multiConsensus ) )
 			return null;
 
-		final RANSACParameters rp = new RANSACParameters( maxEpsilon, RANSACParameters.min_inlier_ratio, minNumMatches, ransacIterations, multiConsensus, RANSACParameters.max_trust, RANSACParameters.filter_ransac );
+		// multi-consensus: sets are accepted by the minimal number of inliers alone; the ratio would refer to the shrinking
+		// remainder of each pass (0.05 for the first set, 1.0 for the last), so it is fixed to 0
+		final double minInlierRatio = multiConsensus ? 0.0 : RANSACParameters.min_inlier_ratio;
+		final RANSACParameters rp = new RANSACParameters( maxEpsilon, minInlierRatio, minNumMatches, ransacIterations, multiConsensus, RANSACParameters.max_trust, RANSACParameters.filter_ransac );
 
 		IOFunctions.println( "maxEpsilon: " + maxEpsilon );
 		IOFunctions.println( "minNumMatches: " + minNumMatches );
 		IOFunctions.println( "ransacIterations: " + ransacIterations );
 		IOFunctions.println( "ransacMultiConsensus: " + multiConsensus );
-		IOFunctions.println( "minInlierRatio: " + RANSACParameters.min_inlier_ratio );
+		IOFunctions.println( "minInlierRatio: " + minInlierRatio + ( multiConsensus ? " (ignored for multi-consensus)" : "" ) );
 		IOFunctions.println( "maxTrust: " + RANSACParameters.max_trust );
 		IOFunctions.println( "filterRansac: " + RANSACParameters.filter_ransac );
 
@@ -96,16 +99,18 @@ public abstract class PairwiseGUI implements DescribesParameters
 	 * {@link RANSACParameters}. Returns false if the user cancels the follow-up dialog.
 	 *
 	 * @param advanced - whether the user ticked the advanced-options checkbox
+	 * @param multiConsensus - whether multi-consensus RANSAC is on; the minimal inlier ratio is not asked then
 	 * @return false if the follow-up dialog was canceled, true otherwise
 	 */
-	protected static boolean queryAdvancedRANSAC( final boolean advanced )
+	protected static boolean queryAdvancedRANSAC( final boolean advanced, final boolean multiConsensus )
 	{
 		if ( !advanced )
 			return true;
 
 		final GenericDialog gd = new GenericDialog( "Advanced RANSAC options" );
 		gd.addNumericField( "Maximal_trust (factor of median residual)", RANSACParameters.max_trust, 2 );
-		gd.addSlider( "Minimal_inlier_ratio", 0.0, 1.0, RANSACParameters.min_inlier_ratio );
+		if ( !multiConsensus )
+			gd.addSlider( "Minimal_inlier_ratio", 0.0, 1.0, RANSACParameters.min_inlier_ratio );
 		gd.addCheckbox( "Filter_RANSAC", RANSACParameters.filter_ransac );
 		gd.showDialog();
 
@@ -113,7 +118,8 @@ public abstract class PairwiseGUI implements DescribesParameters
 			return false;
 
 		RANSACParameters.max_trust = gd.getNextNumber();
-		RANSACParameters.min_inlier_ratio = gd.getNextNumber();
+		if ( !multiConsensus )
+			RANSACParameters.min_inlier_ratio = gd.getNextNumber();
 		RANSACParameters.filter_ransac = gd.getNextBoolean();
 
 		return true;
