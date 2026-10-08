@@ -189,7 +189,7 @@ public class TestDoGScaleSpace
 		p.maxIntensity = TestInterestPointDetection.GLOBAL_MAX_INTENSITY;
 
 		final List< Octave > octaves = DoGScaleSpace.buildScaleSpace( Views.extendMirrorSingle( img ), interval, interval, null, p, service );
-		final List< InterestPoint > ours = legacyDuplicateFilter( DoGScaleSpace.detectSpatialExtrema( octaves.get( 0 ), 1, p, service ) );
+		final List< InterestPoint > ours = DoGImgLib2.removeDuplicates( DoGScaleSpace.detectSpatialExtrema( octaves.get( 0 ), 1, p, service ) );
 
 		service.shutdown();
 
@@ -1237,35 +1237,6 @@ public class TestDoGScaleSpace
 			out.next().set( in.next() );
 
 		return img;
-	}
-
-	/**
-	 * The duplicate filter of DoGImgLib2.computeDoG (it keeps the later of two near-identical points and never the last point)
-	 */
-	public static List< InterestPoint > legacyDuplicateFilter( final List< InterestPoint > peaks )
-	{
-		final ArrayList< InterestPoint > filtered = new ArrayList<>();
-
-		for ( int i = 0; i < peaks.size() - 1; ++i )
-		{
-			final double[] v1 = peaks.get( i ).getL();
-			boolean different = true;
-
-			for ( int j = i + 1; different && j < peaks.size(); ++j )
-			{
-				final double[] v2 = peaks.get( j ).getL();
-				different = false;
-
-				for ( int d = 0; d < v1.length; ++d )
-					if ( Math.abs( v1[ d ] - v2[ d ] ) > 0.001 )
-						different = true;
-			}
-
-			if ( different )
-				filtered.add( peaks.get( i ) );
-		}
-
-		return filtered;
 	}
 
 	public static void assertIdentical( final RandomAccessibleInterval< FloatType > a, final RandomAccessibleInterval< FloatType > b )

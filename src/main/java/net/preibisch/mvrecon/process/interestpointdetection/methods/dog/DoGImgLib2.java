@@ -299,23 +299,7 @@ public class DoGImgLib2
 		}
 
 		// remove potential duplicates (happens because during localization it can move around)
-		//final HashSet< >
-		final ArrayList< InterestPoint > filteredFinalPeaks = new ArrayList<>();
-
-		for ( int i = 0; i < finalPeaks.size() - 1; ++i )
-		{
-			final double[] v1 = finalPeaks.get( i ).getL();
-			boolean approxEqual = true;
-
-			for ( int j = i + 1; approxEqual && j < finalPeaks.size(); ++j )
-			{
-				final double[] v2 = finalPeaks.get( j ).getL();
-				approxEqual = isApproxEqual( v1, v2, 0.001 );
-			}
-
-			if ( approxEqual )
-				filteredFinalPeaks.add( finalPeaks.get( i ) );
-		}
+		final ArrayList< InterestPoint > filteredFinalPeaks = removeDuplicates( finalPeaks );
 
 		if ( !silent )
 			IOFunctions.println("(" + new Date(System.currentTimeMillis()) + "): Found " + filteredFinalPeaks.size() + " final peaks." );
@@ -323,7 +307,38 @@ public class DoGImgLib2
 		return filteredFinalPeaks;
 	}
 
-	private static final boolean isApproxEqual( final double[] v1, final double[] v2, final double epsilon )
+	/**
+	 * Removes near-identical detections (within 0.001 pixels in every dimension, which happens because the localization
+	 * can move a peak onto a neighbour): a detection is kept unless an earlier kept detection is that close, so of two
+	 * duplicates the first one survives. (Until 2026-10 the loop compared each detection with the later ones only and
+	 * never visited the last one, which kept the later duplicate and always dropped the last detection of a view.)
+	 *
+	 * @param finalPeaks - the detections in detection order
+	 * @return the detections without duplicates, in the same order
+	 */
+	public static ArrayList< InterestPoint > removeDuplicates( final List< InterestPoint > finalPeaks )
+	{
+		final ArrayList< InterestPoint > filteredFinalPeaks = new ArrayList<>();
+
+		for ( final InterestPoint peak : finalPeaks )
+		{
+			final double[] v1 = peak.getL();
+			boolean distinct = true;
+
+			for ( int j = 0; distinct && j < filteredFinalPeaks.size(); ++j )
+				distinct = differ( v1, filteredFinalPeaks.get( j ).getL(), 0.001 );
+
+			if ( distinct )
+				filteredFinalPeaks.add( peak );
+		}
+
+		return filteredFinalPeaks;
+	}
+
+	/**
+	 * @return true if the two positions differ by more than epsilon in any dimension
+	 */
+	private static final boolean differ( final double[] v1, final double[] v2, final double epsilon )
 	{
 		for ( int d = 0; d < v1.length; ++d )
 			if ( Math.abs( v1[ d ] - v2[ d ] ) > epsilon )
