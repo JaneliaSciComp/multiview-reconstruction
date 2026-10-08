@@ -22,6 +22,7 @@
  */
 package net.preibisch.mvrecon.process.interestpointdetection;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -29,6 +30,8 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
@@ -78,6 +81,11 @@ public class InterestPointTools
 		return getAllInterestPointLabels( labels, viewIdsToProcess );
 	}
 
+	/**
+	 * @param labels - the labels and the number of views each is present in (getAllInterestPointMap)
+	 * @param viewIdsToProcess - the views, a label missing in some gets a warning appended
+	 * @return the labels in natural order (sortLabels), with a warning for the incomplete ones
+	 */
 	public static String[] getAllInterestPointLabels(
 			final HashMap< String, Integer > labels,
 			final List< ? extends ViewId > viewIdsToProcess )
@@ -86,7 +94,7 @@ public class InterestPointTools
 
 		int i = 0;
 		
-		for ( final String label : labels.keySet() )
+		for ( final String label : sortLabels( labels.keySet() ) )
 		{
 			allLabels[ i ] = label;
 
@@ -97,6 +105,59 @@ public class InterestPointTools
 		}
 
 		return allLabels;
+	}
+
+	/**
+	 * Natural order of labels (naturalOrder): numbers inside the labels compare as numbers (with a decimal fraction if
+	 * present), the text in between case-insensitively, so "beads" &lt; "beads_t0.001" &lt; "beads_t0.0046" &lt; "beads_t0.022"
+	 * &lt; "beads_t0.1" and "nuclei_t2" &lt; "nuclei_t10" (plain alphabetical order gives "nuclei_t10" first)
+	 *
+	 * @return the labels as a new, sorted list
+	 */
+	public static ArrayList< String > sortLabels( final Collection< String > labels )
+	{
+		final ArrayList< String > sorted = new ArrayList<>( labels );
+		Collections.sort( sorted, naturalOrder );
+		return sorted;
+	}
+
+	/** the comparator of sortLabels, see compareNatural */
+	public static final Comparator< String > naturalOrder = InterestPointTools::compareNatural;
+
+	/** a number (with an optional decimal fraction) or a run of anything else */
+	private static final Pattern numberOrText = Pattern.compile( "\\d+(\\.\\d+)?|\\D+" );
+
+	/**
+	 * Compares two strings in natural order: token by token, where a token is a number (digits with an optional decimal
+	 * fraction, compared by value) or the text in between (compared ignoring case); numbers sort before text, a string
+	 * that runs out of tokens first sorts first, and strings that only differ in spelling (case, leading zeros) fall back
+	 * to String.compareTo so that the order is total
+	 */
+	public static int compareNatural( final String a, final String b )
+	{
+		final Matcher ma = numberOrText.matcher( a ), mb = numberOrText.matcher( b );
+
+		while ( true )
+		{
+			final boolean fa = ma.find(), fb = mb.find();
+
+			if ( !fa || !fb )
+				return fa == fb ? a.compareTo( b ) : ( fa ? 1 : -1 );
+
+			final String ta = ma.group(), tb = mb.group();
+			final boolean na = Character.isDigit( ta.charAt( 0 ) ), nb = Character.isDigit( tb.charAt( 0 ) );
+			final int c;
+
+			if ( na && nb )
+				c = new BigDecimal( ta ).compareTo( new BigDecimal( tb ) );
+			else if ( na != nb )
+				c = na ? -1 : 1;
+			else
+				c = ta.compareToIgnoreCase( tb );
+
+			if ( c != 0 )
+				return c;
+		}
 	}
 
 	public static HashMap< String, Integer > getAllCorrespondingInterestPointMap( final ViewInterestPoints interestPoints, final Collection< ? extends ViewId > views )

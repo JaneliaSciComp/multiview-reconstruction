@@ -24,7 +24,6 @@ package net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -133,9 +132,8 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 	public static String label( final HashMap< String, Integer > labelMap, final int row )
 	{
-		final ArrayList< String > labels = new ArrayList< String >();
-		labels.addAll( labelMap.keySet() );
-		Collections.sort( labels );
+		// the same natural order as the label drop-downs of the dialogs (InterestPointTools.getAllInterestPointLabels)
+		final ArrayList< String > labels = InterestPointTools.sortLabels( labelMap.keySet() );
 
 		if ( row >= labels.size() )
 			return null;
