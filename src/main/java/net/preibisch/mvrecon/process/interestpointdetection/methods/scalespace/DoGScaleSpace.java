@@ -255,13 +255,73 @@ public class DoGScaleSpace
 			final ScaleSpaceParameters p,
 			final ExecutorService service )
 	{
-		final ArrayList< ScaleSpacePeak > peaks = computeScaleSpacePeaks( input, imageInterval, processInterval, mask, p, service );
+		return toInterestPoints( computeScaleSpacePeaks( input, imageInterval, processInterval, mask, p, service ), false );
+	}
+
+	/**
+	 * Detects the peaks for several thresholds at once: the candidates are computed once down to the lowest threshold
+	 * (computeScaleSpaceCandidates) and filtered per threshold (filterCandidates), so the cost is that of one run at the
+	 * lowest threshold plus a filter and a duplicate merge per threshold. The result for a threshold is the one of
+	 * computeDoGScaleSpace at that threshold, up to the initial pre-filter of the extrema, which is min( thresholds ) / 3
+	 * instead of threshold / 3 (identical on all data tested). BigStitcher-Spark calls this per block and merges the
+	 * blocks per threshold; the interactive preview is not involved.
+	 *
+	 * @param thresholds - the thresholds (finite, &gt; 0), the results are returned in this order
+	 * @return one list per threshold, each with its own InterestPointSS objects and positions (ids 0..n-1 per list)
+	 */
+	public static < T extends RealType< T >, M extends RealType< M > > ArrayList< ArrayList< InterestPointSS > > computeDoGScaleSpace(
+			final RandomAccessible< T > input,
+			final Interval imageInterval,
+			final Interval processInterval,
+			final RandomAccessible< M > mask,
+			final ScaleSpaceParameters p,
+			final double[] thresholds,
+			final ExecutorService service )
+	{
+		if ( thresholds == null || thresholds.length == 0 )
+			throw new IllegalArgumentException( "No thresholds given." );
+
+		double min = Double.POSITIVE_INFINITY;
+
+		for ( final double t : thresholds )
+		{
+			if ( !( t > 0 ) || Double.isInfinite( t ) )
+				throw new IllegalArgumentException( "Thresholds must be finite and > 0, but one of them is " + t + "." );
+
+			min = Math.min( min, t );
+		}
+
+		final ScaleSpaceParameters pMin = new ScaleSpaceParameters( p );
+		pMin.threshold = min;
+
+		// all candidates down to the lowest threshold (no cap, a raised floor would leave the lowest threshold incomplete)
+		final Candidates candidates = computeScaleSpaceCandidates( input, imageInterval, processInterval, mask, pMin, 0, service );
+
+		if ( candidates.threshold > min )
+			throw new IllegalStateException( "The candidates are complete down to " + candidates.threshold + " only, not to " + min + "." );
+
+		final ArrayList< ArrayList< InterestPointSS > > result = new ArrayList<>();
+
+		for ( final double t : thresholds )
+			result.add( toInterestPoints( filterCandidates( candidates, t, p.detectFinestLevel, p.findMin, p.findMax, p.localization, p.combineDistance ), true ) );
+
+		return result;
+	}
+
+	/**
+	 * @param peaks - merged peaks, sorted by |response|
+	 * @param clonePositions - whether to copy the positions: the lists of several thresholds share their ScaleSpacePeak objects,
+	 * and DownsampleTools.correctForDownsampling transforms the positions of InterestPoints in place
+	 * @return the peaks as InterestPointSS with ids 0..n-1 in the order of the list
+	 */
+	protected static ArrayList< InterestPointSS > toInterestPoints( final ArrayList< ScaleSpacePeak > peaks, final boolean clonePositions )
+	{
 		final ArrayList< InterestPointSS > result = new ArrayList<>();
 
 		for ( int i = 0; i < peaks.size(); ++i )
 		{
 			final ScaleSpacePeak peak = peaks.get( i );
-			result.add( new InterestPointSS( i, peak.l, peak.value, peak.sigma ) );
+			result.add( new InterestPointSS( i, clonePositions ? peak.l.clone() : peak.l, peak.value, peak.sigma ) );
 		}
 
 		return result;

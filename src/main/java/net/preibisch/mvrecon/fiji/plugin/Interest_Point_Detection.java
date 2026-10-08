@@ -199,10 +199,15 @@ public class Interest_Point_Detection implements PlugIn
 		// if grouped, we need to get the min/max intensity for all groups
 		ipd.preprocess();
 
-		// record action history before processing — params reflect the GUI choices that drive ipd
+		// one run can produce several labels (e.g. the scale space with one label per threshold), usually just the label itself
+		final List< String > suffixes = ipd.getLabelSuffixes();
+
+		// record action history before processing — params reflect the GUI choices that drive ipd (one record per label,
+		// so that removing a label removes its record)
+		for ( final String suffix : suffixes )
 		{
 			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
-			ActionHistoryRecorder.put( params, "label", label );
+			ActionHistoryRecorder.put( params, "label", label + suffix );
 			ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
 			ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
 			// which views this ran on -- record() below adds parsimonious --angleId/--tileId/
@@ -210,22 +215,28 @@ public class Interest_Point_Detection implements PlugIn
 			// (see ActionHistoryRecorder.putViewSelection)
 			// individual detection params (sigma, threshold, type, localization, intensities,
 			// downsampling) so the BigStitcher-Spark translator can emit them as CLI flags
-			ActionHistoryRecorder.merge( params, ipd.describeParameters() );
+			ActionHistoryRecorder.merge( params, ipd.describeParameters( suffix ) );
 			ActionHistoryRecorder.record(
 					data,
 					"detect-interestpoints",
 					Interest_Point_Detection.class.getName(),
 					params,
 					viewIds,
-					"interestpoints:" + label );
+					"interestpoints:" + label + suffix );
 		}
 
 		// now extract all the detections
 		for ( final TimePoint tp : SpimData2.getAllTimePointsSorted( data, viewIds ) )
 		{
-			final HashMap< ViewId, List< InterestPoint > > points = ipd.findInterestPoints( tp );
+			final LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > points = ipd.findInterestPointsPerSuffix( tp );
 
-			InterestPointTools.addInterestPoints( data, label, points, ipd.getParameters() );
+			for ( final String suffix : suffixes )
+			{
+				InterestPointTools.addInterestPoints( data, label + suffix, points.get( suffix ), ipd.getParameters( suffix ) );
+
+				if ( suffixes.size() > 1 )
+					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Stored the interest points of timepoint " + tp.getName() + " as '" + label + suffix + "'." );
+			}
 
 			// update metadata if necessary
 			if ( data.getSequenceDescription().getImgLoader() instanceof AbstractImgLoader )

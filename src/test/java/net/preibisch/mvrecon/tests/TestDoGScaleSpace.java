@@ -28,6 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
@@ -656,6 +658,149 @@ public class TestDoGScaleSpace
 	}
 
 	/**
+	 * Several thresholds at once (one computation) give the same points as one run per threshold: for the algorithm,
+	 * for the driver (own positions per threshold, mapped to full resolution once each, also with a limit of detections)
+	 * and for the GUI (one label suffix per threshold with its own parameter string)
+	 */
+	@Test
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public void testMultiThreshold()
+	{
+		final SpimData2 spimData = SpimData2.convert( SimulatedBeadsImgLoader.spimdataExample( new int[] { 0, 90 }, 0, 100, new double[] { 2, 2, 2 }, new FinalInterval( 128, 128, 64 ) ) );
+		final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( 0, 0 );
+		final RandomAccessibleInterval img = DownsampleTools.openAndDownsample( spimData.getSequenceDescription().getImgLoader(), vd, new long[] { 1, 1, 1 }, false ).getA();
+		final Interval interval = new FinalInterval( img );
+		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
+		final double[] thresholds = new double[] { 0.004, 0.02 };
+
+		// the algorithm
+		final ScaleSpaceParameters p = new ScaleSpaceParameters( 1.5, 3, -1, 0.004 );
+		final float[] minmax = FusionTools.minMax( img );
+		p.minIntensity = minmax[ 0 ];
+		p.maxIntensity = minmax[ 1 ];
+
+		final ArrayList< ArrayList< InterestPointSS > > multi = DoGScaleSpace.computeDoGScaleSpace( (RandomAccessible)Views.extendMirrorSingle( img ), interval, interval, null, p, thresholds, service );
+
+		assertEquals( thresholds.length, multi.size() );
+
+		for ( int i = 0; i < thresholds.length; ++i )
+		{
+			final ScaleSpaceParameters pt = new ScaleSpaceParameters( p );
+			pt.threshold = thresholds[ i ];
+
+			final ArrayList< InterestPointSS > single = DoGScaleSpace.computeDoGScaleSpace( (RandomAccessible)Views.extendMirrorSingle( img ), interval, interval, null, pt, service );
+
+			assertTrue( single.size() > 0, "threshold " + thresholds[ i ] );
+			assertSamePoints( single, multi.get( i ), "algorithm, threshold " + thresholds[ i ] );
+		}
+
+		// the positions of the lists are independent (correctForDownsampling transforms in place)
+		assertTrue( multi.get( 0 ).get( 0 ).getL() != multi.get( 1 ).get( 0 ).getL() );
+
+		// the driver, with a limit of detections
+		for ( final boolean limit : new boolean[] { false, true } )
+		{
+			final ScaleSpaceDetectionParameters pd = new ScaleSpaceDetectionParameters();
+			pd.imgloader = spimData.getSequenceDescription().getImgLoader();
+			pd.toProcess = new ArrayList<>();
+			pd.toProcess.add( vd );
+			pd.downsampling = new long[] { 2, 2, 1 };
+			pd.limitDetections = limit;
+			pd.maxDetections = 20;
+			pd.maxDetectionsTypeIndex = 0;
+			pd.scaleSpace.sigmaMin = 1.5;
+			pd.scaleSpace.steps = 3;
+
+			final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = ScaleSpace.findInterestPoints( pd, thresholds );
+
+			assertEquals( thresholds.length, perThreshold.size() );
+
+			for ( int i = 0; i < thresholds.length; ++i )
+			{
+				pd.scaleSpace.threshold = thresholds[ i ];
+				final List< InterestPoint > single = ScaleSpace.findInterestPoints( pd ).get( vd );
+
+				assertTrue( single.size() > 0 );
+				assertSamePoints( single, perThreshold.get( i ).get( vd ), "driver, limit " + limit + ", threshold " + thresholds[ i ] );
+			}
+		}
+
+		// the GUI: one label per threshold
+		final ArrayList< ViewId > views = new ArrayList<>();
+		views.add( vd );
+
+		final ScaleSpaceGUI gui = new ScaleSpaceGUI( spimData, views )
+		{{
+			localization = 1;
+			downsampling = new long[] { 2, 2, 1 };
+			anisotropyZ = 1.0;
+			minIntensity = Double.NaN;
+			maxIntensity = Double.NaN;
+			sigma = 1.5;
+			steps = 3;
+			octaves = -1;
+			detectFinestLevel = true;
+			findMin = false;
+			findMax = true;
+			thresholds = new double[] { 0.004, 0.02 };
+			threshold = 0.004;
+		}};
+
+		assertEquals( Arrays.asList( "_t0.004", "_t0.02" ), gui.getLabelSuffixes() );
+		assertTrue( gui.getParameters( "_t0.02" ).contains( " t=0.02 " ) );
+		assertTrue( gui.getParameters( "_t0.004" ).contains( " t=0.004 " ) );
+		assertEquals( "0.02", gui.describeParameters( "_t0.02" ).get( "threshold" ) );
+		assertEquals( "0.004;0.02", gui.describeParameters( "_t0.02" ).get( "thresholds" ) );
+
+		final TimePoint tp = spimData.getSequenceDescription().getTimePoints().getTimePointsOrdered().get( 0 );
+		final LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > perSuffix = gui.findInterestPointsPerSuffix( tp );
+
+		assertEquals( gui.getLabelSuffixes(), new ArrayList<>( perSuffix.keySet() ) );
+
+		final ScaleSpaceDetectionParameters pd = new ScaleSpaceDetectionParameters();
+		pd.imgloader = spimData.getSequenceDescription().getImgLoader();
+		pd.toProcess = new ArrayList<>();
+		pd.toProcess.add( vd );
+		pd.downsampling = new long[] { 2, 2, 1 };
+		pd.scaleSpace.sigmaMin = 1.5;
+		pd.scaleSpace.steps = 3;
+
+		for ( int i = 0; i < thresholds.length; ++i )
+		{
+			pd.scaleSpace.threshold = thresholds[ i ];
+			assertSamePoints( ScaleSpace.findInterestPoints( pd ).get( vd ), perSuffix.get( gui.getLabelSuffixes().get( i ) ).get( vd ), "GUI, threshold " + thresholds[ i ] );
+		}
+
+		// a single threshold keeps the plain label
+		final ScaleSpaceGUI single = new ScaleSpaceGUI( spimData, views )
+		{{
+			thresholds = new double[] { 0.02 };
+			threshold = 0.02;
+		}};
+
+		assertEquals( Arrays.asList( "" ), single.getLabelSuffixes() );
+
+		service.shutdown();
+	}
+
+	protected static void assertSamePoints( final List< ? extends InterestPoint > expected, final List< ? extends InterestPoint > actual, final String message )
+	{
+		assertEquals( expected.size(), actual.size(), message );
+
+		for ( int j = 0; j < expected.size(); ++j )
+		{
+			final InterestPointSS a = (InterestPointSS)expected.get( j ), b = (InterestPointSS)actual.get( j );
+
+			assertEquals( a.getId(), b.getId(), message );
+			assertEquals( a.getResponse(), b.getResponse(), 0.0, message );
+			assertEquals( a.getSigma(), b.getSigma(), 0.0, message );
+
+			for ( int d = 0; d < 3; ++d )
+				assertEquals( a.getL()[ d ], b.getL()[ d ], 0.0, message + ", point " + j );
+		}
+	}
+
+	/**
 	 * The whole-view driver (ScaleSpace.findInterestPoints) returns InterestPointSS mapped to full
 	 * resolution, identical to DoGScaleSpace.computeDoGScaleSpace plus DownsampleTools.correctForDownsampling
 	 */
@@ -756,8 +901,10 @@ public class TestDoGScaleSpace
 			anisotropyZ = 1.0;
 			minIntensity = 0.0;
 			maxIntensity = 1137.0;
-			sigma = 1.6; // the initial blur is a field of the main dialog, the presets do not touch it
-			setDefaultValues( 1 ); // threshold 0.008, maxima only
+			sigma = 1.6; // the initial blur is a field of the main dialog
+			threshold = 0.008; // what the Advanced dialog or the preview would set (there are no presets)
+			findMin = false;
+			findMax = true;
 			steps = 4;
 			octaves = -1;
 			detectFinestLevel = true;

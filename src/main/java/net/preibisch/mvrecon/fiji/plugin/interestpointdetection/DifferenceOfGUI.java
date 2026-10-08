@@ -182,7 +182,9 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		final GenericDialog gd = new GenericDialog( getDescription() );
 
 		gd.addChoice( "Subpixel_localization", localizationChoice, localizationChoice[ defaultLocalization ] );
-		gd.addChoice( "Interest_point_specification", brightnessChoice, brightnessChoice[ defaultBrightness ] );
+		final String[] specification = specificationChoices();
+		final int defaultSpecification = defaultSpecificationIndex() >= 0 && defaultSpecificationIndex() < specification.length ? defaultSpecificationIndex() : 0;
+		gd.addChoice( "Interest_point_specification", specification, specification[ defaultSpecification ] );
 
 		addDownsamplingParameters( gd );
 
@@ -224,7 +226,8 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		
 		this.localization = defaultLocalization = gd.getNextChoiceIndex();
 
-		final int brightness = defaultBrightness = gd.getNextChoiceIndex();
+		final int brightness = gd.getNextChoiceIndex();
+		setDefaultSpecificationIndex( brightness );
 
 		if ( !queryDownsamplingParameters( gd ) )
 			return false;
@@ -241,21 +244,8 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			sameMinMax = defaultSameMinMax = gd.getNextBoolean();
 		}
 
-		if ( brightness <= 3 )
-		{
-			if ( !setDefaultValues( brightness ) )
-				return false;
-		}
-		else if ( brightness == 4 )
-		{
-			if ( !setAdvancedValues() )
-				return false;
-		}
-		else
-		{
-			if ( !setInteractiveValues() )
-				return false;
-		}
+		if ( !dispatchSpecification( brightness ) )
+			return false;
 
 		if ( defineAnisotropy )
 		{
@@ -278,6 +268,38 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			return false;
 		else
 			return true;
+	}
+
+	/**
+	 * @return the entries of "Interest_point_specification" (the presets, "Advanced ...", "Interactive ..."); a subclass
+	 * can offer another list and must then dispatch it in dispatchSpecification
+	 */
+	protected String[] specificationChoices() { return brightnessChoice; }
+
+	/**
+	 * @return the index of the entry that is preselected (the last choice)
+	 */
+	protected int defaultSpecificationIndex() { return defaultBrightness; }
+
+	/**
+	 * Remembers the chosen entry for the next dialog
+	 */
+	protected void setDefaultSpecificationIndex( final int index ) { defaultBrightness = index; }
+
+	/**
+	 * Applies the chosen entry of "Interest_point_specification": the presets (setDefaultValues), "Advanced ..."
+	 * (setAdvancedValues) or "Interactive ..." (setInteractiveValues)
+	 *
+	 * @return false if the dialog should be aborted
+	 */
+	protected boolean dispatchSpecification( final int choice )
+	{
+		if ( choice <= 3 )
+			return setDefaultValues( choice );
+		else if ( choice == 4 )
+			return setAdvancedValues();
+		else
+			return setInteractiveValues();
 	}
 
 	/**
