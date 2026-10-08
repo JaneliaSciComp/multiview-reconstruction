@@ -22,8 +22,8 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive;
 
-import javax.swing.JLabel;
 import javax.swing.JSlider;
+import javax.swing.JTextField;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
 
@@ -31,7 +31,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive.Inte
 
 public class SigmaListener implements ChangeListener {
 	final InteractiveDoG parent;
-	final JLabel label;
+	final JTextField text;
 	final float min, max;
 	final int scrollbarSize;
 
@@ -39,11 +39,11 @@ public class SigmaListener implements ChangeListener {
 
 	public SigmaListener(
 			final InteractiveDoG parent,
-			final JLabel label, final float min, final float max,
+			final JTextField text, final float min, final float max,
 			final int scrollbarSize,
 			final JSlider sigmaScrollbar1) {
 		this.parent = parent;
-		this.label = label;
+		this.text = text;
 		this.min = min;
 		this.max = max;
 		this.scrollbarSize = scrollbarSize;
@@ -54,7 +54,7 @@ public class SigmaListener implements ChangeListener {
 	@Override
 	public void stateChanged(final ChangeEvent event) {
 		parent.params.sigma = HelperFunctions.computeValueFromScrollbarPosition(sigmaScrollbar1.getValue(), min, max, scrollbarSize);
-		label.setText("Sigma = " + String.format(java.util.Locale.US, "%.3f", parent.params.sigma));
+		text.setText(HelperFunctions.formatValue(parent.params.sigma, 3));
 
 		// the DoG is computed again (on the event thread, so this can only be re-entered by an update it triggers itself)
 		if (!parent.isComputing)

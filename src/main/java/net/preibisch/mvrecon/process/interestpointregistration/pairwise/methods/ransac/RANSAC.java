@@ -184,7 +184,8 @@ public class RANSAC
 
 				try
 				{
-					// TODO: the inlier-ratio requests a smaller and smaller set of inliers as the candidate set size decreases
+					// the inlier ratio refers to the remaining candidates, which shrink with every set found; the GUI and
+					// BigStitcher-Spark therefore pass 0 for multi-consensus and accept sets by minNumInliers alone
 					modelFound = runRANSAC( model, candidates, inliers, numIterations, maxEpsilon, minInlierRatio, maxTrust, filterRansac );
 
 					if ( modelFound && inliers.size() >= minNumCorrespondences )
