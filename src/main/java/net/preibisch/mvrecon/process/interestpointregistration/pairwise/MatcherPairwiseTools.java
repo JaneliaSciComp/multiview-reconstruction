@@ -353,6 +353,7 @@ public class MatcherPairwiseTools
 		// stats value layout: [count, loadedCount, sumMatches, minMatches, maxMatches]
 		final TreeMap< String, long[] > stats = new TreeMap<>();
 		long total = 0;
+		long totalMatches = 0;
 		for ( final Pair< Pair< V, V >, PairwiseResult< I > > p : r )
 		{
 			final PairwiseResult< I > pwr = p.getB();
@@ -368,9 +369,10 @@ public class MatcherPairwiseTools
 				if ( n > s[ 4 ] ) s[ 4 ] = n;
 			}
 			total++;
+			totalMatches += n;
 		}
 
-		IOFunctions.println( "Pairwise correspondence-load summary: " + total + " pair(s) total" );
+		IOFunctions.println( "Pairwise correspondence-load summary: " + total + " pair(s) total, " + totalMatches + " correspondences" );
 		for ( final Map.Entry< String, long[] > e : stats.entrySet() )
 		{
 			final long[] s = e.getValue();
@@ -384,7 +386,7 @@ public class MatcherPairwiseTools
 			else
 			{
 				final double avg = ( ( double ) s[ 2 ] ) / loaded;
-				IOFunctions.println( "  (" + e.getKey() + "): " + count + " pair(s), " + loaded + " with matches (" + zeros + " with zero), matches min=" + s[ 3 ] + " avg=" + String.format( Locale.ROOT, "%.1f", avg ) + " max=" + s[ 4 ] );
+				IOFunctions.println( "  (" + e.getKey() + "): " + count + " pair(s), " + loaded + " with matches (" + zeros + " with zero), " + s[ 2 ] + " correspondences, matches min=" + s[ 3 ] + " avg=" + String.format( Locale.ROOT, "%.1f", avg ) + " max=" + s[ 4 ] );
 			}
 		}
 

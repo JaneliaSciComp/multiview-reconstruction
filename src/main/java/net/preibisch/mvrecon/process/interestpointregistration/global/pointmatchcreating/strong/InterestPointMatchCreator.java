@@ -57,6 +57,9 @@ public class InterestPointMatchCreator implements PointMatchCreator
 	final List< ? extends Pair< ? extends Pair< ViewId, ViewId >, ? extends PairwiseResult< ? > > > pairs;
 	final Map< ViewId, ? extends Map< String, Double > > labelMap;
 
+	/** the lines of the pairwise connection summary of the last assignPointMatches (total and per pair of labels), see getSummary */
+	private final ArrayList< String > summary = new ArrayList<>();
+
 	public InterestPointMatchCreator(
 			final List< ? extends Pair< ? extends Pair< ViewId, ViewId >, ? extends PairwiseResult< ? > > > pairs,
 			final Map< ViewId, ? extends Map< String, Double > > labelMap )
@@ -91,6 +94,7 @@ public class InterestPointMatchCreator implements PointMatchCreator
 		int printed = 0;
 		boolean noticeEmitted = false;
 		long totalConnected = 0;
+		long totalCorrespondences = 0;
 
 		for ( Pair< ? extends Pair< ViewId, ViewId >, ? extends PairwiseResult< ? > > pair : pairs )
 		{
@@ -138,6 +142,7 @@ public class InterestPointMatchCreator implements PointMatchCreator
 				if ( n < s[ 2 ] ) s[ 2 ] = n;
 				if ( n > s[ 3 ] ) s[ 3 ] = n;
 				totalConnected++;
+				totalCorrespondences += n;
 
 				// per-pair line, gated by maxPerPairLog
 				if ( printed < maxPerPairLog )
@@ -155,14 +160,31 @@ public class InterestPointMatchCreator implements PointMatchCreator
 			}
 		}
 
-		// summary always emitted
-		IOFunctions.println( "Pairwise connection summary: " + totalConnected + " pair(s) total" );
+		// summary always emitted, and kept so that it can be printed again below the final transformation models
+		summary.clear();
+		summary.add( "Pairwise connection summary: " + totalConnected + " pair(s) total, " + totalCorrespondences + " correspondences" );
 		for ( final Map.Entry< String, long[] > e : stats.entrySet() )
 		{
 			final long[] s = e.getValue();
 			final double avg = s[ 0 ] == 0 ? 0.0 : ( ( double ) s[ 1 ] ) / s[ 0 ];
-			IOFunctions.println( "  (" + e.getKey() + "): " + s[ 0 ] + " pair(s), matches min=" + s[ 2 ] + " avg=" + String.format( java.util.Locale.ROOT, "%.1f", avg ) + " max=" + s[ 3 ] );
+			summary.add( "  (" + e.getKey() + "): " + s[ 0 ] + " pair(s), " + s[ 1 ] + " correspondences, matches min=" + s[ 2 ] + " avg=" + String.format( java.util.Locale.ROOT, "%.1f", avg ) + " max=" + s[ 3 ] );
 		}
+		printSummary();
+	}
+
+	/**
+	 * @return the lines of the pairwise connection summary of the last assignPointMatches: the total number of connected
+	 * pairs and correspondences, and per pair of labels the pairs, correspondences and matches per pair (min, avg, max)
+	 */
+	public List< String > getSummary() { return summary; }
+
+	/**
+	 * Prints the pairwise connection summary of the last assignPointMatches, see getSummary
+	 */
+	public void printSummary()
+	{
+		for ( final String line : summary )
+			IOFunctions.println( line );
 	}
 
 	@Override

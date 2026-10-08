@@ -76,7 +76,6 @@ public class AllToAllRange< V extends Comparable< V >, R extends RangeComparator
 		}
 
 		// For large datasets, use parallel version
-		final long start = System.currentTimeMillis();
 
 		// Pre-compute group membership for O(1) lookup: view -> set of group indices
 		final Map<V, Set<Integer>> viewToGroups = new ConcurrentHashMap<>();
@@ -128,8 +127,6 @@ public class AllToAllRange< V extends Comparable< V >, R extends RangeComparator
 					.collect(Collectors.toList())
 			).get();
 
-			System.out.println("[TIMING] allPairs() parallel: " + (System.currentTimeMillis() - start) +
-					" ms (" + n + " views, " + viewPairs.size() + " pairs)");
 
 			return viewPairs;
 		}

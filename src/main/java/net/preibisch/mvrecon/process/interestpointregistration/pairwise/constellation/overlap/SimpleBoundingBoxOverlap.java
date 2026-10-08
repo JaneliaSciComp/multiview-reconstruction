@@ -223,7 +223,6 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 	 */
 	public Map<V, BoundingBox> precomputeBoundingBoxes(final Collection<V> views)
 	{
-		final long start = System.currentTimeMillis();
 
 		final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
 		try
@@ -239,7 +238,6 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 				))
 			).get();
 
-			System.out.println("[TIMING] precomputeBoundingBoxes(): " + (System.currentTimeMillis() - start) + " ms (" + views.size() + " views)");
 			return result;
 		}
 		catch (final Exception e)
@@ -264,7 +262,6 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 			final List<Pair<V, V>> pairs,
 			final Map<V, BoundingBox> boundingBoxes)
 	{
-		final long start = System.currentTimeMillis();
 		final int originalSize = pairs.size();
 
 		final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
@@ -296,8 +293,6 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 			pairs.clear();
 			pairs.addAll(overlappingPairs);
 
-			System.out.println("[TIMING] removeNonOverlappingPairsParallel(): " + (System.currentTimeMillis() - start) +
-					" ms (checked " + originalSize + " pairs, removed " + removed.size() + ", kept " + pairs.size() + ")");
 
 			return removed;
 		}
@@ -326,7 +321,6 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 		final int n = views.size();
 		if (n < 2) return new ArrayList<>();
 
-		final long totalStart = System.currentTimeMillis();
 
 		// Step 1: Pre-compute all bounding boxes
 		final Map<V, BoundingBox> boundingBoxes = precomputeBoundingBoxes(views);
@@ -345,7 +339,6 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 		final Set<Integer> emptySet = Collections.emptySet();
 
 		// Step 3: Generate only overlapping pairs in parallel
-		final long pairStart = System.currentTimeMillis();
 		final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
 		try
 		{
@@ -386,9 +379,6 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 					.collect(Collectors.toList())
 			).get();
 
-			System.out.println("[TIMING] generateOverlappingPairs(): " + (System.currentTimeMillis() - totalStart) +
-					" ms total (" + n + " views, " + overlappingPairs.size() + " overlapping pairs, pair generation: " +
-					(System.currentTimeMillis() - pairStart) + " ms)");
 
 			return overlappingPairs;
 		}
