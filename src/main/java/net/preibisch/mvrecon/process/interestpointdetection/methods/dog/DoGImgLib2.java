@@ -25,6 +25,7 @@ package net.preibisch.mvrecon.process.interestpointdetection.methods.dog;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Vector;
@@ -68,6 +69,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions;
 import net.preibisch.legacy.segmentation.SimplePeak;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
 import net.preibisch.mvrecon.process.cuda.Block;
 import net.preibisch.mvrecon.process.cuda.BlockGenerator;
 import net.preibisch.mvrecon.process.cuda.BlockGeneratorVariableSizePrecise;
@@ -87,6 +89,8 @@ public class DoGImgLib2
 {
 	public static boolean silent = false;
 	public static int[] blockSize = new int[] {96, 96, 64};
+	/** two detections closer than this in every dimension (pixels) are duplicates, only the first one is kept (removeDuplicates) */
+	public static final double duplicateDistance = 0.001;
 	public static enum SpecialPoint { INVALID, MIN, MAX };
 
 	public static void main ( String[] args )
@@ -139,6 +143,12 @@ public class DoGImgLib2
 		return halfkernels[ 0 ].length - 1;
 	}
 
+	/**
+	 * Difference-of-Gaussian detection on the interval of the input (the default block size, no CUDA), see the
+	 * variant with the block size and CUDA for the details
+	 *
+	 * @return the detections (InterestPointValue with the refined DoG value) in the coordinates of the input
+	 */
 	public static < T extends RealType< T > > ArrayList< InterestPoint > computeDoG(
 			final RandomAccessible< T > input,
 			final RandomAccessible< T > mask,
@@ -155,7 +165,155 @@ public class DoGImgLib2
 		return computeDoG(input, mask, interval, sigma, threshold, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, null, null, false, 0.0 );
 	}
 
+	/**
+	 * Difference-of-Gaussian detection for several thresholds at once (the default block size, no CUDA), see the
+	 * variant with the block size and CUDA for the details
+	 *
+	 * @return one list of detections per threshold, in the order of the thresholds
+	 */
+	public static < T extends RealType< T > > ArrayList< ArrayList< InterestPoint > > computeDoG(
+			final RandomAccessible< T > input,
+			final RandomAccessible< T > mask,
+			final Interval interval,
+			final double sigma,
+			final double[] thresholds,
+			final int localization,
+			final boolean findMin,
+			final boolean findMax,
+			final double minIntensity,
+			final double maxIntensity,
+			final ExecutorService service )
+	{
+		return computeDoG(input, mask, interval, sigma, thresholds, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, null, null, false, 0.0 );
+	}
+
+	/**
+	 * Difference-of-Gaussian detection on the interval of the input: the image is normalized to [0,1] with the
+	 * intensity range (computed on the interval if not given), the DoG of the two Gaussians derived from sigma is
+	 * computed lazily in blocks (or with CUDA), its extrema with |DoG| &gt;= threshold (localization 0) or
+	 * &gt;= threshold / 3 (otherwise) are detected (findPeaks), refined (localization 0 = none, 1 = quadratic fit,
+	 * keeping |value| &gt; threshold) and near-identical detections are removed (removeDuplicates)
+	 *
+	 * @param input - the image, extended beyond the interval by the caller
+	 * @param mask - weights &gt; 0 where the image is valid, null = everywhere
+	 * @param interval - the interval to process
+	 * @param sigma - the sigma of the DoG detection
+	 * @param threshold - the minimal |DoG| of a detection
+	 * @param localization - 0 = none, 1 = quadratic fit
+	 * @param findMin - keep the minima
+	 * @param findMax - keep the maxima
+	 * @param minIntensity - the min intensity for the normalization to [0,1], NaN = compute it
+	 * @param maxIntensity - the max intensity for the normalization to [0,1], NaN = compute it
+	 * @param blockSize - the block size of the lazy Gaussians
+	 * @param service - the executor
+	 * @param cuda - the CUDA convolution, null = Java
+	 * @param cudaDevice - the CUDA device
+	 * @param accurateCUDA - accurate (true) or approximate CUDA convolution
+	 * @param percentGPUMem - the percentage of GPU memory to use
+	 * @return the detections (InterestPointValue with the refined DoG value) in the coordinates of the input
+	 */
 	public static < T extends RealType< T > > ArrayList< InterestPoint > computeDoG(
+			final RandomAccessible< T > input,
+			final RandomAccessible< T > mask,
+			final Interval interval,
+			final double sigma,
+			final double threshold,
+			final int localization,
+			final boolean findMin,
+			final boolean findMax,
+			final double minIntensity,
+			final double maxIntensity,
+			final int[] blockSize,
+			final ExecutorService service,
+			final CUDASeparableConvolution cuda,
+			final CUDADevice cudaDevice,
+			final boolean accurateCUDA,
+			final double percentGPUMem )
+	{
+		final ArrayList< InterestPoint > finalPeaks = detectPeaks( input, mask, interval, sigma, threshold, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, cuda, cudaDevice, accurateCUDA, percentGPUMem );
+
+		// remove potential duplicates (happens because during localization it can move around)
+		final ArrayList< InterestPoint > filteredFinalPeaks = removeDuplicates( finalPeaks );
+
+		if ( !silent )
+			IOFunctions.println("(" + new Date(System.currentTimeMillis()) + "): Found " + filteredFinalPeaks.size() + " final peaks." );
+
+		return filteredFinalPeaks;
+	}
+
+	/**
+	 * Difference-of-Gaussian detection for several thresholds at once from one computation (the entry point for
+	 * BigStitcher-Spark, which calls it per block and merges per threshold): the detection runs once at the lowest
+	 * threshold (detectPeaks), per threshold the detections whose |value| passes it are kept (&gt;= for localization 0 as
+	 * findPeaks does, &gt; otherwise as the localization does), numbered 0..n-1 in detection order, and the duplicates
+	 * are removed per list (removeDuplicates). The list of a threshold is identical to computeDoG with that single
+	 * threshold up to the initial pre-filter of localization &gt; 0, which is min( thresholds ) / 3 instead of
+	 * threshold / 3 (a superset in theory, identical on all data tested). Every list has its own InterestPoint objects
+	 * and positions, so that each can be transformed independently (DownsampleTools.correctForDownsampling).
+	 *
+	 * @param thresholds - the minimal |DoG| per list, finite and &gt;= 0, in any order
+	 * @return one list of detections per threshold, in the order of the thresholds; the other parameters as for computeDoG
+	 */
+	public static < T extends RealType< T > > ArrayList< ArrayList< InterestPoint > > computeDoG(
+			final RandomAccessible< T > input,
+			final RandomAccessible< T > mask,
+			final Interval interval,
+			final double sigma,
+			final double[] thresholds,
+			final int localization,
+			final boolean findMin,
+			final boolean findMax,
+			final double minIntensity,
+			final double maxIntensity,
+			final int[] blockSize,
+			final ExecutorService service,
+			final CUDASeparableConvolution cuda,
+			final CUDADevice cudaDevice,
+			final boolean accurateCUDA,
+			final double percentGPUMem )
+	{
+		if ( thresholds == null || thresholds.length == 0 )
+			throw new IllegalArgumentException( "At least one threshold is needed." );
+
+		double minThreshold = Double.POSITIVE_INFINITY;
+
+		for ( final double threshold : thresholds )
+		{
+			if ( Double.isNaN( threshold ) || Double.isInfinite( threshold ) || threshold < 0 )
+				throw new IllegalArgumentException( "Thresholds must be finite and >= 0, got " + Arrays.toString( thresholds ) + "." );
+
+			minThreshold = Math.min( minThreshold, threshold );
+		}
+
+		if ( !silent && thresholds.length > 1 )
+			IOFunctions.println( "(" + new Date(System.currentTimeMillis()) + "): computing DoG once for " + thresholds.length + " thresholds " + Arrays.toString( thresholds ) + " (detection at the lowest one)" );
+
+		final ArrayList< InterestPoint > finalPeaks = detectPeaks( input, mask, interval, sigma, minThreshold, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, cuda, cudaDevice, accurateCUDA, percentGPUMem );
+
+		final ArrayList< ArrayList< InterestPoint > > perThreshold = new ArrayList<>();
+
+		for ( final double threshold : thresholds )
+		{
+			// the same comparison as the detection at this threshold: >= in findPeaks (localization 0), > in the localization
+			final ArrayList< InterestPoint > filteredFinalPeaks = removeDuplicates( filterPeaks( finalPeaks, (float)threshold, localization == 0 ) );
+
+			if ( !silent )
+				IOFunctions.println("(" + new Date(System.currentTimeMillis()) + "): Found " + filteredFinalPeaks.size() + " final peaks at threshold " + threshold + "." );
+
+			perThreshold.add( filteredFinalPeaks );
+		}
+
+		return perThreshold;
+	}
+
+	/**
+	 * The detection of computeDoG before the duplicate removal: normalization, the two Gaussians, the DoG, the peaks
+	 * (findPeaks with the threshold for localization 0, threshold / 3 otherwise), the localization (keeps |value| &gt; threshold)
+	 * and the shift of the positions to the coordinates of the input
+	 *
+	 * @return the detections with their value (InterestPointValue), numbered 0..n-1 in detection order; the parameters as for computeDoG
+	 */
+	protected static < T extends RealType< T > > ArrayList< InterestPoint > detectPeaks(
 			final RandomAccessible< T > input,
 			final RandomAccessible< T > mask,
 			final Interval interval,
@@ -298,17 +456,39 @@ public class DoGImgLib2
 			finalPeaks = Localization.computeGaussLocalization( peaks, null, sigma, findMin, findMax, minPeakValue, true );
 		}
 
-		// remove potential duplicates (happens because during localization it can move around)
-		final ArrayList< InterestPoint > filteredFinalPeaks = removeDuplicates( finalPeaks );
-
-		if ( !silent )
-			IOFunctions.println("(" + new Date(System.currentTimeMillis()) + "): Found " + filteredFinalPeaks.size() + " final peaks." );
-
-		return filteredFinalPeaks;
+		return finalPeaks;
 	}
 
 	/**
-	 * Removes near-identical detections (within 0.001 pixels in every dimension, which happens because the localization
+	 * Keeps the detections whose |value| passes a threshold, as new InterestPointValue with copied positions, numbered
+	 * 0..n-1 in the order of the input (the numbering a detection at this threshold gives)
+	 *
+	 * @param peaks - the detections with their value (InterestPointValue, as detectPeaks returns them)
+	 * @param threshold - the minimal |value| (as float, the precision the detection compares with)
+	 * @param inclusive - true: |value| &gt;= threshold (as findPeaks for localization 0), false: |value| &gt; threshold (as the localization)
+	 * @return the detections passing the threshold
+	 */
+	protected static ArrayList< InterestPoint > filterPeaks( final List< InterestPoint > peaks, final float threshold, final boolean inclusive )
+	{
+		final ArrayList< InterestPoint > filtered = new ArrayList<>();
+		int id = 0;
+
+		for ( final InterestPoint peak : peaks )
+		{
+			if ( !( peak instanceof InterestPointValue ) )
+				throw new IllegalArgumentException( "The detections carry no value, cannot filter them by threshold." );
+
+			final double value = ( (InterestPointValue)peak ).getIntensity();
+
+			if ( inclusive ? Math.abs( value ) >= threshold : Math.abs( value ) > threshold )
+				filtered.add( new InterestPointValue( id++, peak.getL().clone(), value ) );
+		}
+
+		return filtered;
+	}
+
+	/**
+	 * Removes near-identical detections (within duplicateDistance in every dimension, which happens because the localization
 	 * can move a peak onto a neighbour): a detection is kept unless an earlier kept detection is that close, so of two
 	 * duplicates the first one survives. (Until 2026-10 the loop compared each detection with the later ones only and
 	 * never visited the last one, which kept the later duplicate and always dropped the last detection of a view.)
@@ -326,7 +506,7 @@ public class DoGImgLib2
 			boolean distinct = true;
 
 			for ( int j = 0; distinct && j < filteredFinalPeaks.size(); ++j )
-				distinct = differ( v1, filteredFinalPeaks.get( j ).getL(), 0.001 );
+				distinct = differ( v1, filteredFinalPeaks.get( j ).getL(), duplicateDistance );
 
 			if ( distinct )
 				filteredFinalPeaks.add( peak );

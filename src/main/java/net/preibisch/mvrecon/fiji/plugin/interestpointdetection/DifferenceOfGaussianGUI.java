@@ -66,10 +66,9 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		"GPU accurate (Nvidia CUDA via JNA)" };
 	public static int defaultComputationChoiceIndex = 0;
 
-	double sigma;
-	double threshold;
-	boolean findMin;
-	boolean findMax;
+	protected double sigma;
+	protected boolean findMin;
+	protected boolean findMax;
 
 	double percentGPUMem = defaultUseGPUMem;
 
@@ -160,8 +159,10 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		return new DifferenceOfGaussianGUI( spimData, viewIdsToProcess );
 	}
 
-	@Override
-	public HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint t )
+	/**
+	 * @return the parameters of the detection as set in the dialogs (the views and the downsampling in xy are set per view by the caller, the threshold per run)
+	 */
+	protected DoGParameters detectionParameters()
 	{
 		final DoGParameters dog = new DoGParameters();
 
@@ -191,7 +192,22 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		dog.maxDetections = this.maxDetections;
 		dog.maxDetectionsTypeIndex = this.maxDetectionsTypeIndex;
 
-		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap< ViewId, List< InterestPoint > >();
+		return dog;
+	}
+
+	/**
+	 * The detections of all thresholds from one computation per view, see DoG.addInterestPoints( perThreshold, dog, thresholds )
+	 */
+	@Override
+	public LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > findInterestPointsPerSuffix( final TimePoint t )
+	{
+		final DoGParameters dog = detectionParameters();
+		final double[] thresholds = thresholds();
+
+		final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = new ArrayList<>();
+
+		for ( int i = 0; i < thresholds.length; ++i )
+			perThreshold.add( new HashMap<>() );
 
 		for ( final ViewDescription vd : SpimData2.getAllViewIdsForTimePointSorted( spimData, viewIdsToProcess, t ) )
 		{
@@ -211,7 +227,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 				else
 					dog.downsampleXY = downsampleXYIndex;
 
-				DoG.addInterestPoints( interestPoints, dog );
+				DoG.addInterestPoints( perThreshold, dog, thresholds );
 			}
 			catch ( Exception  e )
 			{
@@ -221,7 +237,16 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 			}
 		}
 
-		return interestPoints;
+		return perSuffix( perThreshold );
+	}
+
+	/**
+	 * The detections at the first threshold (all of them with a single threshold), see findInterestPointsPerSuffix
+	 */
+	@Override
+	public HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint t )
+	{
+		return findInterestPointsPerSuffix( t ).values().iterator().next();
 	}
 
 	@Override
@@ -245,12 +270,18 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		return true;
 	}
 
+	/**
+	 * Sigma, the threshold, minima and maxima as a dialog. "Number_of_thresholds" asks for several thresholds in a
+	 * second dialog (after one for N if chosen), which give one label per threshold from a single computation per
+	 * view; the single "Threshold" is then not used.
+	 */
 	@Override
 	protected boolean setAdvancedValues()
 	{
 		final GenericDialog gd = new GenericDialog( "Advanced values" );
 
 		gd.addNumericField( "Sigma", defaultSigma, 5 );
+		gd.addChoice( "Number_of_thresholds (several give one label per threshold)", thresholdCountChoice, thresholdCountChoice[ defaultThresholdCountChoice ] );
 		gd.addNumericField( "Threshold", defaultThreshold, 5 );
 		gd.addCheckbox( "Find_minima", defaultFindMin );
 		gd.addCheckbox( "Find_maxima", defaultFindMax );
@@ -261,11 +292,13 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 			return false;
 
 		this.sigma = defaultSigma = gd.getNextNumber();
+		final int countChoice = gd.getNextChoiceIndex();
 		this.threshold = defaultThreshold = gd.getNextNumber();
 		this.findMin = defaultFindMin = gd.getNextBoolean();
 		this.findMax = defaultFindMax = gd.getNextBoolean();
-		
-		return true;
+
+		// several thresholds: one label per threshold from a single computation per view
+		return queryMultipleThresholds( countChoice );
 	}
 
 	@Override
@@ -322,7 +355,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	}
 
 	@Override
-	public String getParameters()
+	protected String parameters( final double threshold )
 	{
 		return "DOG s=" + sigma + " t=" + threshold + " min=" + findMin + " max=" + findMax +
 				" imageSigmaX=" + imageSigmaX + " imageSigmaY=" + imageSigmaY + " imageSigmaZ=" + imageSigmaZ + " downsampleXYIndex=" + downsampleXYIndex +

@@ -22,15 +22,12 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
-import java.math.BigDecimal;
-import java.math.MathContext;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeSet;
 
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
@@ -70,19 +67,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 
 	public static double defaultSigma = defaults.sigmaMin;
 	public static double defaultThreshold = defaults.threshold;
-	/** the entries of "Number_of_thresholds" in the Advanced dialog: one, 2..6 or N thresholds (several give one label per threshold) */
-	public static final String[] thresholdCountChoice = new String[] { "Single threshold", "2 thresholds", "3 thresholds", "4 thresholds", "5 thresholds", "6 thresholds", "N thresholds" };
-	public static int defaultThresholdCountChoice = 0;
-	public static int defaultThresholdCountN = 8;
-
-	/** the default thresholds of a multi-threshold run span this range geometrically (very low .. very high); from wideFromCount thresholds on the lower end is lowestDefaultThresholdWide */
-	public static double lowestDefaultThreshold = 0.001, highestDefaultThreshold = 0.1;
-	public static double lowestDefaultThresholdWide = 0.0001;
-	public static int wideFromCount = 6;
-
-	/** the thresholds last typed into the multi-threshold dialog, per number of thresholds */
-	protected static final HashMap< Integer, double[] > lastThresholds = new HashMap<>();
-
 	/** the entries of "Interest_point_specification" for the scale space: no presets */
 	public static final String[] specificationChoice = new String[] { "Advanced ...", "Interactive ..." };
 	public static int defaultSpecification = 1;
@@ -104,9 +88,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	public static double defaultAnisotropyCalibration = Double.NaN;
 
 	protected double sigma;
-	protected double threshold;
-	/** all thresholds of this run (ascending, unique), threshold is the first one; null = only threshold */
-	protected double[] thresholds = null;
 	protected boolean findMin;
 	protected boolean findMax;
 
@@ -184,44 +165,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	}
 
 	/**
-	 * The thresholds of this run: the ones of the Advanced dialog, or the single one otherwise
-	 */
-	protected double[] thresholds()
-	{
-		return thresholds == null || thresholds.length == 0 ? new double[] { threshold } : thresholds;
-	}
-
-	/**
-	 * @return "" for a single threshold, otherwise "_t" + threshold per threshold (ascending), see thresholdSuffix
-	 */
-	@Override
-	public List< String > getLabelSuffixes()
-	{
-		final double[] thresholds = thresholds();
-		final ArrayList< String > suffixes = new ArrayList<>();
-
-		if ( thresholds.length == 1 )
-			suffixes.add( "" );
-		else
-			for ( final double t : thresholds )
-				suffixes.add( thresholdSuffix( t ) );
-
-		return suffixes;
-	}
-
-	/**
-	 * @return the threshold of a label suffix ("" = the first one)
-	 */
-	protected double thresholdOf( final String suffix )
-	{
-		for ( final double t : thresholds() )
-			if ( thresholdSuffix( t ).equals( suffix ) )
-				return t;
-
-		return threshold;
-	}
-
-	/**
 	 * The detections of all thresholds from one computation per view, see ScaleSpace.findInterestPoints( p, thresholds )
 	 */
 	@Override
@@ -229,7 +172,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	{
 		final ScaleSpaceDetectionParameters p = detectionParameters();
 		final double[] thresholds = thresholds();
-		final List< String > suffixes = getLabelSuffixes();
 
 		final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = new ArrayList<>();
 
@@ -257,12 +199,7 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 			}
 		}
 
-		final LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > result = new LinkedHashMap<>();
-
-		for ( int i = 0; i < thresholds.length; ++i )
-			result.put( suffixes.get( i ), perThreshold.get( i ) );
-
-		return result;
+		return perSuffix( perThreshold );
 	}
 
 	/**
@@ -382,7 +319,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 			return false;
 		}
 
-		defaultThresholdCountChoice = countChoice;
 		defaultThreshold = threshold;
 		defaultSteps = steps;
 		defaultOctaves = octaves;
@@ -390,113 +326,8 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		defaultFindMin = findMin;
 		defaultFindMax = findMax;
 
-		if ( countChoice == 0 )
-		{
-			this.thresholds = new double[] { threshold };
-			return true;
-		}
-
-		// several thresholds: 2..6 directly, N after asking for N
-		int count = countChoice + 1;
-
-		if ( countChoice == thresholdCountChoice.length - 1 )
-		{
-			final GenericDialog gdN = new GenericDialog( "Number of thresholds" );
-
-			gdN.addNumericField( "Number_of_thresholds", defaultThresholdCountN, 0 );
-			gdN.showDialog();
-
-			if ( gdN.wasCanceled() )
-				return false;
-
-			count = (int)Math.round( gdN.getNextNumber() );
-
-			if ( count < 2 )
-			{
-				IOFunctions.println( "Scale space: at least two thresholds are needed for a multi-threshold run, " + count + " were requested." );
-				return false;
-			}
-
-			defaultThresholdCountN = count;
-		}
-
-		final double[] thresholds = queryThresholds( count );
-
-		if ( thresholds == null )
-			return false;
-
-		this.thresholds = thresholds;
-		this.threshold = thresholds[ 0 ];
-
-		IOFunctions.println( "Scale space: " + thresholds.length + " thresholds, one label per threshold: " + Arrays.toString( thresholds ) );
-
-		return true;
-	}
-
-	/**
-	 * The dialog for the thresholds of a multi-threshold run, pre-filled with the ones last typed for this count or the
-	 * default thresholds (geometric from very low to very high)
-	 *
-	 * @return the thresholds ascending without duplicates, null if cancelled or a value is not &gt; 0
-	 */
-	protected static double[] queryThresholds( final int count )
-	{
-		final double[] initial = lastThresholds.containsKey( count ) && lastThresholds.get( count ).length == count ? lastThresholds.get( count ) : defaultThresholds( count );
-
-		final GenericDialog gd = new GenericDialog( "Thresholds" );
-
-		gd.addMessage( "Minimal |response| at any scale, one label per threshold (label_t<threshold>)", GUIHelper.smallStatusFont );
-
-		for ( int i = 0; i < count; ++i )
-			gd.addNumericField( "Threshold_" + ( i + 1 ), initial[ i ], 5 );
-
-		gd.showDialog();
-
-		if ( gd.wasCanceled() )
-			return null;
-
-		final double[] typed = new double[ count ];
-		final TreeSet< Double > values = new TreeSet<>();
-
-		for ( int i = 0; i < count; ++i )
-		{
-			typed[ i ] = gd.getNextNumber();
-
-			if ( !( typed[ i ] > 0 ) || Double.isInfinite( typed[ i ] ) )
-			{
-				IOFunctions.println( "Scale space: thresholds must be > 0, but threshold " + ( i + 1 ) + " is " + typed[ i ] + "." );
-				return null;
-			}
-
-			values.add( typed[ i ] );
-		}
-
-		lastThresholds.put( count, typed );
-
-		if ( values.size() < count )
-			IOFunctions.println( "Scale space: " + ( count - values.size() ) + " duplicate threshold(s) dropped." );
-
-		return values.stream().mapToDouble( Double::doubleValue ).toArray();
-	}
-
-	/**
-	 * @return count thresholds spaced geometrically from lowestDefaultThreshold (very low) to highestDefaultThreshold (very high),
-	 * rounded to two significant digits, e.g. 0.001, 0.01, 0.1 for three; from wideFromCount thresholds on the range starts at
-	 * lowestDefaultThresholdWide (0.0001, below the floor where the threshold still selects anything, but it finds some more matches),
-	 * e.g. 0.0001, 0.0004, 0.0016, 0.0063, 0.025, 0.1 for six; a single one is the default threshold
-	 */
-	public static double[] defaultThresholds( final int count )
-	{
-		if ( count < 2 )
-			return new double[] { defaultThreshold };
-
-		final double[] thresholds = new double[ count ];
-		final double logMin = Math.log( count >= wideFromCount ? lowestDefaultThresholdWide : lowestDefaultThreshold ), logMax = Math.log( highestDefaultThreshold );
-
-		for ( int i = 0; i < count; ++i )
-			thresholds[ i ] = BigDecimal.valueOf( Math.exp( logMin + ( logMax - logMin ) * i / ( count - 1 ) ) ).round( new MathContext( 2 ) ).doubleValue();
-
-		return thresholds;
+		// several thresholds: one label per threshold from a single computation per view
+		return queryMultipleThresholds( countChoice );
 	}
 
 	/**
@@ -570,66 +401,15 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		return true;
 	}
 
-	@Override
-	public String getParameters()
-	{
-		return parameters( threshold );
-	}
-
 	/**
-	 * @return the parameter string of the label of this suffix, with its threshold
+	 * @return the parameter string stored with a label, with this threshold
 	 */
 	@Override
-	public String getParameters( final String suffix )
-	{
-		return parameters( thresholdOf( suffix ) );
-	}
-
 	protected String parameters( final double threshold )
 	{
 		return "DOG-SS s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + detectFinestLevel + " t=" + threshold + " min=" + findMin + " max=" + findMax +
 				" downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] + " anisotropy=" + anisotropyZ +
 				" minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
-	}
-
-	/**
-	 * @return describeParameters() with the threshold of this suffix, plus all thresholds of the run if there are several
-	 */
-	@Override
-	public Map< String, String > describeParameters( final String suffix )
-	{
-		final Map< String, String > p = describeParameters();
-		final double[] thresholds = thresholds();
-
-		p.put( "threshold", Double.toString( thresholdOf( suffix ) ) );
-
-		if ( thresholds.length > 1 )
-		{
-			final StringBuilder all = new StringBuilder();
-
-			for ( final double t : thresholds )
-				all.append( all.length() == 0 ? "" : ";" ).append( t );
-
-			p.put( "thresholds", all.toString() );
-		}
-
-		return p;
-	}
-
-	/**
-	 * @return the label suffix of a threshold, "_t" + the plain number, e.g. "_t0.004" (several thresholds give one label per threshold)
-	 */
-	public static String thresholdSuffix( final double threshold )
-	{
-		return "_t" + plain( threshold );
-	}
-
-	/**
-	 * @return the shortest plain decimal representation (no exponent, no trailing zeros), e.g. 1.0E-4 as "0.0001"
-	 */
-	protected static String plain( final double value )
-	{
-		return BigDecimal.valueOf( value ).stripTrailingZeros().toPlainString();
 	}
 
 	/**
