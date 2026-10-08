@@ -25,6 +25,7 @@ package net.preibisch.mvrecon.tests;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -79,9 +80,9 @@ public class TestInterestPointDetection
 	public static final double GLOBAL_MAX_INTENSITY = 1137.0;
 
 	/** Expected point counts from SimulateUtil.setUp() with standard parameters and global intensity */
-	public static final int EXPECTED_COUNT_VIEW_0 = 162;
-	public static final int EXPECTED_COUNT_VIEW_1 = 91;
-	public static final int EXPECTED_COUNT_VIEW_2 = 59;
+	public static final int EXPECTED_COUNT_VIEW_0 = 163;
+	public static final int EXPECTED_COUNT_VIEW_1 = 92;
+	public static final int EXPECTED_COUNT_VIEW_2 = 60;
 
 	/**
 	 * Position tolerance for median coordinate assertions.
@@ -190,9 +191,10 @@ public class TestInterestPointDetection
 	 * to ensure consistent verification.
 	 *
 	 * Expected results (using SimulateUtil.setUp() with 3 views, 200 beads):
-	 * - View 0: 162 points, median X = 58.37869967778258
-	 * - View 1: 91 points, median Y = 61.81804601215178
-	 * - View 2: 59 points, median Z = 25.192354308314773
+	 * - View 0: 163 points, median X = 58.636172043717856
+	 * - View 1: 92 points, median Y = 62.769406167213575
+	 * - View 2: 60 points, median Z = 25.405042944531267
+	 * (one point more per view since the duplicate removal of DoGImgLib2 keeps the last detection, 2026-10)
 	 *
 	 * @param spimData the SpimData2 containing detected interest points
 	 * @param label the interest point label to verify
@@ -220,9 +222,9 @@ public class TestInterestPointDetection
 		final double medianY1 = Util.median( y1 );
 		final double medianZ2 = Util.median( z2 );
 
-		assertEquals( 58.37869967778258, medianX0, POSITION_DELTA, "View 0 X median" );
-		assertEquals( 61.81804601215178, medianY1, POSITION_DELTA, "View 1 Y median" );
-		assertEquals( 25.192354308314773, medianZ2, POSITION_DELTA, "View 2 Z median" );
+		assertEquals( 58.636172043717856, medianX0, POSITION_DELTA, "View 0 X median" );
+		assertEquals( 62.769406167213575, medianY1, POSITION_DELTA, "View 1 Y median" );
+		assertEquals( 25.405042944531267, medianZ2, POSITION_DELTA, "View 2 Z median" );
 	}
 
 	/**
@@ -286,6 +288,29 @@ public class TestInterestPointDetection
 					new HashMap< ViewId, List< InterestPoint > >() {{ put( vd, ips ); }},
 					"DoG, sigma=" + STANDARD_SIGMA + ", downsampleXY=" + STANDARD_DOWNSAMPLE_XY );
 		}
+	}
+
+	/**
+	 * The duplicate removal of the DoG keeps the first of two near-identical detections (within 0.001 px in every
+	 * dimension), keeps the last detection and leaves distinct ones alone
+	 */
+	@Test
+	public void testRemoveDuplicates()
+	{
+		final InterestPoint a = new InterestPoint( 0, new double[] { 10, 10, 10 } );
+		final InterestPoint b = new InterestPoint( 1, new double[] { 10.0005, 9.9995, 10 } ); // duplicate of a
+		final InterestPoint c = new InterestPoint( 2, new double[] { 10.002, 10, 10 } ); // distinct from a (> 0.001 in x)
+		final InterestPoint d = new InterestPoint( 3, new double[] { 20, 20, 20 } );
+		final InterestPoint e = new InterestPoint( 4, new double[] { 20, 20, 20.0009 } ); // duplicate of d, the last one
+
+		final List< InterestPoint > filtered = DoGImgLib2.removeDuplicates( Arrays.asList( a, b, c, d, e ) );
+
+		assertEquals( Arrays.asList( a, c, d ), filtered );
+
+		// the last detection is kept, also on its own
+		assertEquals( Arrays.asList( a, d ), DoGImgLib2.removeDuplicates( Arrays.asList( a, d ) ) );
+		assertEquals( Arrays.asList( a ), DoGImgLib2.removeDuplicates( Arrays.asList( a ) ) );
+		assertEquals( 0, DoGImgLib2.removeDuplicates( new ArrayList<>() ).size() );
 	}
 
 	public static void main( String[] args ) throws SpimDataException

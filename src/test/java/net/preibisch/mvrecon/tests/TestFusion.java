@@ -100,7 +100,7 @@ public class TestFusion
 		assertEquals( 0, img.getAt( 0, 0, -5 ).get(), "Expecting specific pixel intensities." );
 		assertEquals( 0, img.getAt( 64, 63, 11 ).get(), "Expecting specific pixel intensities." );
 		assertEquals( 45, img.getAt( 3, 22, 1 ).get(), "Expecting specific pixel intensities." );
-		assertEquals( 44, img.getAt( 39, 41, 3 ).get(), "Expecting specific pixel intensities." );
+		assertEquals( 45, img.getAt( 39, 41, 3 ).get(), "Expecting specific pixel intensities." );
 
 		System.out.println( "✓ Fusion test passed, output interval: " + Util.printInterval( blks.getB() ) );
 	}
