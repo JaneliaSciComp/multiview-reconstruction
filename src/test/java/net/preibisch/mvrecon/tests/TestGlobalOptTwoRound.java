@@ -124,7 +124,8 @@ public class TestGlobalOptTwoRound
 				new MetaDataWeakLinkFactory( vrMap, new AllAgainstAllOverlap< ViewId >( bb.numDimensions() ) ),
 				new ConvergenceStrategy( Double.MAX_VALUE ),
 				fixed,
-				groups );
+				groups,
+				true );
 
 		return computeResults;
 	}

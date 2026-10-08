@@ -28,10 +28,8 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 
-import mpicbg.models.Affine3D;
 import mpicbg.models.ErrorStatistic;
 import mpicbg.models.Model;
-import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
 import mpicbg.models.TileConfiguration;
 import mpicbg.models.TileUtil;
@@ -54,9 +52,10 @@ public class GlobalOptIterative
 			final IterativeConvergenceStrategy ics,
 			final LinkRemovalStrategy lms,
 			final Collection< ViewId > fixedViews,
-			final Collection< Group< ViewId > > groupsIn )
+			final Collection< Group< ViewId > > groupsIn,
+			final boolean outputTransforms )
 	{
-		return computeModels( model, preAlign, pmc, ics, lms, null, fixedViews, groupsIn );
+		return computeModels( model, preAlign, pmc, ics, lms, null, fixedViews, groupsIn, outputTransforms );
 	}
 
 	public static < M extends Model< M > > HashMap< ViewId, M > computeModels(
@@ -67,9 +66,10 @@ public class GlobalOptIterative
 			final LinkRemovalStrategy lms,
 			final Collection< Pair< Group< ViewId >, Group< ViewId > > > removedInconsistentPairs,
 			final Collection< ViewId > fixedViews,
-			final Collection< Group< ViewId > > groupsIn )
+			final Collection< Group< ViewId > > groupsIn,
+			final boolean outputTransforms )
 	{
-		return GlobalOpt.toModels( computeTiles( model, preAlign, pmc, ics, lms, null, fixedViews, groupsIn ) );
+		return GlobalOpt.toModels( computeTiles( model, preAlign, pmc, ics, lms, null, fixedViews, groupsIn, outputTransforms ) );
 	}
 
 	public static < M extends Model< M > > HashMap< ViewId, Tile< M > > computeTiles(
@@ -80,7 +80,8 @@ public class GlobalOptIterative
 			final LinkRemovalStrategy lms,
 			final Collection< Pair< Group< ViewId >, Group< ViewId > > > removedInconsistentPairs,
 			final Collection< ViewId > fixedViews,
-			final Collection< Group< ViewId > > groupsIn )
+			final Collection< Group< ViewId > > groupsIn,
+			final boolean outputTransforms )
 	{
 
 		final Pair< HashMap< ViewId, Tile< M > >, ArrayList< Group< ViewId > > > globalOpt = GlobalOpt.initGlobalOpt( model, pmc, fixedViews, groupsIn );
@@ -166,7 +167,8 @@ public class GlobalOptIterative
 		}
 
 		// TODO: We assume it is Affine3D here
-		TransformationTools.printAndSummarizeTransformations( views, map );
+		if ( outputTransforms )
+			TransformationTools.printAndSummarizeTransformations( views, map );
 
 		return map;
 	}

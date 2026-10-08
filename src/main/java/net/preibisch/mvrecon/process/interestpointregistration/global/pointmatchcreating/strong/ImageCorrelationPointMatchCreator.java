@@ -188,6 +188,6 @@ public class ImageCorrelationPointMatchCreator implements PointMatchCreator
 		final ConvergenceStrategy cs = new ConvergenceStrategy( 10.0 );
 		final PointMatchCreator pmc = new ImageCorrelationPointMatchCreator( pairwiseResults, 0.3 );
 
-		GlobalOpt.computeTiles( new TranslationModel3D(), true, pmc, cs, fixed, groups );
+		GlobalOpt.computeTiles( new TranslationModel3D(), true, pmc, cs, fixed, groups, true );
 	}
 }
