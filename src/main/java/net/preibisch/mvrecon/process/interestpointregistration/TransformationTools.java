@@ -642,7 +642,6 @@ public class TransformationTools
 			final Map< ViewId, ViewDescription > viewDescriptions,
 			final int numThreads )
 	{
-		final long startTotal = System.currentTimeMillis();
 
 		// Pre-compute which view pairs share a group for O(1) lookup
 		final Set< Pair< ViewId, ViewId > > sameGroupPairs = new HashSet<>();
@@ -655,7 +654,6 @@ public class TransformationTools
 		}
 
 		// Pre-compute all inverse transforms and intervals (avoids repeated computation per view pair)
-		final long startPrecompute = System.currentTimeMillis();
 		final Map< ViewId, AffineTransform3D > inverseTransforms = new ConcurrentHashMap<>();
 		final Map< ViewId, Interval > viewIntervals = new ConcurrentHashMap<>();
 		final Map< ViewId, BoundingBox > viewBoundingBoxes = new ConcurrentHashMap<>();
@@ -688,13 +686,11 @@ public class TransformationTools
 		{
 			precomputePool.shutdown();
 		}
-		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints precompute: " + (System.currentTimeMillis() - startPrecompute) + " ms" );
 
 		// Build list of views for indexed access
 		final List< ViewId > viewList = new ArrayList<>( interestpoints.keySet() );
 
 		// Pre-compute which view pairs actually overlap (using bounding boxes)
-		final long startOverlapCheck = System.currentTimeMillis();
 		final Map< ViewId, Set< ViewId > > overlappingViews = new ConcurrentHashMap<>();
 
 		final ForkJoinPool overlapPool = new ForkJoinPool( Threads.numThreads() );
@@ -732,17 +728,8 @@ public class TransformationTools
 			overlapPool.shutdown();
 		}
 
-		// Count total overlapping pairs for statistics
-		long totalOverlappingPairs = 0;
-		for ( final Set< ViewId > set : overlappingViews.values() )
-			totalOverlappingPairs += set.size();
-		totalOverlappingPairs /= 2; // Each pair counted twice
-
-		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints overlap detection: " + (System.currentTimeMillis() - startOverlapCheck) +
-				" ms (" + totalOverlappingPairs + " overlapping view pairs out of " + (((long)viewList.size() * (viewList.size() - 1)) / 2) + " total)" );
 
 		// Process each view in parallel - only check actually overlapping views
-		final long startFiltering = System.currentTimeMillis();
 		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );
 
 		try
@@ -811,8 +798,6 @@ public class TransformationTools
 			pool.shutdown();
 		}
 
-		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints point filtering: " + (System.currentTimeMillis() - startFiltering) + " ms" );
-		IOFunctions.println( "[TIMING]   filterForOverlappingInterestPoints total: " + (System.currentTimeMillis() - startTotal) + " ms" );
 	}
 
 	/* call this method to load interestpoints and apply current transformation */
