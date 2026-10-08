@@ -50,6 +50,7 @@ import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.generic.sequence.BasicViewSetup;
+import mpicbg.spim.data.registration.ViewRegistration;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.Volatile;
 import net.imglib2.type.numeric.NumericType;
@@ -185,6 +186,8 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 		// hover) catches up.
 		if ( bdv == null )
 			return;
+		panel.getSpimData().getViewRegistrations().getViewRegistrations().values().forEach( ViewRegistration::updateModel );
+		bdv.getViewer().state().snapshot().getSources().forEach( BDVPopup::reloadTransformFromViewRegistrations );
 		bdv.getViewer().requestRepaint();
 		bdv.getViewer().getDisplay().repaint();
 	}
