@@ -63,9 +63,10 @@ public class GlobalOpt
 			final PointMatchCreator pmc,
 			final ConvergenceStrategy cs,
 			final Collection< ViewId > fixedViews,
-			final Collection< Group< ViewId > > groupsIn )
+			final Collection< Group< ViewId > > groupsIn,
+			final boolean outputTransforms )
 	{
-		return toModels( computeTiles( model, preAlign, pmc, cs, fixedViews, groupsIn ) );
+		return toModels( computeTiles( model, preAlign, pmc, cs, fixedViews, groupsIn, outputTransforms ) );
 	}
 
 	/*
@@ -78,7 +79,8 @@ public class GlobalOpt
 			final PointMatchCreator pmc,
 			final ConvergenceStrategy cs,
 			final Collection< ViewId > fixedViews,
-			final Collection< Group< ViewId > > groupsIn )
+			final Collection< Group< ViewId > > groupsIn,
+			final boolean outputTransforms )
 	{
 		final Pair< HashMap< ViewId, Tile< M > >, ArrayList< Group< ViewId > > > globalOpt = initGlobalOpt( model, pmc, fixedViews, groupsIn );
 
@@ -141,7 +143,8 @@ public class GlobalOpt
 		}
 		
 		// TODO: We assume it is Affine3D here
-		TransformationTools.printAndSummarizeTransformations( views, map );
+		if ( outputTransforms )
+			TransformationTools.printAndSummarizeTransformations( views, map );
 
 		return map;
 	}

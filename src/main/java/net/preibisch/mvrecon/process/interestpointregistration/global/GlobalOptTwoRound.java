@@ -60,6 +60,7 @@ public class GlobalOptTwoRound
 	 * this is a new ConvergenceStrategy( Double.MAX_VALUE );
 	 * @param fixedViews - which views are fixed
 	 * @param groupsIn - which views are grouped
+	 * @param outputTransforms - whether to print the transformations after each of the two rounds (the caller usually prints the final ones)
 	 * @return map from view id to resulting transform
 	 * @param <M> mpicbg model type
 	 */
@@ -72,9 +73,10 @@ public class GlobalOptTwoRound
 			final WeakLinkFactory wlf,
 			final ConvergenceStrategy csWeak,
 			final Collection< ViewId > fixedViews,
-			final Collection< Group< ViewId > > groupsIn )
+			final Collection< Group< ViewId > > groupsIn,
+			final boolean outputTransforms )
 	{
-		return computeModels( model, preAlign, pmc, csStrong, lms, null, wlf, csWeak, fixedViews, groupsIn );
+		return computeModels( model, preAlign, pmc, csStrong, lms, null, wlf, csWeak, fixedViews, groupsIn, outputTransforms );
 	}
 
 	/**
@@ -94,6 +96,7 @@ public class GlobalOptTwoRound
 	 * this is a new ConvergenceStrategy( Double.MAX_VALUE );
 	 * @param fixedViews - which views are fixed
 	 * @param groupsIn - which views are grouped
+	 * @param outputTransforms - whether to print the transformations after each of the two rounds (the caller usually prints the final ones)
 	 * @return map from view id to resulting transform
 	 * @param <M> mpicbg model type
 	 */
@@ -107,9 +110,10 @@ public class GlobalOptTwoRound
 			final WeakLinkFactory wlf,
 			final ConvergenceStrategy csWeak,
 			final Collection< ViewId > fixedViews,
-			final Collection< Group< ViewId > > groupsIn )
+			final Collection< Group< ViewId > > groupsIn,
+			final boolean outputTransforms )
 	{
-		return GlobalOpt.toModels( computeTiles( model, preAlign, pmc, csStrong, lms, removedInconsistentPairs, wlf, csWeak, fixedViews, groupsIn ) );
+		return GlobalOpt.toModels( computeTiles( model, preAlign, pmc, csStrong, lms, removedInconsistentPairs, wlf, csWeak, fixedViews, groupsIn, outputTransforms ) );
 	}
 
 	/**
@@ -129,6 +133,7 @@ public class GlobalOptTwoRound
 	 * this is a new ConvergenceStrategy( Double.MAX_VALUE );
 	 * @param fixedViews - which views are fixed
 	 * @param groupsIn - which views are grouped
+	 * @param outputTransforms - whether to print the transformations after each of the two rounds (the caller usually prints the final ones)
 	 * @return map from view id to resulting transform
 	 * @param <M> mpicbg model type
 	 */
@@ -142,11 +147,12 @@ public class GlobalOptTwoRound
 			final WeakLinkFactory wlf,
 			final ConvergenceStrategy csWeak,
 			final Collection< ViewId > fixedViews,
-			final Collection< Group< ViewId > > groupsIn )
+			final Collection< Group< ViewId > > groupsIn,
+			final boolean outputTransforms )
 	{
 		// find strong links, run global opt iterative
 		final HashMap< ViewId, Tile< M > > models1 =
-				GlobalOptIterative.computeTiles( model, preAlign, pmc, csStrong, lms, removedInconsistentPairs, fixedViews, groupsIn );
+				GlobalOptIterative.computeTiles( model, preAlign, pmc, csStrong, lms, removedInconsistentPairs, fixedViews, groupsIn, outputTransforms );
 
 		// identify groups of connected views
 		final List< Set< Tile< ? > > > sets = Tile.identifyConnectedGraphs( models1.values() );
@@ -176,7 +182,7 @@ public class GlobalOptTwoRound
 		final WeakLinkPointMatchCreator< M > wlpmc = wlf.create( models1 );
 
 		// run global opt without iterative (here we always pre-align)
-		final HashMap< ViewId, Tile< M > > models2 = GlobalOpt.computeTiles( model, true, wlpmc, csWeak, fixedViews, groupsNew );
+		final HashMap< ViewId, Tile< M > > models2 = GlobalOpt.computeTiles( model, true, wlpmc, csWeak, fixedViews, groupsNew, outputTransforms );
 
 		// the combination of models from:
 		// the first round of global opt (strong links) + averageMapBack + the second round of global opt (weak links)

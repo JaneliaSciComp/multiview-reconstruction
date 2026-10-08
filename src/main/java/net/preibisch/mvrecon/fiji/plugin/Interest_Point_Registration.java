@@ -508,7 +508,8 @@ public class Interest_Point_Registration implements PlugIn
 									pmc,
 									cs,
 									fixedViews,
-									subset.getGroups() );
+									subset.getGroups(),
+									false );
 				}
 				else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_ITERATIVE )
 				{
@@ -520,7 +521,8 @@ public class Interest_Point_Registration implements PlugIn
 									new MaxErrorLinkRemoval(),
 									removedInconsistentPairs,
 									fixedViews,
-									subset.getGroups() );
+									subset.getGroups(),
+									false );
 				}
 				else //if ( globalOptParameters.method == GlobalOptType.TWO_ROUND_SIMPLE || globalOptParameters.method == GlobalOptType.TWO_ROUND_ITERATIVE )
 				{
@@ -536,7 +538,8 @@ public class Interest_Point_Registration implements PlugIn
 									new SimpleBoundingBoxOverlap<>( viewSetups, registrations ) ),
 							new ConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth ),
 							fixedViews,
-							subset.getGroups() );
+							subset.getGroups(),
+							true );
 				}
 			}
 			else
@@ -620,7 +623,8 @@ public class Interest_Point_Registration implements PlugIn
 									pmc,
 									cs,
 									fixedViews,
-									groups );
+									groups,
+									false );
 				}
 				else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_ITERATIVE )
 				{
@@ -632,7 +636,8 @@ public class Interest_Point_Registration implements PlugIn
 									new MaxErrorLinkRemoval(),
 									removedInconsistentPairs,
 									fixedViews,
-									groups );
+									groups,
+									false );
 				}
 				else //if ( globalOptParameters.method == GlobalOptType.TWO_ROUND_SIMPLE || globalOptParameters.method == GlobalOptType.TWO_ROUND_ITERATIVE )
 				{
@@ -649,7 +654,8 @@ public class Interest_Point_Registration implements PlugIn
 									new SimpleBoundingBoxOverlap<>( viewSetups, registrations ) ),
 							new ConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.maxIterations, globalOptParameters.maxPlateauWidth ),
 							fixedViews,
-							groups );
+							groups,
+							true );
 				}
 			}
 

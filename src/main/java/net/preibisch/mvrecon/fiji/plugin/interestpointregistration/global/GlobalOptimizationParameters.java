@@ -26,8 +26,8 @@ import ij.gui.GenericDialog;
 
 public class GlobalOptimizationParameters
 {
-	public static int defaultGlobalOpt = 3;
-	public static int defaultSimple = 5;
+	public static int defaultGlobalOpt = 2;
+	public static int defaultSimple = 3;
 	public static boolean defaultPrealign = false;
 
 	final static double relativeBase = 2.5;
@@ -62,8 +62,8 @@ public class GlobalOptimizationParameters
 	private final static String[] methodDescriptions = {
 			"One-Round",
 			"One-Round with iterative dropping of bad links",
-			"Two-Round using metadata to align unconnected Tiles",
-			"Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links", // default
+			"Two-Round using metadata to align unconnected Tiles", // default
+			"Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links",
 			"NO global optimization, just store the corresponding interest points"
 	};
 
@@ -71,9 +71,9 @@ public class GlobalOptimizationParameters
 			"One-Round: DO NOT handle unconnected tiles, DO NOT remove wrong links ('classic option')",
 			"One-Round: DO NOT handle unconnected tiles, handle wrong links STRICT (2.5x / 3.5px)",
 			"One-Round: DO NOT handle unconnected tiles, handle wrong links RELAXED (5.0x / 7.0px)",
-			"Two-Round: Handle unconnected tiles, DO NOT remove wrong links",
+			"Two-Round: Handle unconnected tiles, DO NOT remove wrong links", // default
 			"Two-Round: Handle unconnected tiles, remove wrong links STRICT (2.5x / 3.5px)",
-			"Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)", // default
+			"Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)",
 			"NO global optimization, just store the corresponding interest points",
 			"Show full options dialog"
 	};
@@ -91,7 +91,7 @@ public class GlobalOptimizationParameters
 
 	public GlobalOptimizationParameters()
 	{
-		this( defaultRelativeError, defaultAbsoluteError, GlobalOptType.TWO_ROUND_ITERATIVE, true, false );
+		this( defaultRelativeError, defaultAbsoluteError, GlobalOptType.values()[ defaultGlobalOpt ], true, false );
 	}
 
 	public GlobalOptimizationParameters(double relativeThreshold, double absoluteThreshold, GlobalOptType method, boolean preAlign, boolean showExpertGrouping)
