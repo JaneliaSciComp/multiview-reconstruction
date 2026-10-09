@@ -202,7 +202,7 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 	 * versions nested under {@code source}. This reloads transformations from
 	 * modified {@code ViewRegistrations}.
 	 */
-	private static void reloadTransformFromViewRegistrations( final SourceAndConverter< ? > source )
+	static void reloadTransformFromViewRegistrations( final SourceAndConverter< ? > source )
 	{
 		Source< ? > s = source.getSpimSource();
 
