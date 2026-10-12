@@ -129,17 +129,9 @@ public class LazyDownsample2x<T extends RealType<T> & NativeType<T>> implements 
 				v2 = in.get().getRealDouble();
 				out.get().setReal( quasiGauss( v0, v1, v2 ) );
 
-				// other pixels
-				for ( long p = 1; p < size; ++p )
+				// other pixels (none if the cell is a single pixel in d, e.g. the last cell when dim % blockSize == 1)
+				for ( long p = 1; p <= size; ++p )
 					v2 = mainLoop(v2, in, out, d);
-
-				// last pixel
-				in.fwd( d );
-				v1 = in.get().getRealDouble();
-				in.fwd( d );
-				v0 = in.get().getRealDouble();
-				out.fwd( d );
-				out.get().setReal( quasiGauss( v0, v1, v2 ) );
 			}
 		}
 		catch (final IncompatibleTypeException e)
