@@ -88,8 +88,8 @@ class HistogramIntensityMatchingFilter implements IntensityMatchingFilter {
 
         final List<PointMatch> matches = new ArrayList<>(numSamples);
         for (int i = 0; i < numSamples; ++i) {
-            final double p = histo1[histo1.length * i / numSamples];
-            final double q = histo2[histo2.length * i / numSamples];
+            final double p = histo1[(int) ((long) histo1.length * i / numSamples)];
+            final double q = histo2[(int) ((long) histo2.length * i / numSamples)];
             matches.add(new PointMatch1D(new Point1D(p), new Point1D(q), 1.0));
         }
         try {
