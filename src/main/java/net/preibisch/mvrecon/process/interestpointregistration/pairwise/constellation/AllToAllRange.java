@@ -35,9 +35,12 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import net.imglib2.util.Pair;
+import net.preibisch.legacy.io.IOFunctions;
 import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.range.RangeComparator;
 
 public class AllToAllRange< V extends Comparable< V >, R extends RangeComparator< V > > extends PairwiseSetup< V >
@@ -57,6 +60,25 @@ public class AllToAllRange< V extends Comparable< V >, R extends RangeComparator
 	protected List< Pair< V, V > > definePairsAbstract()
 	{
 		return allPairs( views, groups, rangeComparator );
+	}
+
+	@Override
+	@SuppressWarnings( { "unchecked", "rawtypes" } )
+	public void defineOverlappingPairs( final OverlapDetection< V > ovlp )
+	{
+		if ( !( ovlp instanceof SimpleBoundingBoxOverlap ) )
+		{
+			super.defineOverlappingPairs( ovlp );
+			return;
+		}
+
+		// same pairs in the same order as definePairsAbstract() + removeRedundantPairs + removeNonOverlappingPairs,
+		// but only the overlapping ones are ever generated (V is a ViewId whenever ovlp is a SimpleBoundingBoxOverlap)
+		this.pairs = ( (SimpleBoundingBoxOverlap) ovlp ).generateOverlappingPairs( views, groups );
+		pairs.removeIf( pair -> !rangeComparator.inRange( pair.getA(), pair.getB() ) );
+		final int redundant = removeRedundantPairs( pairs, groups ).size();
+
+		IOFunctions.println( "Defined " + pairs.size() + " overlapping pairs (Strategy='SimpleBoundingBoxOverlap'), removed " + redundant + " redundant view pairs." );
 	}
 
 	@Override

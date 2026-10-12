@@ -691,43 +691,21 @@ public class TransformationTools
 		final List< ViewId > viewList = new ArrayList<>( interestpoints.keySet() );
 
 		// Pre-compute which view pairs actually overlap (using bounding boxes)
-		final Map< ViewId, Set< ViewId > > overlappingViews = new ConcurrentHashMap<>();
+		final Map< ViewId, Set< ViewId > > overlappingViews = new HashMap<>();
+		viewList.forEach( viewId -> { if ( viewBoundingBoxes.containsKey( viewId ) ) overlappingViews.put( viewId, new HashSet<>() ); } );
 
-		final ForkJoinPool overlapPool = new ForkJoinPool( Threads.numThreads() );
-		try
+		for ( final long ab : SimpleBoundingBoxOverlap.overlappingIndexPairs( viewList.stream().map( viewBoundingBoxes::get ).collect( Collectors.toList() ) ) )
 		{
-			overlapPool.submit( () ->
-				viewList.parallelStream().forEach( viewId -> {
-					final BoundingBox bb1 = viewBoundingBoxes.get( viewId );
-					if ( bb1 == null ) return;
+			final ViewId viewA = viewList.get( (int)( ab >>> 32 ) );
+			final ViewId viewB = viewList.get( (int)ab );
 
-					final Set< ViewId > overlapping = new HashSet<>();
-					for ( final ViewId otherViewId : viewList )
-					{
-						if ( otherViewId.equals( viewId ) ) continue;
+			// Skip if same group
+			if ( sameGroupPairs.contains( new ValuePair<>( viewA, viewB ) ) || sameGroupPairs.contains( new ValuePair<>( viewB, viewA ) ) )
+				continue;
 
-						// Skip if same group
-						if ( sameGroupPairs.contains( new ValuePair<>( viewId, otherViewId ) ) ||
-							 sameGroupPairs.contains( new ValuePair<>( otherViewId, viewId ) ) )
-							continue;
-
-						final BoundingBox bb2 = viewBoundingBoxes.get( otherViewId );
-						if ( bb2 != null && SimpleBoundingBoxOverlap.overlaps( bb1, bb2 ) )
-							overlapping.add( otherViewId );
-					}
-					overlappingViews.put( viewId, overlapping );
-				})
-			).get();
+			overlappingViews.get( viewA ).add( viewB );
+			overlappingViews.get( viewB ).add( viewA );
 		}
-		catch ( final Exception e )
-		{
-			throw new RuntimeException( "Failed to compute overlapping views", e );
-		}
-		finally
-		{
-			overlapPool.shutdown();
-		}
-
 
 		// Process each view in parallel - only check actually overlapping views
 		final ForkJoinPool pool = new ForkJoinPool( Threads.numThreads() );

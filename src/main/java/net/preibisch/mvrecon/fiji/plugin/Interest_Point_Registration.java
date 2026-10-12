@@ -773,35 +773,9 @@ public class Interest_Point_Registration implements PlugIn
 		return remove;
 	}
 
-	@SuppressWarnings("unchecked")
-	public void identifySubsets( final PairwiseSetup< ViewId > setup, final OverlapDetection< ViewId > overlapDetection )
+	public static void identifySubsets( final PairwiseSetup< ViewId > setup, final OverlapDetection< ViewId > overlapDetection )
 	{
-		// Use combined optimized approach for SimpleBoundingBoxOverlap (avoids creating millions of pairs just to discard them)
-		if (overlapDetection instanceof SimpleBoundingBoxOverlap)
-		{
-			final SimpleBoundingBoxOverlap<ViewId> sbbo = (SimpleBoundingBoxOverlap<ViewId>) overlapDetection;
-
-			// Generate only overlapping pairs directly (combines definePairs + removeNonOverlappingPairs)
-			final List<Pair<ViewId, ViewId>> overlappingPairs = sbbo.generateOverlappingPairs(
-					setup.getViews(),
-					(Collection<? extends Group<ViewId>>) (Collection<?>) setup.getGroups());
-
-			// Set the pairs directly in the setup
-			setup.setPairs(overlappingPairs);
-
-			// Calculate statistics: total possible pairs minus overlapping = non-overlapping (skipped)
-			final long n = setup.getViews().size();
-			final long totalPossiblePairs = n * (n - 1) / 2;
-			final long nonOverlapping = totalPossiblePairs - overlappingPairs.size();
-
-			IOFunctions.println( "Removed " + nonOverlapping + " pairs because they do not overlap (Strategy='SimpleBoundingBoxOverlap'), kept " + overlappingPairs.size() + " pairs." );
-		}
-		else
-		{
-			// Fallback to sequential approach for other OverlapDetection types
-			IOFunctions.println( "Defined pairs, removed " + setup.definePairs().size() + " redundant view pairs." );
-			IOFunctions.println( "Removed " + setup.removeNonOverlappingPairs( overlapDetection ).size() + " pairs because they do not overlap (Strategy='" + overlapDetection.getClass().getSimpleName() + "')" );
-		}
+		setup.defineOverlappingPairs( overlapDetection );
 
 		setup.reorderPairs();
 		setup.detectSubsets();
