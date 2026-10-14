@@ -30,10 +30,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 import mpicbg.models.AffineModel1D;
 import mpicbg.models.IdentityModel;
 import mpicbg.models.InterpolatedAffineModel1D;
 import mpicbg.models.Model;
+import mpicbg.models.PointMatch;
 import mpicbg.models.TranslationModel1D;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.sequence.ViewId;
@@ -41,6 +43,8 @@ import net.imglib2.RealInterval;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityMatcher.CoefficientMatch;
+import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.Point1D;
+import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.PointMatch1D;
 
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
@@ -420,6 +424,70 @@ public class IntensityCorrection {
 		final Map<ViewId, Coefficients> coefficients = new HashMap<>();
 		intensityTiles.forEach((k, v) -> coefficients.put(k, v.getCoefficients()));
 		return coefficients;
+	}
+
+	/**
+	 * Empties every coefficient match whose matched intensities reach less than {@code minSignal} above the
+	 * threshold of either view: in tiles without specimen the threshold splits background noise, and the
+	 * "intensity ratio" of a few counts above it is noise that would set that tile's gain.
+	 *
+	 * @param thresholds per-view threshold the matches were gated at; every view in {@code pairwiseMatches} needs one
+	 */
+	public static List<ViewPairCoefficientMatches> dropWeakMatches(
+			final Collection<ViewPairCoefficientMatches> pairwiseMatches,
+			final Map<? extends ViewId, Double> thresholds,
+			final double minSignal
+	) {
+		return mapMatches(pairwiseMatches, (m, cm) -> {
+			final double t1 = level(thresholds, m.view1()), t2 = level(thresholds, m.view2());
+			double max1 = Double.NEGATIVE_INFINITY, max2 = Double.NEGATIVE_INFINITY;
+			for (final PointMatch pm : cm.matches()) {
+				max1 = Math.max(max1, pm.getP1().getL()[0]);
+				max2 = Math.max(max2, pm.getP2().getL()[0]);
+			}
+			return max1 - t1 < minSignal || max2 - t2 < minSignal ? Collections.emptyList() : cm.matches();
+		});
+	}
+
+	/**
+	 * Adds the two views' background levels as one more match (weight {@code weight}) to every non-empty
+	 * coefficient match. The matches are otherwise all foreground, which leaves where a view's model maps
+	 * the background to extrapolation; this pins it, so overlapping views' backgrounds come out level.
+	 *
+	 * @param backgrounds per-view background level; every view in {@code pairwiseMatches} needs one
+	 */
+	public static List<ViewPairCoefficientMatches> addBackgroundMatches(
+			final Collection<ViewPairCoefficientMatches> pairwiseMatches,
+			final Map<? extends ViewId, Double> backgrounds,
+			final double weight
+	) {
+		return mapMatches(pairwiseMatches, (m, cm) -> {
+			final List<PointMatch> matches = new ArrayList<>(cm.matches());
+			matches.add(new PointMatch1D(new Point1D(level(backgrounds, m.view1())), new Point1D(level(backgrounds, m.view2())), weight));
+			return matches;
+		});
+	}
+
+	/** Applies {@code f} to every non-empty coefficient match; empty ones (unmatched regions) are kept as they are. */
+	private static List<ViewPairCoefficientMatches> mapMatches(
+			final Collection<ViewPairCoefficientMatches> pairwiseMatches,
+			final BiFunction<ViewPairCoefficientMatches, CoefficientMatch, Collection<PointMatch>> f
+	) {
+		final List<ViewPairCoefficientMatches> out = new ArrayList<>(pairwiseMatches.size());
+		for (final ViewPairCoefficientMatches m : pairwiseMatches) {
+			final List<CoefficientMatch> coefficientMatches = new ArrayList<>(m.coefficientMatches().size());
+			for (final CoefficientMatch cm : m.coefficientMatches())
+				coefficientMatches.add(cm.matches().isEmpty() ? cm : new CoefficientMatch(cm.coeff1(), cm.coeff2(), cm.numVoxels(), f.apply(m, cm)));
+			out.add(new ViewPairCoefficientMatches(m.view1(), m.view2(), coefficientMatches));
+		}
+		return out;
+	}
+
+	private static double level(final Map<? extends ViewId, Double> levels, final ViewId view) {
+		final Double level = levels.get(view);
+		if (level == null)
+			throw new IllegalArgumentException("no level for view (tp=" + view.getTimePointId() + ", setup=" + view.getViewSetupId() + ")");
+		return level;
 	}
 
 	// TODO: this should become part of SpimData2 I'd say? Ultimately this is a property of the dataset that should also be displayed and potentially used during reconstruction

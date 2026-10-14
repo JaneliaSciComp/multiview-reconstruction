@@ -110,6 +110,33 @@ public class IntensitySolverModelTest {
 	}
 
 	@Test
+	public void weakMatchesAreDroppedAndBackgroundMatchesAdded() {
+		final ViewId v1 = new ViewId(0, 0), v2 = new ViewId(0, 1);
+		final List<PointMatch> strong = new ArrayList<>(), weak = new ArrayList<>();
+		strong.add(new PointMatch1D(new Point1D(110), new Point1D(130), 1.0));
+		strong.add(new PointMatch1D(new Point1D(600), new Point1D(400), 1.0));
+		weak.add(new PointMatch1D(new Point1D(101), new Point1D(121), 1.0));
+		weak.add(new PointMatch1D(new Point1D(110), new Point1D(126), 1.0));   // only 10 / 6 above the thresholds
+		final List<ViewPairCoefficientMatches> pairwise = Collections.singletonList(new ViewPairCoefficientMatches(v1, v2,
+				List.of(new CoefficientMatch(0, 0, 1000, strong), new CoefficientMatch(1, 1, 1000, weak), new CoefficientMatch(2, 2, 0, List.of()))));
+
+		final List<ViewPairCoefficientMatches> filtered = IntensityCorrection.dropWeakMatches(pairwise, Map.of(v1, 100.0, v2, 120.0), 50);
+		final List<CoefficientMatch> f = filtered.get(0).coefficientMatches();
+		assertEquals(2, f.get(0).matches().size());
+		assertTrue(f.get(1).matches().isEmpty());
+		assertTrue(f.get(2).matches().isEmpty());
+
+		final List<CoefficientMatch> b = IntensityCorrection.addBackgroundMatches(filtered, Map.of(v1, 90.0, v2, 115.0), 2.0)
+				.get(0).coefficientMatches();
+		assertEquals(3, b.get(0).matches().size());
+		final PointMatch bg = new ArrayList<>(b.get(0).matches()).get(2);
+		assertEquals(90.0, bg.getP1().getL()[0], 0.0);
+		assertEquals(115.0, bg.getP2().getL()[0], 0.0);
+		assertEquals(2.0, bg.getWeight(), 0.0);
+		assertTrue(b.get(1).matches().isEmpty());   // dropped pairs stay unmatched, no lone background point
+	}
+
+	@Test
 	public void identityModelLeavesCoefficientsUntouched() {
 		final Map<ViewId, Coefficients> coefficients = IntensityCorrection.solve(
 				COEFFICIENTS_SIZE, twoViewMatches(), ITERATIONS, new IdentityModel());

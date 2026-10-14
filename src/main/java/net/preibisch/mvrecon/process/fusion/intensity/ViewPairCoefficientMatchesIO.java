@@ -31,7 +31,12 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import mpicbg.models.PointMatch;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.Point1D;
@@ -116,6 +121,39 @@ public class ViewPairCoefficientMatchesIO {
 	) throws IOException {
 		final URI fn = getURI(p1, p2);
 		return readFromFile(fn);
+	}
+
+	private static final Pattern PAIR_FILE = Pattern.compile("t(\\d+)_s(\\d+)--t(\\d+)_s(\\d+)\\.txt");
+
+	/**
+	 * Reads the matches of every pair of {@code views} that has a match file, from one listing of the directory
+	 * instead of probing every possible pair (millions of file opens for thousands of views). Returned in the
+	 * order a loop over {@code views} would find them (first view, then second view by position).
+	 */
+	public List<ViewPairCoefficientMatches> readAll(final List<? extends ViewId> views) throws IOException {
+		final Map<ViewId, Integer> position = new HashMap<>();
+		for (int i = 0; i < views.size(); ++i)
+			position.put(new ViewId(views.get(i).getTimePointId(), views.get(i).getViewSetupId()), i);
+
+		final List<int[]> pairs = new ArrayList<>();   // {position of view1, position of view2, index into names}
+		final List<String> names = new ArrayList<>();
+		for (final String name : kva.list(kva.compose(uri))) {
+			final Matcher m = PAIR_FILE.matcher(name);
+			if (!m.matches())
+				continue;
+			final Integer p1 = position.get(new ViewId(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))));
+			final Integer p2 = position.get(new ViewId(Integer.parseInt(m.group(3)), Integer.parseInt(m.group(4))));
+			if (p1 == null || p2 == null)
+				continue;
+			pairs.add(new int[] {Math.min(p1, p2), Math.max(p1, p2), names.size()});
+			names.add(name);
+		}
+		pairs.sort(Comparator.<int[]>comparingInt(p -> p[0]).thenComparingInt(p -> p[1]));
+
+		final List<ViewPairCoefficientMatches> matches = new ArrayList<>(pairs.size());
+		for (final int[] p : pairs)
+			matches.add(readFromFile(uri.resolve(names.get(p[2]))));
+		return matches;
 	}
 
 	private ViewPairCoefficientMatches readFromFile(final URI fn)
