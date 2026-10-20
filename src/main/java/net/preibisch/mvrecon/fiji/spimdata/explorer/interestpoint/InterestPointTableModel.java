@@ -43,6 +43,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointO
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
@@ -71,6 +72,11 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	volatile InterestPointOverlay interestPointOverlay = null;
 
 	HashMap< ViewId, Collection< ? extends RealLocalizable > > points = new HashMap<>();
+
+	// the preview of the interactive filter (InteractiveInterestPointFilter): only the points that pass it are drawn
+	private volatile InterestPointFilter previewFilter = null;
+	private HashMap< ViewId, Collection< ? extends RealLocalizable > > previewPoints = null, previewSource = null;
+	private InterestPointFilter previewWith = null;
 
 	public InterestPointTableModel( final ViewInterestPoints viewInterestPoints, final InterestPointExplorerPanel panel )
 	{
@@ -507,11 +513,62 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		if ( currentlyVisible == null || currentlyVisible.size() == 0 )
 			return coords;
 
+		final HashMap< ViewId, Collection< ? extends RealLocalizable > > displayed = displayedPoints();
+
 		for ( final ViewId viewId : currentlyVisible )
-			if ( points.containsKey( viewId ) )
-				coords.put( viewId, points.get( viewId ) );
+			if ( displayed.containsKey( viewId ) )
+				coords.put( viewId, displayed.get( viewId ) );
 
 		return coords;
+	}
+
+	/**
+	 * Sets the filter the drawn points are previewed with (null = none) and repaints BigDataViewer
+	 */
+	public void setPreviewFilter( final InterestPointFilter filter )
+	{
+		this.previewFilter = filter;
+
+		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().runningBdvPopup();
+		if ( bdvPopup != null && bdvPopup.bdvRunning() )
+			bdvPopup.updateBDV();
+	}
+
+	public InterestPointFilter getPreviewFilter() { return previewFilter; }
+
+	/**
+	 * @return the points to draw: the selected ones, or of those the ones that pass the preview filter (recomputed only
+	 *         when the selection or the filter changed; a point without the attribute does not pass)
+	 */
+	protected HashMap< ViewId, Collection< ? extends RealLocalizable > > displayedPoints()
+	{
+		final InterestPointFilter filter = previewFilter;
+		final HashMap< ViewId, Collection< ? extends RealLocalizable > > source = points;
+
+		if ( filter == null || filter.isEmpty() )
+			return source;
+
+		if ( previewPoints == null || previewSource != source || previewWith != filter )
+		{
+			final HashMap< ViewId, Collection< ? extends RealLocalizable > > filtered = new HashMap<>();
+
+			for ( final Map.Entry< ViewId, Collection< ? extends RealLocalizable > > e : source.entrySet() )
+			{
+				final ArrayList< RealLocalizable > pass = new ArrayList<>();
+
+				for ( final RealLocalizable p : e.getValue() )
+					if ( !( p instanceof InterestPoint ) || filter.acceptKnown( (InterestPoint)p ) )
+						pass.add( p );
+
+				filtered.put( e.getKey(), pass );
+			}
+
+			previewPoints = filtered;
+			previewSource = source;
+			previewWith = filter;
+		}
+
+		return previewPoints;
 	}
 
 	@Override

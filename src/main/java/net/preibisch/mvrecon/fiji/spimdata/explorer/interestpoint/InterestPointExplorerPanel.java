@@ -83,6 +83,9 @@ public class InterestPointExplorerPanel extends JPanel
 	//protected ArrayList< Pair< InterestPointList, ViewId > > save;
 	protected ArrayList< Pair< InterestPoints, ViewId > > delete;
 
+	// the open interactive filter window (one at a time, its preview lives in the table model)
+	protected InteractiveInterestPointFilter filterWindow = null;
+
 	public InterestPointExplorerPanel( final ViewInterestPoints viewInterestPoints, final FilteredAndGroupedExplorer< ? > viewSetupExplorer )
 	{
 		//this.save = new ArrayList< Pair< InterestPointList, ViewId > >();
@@ -415,10 +418,10 @@ public class InterestPointExplorerPanel extends JPanel
 		table.addMouseListener( new MouseListener()
 		{
 			@Override
-			public void mouseReleased(MouseEvent e) {}
+			public void mouseReleased(MouseEvent e) { selectRowForPopup( e ); }
 			
 			@Override
-			public void mousePressed(MouseEvent e) {}
+			public void mousePressed(MouseEvent e) { selectRowForPopup( e ); }
 			
 			@Override
 			public void mouseExited(MouseEvent e) {}
@@ -590,10 +593,77 @@ public class InterestPointExplorerPanel extends JPanel
 		tableModel.fireTableDataChanged();
 	}
 
+	/**
+	 * A right-click selects the row under the mouse (if it is not selected yet), so that the popup menu acts on it
+	 */
+	protected void selectRowForPopup( final MouseEvent e )
+	{
+		if ( !e.isPopupTrigger() )
+			return;
+
+		final int row = table.rowAtPoint( e.getPoint() );
+
+		if ( row >= 0 && !table.isRowSelected( row ) )
+			table.setRowSelectionInterval( row, row );
+	}
+
+	/**
+	 * Opens the interactive filter (histograms of |response|, intensity and sigma with range sliders) of the label of the
+	 * selected row for the selected views; all points of the label are shown in BigDataViewer (if it runs) and follow the filter
+	 */
+	protected void filterInteractively()
+	{
+		final int row = table.getSelectedRow();
+		final List< BasicViewDescription< ? > > vds = tableModel.getCurrentViewDescriptions();
+
+		if ( row < 0 || vds == null || vds.size() == 0 )
+		{
+			JOptionPane.showMessageDialog( table, "Nothing selected." );
+			return;
+		}
+
+		final String selectedLabel = InterestPointTableModel.label( InterestPointTools.getAllInterestPointMap( tableModel.getViewInterestPoints(), vds ), row );
+
+		if ( selectedLabel == null )
+		{
+			JOptionPane.showMessageDialog( table, "No interest points in this row." );
+			return;
+		}
+
+		// show all points of the label (column 1) in BigDataViewer, the preview filters them
+		if ( tableModel.getSelectedRow() != row || tableModel.getSelectedCol() != 1 )
+		{
+			tableModel.setSelected( row, 1 );
+			tableModel.fireTableDataChanged();
+			table.setRowSelectionInterval( row, row );
+		}
+
+		closeFilterWindow();
+
+		filterWindow = new InteractiveInterestPointFilter( this, selectedLabel, vds );
+		filterWindow.setLocationRelativeTo( this );
+		filterWindow.setVisible( true );
+	}
+
+	/**
+	 * Closes the interactive filter window if one is open, which also ends its preview in BigDataViewer
+	 */
+	public void closeFilterWindow()
+	{
+		if ( filterWindow != null )
+		{
+			filterWindow.dispose();
+			filterWindow = null;
+		}
+	}
+
 	protected void addPopupMenu( final JTable table )
 	{
 		final JPopupMenu popupMenu = new JPopupMenu();
+		final JMenuItem filterItem = new JMenuItem( "Filter interactively ..." );
 		final JMenuItem deleteItem = new JMenuItem( "Delete" );
+
+		filterItem.addActionListener( e -> filterInteractively() );
 
 		deleteItem.addActionListener(new ActionListener()
 		{
@@ -605,6 +675,7 @@ public class InterestPointExplorerPanel extends JPanel
 			}
 		});
 
+		popupMenu.add( filterItem );
 		popupMenu.add( deleteItem );
 
 		table.setComponentPopupMenu( popupMenu );

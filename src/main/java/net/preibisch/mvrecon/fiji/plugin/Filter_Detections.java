@@ -53,6 +53,8 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 public class Filter_Detections implements PlugIn
 {
 	public static int defaultLabel = -1;
+	/** the base label chosen last, by name (the interactive filter of the explorer sets it too); wins over defaultLabel if present */
+	public static String defaultBaseLabel = null;
 	public static String defaultResponse = "";
 	public static String defaultIntensity = "";
 	public static String defaultSigma = "";
@@ -170,6 +172,11 @@ public class Filter_Detections implements PlugIn
 				defaultLabel = 0;
 		}
 
+		final int byName = defaultLabelIndex( labels, defaultBaseLabel );
+
+		if ( byName >= 0 )
+			defaultLabel = byName;
+
 		final GenericDialog gd = new GenericDialog( "Filter interest points" );
 
 		gd.addChoice( "Interest_points", labels, labels[ defaultLabel ] );
@@ -187,7 +194,7 @@ public class Filter_Detections implements PlugIn
 
 		final FilterParameters params = new FilterParameters();
 
-		params.baseLabel = InterestPointTools.getSelectedLabel( labels, defaultLabel = gd.getNextChoiceIndex() );
+		params.baseLabel = defaultBaseLabel = InterestPointTools.getSelectedLabel( labels, defaultLabel = gd.getNextChoiceIndex() );
 
 		final String response = defaultResponse = gd.getNextString();
 		final String intensity = defaultIntensity = gd.getNextString();
@@ -221,6 +228,47 @@ public class Filter_Detections implements PlugIn
 		}
 
 		return params;
+	}
+
+	/**
+	 * @return the index of the label (ignoring the warning suffix of incomplete labels) in the choices, -1 if null or absent
+	 */
+	public static int defaultLabelIndex( final String[] labels, final String label )
+	{
+		if ( label == null )
+			return -1;
+
+		for ( int i = 0; i < labels.length; ++i )
+			if ( InterestPointTools.getSelectedLabel( labels, i ).equals( label ) )
+				return i;
+
+		return -1;
+	}
+
+	/**
+	 * Remembers the base label and the ranges of a filter as the defaults of the dialog (the interactive filter of the
+	 * explorer calls it on every change, so that the ranges found there can be applied to any views)
+	 */
+	public static void remember( final String baseLabel, final InterestPointFilter filter )
+	{
+		defaultBaseLabel = baseLabel;
+		defaultResponse = rangeString( filter, Axis.RESPONSE );
+		defaultIntensity = rangeString( filter, Axis.INTENSITY );
+		defaultSigma = rangeString( filter, Axis.SIGMA );
+	}
+
+	/**
+	 * @return the range of the axis in the grammar of the dialog fields: "" (unbounded), "a" (&gt;= a) or "a-b"; a missing lower bound is written as 0
+	 */
+	public static String rangeString( final InterestPointFilter filter, final Axis axis )
+	{
+		if ( !filter.filters( axis ) )
+			return "";
+
+		final double min = filter.min( axis ), max = filter.max( axis );
+		final String lower = InterestPointFilter.plain( Double.isNaN( min ) ? 0 : min );
+
+		return Double.isNaN( max ) ? lower : lower + "-" + InterestPointFilter.plain( max );
 	}
 
 	/**

@@ -180,6 +180,19 @@ public class InterestPointFilter implements Serializable
 	 */
 	public boolean accept( final InterestPoint ip )
 	{
+		return accept( ip, true );
+	}
+
+	/**
+	 * @return whether the point passes the filter; a point lacking an attribute the filter needs does not pass (no exception, for previews)
+	 */
+	public boolean acceptKnown( final InterestPoint ip )
+	{
+		return accept( ip, false );
+	}
+
+	protected boolean accept( final InterestPoint ip, final boolean throwOnUnknown )
+	{
 		for ( final Axis axis : Axis.values() )
 		{
 			if ( !filters( axis ) )
@@ -188,7 +201,12 @@ public class InterestPointFilter implements Serializable
 			final float v = value( ip, axis );
 
 			if ( Float.isNaN( v ) )
-				throw new IllegalArgumentException( "Interest point " + ip.getId() + " has no " + axis.key + " stored, cannot filter by it (detect the base label again to store it)." );
+			{
+				if ( throwOnUnknown )
+					throw new IllegalArgumentException( "Interest point " + ip.getId() + " has no " + axis.key + " stored, cannot filter by it (detect the base label again to store it)." );
+				else
+					return false;
+			}
 
 			// the attributes are floats, the bounds are compared at that precision (a bound of 0.7 keeps a stored 0.7)
 			if ( !Double.isNaN( min( axis ) ) && v < (float)min( axis ) )
