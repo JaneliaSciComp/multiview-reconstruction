@@ -27,12 +27,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
+import java.awt.GraphicsEnvironment;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+
+import javax.swing.SwingUtilities;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -48,7 +52,8 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Ax
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
- * The non-GUI parts of the interactive filter of the interest point explorer and the defaults it leaves for Filter_Detections
+ * The non-GUI parts of the interactive filter of the interest point explorer (the counting behind the linked histograms
+ * included), the defaults it leaves for Filter_Detections, and the window itself where a display is available
  */
 public class TestInteractiveInterestPointFilter
 {
@@ -133,6 +138,195 @@ public class TestInteractiveInterestPointFilter
 		// a single value does not divide by zero
 		final double[][] single = InteractiveInterestPointFilter.histogram( new float[] { 3f }, true, 5 );
 		assertEquals( 1.0, Arrays.stream( single[ 1 ] ).sum(), 0.0 );
+	}
+
+	@Test
+	public void testBin()
+	{
+		// 10 linear bins over [0, 10]: the maximum falls into the last bin, values outside are clamped, no value = -1
+		assertEquals( 1, InteractiveInterestPointFilter.bin( 1f, 0, 10, false, 10 ) );
+		assertEquals( 9, InteractiveInterestPointFilter.bin( 10f, 0, 10, false, 10 ) );
+		assertEquals( 0, InteractiveInterestPointFilter.bin( -3f, 0, 10, false, 10 ) );
+		assertEquals( 9, InteractiveInterestPointFilter.bin( 30f, 0, 10, false, 10 ) );
+		assertEquals( -1, InteractiveInterestPointFilter.bin( Float.NaN, 0, 10, false, 10 ) );
+		assertEquals( -1, InteractiveInterestPointFilter.bin( Float.POSITIVE_INFINITY, 0, 10, false, 10 ) );
+
+		// 4 log bins over [1, 100]
+		assertEquals( 0, InteractiveInterestPointFilter.bin( 1f, 0, 2, true, 4 ) );
+		assertEquals( 2, InteractiveInterestPointFilter.bin( 10f, 0, 2, true, 4 ) );
+		assertEquals( 3, InteractiveInterestPointFilter.bin( 100f, 0, 2, true, 4 ) );
+
+		// the histogram of sorted values is the same binning
+		final float[] sigma = InteractiveInterestPointFilter.sortedValues( points(), Axis.SIGMA ); // 1 2 4 8
+		final double[][] h = InteractiveInterestPointFilter.histogram( sigma, false, 7 );
+		final int[] bin = new int[ sigma.length ];
+		for ( int i = 0; i < sigma.length; ++i )
+			bin[ i ] = InteractiveInterestPointFilter.bin( sigma[ i ], 1, 7, false, 7 );
+		final double[] counts = new double[ 7 ];
+		assertEquals( 4, InteractiveInterestPointFilter.histogram( bin, new boolean[ 0 ][], null, counts ) );
+		assertArrayEquals( h[ 1 ], counts, 0.0 );
+	}
+
+	@Test
+	public void testInRange()
+	{
+		final float[] values = new float[] { 1f, Float.NaN, 3f, 5f, 0.7f };
+		final boolean[] flags = new boolean[ values.length ];
+
+		// no bounds: everything passes, the missing value included (acceptKnown)
+		InteractiveInterestPointFilter.inRange( values, Double.NaN, Double.NaN, flags );
+		assertArrayEquals( new boolean[] { true, true, true, true, true }, flags );
+
+		// bounds: the missing value does not pass, the bounds are inclusive and compared as floats
+		InteractiveInterestPointFilter.inRange( values, 2, Double.NaN, flags );
+		assertArrayEquals( new boolean[] { false, false, true, true, false }, flags );
+		InteractiveInterestPointFilter.inRange( values, Double.NaN, 3, flags );
+		assertArrayEquals( new boolean[] { true, false, true, false, true }, flags );
+		InteractiveInterestPointFilter.inRange( values, 3, 3, flags );
+		assertArrayEquals( new boolean[] { false, false, true, false, false }, flags );
+		InteractiveInterestPointFilter.inRange( values, 0.7, 1, flags );
+		assertArrayEquals( new boolean[] { true, false, false, false, true }, flags );
+
+		// the same as the filter decides
+		final List< InterestPoint > points = points();
+		final float[] response = InteractiveInterestPointFilter.values( points, Axis.RESPONSE );
+		final boolean[] pass = new boolean[ points.size() ];
+		InteractiveInterestPointFilter.inRange( response, 0.1, 0.3, pass );
+		final InterestPointFilter filter = InterestPointFilter.of( Axis.RESPONSE, 0.1, 0.3 );
+		for ( int i = 0; i < points.size(); ++i )
+			assertEquals( filter.acceptKnown( points.get( i ) ), pass[ i ], "point " + i );
+	}
+
+	@Test
+	public void testLinkedCounts()
+	{
+		// the sigma histogram (7 linear bins over [1, 8]) of the points that pass bounds on the other axes
+		final List< InterestPoint > points = points();
+		final int n = points.size();
+		final float[] sigma = InteractiveInterestPointFilter.values( points, Axis.SIGMA );
+		final float[] response = InteractiveInterestPointFilter.values( points, Axis.RESPONSE );
+		final float[] intensity = InteractiveInterestPointFilter.values( points, Axis.INTENSITY );
+
+		final int[] bin = new int[ n ];
+		for ( int i = 0; i < n; ++i )
+			bin[ i ] = InteractiveInterestPointFilter.bin( sigma[ i ], 1, 7, false, 7 );
+		assertArrayEquals( new int[] { 1, 0, 3, -1, 6 }, bin );
+
+		final boolean[] passR = new boolean[ n ], passI = new boolean[ n ], passS = new boolean[ n ];
+		InteractiveInterestPointFilter.inRange( response, 0.2, Double.NaN, passR ); // points 0 and 2
+		InteractiveInterestPointFilter.inRange( intensity, Double.NaN, 150, passI ); // point 0
+		InteractiveInterestPointFilter.inRange( sigma, Double.NaN, Double.NaN, passS ); // all
+
+		// no flags: all points with a sigma, all in range
+		double[] counts = new double[ 7 ];
+		assertEquals( 4, InteractiveInterestPointFilter.histogram( bin, new boolean[ 0 ][], passS, counts ) );
+		assertArrayEquals( new double[] { 1, 1, 0, 1, 0, 0, 1 }, counts, 0.0 );
+		assertEquals( 4, InteractiveInterestPointFilter.countPassing( bin, new boolean[ 0 ][], n ) );
+		assertEquals( 5, InteractiveInterestPointFilter.countPassing( null, new boolean[ 0 ][], n ) );
+
+		// the own flags thin the count in range, not the histogram
+		counts = new double[ 7 ];
+		assertEquals( 2, InteractiveInterestPointFilter.histogram( bin, new boolean[ 0 ][], passR, counts ) );
+		assertArrayEquals( new double[] { 1, 1, 0, 1, 0, 0, 1 }, counts, 0.0 );
+
+		// linked to the response bound: points 0 (sigma 2 -> bin 1) and 2 (sigma 4 -> bin 3)
+		counts = new double[ 7 ];
+		assertEquals( 2, InteractiveInterestPointFilter.histogram( bin, new boolean[][] { passR }, passS, counts ) );
+		assertArrayEquals( new double[] { 0, 1, 0, 1, 0, 0, 0 }, counts, 0.0 );
+		assertEquals( 2, InteractiveInterestPointFilter.countPassing( bin, new boolean[][] { passR, passS }, n ) );
+
+		// linked to both: point 0 only
+		counts = new double[ 7 ];
+		assertEquals( 1, InteractiveInterestPointFilter.histogram( bin, new boolean[][] { passR, passI }, passS, counts ) );
+		assertArrayEquals( new double[] { 0, 1, 0, 0, 0, 0, 0 }, counts, 0.0 );
+		assertEquals( 1, InteractiveInterestPointFilter.countPassing( bin, new boolean[][] { passR, passI, passS }, n ) );
+
+		// the same as the combined filter decides
+		final InterestPointFilter both = new InterestPointFilter( 0.2, Double.NaN, Double.NaN, 150, Double.NaN, Double.NaN );
+		int pass = 0;
+		for ( final InterestPoint ip : points )
+			if ( both.acceptKnown( ip ) )
+				++pass;
+		assertEquals( pass, InteractiveInterestPointFilter.countPassing( null, new boolean[][] { passR, passI, passS }, n ) );
+	}
+
+	/**
+	 * The window itself (built, never shown): the linked histograms follow the bounds of the other axes; skipped without a display
+	 */
+	@Test
+	public void testWindowLinked() throws Exception
+	{
+		assumeFalse( GraphicsEnvironment.isHeadless() );
+
+		final SpimData2 spimData = SimulateUtil.setUp();
+		spimData.setBasePathURI( tempDir.toUri() );
+
+		final List< ViewId > all = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		final HashMap< ViewId, List< InterestPoint > > map = new HashMap<>();
+		map.put( all.get( 0 ), points() );
+		InterestPointTools.addInterestPoints( spimData, "beads", map, "test" );
+
+		final boolean oldLinked = InteractiveInterestPointFilter.defaultLinked;
+		final String oldBase = Filter_Detections.defaultBaseLabel, oldR = Filter_Detections.defaultResponse, oldI = Filter_Detections.defaultIntensity, oldS = Filter_Detections.defaultSigma;
+		final InteractiveInterestPointFilter[] window = new InteractiveInterestPointFilter[ 1 ];
+
+		try
+		{
+			InteractiveInterestPointFilter.defaultLinked = true;
+			SwingUtilities.invokeAndWait( () -> window[ 0 ] = new InteractiveInterestPointFilter( spimData, "beads", all, null, null ) );
+			final InteractiveInterestPointFilter w = window[ 0 ];
+
+			assertEquals( 5, w.getNumPoints() );
+			assertTrue( w.isLinked() );
+
+			final double[][] full = new double[ 3 ][];
+			for ( final Axis axis : Axis.values() )
+			{
+				full[ axis.ordinal() ] = w.getHistogramCounts( axis );
+				assertEquals( 4.0, Arrays.stream( full[ axis.ordinal() ] ).sum(), 0.0, axis.key ); // four points have each attribute
+			}
+
+			// sigma in [1, 4] keeps points 0, 1, 2: the response histogram shows their three responses, the intensity histogram the two that are stored, its own histogram is not thinned by its own bounds
+			SwingUtilities.invokeAndWait( () -> w.setRange( Axis.SIGMA, 1, 4 ) );
+			assertEquals( "sigma=1..4", w.getFilter().toString() );
+			assertEquals( 3.0, Arrays.stream( w.getHistogramCounts( Axis.RESPONSE ) ).sum(), 0.0 );
+			assertEquals( 2.0, Arrays.stream( w.getHistogramCounts( Axis.INTENSITY ) ).sum(), 0.0 );
+			assertEquals( 4.0, Arrays.stream( w.getHistogramCounts( Axis.SIGMA ) ).sum(), 0.0 );
+			assertEquals( "3 of 3 in range (3 of 4 pass the other bounds) (1 without value)", w.getCountText( Axis.RESPONSE ) );
+			assertEquals( "2 of 2 in range (2 of 4 pass the other bounds) (1 without value)", w.getCountText( Axis.INTENSITY ) );
+			assertEquals( "3 of 4 in range (1 without value)", w.getCountText( Axis.SIGMA ) );
+
+			// a response bound on top: |response| >= 0.2 keeps points 0 and 2 (of 0, 1, 2), the sigma histogram follows, the intensity histogram shows point 0 only
+			SwingUtilities.invokeAndWait( () -> w.setRange( Axis.RESPONSE, 0.2, Double.NaN ) );
+			assertEquals( "response=0.2..;sigma=1..4", w.getFilter().toString() );
+			assertEquals( 2.0, Arrays.stream( w.getHistogramCounts( Axis.SIGMA ) ).sum(), 0.0 );
+			assertEquals( 1.0, Arrays.stream( w.getHistogramCounts( Axis.INTENSITY ) ).sum(), 0.0 );
+			assertEquals( 3.0, Arrays.stream( w.getHistogramCounts( Axis.RESPONSE ) ).sum(), 0.0 );
+			assertTrue( w.getSummaryText().startsWith( "2 of 5 points pass" ), w.getSummaryText() );
+
+			// unlinked: the full histograms again, the counts stay
+			SwingUtilities.invokeAndWait( () -> w.setLinked( false ) );
+			assertFalse( w.isLinked() );
+			assertFalse( InteractiveInterestPointFilter.defaultLinked );
+			for ( final Axis axis : Axis.values() )
+				assertArrayEquals( full[ axis.ordinal() ], w.getHistogramCounts( axis ), 0.0, axis.key );
+			assertEquals( "2 of 4 in range (1 without value)", w.getCountText( Axis.RESPONSE ) );
+			assertTrue( w.getSummaryText().startsWith( "2 of 5 points pass" ), w.getSummaryText() );
+
+			// linked again
+			SwingUtilities.invokeAndWait( () -> w.setLinked( true ) );
+			assertEquals( 2.0, Arrays.stream( w.getHistogramCounts( Axis.SIGMA ) ).sum(), 0.0 );
+
+			SwingUtilities.invokeAndWait( () -> w.dispose() );
+		}
+		finally
+		{
+			InteractiveInterestPointFilter.defaultLinked = oldLinked;
+			Filter_Detections.defaultBaseLabel = oldBase;
+			Filter_Detections.defaultResponse = oldR;
+			Filter_Detections.defaultIntensity = oldI;
+			Filter_Detections.defaultSigma = oldS;
+		}
 	}
 
 	@Test
