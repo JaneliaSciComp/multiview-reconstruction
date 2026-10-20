@@ -65,9 +65,7 @@ public class Interest_Point_Detection implements PlugIn
 {
 	public static ArrayList< InterestPointDetectionGUI > staticAlgorithms = new ArrayList< InterestPointDetectionGUI >();
 	public static int defaultAlgorithm = 0;
-	public static boolean defaultDefineAnisotropy = false;
 	public static boolean defaultSetMinMax = false;
-	public static boolean defaultLimitDetections = false;
 	public static String defaultLabel = "beads";
 
 	public static boolean defaultGroupTiles = true;
@@ -138,9 +136,12 @@ public class Interest_Point_Detection implements PlugIn
 		gd.addChoice( "Type_of_interest_point_detection", descriptions, descriptions[ defaultAlgorithm ] );
 		gd.addStringField( "Label_interest_points", defaultLabel );
 
-		gd.addCheckbox( "Define_anisotropy for segmentation", defaultDefineAnisotropy );
 		gd.addCheckbox( "Set_minimal_and_maximal_intensity", defaultSetMinMax );
-		gd.addCheckbox( "Limit_amount_of_detections" , defaultLimitDetections );
+
+		gd.addMessage( "Limiting the number of detections moved to the filtered labels: the next dialog can create labels that keep the\n" +
+				"n highest points by |response| per view next to the ones by ranges of |response|, intensity or sigma, and the interest\n" +
+				"point explorer offers 'Keep n points per view ...' (highest / around median / lowest by intensity, |response| or sigma),\n" +
+				"'New filtered interest points ...' and 'Filter interactively ...' for any label, no re-detection needed.", GUIHelper.smallStatusFont );
 
 		gd.addMessage( "" );
 
@@ -178,9 +179,7 @@ public class Interest_Point_Detection implements PlugIn
 
 		// how are the detections called (e.g. beads, nuclei, ...)
 		final String label = defaultLabel = gd.getNextString();
-		final boolean defineAnisotropy = defaultDefineAnisotropy = gd.getNextBoolean();
 		final boolean setMinMax = defaultSetMinMax = gd.getNextBoolean();
-		final boolean limitDetections = defaultLimitDetections = gd.getNextBoolean();
 
 		boolean groupTiles = false;
 		if ( tiles.size() > 1 )
@@ -195,7 +194,7 @@ public class Interest_Point_Detection implements PlugIn
 				viewIds );
 
 		// the interest point detection should query its parameters
-		if ( !ipd.queryParameters( defineAnisotropy, setMinMax, limitDetections, groupTiles, groupIllums ) )
+		if ( !ipd.queryParameters( setMinMax, groupTiles, groupIllums ) )
 			return false;
 
 		// if grouped, we need to get the min/max intensity for all groups

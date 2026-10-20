@@ -119,23 +119,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		// z voxel / xy voxel at full resolution, the Gaussians are isotropic in physical units; BigStitcher-Spark has no such
 		// option yet (its DoG is isotropic in pixels), ActionToSparkCli warns and renders the command without it
 		p.put( "anisotropy", Double.toString( anisotropyZ ) );
-		// mvrecon's "Limit amount of detections" offers three modes (brightest / around median /
-		// weakest); Spark's --maxSpots only supports "brightest N per view", so only that mode
-		// translates to a flag. Record the mode + count regardless, so a non-brightest limit that
-		// silently can't be translated is still visible in the params dump / XML rather than
-		// vanishing without a trace (see ActionToSparkCli's warning comment for the CLI-side half
-		// of this).
-		if ( limitDetections )
-		{
-			final String mode;
-			if ( maxDetectionsTypeIndex == 0 ) mode = "BRIGHTEST";
-			else if ( maxDetectionsTypeIndex == 1 ) mode = "AROUND_MEDIAN";
-			else mode = "WEAKEST";
-			p.put( "limitDetectionsMode", mode );
-			p.put( "maxDetections", Integer.toString( maxDetections ) );
-			if ( maxDetectionsTypeIndex == 0 )
-				p.put( "maxSpots", Integer.toString( maxDetections ) );
-		}
+		// no "Limit amount of detections" any more (2026-10-20): a count limit is a filtered label (filter-interestpoints record, InterestPointFilter.Limit)
 		return p;
 	}
 
@@ -159,9 +143,6 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		dog.downsampleXY = (int)downsampling[ 0 ];
 		dog.downsampleZ = (int)downsampling[ 2 ];
 		dog.anisotropyZ = this.anisotropyZ;
-		dog.imageSigmaX = this.imageSigmaX;
-		dog.imageSigmaY = this.imageSigmaY;
-		dog.imageSigmaZ = this.imageSigmaZ;
 
 		dog.minIntensity = this.minIntensity;
 		dog.maxIntensity = this.maxIntensity;
@@ -175,10 +156,6 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		dog.deviceCUDA = this.deviceCUDA;
 		dog.accurateCUDA = this.accurateCUDA;
 		dog.percentGPUMem = this.percentGPUMem;
-
-		dog.limitDetections = this.limitDetections;
-		dog.maxDetections = this.maxDetections;
-		dog.maxDetectionsTypeIndex = this.maxDetectionsTypeIndex;
 
 		return dog;
 	}
@@ -318,7 +295,6 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	public String getParameters()
 	{
 		return "DOG s=" + sigma + " t=" + threshold + " min=" + findMin + " max=" + findMax +
-				" imageSigmaX=" + imageSigmaX + " imageSigmaY=" + imageSigmaY + " imageSigmaZ=" + imageSigmaZ +
 				" downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] + " anisotropy=" + anisotropyZ +
 				" minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 	}

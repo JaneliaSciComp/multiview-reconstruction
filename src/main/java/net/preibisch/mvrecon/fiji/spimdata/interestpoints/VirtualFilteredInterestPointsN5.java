@@ -194,9 +194,9 @@ public class VirtualFilteredInterestPointsN5 extends InterestPointsN5
 
 		final HashMap< Integer, InterestPoint > filtered = new HashMap<>();
 
-		for ( final InterestPoint ip : points.values() )
-			if ( filter.accept( ip ) )
-				filtered.put( ip.getId(), ip );
+		// the ranges per point and the count limit per view (this is one view)
+		for ( final InterestPoint ip : filter.filter( points.values() ) )
+			filtered.put( ip.getId(), ip );
 
 		return filtered;
 	}

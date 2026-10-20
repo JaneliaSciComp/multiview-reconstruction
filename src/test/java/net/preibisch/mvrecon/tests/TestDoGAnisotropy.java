@@ -301,14 +301,13 @@ public class TestDoGAnisotropy
 			anisotropyZ = 1.5;
 			minIntensity = 0.0;
 			maxIntensity = 1137.0;
-			imageSigmaX = imageSigmaY = imageSigmaZ = 0.5;
 			sigma = 1.8;
 			threshold = 0.008;
 			findMin = false;
 			findMax = true;
 		}};
 
-		assertEquals( "DOG s=1.8 t=0.008 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=1.5 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
+		assertEquals( "DOG s=1.8 t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=1.5 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
 
 		final Map< String, String > d = gui.describeParameters();
 		assertEquals( "2", d.get( "downsampleXY" ) );

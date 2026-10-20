@@ -554,12 +554,17 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 			for ( final Map.Entry< ViewId, Collection< ? extends RealLocalizable > > e : source.entrySet() )
 			{
+				// the interest points of the view through the filter (ranges per point, a count limit per view), anything else passes
+				final ArrayList< InterestPoint > ips = new ArrayList<>();
 				final ArrayList< RealLocalizable > pass = new ArrayList<>();
 
 				for ( final RealLocalizable p : e.getValue() )
-					if ( !( p instanceof InterestPoint ) || filter.acceptKnown( (InterestPoint)p ) )
+					if ( p instanceof InterestPoint )
+						ips.add( (InterestPoint)p );
+					else
 						pass.add( p );
 
+				pass.addAll( filter.filterKnown( ips ) );
 				filtered.put( e.getKey(), pass );
 			}
 

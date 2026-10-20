@@ -610,6 +610,61 @@ public class TestInterestPointStorage
 	 * The Spark save path (collectInterestPointData, saveInterestPointDataStatic) treats plain and filtered labels alike:
 	 * the datasets for one, the marker for the other, the correspondences for both
 	 */
+	/**
+	 * A filtered label with a count limit keeps the n brightest per view (the ids of the base), through the XML round trip, too
+	 */
+	@Test
+	public void testFilteredLabelLimit() throws Exception
+	{
+		final SpimData2 spimData = SimulateUtil.setUp();
+		spimData.setBasePathURI( tempDir.toUri() );
+
+		final List< ViewId > views = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		final HashMap< ViewId, List< InterestPoint > > map = new HashMap<>();
+		int seed = 0;
+
+		for ( final ViewId viewId : views )
+			map.put( viewId, points( 200 + 10 * seed, 300 + seed++ ) );
+
+		InterestPointTools.addInterestPoints( spimData, "beads", map, "DOG s=1.8 t=0.001" );
+
+		final InterestPointFilter brightest = InterestPointFilter.of( Axis.RESPONSE, InterestPointFilter.Limit.HIGHEST, 50 );
+		assertTrue( InterestPointTools.addFilteredInterestPoints( spimData, "beads_rh50", "beads", brightest, views ) );
+
+		final HashMap< ViewId, TreeSet< Integer > > expected = new HashMap<>();
+
+		for ( final ViewId viewId : views )
+		{
+			// the 50 largest |response| of the base
+			final ArrayList< InterestPoint > base = new ArrayList<>( map.get( viewId ) );
+			base.sort( ( a, b ) -> Double.compare( Math.abs( b.getResponse() ), Math.abs( a.getResponse() ) ) );
+			final TreeSet< Integer > ids = new TreeSet<>();
+
+			for ( int i = 0; i < 50; ++i )
+				ids.add( base.get( i ).getId() );
+
+			expected.put( viewId, ids );
+
+			final Map< Integer, InterestPoint > filtered = spimData.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_rh50" ).getInterestPointsCopy();
+			assertEquals( 50, filtered.size() );
+			assertEquals( ids, new TreeSet<>( filtered.keySet() ) );
+		}
+
+		final URI xmlURI = tempDir.resolve( "dataset.xml" ).toUri();
+		assertTrue( new XmlIoSpimData2().save( spimData, xmlURI ) );
+		assertTrue( new String( Files.readAllBytes( tempDir.resolve( "dataset.xml" ) ) ).contains( "filter=\"limit=response:highest:50\"" ) );
+
+		final SpimData2 loaded = new XmlIoSpimData2().load( xmlURI );
+
+		for ( final ViewId viewId : views )
+		{
+			final InterestPoints ips = loaded.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_rh50" );
+			assertTrue( ips instanceof VirtualFilteredInterestPointsN5 );
+			assertEquals( brightest, ( (VirtualFilteredInterestPointsN5)ips ).getFilter() );
+			assertEquals( expected.get( viewId ), new TreeSet<>( ips.getInterestPointsCopy().keySet() ) );
+		}
+	}
+
 	@Test
 	public void testVirtualDTO()
 	{

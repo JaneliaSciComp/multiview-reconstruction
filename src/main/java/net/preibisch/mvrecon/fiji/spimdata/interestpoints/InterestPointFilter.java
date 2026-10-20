@@ -25,6 +25,7 @@ package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,6 +46,12 @@ import net.preibisch.legacy.io.IOFunctions;
  *
  * Units: the response in the units of the DoG (the image normalized to [0,1]), the intensity in the units of the image,
  * the sigma in full-resolution pixels (x).
+ *
+ * A count limit ({@link Limit}, the former "Limit amount of detections" of the detection dialog) keeps only n points per
+ * view: the n highest, the n around the median or the n lowest by one attribute (intensity, |response| or sigma), applied
+ * after the ranges; it needs the points of the whole view, so it is applied by {@link #filter(Collection)} (called per view
+ * by every data path) and not by {@link #accept(InterestPoint)}. Canonical "limit=response:highest:3000", suffix "_rh3000"
+ * (the letters of the axis and of the mode), set in the dialog "Keep n points per view" (Limit_Detections).
  *
  * @author Stephan Preibisch
  */
@@ -78,13 +85,65 @@ public class InterestPointFilter implements Serializable
 		}
 	}
 
+	/**
+	 * Which points a count limit keeps, by the value of one attribute within one view and after the ranges: the highest n,
+	 * the n around the median or the lowest n (the modes of the former "Limit amount of detections" of the detection dialog)
+	 */
+	public enum Limit
+	{
+		HIGHEST( "highest", "h", "highest" ),
+		AROUND_MEDIAN( "median", "m", "around the median" ),
+		LOWEST( "lowest", "l", "lowest" );
+
+		/** the key in the canonical string and the dialog entries, the letter of the label suffix, the words of a description */
+		public final String key, letter, description;
+
+		private Limit( final String key, final String letter, final String description )
+		{
+			this.key = key;
+			this.letter = letter;
+			this.description = description;
+		}
+
+		public static Limit forKey( final String key )
+		{
+			for ( final Limit limit : values() )
+				if ( limit.key.equals( key ) )
+					return limit;
+
+			throw new IllegalArgumentException( "Unknown limit '" + key + "', expected highest, median or lowest." );
+		}
+	}
+
+	/** the key of the count limit in the canonical string and the action history */
+	public static final String limitKey = "limit";
+
 	/** the bounds per axis (inclusive), NaN = unbounded */
 	public final double responseMin, responseMax, intensityMin, intensityMax, sigmaMin, sigmaMax;
+
+	/** the count limit per view (applied after the ranges): keep limitCount points by the value of limitAxis (|response| for the response), null = none (then limitCount is 0) */
+	public final Axis limitAxis;
+	public final Limit limit;
+	public final int limitCount;
 
 	public InterestPointFilter(
 			final double responseMin, final double responseMax,
 			final double intensityMin, final double intensityMax,
 			final double sigmaMin, final double sigmaMax )
+	{
+		this( responseMin, responseMax, intensityMin, intensityMax, sigmaMin, sigmaMax, null, null, 0 );
+	}
+
+	/**
+	 * @param limitAxis - the attribute a count limit ranks by (|response| for the response), null = no limit
+	 * @param limit - keep only the limitCount highest / around the median / lowest points of a view that pass the ranges, null = no limit
+	 * @param limitCount - the number of points to keep, &gt;= 1 if a limit is set (0 otherwise)
+	 */
+	public InterestPointFilter(
+			final double responseMin, final double responseMax,
+			final double intensityMin, final double intensityMax,
+			final double sigmaMin, final double sigmaMax,
+			final Axis limitAxis, final Limit limit, final int limitCount )
 	{
 		this.responseMin = responseMin;
 		this.responseMax = responseMax;
@@ -92,6 +151,9 @@ public class InterestPointFilter implements Serializable
 		this.intensityMax = intensityMax;
 		this.sigmaMin = sigmaMin;
 		this.sigmaMax = sigmaMax;
+		this.limitAxis = limit == null ? null : limitAxis;
+		this.limit = limit;
+		this.limitCount = limit == null ? 0 : limitCount;
 
 		for ( final Axis axis : Axis.values() )
 		{
@@ -103,6 +165,12 @@ public class InterestPointFilter implements Serializable
 			if ( !Double.isNaN( min ) && !Double.isNaN( max ) && min > max )
 				throw new IllegalArgumentException( "The lower bound of " + axis.description + " is above the upper one: [" + min + ", " + max + "]." );
 		}
+
+		if ( limit != null && limitAxis == null )
+			throw new IllegalArgumentException( "The limit needs the attribute to rank by." );
+
+		if ( limit != null && limitCount < 1 )
+			throw new IllegalArgumentException( "The count of the limit must be >= 1, but is " + limitCount + "." );
 	}
 
 	/**
@@ -119,6 +187,22 @@ public class InterestPointFilter implements Serializable
 		default:
 			return new InterestPointFilter( Double.NaN, Double.NaN, Double.NaN, Double.NaN, min, max );
 		}
+	}
+
+	/**
+	 * @return a filter with only a count limit: the count highest / around the median / lowest points of a view by the attribute
+	 */
+	public static InterestPointFilter of( final Axis axis, final Limit limit, final int count )
+	{
+		return new InterestPointFilter( Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, axis, limit, count );
+	}
+
+	/**
+	 * @return this filter with the count limit (replacing any), a null limit = none
+	 */
+	public InterestPointFilter withLimit( final Axis axis, final Limit limit, final int count )
+	{
+		return new InterestPointFilter( responseMin, responseMax, intensityMin, intensityMax, sigmaMin, sigmaMax, axis, limit, count );
 	}
 
 	public double min( final Axis axis )
@@ -150,7 +234,15 @@ public class InterestPointFilter implements Serializable
 	}
 
 	/**
-	 * @return whether the filter restricts nothing
+	 * @return whether the filter has a count limit
+	 */
+	public boolean hasLimit()
+	{
+		return limit != null;
+	}
+
+	/**
+	 * @return whether the filter restricts nothing (no range, no count limit)
 	 */
 	public boolean isEmpty()
 	{
@@ -158,7 +250,7 @@ public class InterestPointFilter implements Serializable
 			if ( filters( axis ) )
 				return false;
 
-		return true;
+		return limit == null;
 	}
 
 	/**
@@ -175,23 +267,35 @@ public class InterestPointFilter implements Serializable
 	}
 
 	/**
-	 * @return whether the point passes the filter
+	 * @return whether the point passes the ranges of the filter
 	 * @throws IllegalArgumentException if the point lacks an attribute the filter needs (NaN, e.g. a label stored before the attributes existed)
+	 * @throws IllegalStateException if the filter has a count limit, which needs the points of the whole view (filter( Collection ))
 	 */
 	public boolean accept( final InterestPoint ip )
 	{
-		return accept( ip, true );
+		requireNoLimit();
+
+		return acceptRanges( ip, true );
 	}
 
 	/**
-	 * @return whether the point passes the filter; a point lacking an attribute the filter needs does not pass (no exception, for previews)
+	 * @return whether the point passes the ranges of the filter; a point lacking an attribute the filter needs does not pass (no exception, for previews)
+	 * @throws IllegalStateException if the filter has a count limit, which needs the points of the whole view (filterKnown( Collection ))
 	 */
 	public boolean acceptKnown( final InterestPoint ip )
 	{
-		return accept( ip, false );
+		requireNoLimit();
+
+		return acceptRanges( ip, false );
 	}
 
-	protected boolean accept( final InterestPoint ip, final boolean throwOnUnknown )
+	protected void requireNoLimit()
+	{
+		if ( limit != null )
+			throw new IllegalStateException( "The filter '" + this + "' has a count limit, which needs the points of the whole view: use filter( Collection ) or filterKnown( Collection )." );
+	}
+
+	protected boolean acceptRanges( final InterestPoint ip, final boolean throwOnUnknown )
 	{
 		for ( final Axis axis : Axis.values() )
 		{
@@ -220,21 +324,159 @@ public class InterestPointFilter implements Serializable
 	}
 
 	/**
+	 * @param points - the points of ONE view (a count limit keeps the limitCount highest / around the median / lowest by its attribute of the points that pass the ranges)
 	 * @return the points that pass the filter (the same objects), in the order of the collection
+	 * @throws IllegalArgumentException if a point lacks an attribute the filter needs (the one a count limit ranks by, too)
 	 */
 	public < P extends InterestPoint > ArrayList< P > filter( final Collection< P > points )
+	{
+		return filter( points, true );
+	}
+
+	/**
+	 * As filter( Collection ), but a point lacking an attribute the filter needs does not pass (no exception, for previews)
+	 */
+	public < P extends InterestPoint > ArrayList< P > filterKnown( final Collection< P > points )
+	{
+		return filter( points, false );
+	}
+
+	protected < P extends InterestPoint > ArrayList< P > filter( final Collection< P > points, final boolean throwOnUnknown )
 	{
 		final ArrayList< P > filtered = new ArrayList<>();
 
 		for ( final P ip : points )
-			if ( accept( ip ) )
+			if ( acceptRanges( ip, throwOnUnknown ) )
 				filtered.add( ip );
 
-		return filtered;
+		return limit == null ? filtered : limit( filtered, limitAxis, limit, limitCount, throwOnUnknown );
 	}
 
 	/**
-	 * @return the canonical string, e.g. "response=0.004..;sigma=1.5..3" (the filtered axes in order, an unbounded side is empty), parsed by fromString
+	 * Keeps the count highest / around the median / lowest points by the value of the axis (|response| for the response),
+	 * the result in the order of the input; at most count points are returned as they are. The kept points are the block
+	 * [from, to) (keepRange) of the points ordered by descending value with ties in the order of the list (a stable sort);
+	 * computed without sorting the objects: the values are sorted as a float[], which gives the values at both ends of the
+	 * block and how many values lie above each, then one pass over the points keeps everything strictly between the two
+	 * and, of the ties at either end, the occurrences whose position in that order falls into the block (a million points
+	 * cost about as much as copying them, a comparator sort of the objects five times more)
+	 *
+	 * @param throwOnUnknown - a point without the attribute (NaN) throws if true, otherwise it does not pass
+	 */
+	public static < P extends InterestPoint > ArrayList< P > limit( final List< P > points, final Axis axis, final Limit limit, final int count, final boolean throwOnUnknown )
+	{
+		final ArrayList< P > ranked = new ArrayList<>();
+
+		for ( final P ip : points )
+		{
+			if ( Float.isNaN( value( ip, axis ) ) )
+			{
+				if ( throwOnUnknown )
+					throw new IllegalArgumentException( "Interest point " + ip.getId() + " has no " + axis.key + " stored, cannot limit by it (detect the base label again to store it)." );
+				else
+					continue;
+			}
+
+			ranked.add( ip );
+		}
+
+		final int m = ranked.size();
+
+		if ( m <= count )
+			return ranked;
+
+		final float[] values = new float[ m ];
+
+		for ( int i = 0; i < m; ++i )
+			values[ i ] = value( ranked.get( i ), axis );
+
+		final float[] sorted = values.clone();
+		Arrays.sort( sorted );
+
+		final int[] range = keepRange( m, limit, count );
+		final int from = range[ 0 ], to = range[ 1 ];
+
+		// the values at the first and the last kept position of the descending order, and how many values lie above each
+		final float hiCut = sorted[ m - 1 - from ], loCut = sorted[ m - to ];
+		final int aboveHi = m - upperIndex( sorted, hiCut ), aboveLo = m - upperIndex( sorted, loCut );
+		int seenHi = 0, seenLo = 0;
+
+		final ArrayList< P > kept = new ArrayList<>( to - from );
+
+		for ( int i = 0; i < m; ++i )
+		{
+			final float v = values[ i ];
+			final boolean keep;
+
+			if ( v > hiCut || v < loCut )
+			{
+				keep = false;
+			}
+			else if ( v == hiCut )
+			{
+				// the position of this occurrence in the descending order (ties in the order of the list)
+				final int position = aboveHi + seenHi++;
+				keep = position >= from && position < to;
+			}
+			else if ( v == loCut )
+			{
+				final int position = aboveLo + seenLo++;
+				keep = position >= from && position < to;
+			}
+			else
+			{
+				keep = true;
+			}
+
+			if ( keep )
+				kept.add( ranked.get( i ) );
+		}
+
+		return kept;
+	}
+
+	/**
+	 * @return the index after the last value &lt;= v in an ascending array
+	 */
+	protected static int upperIndex( final float[] sorted, final float v )
+	{
+		int lo = 0, hi = sorted.length;
+
+		while ( lo < hi )
+		{
+			final int mid = ( lo + hi ) >>> 1;
+
+			if ( sorted[ mid ] <= v )
+				lo = mid + 1;
+			else
+				hi = mid;
+		}
+
+		return lo;
+	}
+
+	/**
+	 * @return { from, to } (to exclusive) of the points to keep in a list of size points sorted by descending value:
+	 * the first count (highest), the last count (lowest) or the count in the middle (around the median); at most size
+	 */
+	public static int[] keepRange( final int size, final Limit limit, final int count )
+	{
+		final int n = Math.min( count, size );
+
+		switch ( limit )
+		{
+		case HIGHEST:
+			return new int[] { 0, n };
+		case LOWEST:
+			return new int[] { size - n, size };
+		default:
+			final int from = ( size - n ) / 2;
+			return new int[] { from, from + n };
+		}
+	}
+
+	/**
+	 * @return the canonical string, e.g. "response=0.004..;sigma=1.5..3;limit=response:highest:3000" (the filtered axes in order, an unbounded side is empty, the count limit last as axis:mode:count), parsed by fromString
 	 */
 	@Override
 	public String toString()
@@ -252,6 +494,14 @@ public class InterestPointFilter implements Serializable
 			sb.append( axis.key ).append( "=" ).append( plainOrEmpty( min( axis ) ) ).append( ".." ).append( plainOrEmpty( max( axis ) ) );
 		}
 
+		if ( limit != null )
+		{
+			if ( sb.length() > 0 )
+				sb.append( ";" );
+
+			sb.append( limitKey ).append( "=" ).append( limitAxis.key ).append( ":" ).append( limit.key ).append( ":" ).append( limitCount );
+		}
+
 		return sb.toString();
 	}
 
@@ -263,21 +513,53 @@ public class InterestPointFilter implements Serializable
 	public static InterestPointFilter fromString( final String s )
 	{
 		final double[] min = new double[ Axis.values().length ], max = new double[ Axis.values().length ];
-		java.util.Arrays.fill( min, Double.NaN );
-		java.util.Arrays.fill( max, Double.NaN );
+		Arrays.fill( min, Double.NaN );
+		Arrays.fill( max, Double.NaN );
+
+		Axis limitAxis = null;
+		Limit limit = null;
+		int limitCount = 0;
 
 		if ( s != null && s.trim().length() > 0 )
 		{
 			for ( final String entry : s.trim().split( ";" ) )
 			{
 				final int eq = entry.indexOf( '=' );
-				final int dots = entry.indexOf( ".." );
 
-				if ( eq < 0 || dots < eq )
+				if ( eq < 0 )
+					throw new IllegalArgumentException( "Malformed interest point filter '" + s + "', expected key=min..max (or limit=mode:count) entries separated by ';'." );
+
+				final String key = entry.substring( 0, eq ).trim(), value = entry.substring( eq + 1 ).trim();
+
+				if ( key.equals( limitKey ) )
+				{
+					// axis:mode:count
+					final String[] parts = value.split( ":" );
+
+					if ( parts.length != 3 )
+						throw new IllegalArgumentException( "Malformed count limit '" + value + "' in interest point filter '" + s + "', expected axis:mode:count." );
+
+					try
+					{
+						limitAxis = Axis.forKey( parts[ 0 ].trim() );
+						limit = Limit.forKey( parts[ 1 ].trim() );
+						limitCount = Integer.parseInt( parts[ 2 ].trim() );
+					}
+					catch ( final IllegalArgumentException e )
+					{
+						throw new IllegalArgumentException( "Malformed count limit '" + value + "' in interest point filter '" + s + "': " + e.getMessage() );
+					}
+
+					continue;
+				}
+
+				final int dots = value.indexOf( ".." );
+
+				if ( dots < 0 )
 					throw new IllegalArgumentException( "Malformed interest point filter '" + s + "', expected key=min..max entries separated by ';'." );
 
-				final Axis axis = Axis.forKey( entry.substring( 0, eq ).trim() );
-				final String lo = entry.substring( eq + 1, dots ).trim(), hi = entry.substring( dots + 2 ).trim();
+				final Axis axis = Axis.forKey( key );
+				final String lo = value.substring( 0, dots ).trim(), hi = value.substring( dots + 2 ).trim();
 
 				min[ axis.ordinal() ] = lo.isEmpty() ? Double.NaN : parseBound( lo, s );
 				max[ axis.ordinal() ] = hi.isEmpty() ? Double.NaN : parseBound( hi, s );
@@ -287,7 +569,54 @@ public class InterestPointFilter implements Serializable
 		return new InterestPointFilter(
 				min[ Axis.RESPONSE.ordinal() ], max[ Axis.RESPONSE.ordinal() ],
 				min[ Axis.INTENSITY.ordinal() ], max[ Axis.INTENSITY.ordinal() ],
-				min[ Axis.SIGMA.ordinal() ], max[ Axis.SIGMA.ordinal() ] );
+				min[ Axis.SIGMA.ordinal() ], max[ Axis.SIGMA.ordinal() ],
+				limitAxis, limit, limitCount );
+	}
+
+	/**
+	 * Parses the entries of the "Filtered_labels_by_count" field of the detection dialogs (counts separated by ',' or ';')
+	 * into one filter per entry that keeps the n highest by |response| per view (other attributes and modes: the dialog
+	 * "Keep n points per view" of the explorer), duplicates dropped
+	 *
+	 * @return the filters (empty for an empty field), null with a log line if an entry is malformed
+	 */
+	public static List< InterestPointFilter > parseLimitEntries( final String field )
+	{
+		final ArrayList< InterestPointFilter > filters = new ArrayList<>();
+
+		if ( field == null || field.trim().isEmpty() )
+			return filters;
+
+		for ( final String entry : field.split( "[,;]" ) )
+		{
+			if ( entry.trim().isEmpty() )
+				continue;
+
+			final int count;
+
+			try
+			{
+				count = Integer.parseInt( entry.trim() );
+			}
+			catch ( final NumberFormatException e )
+			{
+				IOFunctions.println( "Cannot parse the count entry '" + entry.trim() + "' of '" + field + "': expected a number of points." );
+				return null;
+			}
+
+			if ( count < 1 )
+			{
+				IOFunctions.println( "Cannot use the count entry '" + entry.trim() + "' of '" + field + "': the number of points must be >= 1." );
+				return null;
+			}
+
+			final InterestPointFilter f = of( Axis.RESPONSE, Limit.HIGHEST, count );
+
+			if ( !filters.contains( f ) )
+				filters.add( f );
+		}
+
+		return filters;
 	}
 
 	protected static double parseBound( final String value, final String whole )
@@ -303,7 +632,7 @@ public class InterestPointFilter implements Serializable
 	}
 
 	/**
-	 * @return the label suffix, "_" + letter + entry per filtered axis, e.g. "_r0.004", "_r0.004-0.01", "_s1.5-3", "_r0.004_s1.5-3" (a missing lower bound is written as 0)
+	 * @return the label suffix, "_" + letter + entry per filtered axis, e.g. "_r0.004", "_r0.004-0.01", "_s1.5-3", "_r0.004_s1.5-3" (a missing lower bound is written as 0), a count limit last as "_" + the letters of its axis and mode + the count ("_rh3000" = the 3000 highest by |response|, "_im", "_sl", ...)
 	 */
 	public String suffix()
 	{
@@ -320,11 +649,14 @@ public class InterestPointFilter implements Serializable
 				sb.append( "-" ).append( plain( max( axis ) ) );
 		}
 
+		if ( limit != null )
+			sb.append( "_" ).append( limitAxis.letter ).append( limit.letter ).append( limitCount );
+
 		return sb.toString();
 	}
 
 	/**
-	 * @return the parameter string of a filtered label, e.g. "filtered from 'beads': |response| >= 0.004, sigma in [1.5, 3]"
+	 * @return the parameter string of a filtered label, e.g. "filtered from 'beads': |response| >= 0.004, sigma in [1.5, 3]" or "filtered from 'beads': the 3000 highest by |response| per view"
 	 */
 	public String describe( final String baseLabel )
 	{
@@ -351,6 +683,15 @@ public class InterestPointFilter implements Serializable
 				sb.append( axis.description ).append( " in [" ).append( plain( min ) ).append( ", " ).append( plain( max ) ).append( "]" );
 		}
 
+		if ( limit != null )
+		{
+			if ( !first )
+				sb.append( ", " );
+
+			first = false;
+			sb.append( "the " ).append( limitCount ).append( " " ).append( limit.description ).append( " by " ).append( limitAxis.description ).append( " per view" );
+		}
+
 		if ( first )
 			sb.append( "everything" );
 
@@ -358,7 +699,7 @@ public class InterestPointFilter implements Serializable
 	}
 
 	/**
-	 * @return the filter per axis for the action history, e.g. { response: "0.004..", sigma: "1.5..3" } (the filtered axes only)
+	 * @return the filter per axis for the action history, e.g. { response: "0.004..", sigma: "1.5..3" } (the filtered axes only), plus { limit: "response:highest:3000" } for a count limit
 	 */
 	public Map< String, String > describeParameters()
 	{
@@ -367,6 +708,9 @@ public class InterestPointFilter implements Serializable
 		for ( final Axis axis : Axis.values() )
 			if ( filters( axis ) )
 				p.put( axis.key, plainOrEmpty( min( axis ) ) + ".." + plainOrEmpty( max( axis ) ) );
+
+		if ( limit != null )
+			p.put( limitKey, limitAxis.key + ":" + limit.key + ":" + limitCount );
 
 		return p;
 	}
@@ -482,6 +826,6 @@ public class InterestPointFilter implements Serializable
 			if ( Double.compare( min( axis ), other.min( axis ) ) != 0 || Double.compare( max( axis ), other.max( axis ) ) != 0 )
 				return false;
 
-		return true;
+		return limitAxis == other.limitAxis && limit == other.limit && limitCount == other.limitCount;
 	}
 }

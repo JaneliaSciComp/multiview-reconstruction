@@ -70,7 +70,6 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.export.DisplayImage;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
-import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -94,28 +93,24 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	public static int defaultLocalization = 1;
 	public static int defaultBrightness = 5;
 
+	/** @deprecated the image sigmas were never used by the detectors and left the dialogs on 2026-10-20 (the anisotropy replaces them); kept until BigStitcher-Spark drops its assignment */
+	@Deprecated
 	public static double defaultImageSigmaX = 0.5;
+	/** @deprecated see defaultImageSigmaX */
+	@Deprecated
 	public static double defaultImageSigmaY = 0.5;
+	/** @deprecated see defaultImageSigmaX */
+	@Deprecated
 	public static double defaultImageSigmaZ = 0.5;
 
 	public static int defaultViewChoice = 0;
 	public static int defaultGroupChoice = 0;
 
-	public static double defaultAdditionalSigmaX = 0.0;
-	public static double defaultAdditionalSigmaY = 0.0;
-	public static double defaultAdditionalSigmaZ = 0.0;
-
 	public static double defaultMinIntensity = 0.0;
 	public static double defaultMaxIntensity = 65535.0;
 	public static boolean defaultSameMinMax = false;
 
-	public static int defaultMaxDetections = 3000;
-	public static int defaultMaxDetectionsTypeIndex = 0;
-
-	protected boolean limitDetections = false;
-	protected double imageSigmaX, imageSigmaY, imageSigmaZ;
 	protected double minIntensity, maxIntensity;
-	protected int maxDetections, maxDetectionsTypeIndex;
 
 	protected int localization;
 
@@ -197,9 +192,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 	@Override
 	public boolean queryParameters(
-			final boolean defineAnisotropy,
 			final boolean setMinMax,
-			final boolean limitDetections,
 			final boolean groupTiles,
 			final boolean groupIllums )
 	{
@@ -227,30 +220,16 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			gd.addCheckbox( "Use_same_min & max intensity for all views", defaultSameMinMax );
 		}
 
-		if ( defineAnisotropy )
-		{
-			gd.addNumericField( "Image_Sigma_X", defaultImageSigmaX, 5 );
-			gd.addNumericField( "Image_Sigma_Y", defaultImageSigmaY, 5 );
-			gd.addNumericField( "Image_Sigma_Z", defaultImageSigmaZ, 5 );
-			
-			gd.addMessage( "Please consider that usually the lower resolution in z is compensated by a lower sampling rate in z.\n" +
-					"Only adjust the initial sigma's if this is not the case.", GUIHelper.mediumstatusfont );
-		}
-
-		this.limitDetections = limitDetections;
-		if ( limitDetections )
-		{
-			gd.addNumericField( "Maximum_number of detections (highest n)", defaultMaxDetections, 0 );
-			gd.addChoice( "Type_of_detections_to_use", InterestPointTools.limitDetectionChoice, InterestPointTools.limitDetectionChoice[ defaultMaxDetectionsTypeIndex ] );
-		}
-
 		// filtered labels of the detections (VirtualFilteredInterestPointsN5), one per entry; none by default and never remembered
-		gd.addMessage( "Also create filtered labels of the detections (one label per entry, empty = none; 'a' keeps values >= a, 'a-b' keeps a..b):", GUIHelper.smallStatusFont );
+		gd.addMessage( "Also create filtered labels of the detections (one label per entry, empty = none; 'a' keeps values >= a, 'a-b' keeps a..b,\n" +
+				"a count keeps the n highest by |response| per view; other attributes and modes: 'Keep n points per view ...' in the explorer):", GUIHelper.smallStatusFont );
 		gd.addStringField( "Filtered_labels_by_response (|DoG response|)", "", 20 );
 		gd.addStringField( "Filtered_labels_by_intensity (image units)", "", 20 );
 
 		if ( hasSigmaFilter() )
 			gd.addStringField( "Filtered_labels_by_sigma (px at full resolution)", "", 20 );
+
+		gd.addStringField( "Filtered_labels_by_count (the n highest by |response| per view, e.g. 3000)", "", 20 );
 
 		addAddtionalParameters( gd );
 
@@ -282,23 +261,6 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		if ( !dispatchSpecification( brightness ) )
 			return false;
 
-		if ( defineAnisotropy )
-		{
-			imageSigmaX = defaultImageSigmaX = gd.getNextNumber();
-			imageSigmaY = defaultImageSigmaY = gd.getNextNumber();
-			imageSigmaZ = defaultImageSigmaZ = gd.getNextNumber();
-		}
-		else
-		{
-			imageSigmaX = imageSigmaY = imageSigmaZ = 0.5;
-		}
-
-		if ( limitDetections )
-		{
-			maxDetections = defaultMaxDetections = (int)Math.round( gd.getNextNumber() );
-			maxDetectionsTypeIndex = defaultMaxDetectionsTypeIndex = gd.getNextChoiceIndex();
-		}
-
 		if ( !queryFilters( gd ) )
 			return false;
 
@@ -314,7 +276,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	protected boolean hasSigmaFilter() { return false; }
 
 	/**
-	 * Reads the "Filtered_labels_by_..." fields of the dialog (see InterestPointFilter.parseEntries) into filters
+	 * Reads the "Filtered_labels_by_..." fields of the dialog (see InterestPointFilter.parseEntries and parseLimitEntries) into filters
 	 *
 	 * @return false if an entry is malformed (logged)
 	 */
@@ -325,13 +287,15 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		final List< InterestPointFilter > byResponse = InterestPointFilter.parseEntries( gd.getNextString(), Axis.RESPONSE );
 		final List< InterestPointFilter > byIntensity = InterestPointFilter.parseEntries( gd.getNextString(), Axis.INTENSITY );
 		final List< InterestPointFilter > bySigma = hasSigmaFilter() ? InterestPointFilter.parseEntries( gd.getNextString(), Axis.SIGMA ) : new ArrayList<>();
+		final List< InterestPointFilter > byCount = InterestPointFilter.parseLimitEntries( gd.getNextString() );
 
-		if ( byResponse == null || byIntensity == null || bySigma == null )
+		if ( byResponse == null || byIntensity == null || bySigma == null || byCount == null )
 			return false;
 
 		filters.addAll( byResponse );
 		filters.addAll( byIntensity );
 		filters.addAll( bySigma );
+		filters.addAll( byCount );
 
 		if ( filters.size() > 0 )
 			IOFunctions.println( getDescription() + ": also creating " + filters.size() + " filtered label(s): " + filters.stream().map( InterestPointFilter::suffix ).collect( Collectors.joining( ", " ) ) );

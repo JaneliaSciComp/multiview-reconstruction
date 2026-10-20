@@ -25,19 +25,24 @@ package net.preibisch.mvrecon.tests;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 
+import net.preibisch.mvrecon.fiji.plugin.Limit_Detections;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Limit;
 
 /**
  * The filter of a filtered label (InterestPointFilter): the grammar of the dialog entries, the canonical string of the XML,
@@ -167,6 +172,117 @@ public class TestInterestPointFilter
 		final InterestPoint unknown = new InterestPoint( 3, new double[] { 1, 2, 3 } );
 		assertThrows( IllegalArgumentException.class, () -> response.accept( unknown ) );
 		assertTrue( new InterestPointFilter( Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN ).accept( unknown ) );
+	}
+
+	/**
+	 * The count limit: the canonical string, the suffix, the description, the entries of the detection dialog and the choices
+	 * of the explorer dialog, and what filter( Collection ) keeps (the n highest / around the median / lowest by one attribute
+	 * of the points that pass the ranges, per call = per view)
+	 */
+	@Test
+	public void testLimit()
+	{
+		final InterestPointFilter highest = InterestPointFilter.of( Axis.RESPONSE, Limit.HIGHEST, 3 );
+
+		assertTrue( highest.hasLimit() );
+		assertFalse( highest.isEmpty() );
+		assertEquals( 3, highest.limitCount );
+		assertEquals( Axis.RESPONSE, highest.limitAxis );
+		assertEquals( "limit=response:highest:3", highest.toString() );
+		assertEquals( highest, InterestPointFilter.fromString( "limit=response:highest:3" ) );
+		assertEquals( "_rh3", highest.suffix() );
+		assertEquals( "filtered from 'beads': the 3 highest by |response| per view", highest.describe( "beads" ) );
+		assertEquals( "response:highest:3", highest.describeParameters().get( "limit" ) );
+		assertEquals( 1, highest.describeParameters().size() );
+
+		final InterestPointFilter combined = InterestPointFilter.of( Axis.RESPONSE, 0.2, Double.NaN ).withLimit( Axis.INTENSITY, Limit.AROUND_MEDIAN, 2 );
+
+		assertEquals( "response=0.2..;limit=intensity:median:2", combined.toString() );
+		assertEquals( combined, InterestPointFilter.fromString( combined.toString() ) );
+		assertEquals( combined.hashCode(), InterestPointFilter.fromString( combined.toString() ).hashCode() );
+		assertEquals( "_r0.2_im2", combined.suffix() );
+		assertEquals( "filtered from 'beads': |response| >= 0.2, the 2 around the median by intensity per view", combined.describe( "beads" ) );
+		assertEquals( Arrays.asList( "response", "limit" ), Arrays.asList( combined.describeParameters().keySet().toArray() ) );
+		assertNotEquals( combined, InterestPointFilter.of( Axis.RESPONSE, 0.2, Double.NaN ) );
+		assertNotEquals( highest, InterestPointFilter.of( Axis.RESPONSE, Limit.LOWEST, 3 ) );
+		assertNotEquals( highest, InterestPointFilter.of( Axis.RESPONSE, Limit.HIGHEST, 4 ) );
+		assertNotEquals( highest, InterestPointFilter.of( Axis.SIGMA, Limit.HIGHEST, 3 ) );
+		assertEquals( InterestPointFilter.of( Axis.SIGMA, Limit.LOWEST, 3 ), highest.withLimit( Axis.SIGMA, Limit.LOWEST, 3 ) );
+		assertTrue( highest.withLimit( null, null, 0 ).isEmpty() );
+
+		// the detection dialog takes counts only (the n highest by |response|), the explorer dialog has the attribute and the mode
+		assertEquals( Arrays.asList( highest, InterestPointFilter.of( Axis.RESPONSE, Limit.HIGHEST, 10 ) ), InterestPointFilter.parseLimitEntries( "3, 10; 3" ) );
+		assertEquals( 0, InterestPointFilter.parseLimitEntries( " " ).size() );
+		assertNull( InterestPointFilter.parseLimitEntries( "3, median 10" ) );
+		assertNull( InterestPointFilter.parseLimitEntries( "0" ) );
+		assertEquals( InterestPointFilter.of( Axis.RESPONSE, Limit.HIGHEST, 3000 ), Limit_Detections.filterFor( 3000, 1, 0 ) );
+		assertEquals( InterestPointFilter.of( Axis.INTENSITY, Limit.LOWEST, 10 ), Limit_Detections.filterFor( 10, 0, 2 ) );
+		assertEquals( InterestPointFilter.of( Axis.SIGMA, Limit.AROUND_MEDIAN, 5 ), Limit_Detections.filterFor( 5, 2, 1 ) );
+		assertEquals( "_il10", Limit_Detections.filterFor( 10, 0, 2 ).suffix() );
+		assertThrows( IllegalArgumentException.class, () -> Limit_Detections.filterFor( 0, 1, 0 ) );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.fromString( "limit=highest:3" ) );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.fromString( "limit=response:brightest:3" ) );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.fromString( "limit=response:highest:0" ) );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.fromString( "limit=response:highest:x" ) );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.of( Axis.RESPONSE, Limit.HIGHEST, 0 ) );
+		assertThrows( IllegalArgumentException.class, () -> new InterestPointFilter( Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, null, Limit.HIGHEST, 3 ) );
+
+		// what is kept: |response| 0.9, 0.1, 0.5, 0.3, 0.7; sigma 2, 1, 4, 3, 8; intensity 10, 50, 30, 20, 40 (ids 0..4); the result in the order of the input
+		final List< InterestPoint > points = Arrays.asList( p( 0, 0.9f, 2f, 10f ), p( 1, -0.1f, 1f, 50f ), p( 2, 0.5f, 4f, 30f ), p( 3, -0.3f, 3f, 20f ), p( 4, 0.7f, 8f, 40f ) );
+
+		assertEquals( Arrays.asList( 0, 2, 4 ), ids( highest.filter( points ) ) );
+		assertEquals( Arrays.asList( 1, 2, 3 ), ids( InterestPointFilter.of( Axis.RESPONSE, Limit.LOWEST, 3 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 2 ), ids( InterestPointFilter.of( Axis.RESPONSE, Limit.AROUND_MEDIAN, 1 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 2, 4 ), ids( InterestPointFilter.of( Axis.RESPONSE, Limit.AROUND_MEDIAN, 2 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 0, 1, 2, 3, 4 ), ids( InterestPointFilter.of( Axis.RESPONSE, Limit.HIGHEST, 10 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 1, 4 ), ids( InterestPointFilter.of( Axis.INTENSITY, Limit.HIGHEST, 2 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 0, 3 ), ids( InterestPointFilter.of( Axis.INTENSITY, Limit.LOWEST, 2 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 4 ), ids( InterestPointFilter.of( Axis.SIGMA, Limit.HIGHEST, 1 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 3 ), ids( InterestPointFilter.of( Axis.SIGMA, Limit.AROUND_MEDIAN, 1 ).filter( points ) ) );
+
+		// after the ranges: |response| >= 0.2 leaves ids 0, 2, 3, 4
+		assertEquals( Arrays.asList( 0, 4 ), ids( InterestPointFilter.of( Axis.RESPONSE, 0.2, Double.NaN ).withLimit( Axis.RESPONSE, Limit.HIGHEST, 2 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 2, 3 ), ids( InterestPointFilter.of( Axis.RESPONSE, 0.2, Double.NaN ).withLimit( Axis.RESPONSE, Limit.LOWEST, 2 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 0, 3 ), ids( InterestPointFilter.of( Axis.RESPONSE, 0.2, Double.NaN ).withLimit( Axis.INTENSITY, Limit.LOWEST, 2 ).filter( points ) ) );
+		assertEquals( Arrays.asList( 0, 2, 3, 4 ), ids( InterestPointFilter.of( Axis.RESPONSE, 0.2, Double.NaN ).filter( points ) ) );
+
+		// ties keep the order of the input
+		final List< InterestPoint > ties = Arrays.asList( p( 0, 0.5f, 1f, 1f ), p( 1, 0.5f, 1f, 1f ), p( 2, 0.5f, 1f, 1f ) );
+		assertEquals( Arrays.asList( 0, 1 ), ids( InterestPointFilter.of( Axis.RESPONSE, Limit.HIGHEST, 2 ).filter( ties ) ) );
+		assertEquals( Arrays.asList( 1, 2 ), ids( InterestPointFilter.of( Axis.RESPONSE, Limit.LOWEST, 2 ).filter( ties ) ) );
+
+		assertArrayEquals( new int[] { 0, 3 }, InterestPointFilter.keepRange( 10, Limit.HIGHEST, 3 ) );
+		assertArrayEquals( new int[] { 7, 10 }, InterestPointFilter.keepRange( 10, Limit.LOWEST, 3 ) );
+		assertArrayEquals( new int[] { 3, 6 }, InterestPointFilter.keepRange( 10, Limit.AROUND_MEDIAN, 3 ) );
+		assertArrayEquals( new int[] { 0, 2 }, InterestPointFilter.keepRange( 2, Limit.HIGHEST, 5 ) );
+		assertArrayEquals( new int[] { 0, 0 }, InterestPointFilter.keepRange( 0, Limit.LOWEST, 5 ) );
+
+		// a point without the attribute: filter throws, filterKnown drops it; the per-point methods refuse a count limit
+		final List< InterestPoint > withUnknown = new ArrayList<>( points );
+		withUnknown.add( new InterestPoint( 5, new double[] { 5, 0, 0 } ) );
+
+		assertThrows( IllegalArgumentException.class, () -> highest.filter( withUnknown ) );
+		assertEquals( Arrays.asList( 0, 2, 4 ), ids( highest.filterKnown( withUnknown ) ) );
+
+		final List< InterestPoint > noIntensity = new ArrayList<>( points );
+		noIntensity.add( new InterestPoint( 6, new double[] { 6, 0, 0 }, 0.95f, 1f, Float.NaN ) );
+
+		assertEquals( Arrays.asList( 0, 4, 6 ), ids( highest.filterKnown( noIntensity ) ) );
+		assertEquals( Arrays.asList( 1, 4 ), ids( InterestPointFilter.of( Axis.INTENSITY, Limit.HIGHEST, 2 ).filterKnown( noIntensity ) ) );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.of( Axis.INTENSITY, Limit.HIGHEST, 2 ).filter( noIntensity ) );
+		assertThrows( IllegalStateException.class, () -> highest.accept( points.get( 0 ) ) );
+		assertThrows( IllegalStateException.class, () -> highest.acceptKnown( points.get( 0 ) ) );
+		assertTrue( InterestPointFilter.of( Axis.RESPONSE, 0.2, Double.NaN ).accept( points.get( 0 ) ) );
+	}
+
+	protected static InterestPoint p( final int id, final float response, final float sigma, final float intensity )
+	{
+		return new InterestPoint( id, new double[] { id, 0, 0 }, response, sigma, intensity );
+	}
+
+	protected static List< Integer > ids( final List< ? extends InterestPoint > points )
+	{
+		return points.stream().map( InterestPoint::getId ).collect( Collectors.toList() );
 	}
 
 	@Test

@@ -123,17 +123,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		}
 		p.put( "downsampleZ", Long.toString( downsampling[ 2 ] ) );
 		p.put( "anisotropy", Double.toString( anisotropyZ ) );
-		if ( limitDetections )
-		{
-			final String mode;
-			if ( maxDetectionsTypeIndex == 0 ) mode = "BRIGHTEST";
-			else if ( maxDetectionsTypeIndex == 1 ) mode = "AROUND_MEDIAN";
-			else mode = "WEAKEST";
-			p.put( "limitDetectionsMode", mode );
-			p.put( "maxDetections", Integer.toString( maxDetections ) );
-			if ( maxDetectionsTypeIndex == 0 )
-				p.put( "maxSpots", Integer.toString( maxDetections ) );
-		}
 		return p;
 	}
 
@@ -191,10 +180,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 
 		p.minIntensity = this.minIntensity;
 		p.maxIntensity = this.maxIntensity;
-
-		p.limitDetections = this.limitDetections;
-		p.maxDetections = this.maxDetections;
-		p.maxDetectionsTypeIndex = this.maxDetectionsTypeIndex;
 
 		p.scaleSpace.sigmaMin = this.sigma;
 		p.scaleSpace.threshold = this.threshold;
@@ -447,12 +432,5 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	protected void addAddtionalParameters( final GenericDialog gd ) {}
 
 	@Override
-	protected boolean queryAdditionalParameters( final GenericDialog gd )
-	{
-		// the image sigmas are queried after the sub-dialogs, so the note stays here
-		if ( imageSigmaX != 0.5 || imageSigmaY != 0.5 || imageSigmaZ != 0.5 )
-			IOFunctions.println( "Scale space: the image sigmas are ignored, the scale space assumes an isotropic image blur of " + defaults.imageSigma + " px." );
-
-		return true;
-	}
+	protected boolean queryAdditionalParameters( final GenericDialog gd ) { return true; }
 }

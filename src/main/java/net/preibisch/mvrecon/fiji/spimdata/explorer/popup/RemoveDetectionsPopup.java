@@ -39,6 +39,7 @@ import net.preibisch.mvrecon.fiji.ImgLib2Temp.Pair;
 import net.preibisch.mvrecon.fiji.ImgLib2Temp.ValuePair;
 import net.preibisch.mvrecon.fiji.plugin.CreateFromCorresponding_Detections;
 import net.preibisch.mvrecon.fiji.plugin.Filter_Detections;
+import net.preibisch.mvrecon.fiji.plugin.Limit_Detections;
 import net.preibisch.mvrecon.fiji.plugin.RelativeThinOut_Detections;
 import net.preibisch.mvrecon.fiji.plugin.Show_Relative_Histogram;
 import net.preibisch.mvrecon.fiji.plugin.ThinOut_Detections;
@@ -69,6 +70,7 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 
 		final JMenuItem createFromCorr = new JMenuItem( "New interest points from correspondences ..." );
 		final JMenuItem createFiltered = new JMenuItem( "New filtered interest points ..." );
+		final JMenuItem createLimited = new JMenuItem( "Keep n points per view ..." );
 		final JMenu showDistanceHist = new JMenu( "Show Distance Histogram" );
 		final JMenuItem showRelativeDistanceHist = new JMenuItem( "Show Relative Distance Histogram ... " );
 		final JMenuItem byDistance = new JMenuItem( "Remove by Distance ..." );
@@ -81,6 +83,8 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		this.add( createFromCorr );
 		createFiltered.addActionListener( new FilterListener() );
 		this.add( createFiltered );
+		createLimited.addActionListener( new LimitListener() );
+		this.add( createLimited );
 
 		this.add( new Separator() );
 
@@ -337,6 +341,40 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 				public void run()
 				{
 					if ( Filter_Detections.filter( spimData, views ) )
+						panel.updateContent(); // update interestpoint panel if available
+				}
+			} ).start();
+		}
+	}
+
+	/**
+	 * "Keep n points per view ...": a filtered label that keeps the n highest / around the median / lowest points by an attribute of every view (Limit_Detections)
+	 */
+	public class LimitListener implements ActionListener
+	{
+		@Override
+		public void actionPerformed( final ActionEvent e )
+		{
+			if ( panel == null )
+			{
+				IOFunctions.println( "Panel not set for " + this.getClass().getSimpleName() );
+				return;
+			}
+
+			final SpimData2 spimData = (SpimData2)panel.getSpimData();
+
+			final ArrayList< ViewId > views = new ArrayList<>();
+			views.addAll( ApplyTransformationPopup.getSelectedViews( panel ) );
+
+			// filter not present ViewIds
+			SpimData2.filterMissingViews( spimData, views );
+
+			new Thread( new Runnable()
+			{
+				@Override
+				public void run()
+				{
+					if ( Limit_Detections.limit( spimData, views ) )
 						panel.updateContent(); // update interestpoint panel if available
 				}
 			} ).start();

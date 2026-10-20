@@ -833,7 +833,7 @@ public class TestDoGScaleSpace
 		assertEquals( 0, Interest_Point_Detection.defaultAlgorithm );
 		assertTrue( Interest_Point_Detection.staticAlgorithms.get( 0 ) instanceof DifferenceOfGaussianGUI );
 		assertTrue( Interest_Point_Detection.staticAlgorithms.get( 1 ) instanceof ScaleSpaceGUI );
-		assertEquals( "Scale-space Difference-of-Gaussian", Interest_Point_Detection.staticAlgorithms.get( 1 ).getDescription() );
+		assertEquals( "Scale-space (Difference-of-Gaussian)", Interest_Point_Detection.staticAlgorithms.get( 1 ).getDescription() );
 
 		final SpimData2 spimData = SimulateUtil.setUp();
 		final ArrayList< ViewId > views = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );

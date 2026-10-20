@@ -78,17 +78,13 @@ public abstract class InterestPointDetectionGUI implements DescribesParameters
 	/**
 	 * Query the necessary parameters for the interestpoint detection
 	 * 
-	 * @param defineAnisotropy - whether to use/query for anisotropy in resolution of the data
 	 * @param setMinMax - whether to define minimal and maximal intensity relative to whom everything is normalized to [0...1]
-	 * @param limitDetections - offers the chance to select certain detections only based on their intensity
 	 * @param groupTiles - if grouping of tiles is wanted
 	 * @param groupIllums - if grouping of illums is wanted
 	 * @return - if it was successful
 	 */
 	public abstract boolean queryParameters(
-			final boolean defineAnisotropy,
 			final boolean setMinMax,
-			final boolean limitDetections,
 			final boolean groupTiles,
 			final boolean groupIllums );
 

@@ -32,8 +32,14 @@ public class InterestPointParameters
 	public Collection< ViewDescription > toProcess;
 	public ImgLoader imgloader;
 
+	/** @deprecated never read by the detectors (DoGImgLib2 assumes 0.5 px per dimension, the anisotropy scales the sigmas); kept until BigStitcher-Spark drops its assignment */
+	@Deprecated
 	public double imageSigmaX = 0.5;
+	/** @deprecated see imageSigmaX */
+	@Deprecated
 	public double imageSigmaY = 0.5;
+	/** @deprecated see imageSigmaX */
+	@Deprecated
 	public double imageSigmaZ = 0.5;
 
 	public double minIntensity = Double.NaN;
