@@ -22,6 +22,7 @@
  */
 package net.preibisch.mvrecon.process.interestpointdetection.methods.dog;
 
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -37,6 +38,7 @@ import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
+import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
@@ -129,7 +131,7 @@ public class DoG
 	 * view is logged and skipped.
 	 *
 	 * @param interestPoints - the map the detections are added to, one list per view
-	 * @param dog - the parameters (views, loader, downsampling, sigma, threshold, localization, intensity range, limit, CUDA)
+	 * @param dog - the parameters (views, loader, downsampling, sigma, anisotropy, threshold, localization, intensity range, limit, CUDA)
 	 */
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static void addInterestPoints( final HashMap< ViewId, List< InterestPoint > > interestPoints, final DoGParameters dog )
@@ -161,6 +163,13 @@ public class DoG
 								new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
 								false );
 
+				// the voxel size of the opened image per dimension relative to x, the Gaussians become isotropic in physical units (null = isotropic in pixels)
+				final double[] anisotropy = Double.isNaN( dog.anisotropyZ ) ? null : DownsampleTools.anisotropy( vd, input.getB(), dog.anisotropyZ );
+
+				if ( anisotropy != null )
+					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): anisotropy of the opened image (voxel size per dimension relative to x) = " + Util.printCoordinates( anisotropy ) +
+							", sigma in pixels = (" + dog.sigma / anisotropy[ 0 ] + ", " + dog.sigma / anisotropy[ 1 ] + ", " + dog.sigma / anisotropy[ 2 ] + ")" );
+
 				List< InterestPoint > ips;
 
 				try
@@ -170,6 +179,7 @@ public class DoG
 							null, // mask
 							new FinalInterval( input.getA() ),
 							dog.sigma,
+							anisotropy,
 							dog.threshold,
 							dog.localization,
 							dog.findMin,

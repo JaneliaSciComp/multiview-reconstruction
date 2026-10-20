@@ -27,6 +27,7 @@ import java.util.List;
 
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
@@ -295,6 +296,41 @@ public class DownsampleTools
 			if ( !Double.isNaN( ip.getSigma() ) )
 				ip.setSigma( (float)( ip.getSigma() * sigmaScale ) );
 		}
+	}
+
+	/**
+	 * The voxel size of an opened (downsampled) image per dimension relative to x: the anisotropy the Gaussians of a
+	 * detection compensate so that they are isotropic in physical units (the sigma in dimension d is sigma / anisotropy[ d ],
+	 * DoGImgLib2.computeDoG and DoGScaleSpace)
+	 *
+	 * @param vd - the view (its calibration)
+	 * @param mipmapTransform - the transform of the opened image to full resolution (openAndDownsample)
+	 * @param anisotropyZ - z voxel / x voxel at FULL resolution as estimated by the user (the PSF blurs z more than the calibration says), NaN = the ratio of the calibration
+	 * @return { 1, (vy * sy) / (vx * sx), (anisotropyZ * sz) / sx } with v = the voxel size and s = the diagonal of the mipmap transform
+	 */
+	public static double[] anisotropy( final BasicViewDescription< ? > vd, final AffineTransform3D mipmapTransform, final double anisotropyZ )
+	{
+		final double vx, vy, vz;
+
+		if ( vd.getViewSetup().hasVoxelSize() )
+		{
+			final VoxelDimensions voxelSize = vd.getViewSetup().getVoxelSize();
+			vx = voxelSize.dimension( 0 );
+			vy = voxelSize.dimension( 1 );
+			vz = voxelSize.dimension( 2 );
+		}
+		else
+		{
+			vx = vy = vz = 1.0;
+		}
+
+		final double a = Double.isNaN( anisotropyZ ) ? vz / vx : anisotropyZ;
+
+		final double sx = Math.abs( mipmapTransform.get( 0, 0 ) );
+		final double sy = Math.abs( mipmapTransform.get( 1, 1 ) );
+		final double sz = Math.abs( mipmapTransform.get( 2, 2 ) );
+
+		return new double[] { 1.0, ( vy * sy ) / ( vx * sx ), ( a * sz ) / sx };
 	}
 
 	public static int downsampleFactor( final int downsampleXY, final int downsampleZ, final VoxelDimensions v )

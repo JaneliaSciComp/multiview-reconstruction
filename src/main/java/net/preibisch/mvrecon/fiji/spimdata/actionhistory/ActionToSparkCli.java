@@ -484,6 +484,22 @@ public class ActionToSparkCli
 					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
 					+ "before running the command below." );
 
+		// the Difference-of-Gaussian of mvrecon blurs anisotropically since 2026-10 ("anisotropy" = z voxel / xy voxel at
+		// full resolution, the Gaussians are isotropic in physical units); BigStitcher-Spark's detect-interestpoints has no
+		// such option yet and blurs isotropically in pixels, so the rendered command finds somewhat different points
+		if ( params.containsKey( "anisotropy" ) && !isUnsupported( params, "detectionMethod", true ) )
+			warnUntranslated( out, "WARNING: mvrecon ran the Difference-of-Gaussian with anisotropy " + params.get( "anisotropy" )
+					+ " (z / xy voxel at full resolution, Gaussians isotropic in physical units) — BigStitcher-Spark has no anisotropy "
+					+ "option yet and blurs isotropically in pixels, so the command below detects somewhat different points." );
+
+		// -dsxy takes one factor for x and y; a resolution level with different x and y factors is rendered with the x factor
+		if ( !params.containsKey( "downsampleXY" ) && params.containsKey( "downsampleX" ) )
+		{
+			warnUntranslated( out, "WARNING: mvrecon downsampled x by " + params.get( "downsampleX" ) + " and y by " + params.get( "downsampleY" )
+					+ " — BigStitcher-Spark's -dsxy takes one factor for both, the x factor is used below." );
+			params.put( "downsampleXY", params.get( "downsampleX" ) );
+		}
+
 		// mvrecon only records regularizationModel/lambda when the user actually regularized (see
 		// PairwiseGUI.putModelParams), but BigStitcher-Spark's -rm defaults to RIGID with --lambda 0.1
 		// (AbstractRegistration) -- omitting the flag would silently add a rigid component to a solve

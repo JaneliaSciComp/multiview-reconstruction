@@ -67,7 +67,7 @@ import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interactive.MultiResolutionSource;
 import net.preibisch.mvrecon.fiji.plugin.interactive.MultiResolutionTools;
-import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.ScaleSpaceGUI;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -81,7 +81,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  * The slider ({@link BoundedValueSlider}) looks and behaves like the brightness slider of BigDataViewer:
  * value textbox next to it, the bounds stacked to the right (click them or right-click the slider to
  * change them, a value typed outside the bounds extends them). The confirmed value is logged, kept in
- * {@link #lastAnisotropy} and set as the default of the scale-space detection dialog (ScaleSpaceGUI).
+ * {@link #lastAnisotropy} and set as the default of the detection dialogs (DifferenceOfGUI, DoG and scale space).
  *
  * @author Stephan Preibisch
  */
@@ -106,11 +106,11 @@ public class InteractiveAnisotropy
 	{
 		this.vd = data.getSequenceDescription().getViewDescriptions().get( view );
 		this.calibration = calibrationAnisotropy( vd );
-		this.anisotropy = calibration;
+		this.anisotropy = DifferenceOfGUI.estimateAnisotropy( calibration );
 
 		final String name = Group.pvid( view );
 
-		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Opening " + name + " on its raw pixel grid in BigDataViewer, anisotropy z / xy of the calibration = " + calibration );
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Opening " + name + " on its raw pixel grid in BigDataViewer, anisotropy z / xy of the calibration = " + calibration + ", starting at the estimate " + anisotropy + " (calibration x " + DifferenceOfGUI.anisotropyEstimateFactor + ")" );
 
 		final List< Pair< RandomAccessibleInterval< FloatType >, AffineTransform3D > > multiRes = rawMultiResolution( data, view );
 		final double[] minmax = FusionTools.minMaxApprox1( multiRes.get( multiRes.size() - 1 ).getA() );
@@ -119,7 +119,7 @@ public class InteractiveAnisotropy
 		this.bdv.setDisplayRange( minmax[ 0 ], minmax[ 1 ] );
 		this.transformedSource = (TransformedSource< ? >)bdv.getSources().get( 0 ).getSpimSource();
 
-		setAnisotropy( calibration );
+		setAnisotropy( anisotropy );
 
 		final BdvHandle handle = bdv.getBdvHandle();
 
@@ -230,13 +230,13 @@ public class InteractiveAnisotropy
 		finished = true;
 		lastAnisotropy = anisotropy;
 
-		// pre-fill the anisotropy of the scale-space detection dialog (it keeps the value while the calibration stays the same)
-		ScaleSpaceGUI.defaultAnisotropyZ = anisotropy;
-		ScaleSpaceGUI.defaultAnisotropyCalibration = calibration;
+		// pre-fill the anisotropy of the detection dialogs (DoG and scale space, they keep the value while the calibration stays the same)
+		DifferenceOfGUI.defaultAnisotropyZ = anisotropy;
+		DifferenceOfGUI.defaultAnisotropyCalibration = calibration;
 
 		IOFunctions.println(
 				"(" + new Date( System.currentTimeMillis() ) + "): anisotropy (z / xy voxel at full resolution) of " + 
-				Group.pvid( vd ) + " = " + anisotropy + " (calibration: " + calibration + "), set as default of the scale-space detection." );
+				Group.pvid( vd ) + " = " + anisotropy + " (calibration: " + calibration + "), set as default of the interest point detection." );
 
 		if ( close )
 			bdv.getBdvHandle().close();
@@ -274,7 +274,8 @@ public class InteractiveAnisotropy
 		panel.add( slider, c );
 
 		++c.gridy;
-		l = new JLabel( "<html>calibration (z/xy): <b>" + String.format( Locale.US, "%.3f", calibration ) + "</b>. Press 'Done' to update the ScaleSpace dialog.</html>");
+		l = new JLabel( "<html>calibration (z/xy): <b>" + String.format( Locale.US, "%.3f", calibration ) + "</b>, estimate (x " + DifferenceOfGUI.anisotropyEstimateFactor + "): <b>" +
+				String.format( Locale.US, "%.3f", DifferenceOfGUI.estimateAnisotropy( calibration ) ) + "</b>. Press 'Done' to update the detection dialogs.</html>");
 		l.setFont( GUIHelper.smallStatusFont );
 		panel.add( l, c );
 

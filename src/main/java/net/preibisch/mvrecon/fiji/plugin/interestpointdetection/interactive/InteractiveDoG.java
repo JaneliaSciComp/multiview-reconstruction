@@ -354,7 +354,7 @@ public class InteractiveDoG
 	}
 
 	/**
-	 * The detection itself (DoGImgLib2.computeDoG, sigma and k as in the final run) on the region, down to thresholdMin
+	 * The detection itself (DoGImgLib2.computeDoG, sigma, k and the anisotropy of the opened image as in the final run) on the region, down to thresholdMin
 	 * (or a lower typed threshold) so that the threshold slider only filters. Maxima and minima are detected separately: the detector decides the type
 	 * before the sub-pixel refinement, so the sign of the refined value does not tell it reliably.
 	 */
@@ -372,7 +372,7 @@ public class InteractiveDoG
 
 		try
 		{
-			return DoGImgLib2.computeDoG( image, null, interval, params.sigma, detectionThreshold, 1, findMin, findMax, min, max, service );
+			return DoGImgLib2.computeDoG( image, null, interval, params.sigma, params.anisotropy, detectionThreshold, 1, findMin, findMax, min, max, service );
 		}
 		finally
 		{

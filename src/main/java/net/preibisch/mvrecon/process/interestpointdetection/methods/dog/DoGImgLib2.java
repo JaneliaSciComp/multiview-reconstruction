@@ -161,7 +161,31 @@ public class DoGImgLib2
 			final double maxIntensity,
 			final ExecutorService service )
 	{
-		return computeDoG(input, mask, interval, sigma, threshold, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, null, null, false, 0.0 );
+		return computeDoG(input, mask, interval, sigma, null, threshold, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, null, null, false, 0.0 );
+	}
+
+	/**
+	 * Difference-of-Gaussian detection with Gaussians that are isotropic in physical units (the default block size,
+	 * no CUDA), see the variant with the block size and CUDA for the details
+	 *
+	 * @param anisotropy - the voxel size of the image per dimension relative to x (DownsampleTools.anisotropy), null = isotropic in pixels
+	 * @return the detections (with the DoG response, the sigma of the detection and the image intensity) in the coordinates of the input
+	 */
+	public static < T extends RealType< T > > ArrayList< InterestPoint > computeDoG(
+			final RandomAccessible< T > input,
+			final RandomAccessible< T > mask,
+			final Interval interval,
+			final double sigma,
+			final double[] anisotropy,
+			final double threshold,
+			final int localization,
+			final boolean findMin,
+			final boolean findMax,
+			final double minIntensity,
+			final double maxIntensity,
+			final ExecutorService service )
+	{
+		return computeDoG(input, mask, interval, sigma, anisotropy, threshold, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, null, null, false, 0.0 );
 	}
 
 	/**
@@ -174,7 +198,7 @@ public class DoGImgLib2
 	 * @param input - the image, extended beyond the interval by the caller
 	 * @param mask - weights &gt; 0 where the image is valid, null = everywhere
 	 * @param interval - the interval to process
-	 * @param sigma - the sigma of the DoG detection
+	 * @param sigma - the sigma of the DoG detection (in x pixels, see the variant with the anisotropy)
 	 * @param threshold - the minimal |DoG| of a detection
 	 * @param localization - 0 = none, 1 = quadratic fit
 	 * @param findMin - keep the minima
@@ -207,7 +231,38 @@ public class DoGImgLib2
 			final boolean accurateCUDA,
 			final double percentGPUMem )
 	{
-		final ArrayList< InterestPoint > finalPeaks = detectPeaks( input, mask, interval, sigma, threshold, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, cuda, cudaDevice, accurateCUDA, percentGPUMem );
+		return computeDoG( input, mask, interval, sigma, null, threshold, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, cuda, cudaDevice, accurateCUDA, percentGPUMem );
+	}
+
+	/**
+	 * Difference-of-Gaussian detection with Gaussians that are isotropic in physical units: the sigma in dimension d
+	 * is sigma / anisotropy[ d ], so sigma is the x sigma (the stored sigma of the detections, as in the scale space);
+	 * otherwise as the variant without the anisotropy
+	 *
+	 * @param anisotropy - the voxel size of the image per dimension relative to x (DownsampleTools.anisotropy for an
+	 * opened view and the user's estimate of z voxel / x voxel at full resolution), null = isotropic in pixels
+	 * @return the detections (with the DoG response, the sigma of the detection and the image intensity) in the coordinates of the input
+	 */
+	public static < T extends RealType< T > > ArrayList< InterestPoint > computeDoG(
+			final RandomAccessible< T > input,
+			final RandomAccessible< T > mask,
+			final Interval interval,
+			final double sigma,
+			final double[] anisotropy,
+			final double threshold,
+			final int localization,
+			final boolean findMin,
+			final boolean findMax,
+			final double minIntensity,
+			final double maxIntensity,
+			final int[] blockSize,
+			final ExecutorService service,
+			final CUDASeparableConvolution cuda,
+			final CUDADevice cudaDevice,
+			final boolean accurateCUDA,
+			final double percentGPUMem )
+	{
+		final ArrayList< InterestPoint > finalPeaks = detectPeaks( input, mask, interval, sigma, anisotropy, threshold, localization, findMin, findMax, minIntensity, maxIntensity, blockSize, service, cuda, cudaDevice, accurateCUDA, percentGPUMem );
 
 		// remove potential duplicates (happens because during localization it can move around)
 		final ArrayList< InterestPoint > filteredFinalPeaks = removeDuplicates( finalPeaks );
@@ -223,13 +278,14 @@ public class DoGImgLib2
 	 * (findPeaks with the threshold for localization 0, threshold / 3 otherwise), the localization (keeps |value| &gt; threshold)
 	 * and the shift of the positions to the coordinates of the input
 	 *
-	 * @return the detections with their response, the sigma of the detection and the image intensity, numbered 0..n-1 in detection order; the parameters as for computeDoG
+	 * @return the detections with their response, the sigma of the detection (the x sigma) and the image intensity, numbered 0..n-1 in detection order; the parameters as for computeDoG
 	 */
 	protected static < T extends RealType< T > > ArrayList< InterestPoint > detectPeaks(
 			final RandomAccessible< T > input,
 			final RandomAccessible< T > mask,
 			final Interval interval,
 			final double sigma,
+			final double[] anisotropy,
 			final double threshold,
 			final int localization,
 			final boolean findMin,
@@ -282,14 +338,15 @@ public class DoGImgLib2
 		// normalize image
 		final RandomAccessible< FloatType > inputFloat = ImgLib2Tools.normalizeVirtual( input, min, max );
 
-		// compute sigmas
-		final Pair< double[][], Float > sigmas = computeSigmas( initialSigma, inputFloat.numDimensions() );
+		// compute sigmas (per dimension, the anisotropy makes the Gaussians isotropic in physical units)
+		final Pair< double[][], Float > sigmas = computeSigmas( initialSigma, anisotropy, inputFloat.numDimensions() );
 		final double[] sigma1 = sigmas.getA()[ 0 ];
 		final double[] sigma2 = sigmas.getA()[ 1 ];
 		final float K_MIN1_INV = sigmas.getB();
 
 		if ( !silent )
 			IOFunctions.println( "(" + new Date(System.currentTimeMillis()) + "): computing DoG with (sigma=" + initialSigma + ", " +
+				( anisotropy == null ? "" : "anisotropy=" + Util.printCoordinates( anisotropy ) + ", " ) +
 				"threshold=" + minPeakValue + ", sigma1=" + Util.printCoordinates( sigma1 ) + ", sigma2=" + Util.printCoordinates( sigma2 ) + ")" );
 
 		final long[] minInterval = new long[ inputFloat.numDimensions() ];
@@ -417,24 +474,60 @@ public class DoGImgLib2
 		return false;
 	}
 
+	/**
+	 * The two Gaussian sigmas of the DoG per dimension, isotropic in pixels (see the variant with the anisotropy)
+	 */
 	public static Pair<double[][], Float > computeSigmas( final float initialSigma, final int n )
+	{
+		return computeSigmas( initialSigma, null, n );
+	}
+
+	/**
+	 * The two Gaussian sigmas of the DoG per dimension: the targets are sigma and sigma * k (k = 2^(1/4)), each divided
+	 * by the anisotropy of the dimension (the voxel size relative to x, DownsampleTools.anisotropy; null = isotropic in
+	 * pixels, bit-identical to the code before the anisotropy existed, as is an anisotropy of 1); applied is the target
+	 * minus the blur the image carries (0.5 px) in quadrature, and a target below that blur gives 0, nothing is applied
+	 * in that dimension (the convention of the scale space, DoGScaleSpace.computeSigmaDiff)
+	 *
+	 * @return { sigma1 per dimension, sigma2 per dimension } and 1 / ( k - 1 ), the normalization of the DoG
+	 */
+	public static Pair<double[][], Float > computeSigmas( final float initialSigma, final double[] anisotropy, final int n )
 	{
 		final float k = LaPlaceFunctions.computeK( 4 );
 		final float K_MIN1_INV = LaPlaceFunctions.computeKWeight(k);
 		final int steps = 3;
-		
+		final float imageSigma = 0.5f;
+
+		if ( anisotropy != null && anisotropy.length != n )
+			throw new IllegalArgumentException( "The anisotropy has " + anisotropy.length + " dimensions, the image " + n + "." );
+
 		//
 		// Compute the Sigmas for the gaussian convolution
 		//
 		final double[][] sigma = new double[2][ n ];
-		
+		final float[] sigmaStepsX = LaPlaceFunctions.computeSigma( steps, k, initialSigma );
+
 		for ( int d = 0; d < n; ++d )
 		{
-			final float[] sigmaStepsX = LaPlaceFunctions.computeSigma( steps, k, initialSigma );
-			final float[] sigmaStepsDiffX = LaPlaceFunctions.computeSigmaDiff( sigmaStepsX, 0.5f );
-			
-			sigma[0][ d ] = sigmaStepsDiffX[0];
-			sigma[1][ d ] = sigmaStepsDiffX[1];
+			if ( anisotropy == null || anisotropy[ d ] == 1.0 )
+			{
+				final float[] sigmaStepsDiffX = LaPlaceFunctions.computeSigmaDiff( sigmaStepsX, imageSigma );
+
+				sigma[0][ d ] = sigmaStepsDiffX[0];
+				sigma[1][ d ] = sigmaStepsDiffX[1];
+			}
+			else
+			{
+				if ( !( anisotropy[ d ] > 0 ) || Double.isInfinite( anisotropy[ d ] ) )
+					throw new IllegalArgumentException( "The anisotropy must be positive and finite in every dimension, but is " + Util.printCoordinates( anisotropy ) + "." );
+
+				for ( int i = 0; i < 2; ++i )
+				{
+					final float target = (float)( sigmaStepsX[ i ] / anisotropy[ d ] );
+
+					sigma[ i ][ d ] = target <= imageSigma ? 0.0 : LaPlaceFunctions.getDiffSigma( imageSigma, target );
+				}
+			}
 		}
 
 		return new ValuePair<>( sigma, K_MIN1_INV );

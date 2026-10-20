@@ -43,6 +43,14 @@ public class DoGParameters extends InterestPointParameters
 	public boolean findMin = false;
 	public boolean findMax = true;
 
+	/**
+	 * z voxel / x voxel at FULL resolution as estimated by the user (the PSF blurs z more than the calibration says):
+	 * the Gaussians are then isotropic in physical units, the sigma in dimension d of the opened image is
+	 * sigma / anisotropy[ d ] (DownsampleTools.anisotropy) and sigma itself is the x sigma. NaN (the default) = no
+	 * anisotropy, the Gaussians are isotropic in pixels, what every caller got before 2026-10 (e.g. BigStitcher-Spark)
+	 */
+	public double anisotropyZ = Double.NaN;
+
 	public double percentGPUMem = 75;
 	public CUDADevice deviceCUDA = null;
 	public CUDASeparableConvolution cuda = null;

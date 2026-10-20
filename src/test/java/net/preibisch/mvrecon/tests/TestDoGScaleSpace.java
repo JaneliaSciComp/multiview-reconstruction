@@ -74,6 +74,7 @@ import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.S
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.ScaleSpace;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.ScaleSpaceDetectionParameters;
 import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Detection;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGaussianGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.ScaleSpaceGUI;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
@@ -1078,28 +1079,28 @@ public class TestDoGScaleSpace
 	}
 
 	/**
-	 * The drop-down of the starting resolution lists the precomputed levels (with the voxel size) and
-	 * the manual entry; the default is the second level if it exists
+	 * The drop-down of the (starting) resolution, shared by both detection methods (DifferenceOfGUI), lists the
+	 * precomputed levels (with the voxel size) and the manual entry; the default is the second level if it exists
 	 */
 	@Test
 	public void testResolutionChoices()
 	{
 		final String[] resolutions = new String[] { "1, 1, 1", "2, 2, 1", "4, 4, 2" };
-		final String[] choices = ScaleSpaceGUI.resolutionChoices( resolutions, new FinalVoxelDimensions( "um", 0.45, 0.45, 2.0 ) );
+		final String[] choices = DifferenceOfGUI.resolutionChoices( resolutions, new FinalVoxelDimensions( "um", 0.45, 0.45, 2.0 ) );
 
 		assertEquals( 4, choices.length );
 		assertTrue( choices[ 0 ].startsWith( "1, 1, 1" ) && choices[ 0 ].contains( "0.45 x 0.45 x 2.0 um" ), choices[ 0 ] );
 		assertTrue( choices[ 1 ].startsWith( "2, 2, 1" ) && choices[ 1 ].contains( "0.9 x 0.9 x 2.0 um" ), choices[ 1 ] );
 		assertTrue( choices[ 2 ].startsWith( "4, 4, 2" ) && choices[ 2 ].contains( "1.8 x 1.8 x 4.0 um" ), choices[ 2 ] );
-		assertEquals( ScaleSpaceGUI.manualResolution, choices[ 3 ] );
+		assertEquals( DifferenceOfGUI.manualResolution, choices[ 3 ] );
 
-		assertEquals( 2, ScaleSpaceGUI.resolutionChoices( new String[] { "1, 1, 1" }, null ).length );
-		assertEquals( "1, 1, 1", ScaleSpaceGUI.resolutionChoices( new String[] { "1, 1, 1" }, null )[ 0 ] );
+		assertEquals( 2, DifferenceOfGUI.resolutionChoices( new String[] { "1, 1, 1" }, null ).length );
+		assertEquals( "1, 1, 1", DifferenceOfGUI.resolutionChoices( new String[] { "1, 1, 1" }, null )[ 0 ] );
 
-		assertEquals( 1, ScaleSpaceGUI.defaultResolutionChoice( 3, 1, false ) );
-		assertEquals( 0, ScaleSpaceGUI.defaultResolutionChoice( 1, 1, false ) );
-		assertEquals( 2, ScaleSpaceGUI.defaultResolutionChoice( 3, 7, false ) );
-		assertEquals( 3, ScaleSpaceGUI.defaultResolutionChoice( 3, 1, true ) );
+		assertEquals( 1, DifferenceOfGUI.defaultResolutionChoice( 3, 1, false ) );
+		assertEquals( 0, DifferenceOfGUI.defaultResolutionChoice( 1, 1, false ) );
+		assertEquals( 2, DifferenceOfGUI.defaultResolutionChoice( 3, 7, false ) );
+		assertEquals( 3, DifferenceOfGUI.defaultResolutionChoice( 3, 1, true ) );
 
 		// the simulated data has no resolution levels
 		final SpimData2 spimData = SimulateUtil.setUp();
@@ -1107,8 +1108,8 @@ public class TestDoGScaleSpace
 		final String[] simulated = DownsampleTools.availableDownsamplings( spimData, views.get( 0 ) );
 
 		assertEquals( 1, simulated.length );
-		assertEquals( 0, ScaleSpaceGUI.defaultResolutionChoice( simulated.length, ScaleSpaceGUI.defaultResolutionIndex, false ) );
-		assertTrue( ScaleSpaceGUI.sameResolutionLevels( spimData, views ) );
+		assertEquals( 0, DifferenceOfGUI.defaultResolutionChoice( simulated.length, DifferenceOfGUI.defaultResolutionIndex, false ) );
+		assertTrue( DifferenceOfGUI.sameResolutionLevels( spimData, views ) );
 	}
 
 	public static Img< FloatType > blobs( final long[] dim, final double[][] centers, final double[] stds )
