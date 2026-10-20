@@ -671,6 +671,146 @@ public class TestInterestPointStorage
 	}
 
 	/**
+	 * copyTo recreates a label elsewhere without the caller knowing its kind: a plain label copies its (mapped) points, a
+	 * filtered label stays a filter of the mapped base label (what splitting and copying a dataset need)
+	 */
+	@Test
+	public void testCopyTo() throws Exception
+	{
+		final URI base = tempDir.toUri();
+		final ViewId from = new ViewId( 0, 10 ), to = new ViewId( 0, 11 );
+		final ArrayList< InterestPoint > points = points( 100, 500 );
+
+		final ViewInterestPointLists vipl = new ViewInterestPointLists( from.getTimePointId(), from.getViewSetupId() );
+
+		final InterestPointFilter filter = InterestPointFilter.of( Axis.RESPONSE, 0.5, Double.NaN );
+
+		// three correspondences (to the next id in another view): a point inside the split interval (x < 250) that passes the
+		// filter, one inside that does not, one outside that passes; the filtered label links the two that pass its filter
+		int inPass = -1, inFail = -1, outPass = -1;
+
+		for ( final InterestPoint ip : points )
+		{
+			final boolean in = ip.getL()[ 0 ] < 250, pass = filter.accept( ip );
+
+			if ( in && pass && inPass < 0 ) inPass = ip.getId();
+			if ( in && !pass && inFail < 0 ) inFail = ip.getId();
+			if ( !in && pass && outPass < 0 ) outPass = ip.getId();
+		}
+
+		assertTrue( inPass >= 0 && inFail >= 0 && outPass >= 0 );
+
+		final ArrayList< CorrespondingInterestPoints > corr = new ArrayList<>();
+		for ( final int id : new int[] { inPass, inFail, outPass } )
+			corr.add( new CorrespondingInterestPoints( id, to, "beads", id + 1 ) );
+
+		final InterestPoints plain = InterestPoints.newInstance( base, from, "beads" );
+		plain.setParameters( "DOG s=1.8" );
+		plain.setInterestPoints( points );
+		plain.setCorrespondingInterestPoints( corr );
+		vipl.addInterestPointList( "beads", plain );
+
+		final VirtualFilteredInterestPointsN5 virtual = VirtualFilteredInterestPointsN5.create( base, from, "beads_r0.5", "beads", filter );
+		virtual.setParameters( filter.describe( "beads" ) );
+		virtual.setCorrespondingInterestPoints( new ArrayList<>( Arrays.asList( corr.get( 0 ), corr.get( 2 ) ) ) );
+		vipl.addInterestPointList( "beads_r0.5", virtual );
+
+		// as splitting does: the points with x < 250 shifted by -10, labels renamed, no correspondences
+		final Function< InterestPoint, InterestPoint > inside = ip -> ip.getL()[ 0 ] < 250 ? ip.derive( ip.getId(), new double[] { ip.getL()[ 0 ] - 10, ip.getL()[ 1 ], ip.getL()[ 2 ] } ) : null;
+		final ViewInterestPointLists split = new ViewInterestPointLists( to.getTimePointId(), to.getViewSetupId() );
+
+		for ( final String label : vipl.getHashMap().keySet() )
+			split.addInterestPointList( label + "_split", vipl.getInterestPointList( label ).copyTo( base, to, label + "_split", l -> l + "_split", inside, false ) );
+
+		final InterestPoints plainSplit = split.getInterestPointList( "beads_split" );
+		final InterestPoints virtualSplit = split.getInterestPointList( "beads_r0.5_split" );
+
+		assertFalse( plainSplit instanceof VirtualFilteredInterestPointsN5 );
+		assertTrue( virtualSplit instanceof VirtualFilteredInterestPointsN5 );
+		assertEquals( "beads_split", ( (VirtualFilteredInterestPointsN5)virtualSplit ).getBaseLabel() );
+		assertEquals( filter, ( (VirtualFilteredInterestPointsN5)virtualSplit ).getFilter() );
+		assertEquals( filter.describe( "beads_split" ), virtualSplit.getParameters() );
+		assertEquals( "DOG s=1.8", plainSplit.getParameters() );
+		assertEquals( 0, plainSplit.getCorrespondingInterestPointsCopy().size() );
+		assertEquals( 0, virtualSplit.getCorrespondingInterestPointsCopy().size() );
+		assertEquals( base, virtualSplit.getBasePath() );
+
+		final TreeSet< Integer > expectedPlain = new TreeSet<>(), expectedVirtual = new TreeSet<>();
+
+		for ( final InterestPoint ip : points )
+			if ( ip.getL()[ 0 ] < 250 )
+			{
+				expectedPlain.add( ip.getId() );
+
+				if ( filter.accept( ip ) )
+					expectedVirtual.add( ip.getId() );
+			}
+
+		assertTrue( expectedVirtual.size() > 0 && expectedVirtual.size() < expectedPlain.size() && expectedPlain.size() < points.size() );
+
+		final Map< Integer, InterestPoint > plainPoints = plainSplit.getInterestPointsCopy();
+		assertEquals( expectedPlain, new TreeSet<>( plainPoints.keySet() ) );
+
+		for ( final InterestPoint ip : plainPoints.values() )
+		{
+			final InterestPoint original = points.get( ip.getId() );
+			assertEquals( original.getL()[ 0 ] - 10, ip.getL()[ 0 ], 0.0 );
+			assertEquals( original.getL()[ 1 ], ip.getL()[ 1 ], 0.0 );
+			assertEquals( original.getResponse(), ip.getResponse(), 0.0f );
+			assertEquals( original.getSigma(), ip.getSigma(), 0.0f );
+			assertEquals( original.getIntensity(), ip.getIntensity(), 0.0f );
+		}
+
+		assertEquals( expectedVirtual, new TreeSet<>( virtualSplit.getInterestPointsCopy().keySet() ) );
+
+		// the same copy with the correspondences on: only the ones of points that survive remain (the correspondences
+		// of dropped points would link to points that do not exist), their label follows the mapping, the other end is untouched
+		final InterestPoints plainCorr = plain.copyTo( base, to, "beads_split", l -> l + "_split", inside, true );
+		final InterestPoints virtualCorr = virtual.copyTo( base, to, "beads_r0.5_split", l -> l + "_split", inside, true );
+
+		assertEquals( new TreeSet<>( Arrays.asList( inPass, inFail ) ), detectionIds( plainCorr.getCorrespondingInterestPointsCopy() ) );
+		assertEquals( new TreeSet<>( Arrays.asList( inPass ) ), detectionIds( virtualCorr.getCorrespondingInterestPointsCopy() ) );
+
+		for ( final InterestPoints ips : Arrays.asList( plainCorr, virtualCorr ) )
+			for ( final CorrespondingInterestPoints c : ips.getCorrespondingInterestPointsCopy() )
+			{
+				assertEquals( "beads_split", c.getCorrespodingLabel() );
+				assertEquals( to, c.getCorrespondingViewId() );
+				assertEquals( c.getDetectionId() + 1, c.getCorrespondingDetectionId() );
+				assertEquals( -1, c.getConsensusSetId() );
+			}
+
+		// renumbered points: the detection ids of the correspondences follow the points, nothing else changes
+		final Function< InterestPoint, InterestPoint > renumber = ip -> ip.derive( ip.getId() + 1000, ip.getL() );
+		final InterestPoints plainRenumbered = plain.copyTo( base, from, "beads", l -> l, renumber, true );
+		final InterestPoints virtualRenumbered = virtual.copyTo( base, from, "beads_r0.5", l -> l, renumber, true );
+
+		assertEquals( new TreeSet<>( Arrays.asList( inPass + 1000, inFail + 1000, outPass + 1000 ) ), detectionIds( plainRenumbered.getCorrespondingInterestPointsCopy() ) );
+		assertEquals( new TreeSet<>( Arrays.asList( inPass + 1000, outPass + 1000 ) ), detectionIds( virtualRenumbered.getCorrespondingInterestPointsCopy() ) );
+
+		for ( final CorrespondingInterestPoints c : plainRenumbered.getCorrespondingInterestPointsCopy() )
+		{
+			assertTrue( plainRenumbered.getInterestPointsCopy().containsKey( c.getDetectionId() ) );
+			assertEquals( "beads", c.getCorrespodingLabel() );
+			assertEquals( c.getDetectionId() - 1000 + 1, c.getCorrespondingDetectionId() );
+		}
+
+		// as a dataset copy does: identity, another base path, with correspondences
+		final Path other = Files.createDirectories( tempDir.resolve( "copyTo" ) );
+		final ViewInterestPointLists copy = new ViewInterestPointLists( from.getTimePointId(), from.getViewSetupId() );
+
+		for ( final String label : vipl.getHashMap().keySet() )
+			copy.addInterestPointList( label, vipl.getInterestPointList( label ).copyTo( other.toUri(), from, label, l -> l, ip -> ip, true ) );
+
+		assertEquals( 3, copy.getInterestPointList( "beads" ).getCorrespondingInterestPointsCopy().size() );
+		assertEquals( 2, copy.getInterestPointList( "beads_r0.5" ).getCorrespondingInterestPointsCopy().size() );
+		assertEquals( 100, copy.getInterestPointList( "beads" ).getInterestPointsCopy().size() );
+		assertEquals( idsPassing( points, filter ), new TreeSet<>( copy.getInterestPointList( "beads_r0.5" ).getInterestPointsCopy().keySet() ) );
+		assertEquals( other.toUri(), copy.getInterestPointList( "beads_r0.5" ).getBasePath() );
+		assertEquals( filter.describe( "beads" ), copy.getInterestPointList( "beads_r0.5" ).getParameters() );
+	}
+
+	/**
 	 * A plain copy of the points that pass a filter keeps the ids and the attributes
 	 */
 	@Test
@@ -708,5 +848,51 @@ public class TestInterestPointStorage
 		assertThrows( IllegalArgumentException.class, () -> InterestPointTools.addFilteredInterestPoints( spimData, "x", "nothere", byIntensity, views ) );
 		assertThrows( IllegalArgumentException.class, () -> InterestPointTools.addFilteredInterestPointsCopy( spimData, "x", "nothere", byIntensity, views ) );
 		assertThrows( IllegalArgumentException.class, () -> InterestPointTools.addFilteredInterestPoints( spimData, "beads", "beads", byIntensity, views ) );
+	}
+
+	/**
+	 * Copying the data to another base path (SpimData2Tools.reduceSpimData2) keeps a filtered label filtered
+	 */
+	@Test
+	public void testFilteredLabelReduce() throws Exception
+	{
+		final SpimData2 spimData = SimulateUtil.setUp();
+		spimData.setBasePathURI( tempDir.toUri() );
+
+		final List< ViewId > views = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		final HashMap< ViewId, List< InterestPoint > > map = new HashMap<>();
+
+		for ( final ViewId viewId : views )
+			map.put( viewId, points( 100, 400 + viewId.getViewSetupId() ) );
+
+		InterestPointTools.addInterestPoints( spimData, "beads", map, "DOG s=1.8 t=0.001" );
+
+		final InterestPointFilter byResponse = InterestPointFilter.of( Axis.RESPONSE, 0.25, 0.75 );
+		assertTrue( InterestPointTools.addFilteredInterestPoints( spimData, "beads_r0.25-0.75", "beads", byResponse, views ) );
+
+		final Path other = Files.createDirectories( tempDir.resolve( "copy" ) );
+		final SpimData2 reduced = SpimData2Tools.reduceSpimData2( spimData, views, other.toUri() );
+
+		for ( final ViewId viewId : views )
+		{
+			final InterestPoints filtered = reduced.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_r0.25-0.75" );
+
+			assertTrue( filtered instanceof VirtualFilteredInterestPointsN5 );
+			assertEquals( "beads", ( (VirtualFilteredInterestPointsN5)filtered ).getBaseLabel() );
+			assertEquals( byResponse, ( (VirtualFilteredInterestPointsN5)filtered ).getFilter() );
+			assertEquals( byResponse.describe( "beads" ), filtered.getParameters() );
+			assertEquals( other.toUri(), filtered.getBasePath() );
+			assertEquals( idsPassing( map.get( viewId ), byResponse ), new TreeSet<>( filtered.getInterestPointsCopy().keySet() ) );
+			assertEquals( "DOG s=1.8 t=0.001", reduced.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads" ).getParameters() );
+		}
+
+		// and it saves to the new place
+		final URI xmlURI = other.resolve( "dataset.xml" ).toUri();
+		assertTrue( new XmlIoSpimData2().save( reduced, xmlURI ) );
+
+		final SpimData2 loaded = new XmlIoSpimData2().load( xmlURI );
+
+		for ( final ViewId viewId : views )
+			assertEquals( idsPassing( map.get( viewId ), byResponse ), new TreeSet<>( loaded.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_r0.25-0.75" ).getInterestPointsCopy().keySet() ) );
 	}
 }

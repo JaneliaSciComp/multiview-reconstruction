@@ -789,30 +789,33 @@ public class SplittingTools
 				final MissingViews mvSetup = spimData.getSequenceDescription().getMissingViews();
 				if ( mvSetup == null || mvSetup.getMissingViews() == null || !mvSetup.getMissingViews().contains( oldViewId ) )
 				{
+					final Interval splitInterval = interval;
+
 					for ( final String label : oldVipl.getHashMap().keySet() )
 					{
 						final String newLabel = label + "_split";
-
-						final List< InterestPoint > newIpList = new ArrayList<>();
 						final InterestPoints oldIps = oldVipl.getInterestPointList( label );
-						final Map< Integer, InterestPoint > oldIpList = oldIps.getInterestPointsCopy();
 
-						for ( final InterestPoint ip : oldIpList.values() )
-						{
-							if ( contains( ip.getL(), interval ) )
-							{
-								final double[] l = ip.getL().clone();
-								for ( int d = 0; d < interval.numDimensions(); ++d )
-									l[ d ] -= interval.min( d );
+						// the points inside the interval, shifted to its origin, ids kept, no correspondences (a filtered label stays a filter of its split base label)
+						final InterestPoints newIps = oldIps.copyTo(
+								oldIps.getBasePath(),
+								newViewId,
+								newLabel,
+								l -> l + "_split",
+								ip ->
+								{
+									if ( !contains( ip.getL(), splitInterval ) )
+										return null;
 
-								newIpList.add( ip.derive( ip.getId(), l ) );
-							}
-						}
+									final double[] l = ip.getL().clone();
 
-						final InterestPoints newIps = InterestPoints.newInstance( oldIps.getBasePath(), newViewId, newLabel );
-						newIps.setInterestPoints( newIpList );
-						newIps.setParameters( oldIps.getParameters() );
-						newIps.setCorrespondingInterestPoints( new ArrayList<>() );
+									for ( int d = 0; d < splitInterval.numDimensions(); ++d )
+										l[ d ] -= splitInterval.min( d );
+
+									return ip.derive( ip.getId(), l );
+								},
+								false );
+
 						newVipl.addInterestPointList( newLabel, newIps );
 					}
 

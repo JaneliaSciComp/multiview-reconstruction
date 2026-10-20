@@ -76,9 +76,6 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
@@ -629,17 +626,9 @@ public class SpimData2Tools
 				{
 					final ViewInterestPointLists ipListsNew = new ViewInterestPointLists(viewId.getTimePointId(), viewId.getViewSetupId() );
 
+					// points, correspondences and parameters as they are (a filtered label stays a filter of its base label)
 					ipLists.getHashMap().forEach( (label,interestpoints) ->
-					{
-						final Map<Integer, InterestPoint> points = interestpoints.getInterestPointsCopy();
-						final Collection<CorrespondingInterestPoints> corr = interestpoints.getCorrespondingInterestPointsCopy();
-
-						final InterestPoints interestpointsNew = InterestPoints.newInstance( basePath, viewId, label );
-						interestpointsNew.setInterestPoints( points.values() );
-						interestpointsNew.setCorrespondingInterestPoints( corr );
-
-						ipListsNew.addInterestPointList( label, interestpointsNew );
-					} );
+						ipListsNew.addInterestPointList( label, interestpoints.copyTo( basePath, viewId, label, l -> l, ip -> ip, true ) ) );
 
 					newInterestPoints.put( viewId, ipListsNew );
 				}

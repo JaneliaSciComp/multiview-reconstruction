@@ -106,6 +106,40 @@ public class VirtualFilteredInterestPointsN5 extends InterestPointsN5
 		return list;
 	}
 
+	/**
+	 * The copy stays a filter of the mapped base label (which the caller copies as well), the point mapping applies to the
+	 * base; the correspondences follow the points of this label through the same mapping (CorrespondenceTools.mapCorrespondences)
+	 */
+	@Override
+	public InterestPoints copyTo(
+			final URI basePath,
+			final ViewId viewId,
+			final String label,
+			final Function< String, String > labelMapping,
+			final Function< InterestPoint, InterestPoint > pointMapping,
+			final boolean copyCorrespondences )
+	{
+		final String mappedBase = labelMapping.apply( baseLabel );
+		final VirtualFilteredInterestPointsN5 copy = create( basePath, viewId, label, mappedBase, filter );
+		copy.setParameters( mappedBase.equals( baseLabel ) ? getParameters() : filter.describe( mappedBase ) );
+
+		final Collection< CorrespondingInterestPoints > correspondences = copyCorrespondences ? getCorrespondingInterestPointsCopy() : new ArrayList<>();
+
+		if ( correspondences.isEmpty() )
+		{
+			copy.setCorrespondingInterestPoints( new ArrayList<>() );
+		}
+		else
+		{
+			// which of the (filtered) points survive the mapping and under which id
+			final HashMap< Integer, Integer > idMapping = new HashMap<>();
+			mapPoints( getInterestPointsCopy().values(), pointMapping, idMapping );
+			copy.setCorrespondingInterestPoints( CorrespondenceTools.mapCorrespondences( correspondences, idMapping, labelMapping ) );
+		}
+
+		return copy;
+	}
+
 	public String getBaseLabel() { return baseLabel; }
 	public InterestPointFilter getFilter() { return filter; }
 	public ViewInterestPointLists getOwner() { return owner; }

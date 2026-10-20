@@ -178,6 +178,55 @@ public class InterestPointsN5 extends InterestPoints
 			this.correspondingInterestPoints = new ArrayList<>( list );
 	}
 
+	@Override
+	public InterestPoints copyTo(
+			final URI basePath,
+			final ViewId viewId,
+			final String label,
+			final Function< String, String > labelMapping,
+			final Function< InterestPoint, InterestPoint > pointMapping,
+			final boolean copyCorrespondences )
+	{
+		final HashMap< Integer, Integer > idMapping = new HashMap<>();
+		final ArrayList< InterestPoint > points = mapPoints( getInterestPointsCopy().values(), pointMapping, idMapping );
+
+		final InterestPoints copy = InterestPoints.newInstance( basePath, viewId, label );
+		copy.setParameters( getParameters() );
+		copy.setInterestPoints( points );
+		copy.setCorrespondingInterestPoints( copyCorrespondences ? CorrespondenceTools.mapCorrespondences( getCorrespondingInterestPointsCopy(), idMapping, labelMapping ) : new ArrayList<>() );
+
+		return copy;
+	}
+
+	/**
+	 * Applies the point mapping of {@link #copyTo} to the points of a label: null drops a point
+	 *
+	 * @param points - the points of the original label
+	 * @param pointMapping - the point of the copy for a point of the original, null drops the point
+	 * @param idMapping - filled with original id to copied id for every point that survived (what CorrespondenceTools.mapCorrespondences needs)
+	 * @return the points of the copy
+	 */
+	protected static ArrayList< InterestPoint > mapPoints(
+			final Collection< InterestPoint > points,
+			final Function< InterestPoint, InterestPoint > pointMapping,
+			final Map< Integer, Integer > idMapping )
+	{
+		final ArrayList< InterestPoint > mapped = new ArrayList<>();
+
+		for ( final InterestPoint ip : points )
+		{
+			final InterestPoint m = pointMapping.apply( ip );
+
+			if ( m != null )
+			{
+				mapped.add( m );
+				idMapping.put( ip.getId(), m.getId() );
+			}
+		}
+
+		return mapped;
+	}
+
 	public String ipDataset() { return ipDataset( getN5dataset() ); }
 	public String corrDataset() { return corrDataset( getN5dataset() ); }
 

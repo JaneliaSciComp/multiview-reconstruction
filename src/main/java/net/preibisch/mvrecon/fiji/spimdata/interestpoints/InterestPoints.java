@@ -97,6 +97,33 @@ public abstract class InterestPoints
 	public abstract boolean deleteInterestPoints();
 	public abstract boolean deleteCorrespondingInterestPoints();
 
+	/**
+	 * Recreates this label elsewhere: under another base path, for another view and/or under another name, e.g. when a
+	 * dataset is copied (SpimData2Tools.reduceSpimData2) or its views are split (SplittingTools). A plain label copies its
+	 * points through the point mapping, a filtered label stays a filter of the mapped base label, so that callers need not
+	 * know which kind of label they hold. The copy carries the parameters of this label (adapted to the mapped base label
+	 * for a filtered one) and is not saved.
+	 *
+	 * @param basePath - the base path of the copy
+	 * @param viewId - the view of the copy
+	 * @param label - the name of the copy
+	 * @param labelMapping - how the labels of this view map to the labels of the copy's view (the base label of a filtered label), e.g. l -&gt; l or l -&gt; l + "_split"
+	 * @param pointMapping - the point of the copy for a point of this label, null drops the point; ip -&gt; ip copies
+	 * @param copyCorrespondences - whether the copy gets the correspondences of this label (otherwise none): the ones of
+	 *        dropped points are dropped, the detection ids follow the point mapping and the corresponding labels the label
+	 *        mapping; the other end of a correspondence (corresponding view and detection id) lives in another view and is
+	 *        NOT checked, so a caller that drops or renumbers points must only copy correspondences when the corresponding
+	 *        points of the other views survive the same way (SplittingTools copies none)
+	 * @return the copy
+	 */
+	public abstract InterestPoints copyTo(
+			final URI basePath,
+			final ViewId viewId,
+			final String label,
+			final Function< String, String > labelMapping,
+			final Function< InterestPoint, InterestPoint > pointMapping,
+			final boolean copyCorrespondences );
+
 	/** 
 	 * @return the parameters used for segmenting these points
 	 */

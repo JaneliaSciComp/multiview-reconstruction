@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.Function;
 
 import mpicbg.spim.data.sequence.ViewId;
 
@@ -405,5 +407,39 @@ public class CorrespondenceTools
 	{
 		return a.getTimePointId() == b.getTimePointId() &&
 			   a.getViewSetupId() == b.getViewSetupId();
+	}
+
+	/**
+	 * The correspondences of a copy of a label whose points went through a point mapping ({@link InterestPoints#copyTo}):
+	 * a correspondence of a point that was dropped is dropped, the detection id follows the point (idMapping) and the
+	 * corresponding label follows the label mapping (the same mapping is assumed for all views). The other end of a
+	 * correspondence, the corresponding view and detection id, lives in another view and is not checked here.
+	 *
+	 * @param correspondences - the correspondences of the original label
+	 * @param idMapping - the id of the copied point for the id of every original point that survived (a missing id = the point was dropped)
+	 * @param labelMapping - how the labels of the original views map to the labels of the copied views
+	 * @return the correspondences of the copy (new objects, in the original order)
+	 */
+	public static ArrayList< CorrespondingInterestPoints > mapCorrespondences(
+			final Collection< CorrespondingInterestPoints > correspondences,
+			final Map< Integer, Integer > idMapping,
+			final Function< String, String > labelMapping )
+	{
+		final ArrayList< CorrespondingInterestPoints > mapped = new ArrayList<>();
+
+		for ( final CorrespondingInterestPoints c : correspondences )
+		{
+			final Integer id = idMapping.get( c.getDetectionId() );
+
+			if ( id != null )
+				mapped.add( new CorrespondingInterestPoints(
+						id,
+						c.getCorrespondingViewId(),
+						labelMapping.apply( c.getCorrespodingLabel() ),
+						c.getCorrespondingDetectionId(),
+						c.getConsensusSetId() ) );
+		}
+
+		return mapped;
 	}
 }
