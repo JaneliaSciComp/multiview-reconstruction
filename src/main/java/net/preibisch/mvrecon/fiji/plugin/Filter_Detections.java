@@ -79,7 +79,7 @@ public class Filter_Detections implements PlugIn
 	/** the threshold ramp (filterRamp, the detection dialogs): t x rampFactor^k for k = 1 .. rampSteps, and on until rampMinEnd is reached (at most rampMaxSteps steps) */
 	public static double rampFactor = 2.0;
 	public static int rampSteps = 6;
-	public static double rampMinEnd = 0.01;
+	public static double rampMinEnd = 0.1;
 	public static int rampMaxSteps = 30;
 
 	/** the "t=" of a parameter string of a detection, e.g. "DOG s=1.8 t=0.004 min=false ..." or "DOG-SS s=1.6 steps=4 ... t=0.008 ..." */
@@ -413,7 +413,7 @@ public class Filter_Detections implements PlugIn
 
 	/**
 	 * @param minEnd - the ramp goes on beyond the steps until its last threshold is &gt;= minEnd (Stephan, 2026-10-20: at least
-	 * up to 0.01, which a low detection threshold would not reach in four steps), at most rampMaxSteps steps in all
+	 * up to 0.1, which a low detection threshold would not reach in six steps), at most rampMaxSteps steps in all
 	 * @return the entries, see rampEntries( t, factor, steps ); e.g. "0.001, 0.002, 0.004, 0.008, 0.016" for t = 0.0005, factor 2, four steps, minEnd 0.01
 	 */
 	public static String rampEntries( final double t, final double factor, final int steps, final double minEnd )

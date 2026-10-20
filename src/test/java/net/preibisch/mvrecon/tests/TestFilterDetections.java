@@ -97,9 +97,10 @@ public class TestFilterDetections
 		assertEquals( "0.0002, 0.0004, 0.0008, 0.0016, 0.0032, 0.0064, 0.0128", Filter_Detections.rampEntries( 0.0001, 2, 4, 0.01 ) );
 		assertEquals( "0.008, 0.016, 0.032, 0.064", Filter_Detections.rampEntries( 0.004, 2, 4, 0.01 ) );
 		assertEquals( "0.04, 0.08, 0.16, 0.32", Filter_Detections.rampEntries( 0.02, 2, 4, 0.01 ) );
-		assertEquals( 0.01, Filter_Detections.rampMinEnd, 0.0 );
+		assertEquals( 0.1, Filter_Detections.rampMinEnd, 0.0 );
 		assertEquals( 6, Filter_Detections.rampSteps );
 		assertEquals( "0.008, 0.016, 0.032, 0.064, 0.128, 0.256", Filter_Detections.rampEntries( 0.004, Filter_Detections.rampFactor, Filter_Detections.rampSteps, Filter_Detections.rampMinEnd ) );
+		assertEquals( "0.00002, 0.00004, 0.00008, 0.00016, 0.00032, 0.00064, 0.00128, 0.00256, 0.00512, 0.0102, 0.0205, 0.041, 0.0819, 0.164", Filter_Detections.rampEntries( 0.00001, Filter_Detections.rampFactor, Filter_Detections.rampSteps, Filter_Detections.rampMinEnd ) );
 		assertEquals( Filter_Detections.rampMaxSteps, Filter_Detections.rampEntries( 1e-15, 2, 4, 0.01 ).split( ", " ).length ); // capped
 		assertEquals( 0.00432, Filter_Detections.round3( 0.0043217 ), 0.0 );
 		assertEquals( 1230, Filter_Detections.round3( 1234.5 ), 0.0 );
