@@ -41,7 +41,6 @@ import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyDownsample2x;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 
@@ -276,7 +275,7 @@ public class DownsampleTools
 
 		final double[] tmp = new double[ ips.get( 0 ).getL().length ];
 
-		// the sigma of scale-space points scales with the geometric mean of the scaling in x and y (the offset does not matter)
+		// the sigma of the detections scales with the geometric mean of the scaling in x and y (the offset does not matter)
 		final double sigmaScale = Math.sqrt( Math.abs( t.get( 0, 0 ) * t.get( 1, 1 ) ) );
 
 		for ( final InterestPoint ip : ips )
@@ -293,8 +292,8 @@ public class DownsampleTools
 			ip.getW()[ 1 ] = tmp[ 1 ];
 			ip.getW()[ 2 ] = tmp[ 2 ];
 
-			if ( InterestPointSS.class.isInstance( ip ) )
-				( (InterestPointSS)ip ).setSigma( ( (InterestPointSS)ip ).getSigma() * sigmaScale );
+			if ( !Double.isNaN( ip.getSigma() ) )
+				ip.setSigma( (float)( ip.getSigma() * sigmaScale ) );
 		}
 	}
 

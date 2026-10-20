@@ -23,6 +23,8 @@
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import static net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlKeysInterestPoints.VIEWINTERESTPOINTSFILE_TAG;
+import static net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlKeysInterestPoints.VIEWINTERESTPOINTS_BASE_ATTRIBUTE_NAME;
+import static net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlKeysInterestPoints.VIEWINTERESTPOINTS_FILTER_ATTRIBUTE_NAME;
 import static net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlKeysInterestPoints.VIEWINTERESTPOINTS_LABEL_ATTRIBUTE_NAME;
 import static net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlKeysInterestPoints.VIEWINTERESTPOINTS_PARAMETERS_ATTRIBUTE_NAME;
 import static net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlKeysInterestPoints.VIEWINTERESTPOINTS_SETUP_ATTRIBUTE_NAME;
@@ -88,6 +90,10 @@ public class XmlIoViewInterestPoints extends XmlIoSingleton< ViewInterestPoints 
 			final String label = viewInterestPointsElement.getAttributeValue( VIEWINTERESTPOINTS_LABEL_ATTRIBUTE_NAME );
 			final String parameters = viewInterestPointsElement.getAttributeValue( VIEWINTERESTPOINTS_PARAMETERS_ATTRIBUTE_NAME );
 
+			// a filtered label (VirtualFilteredInterestPointsN5) records the label it filters and the filter, a plain label has neither
+			final String baseLabel = viewInterestPointsElement.getAttributeValue( VIEWINTERESTPOINTS_BASE_ATTRIBUTE_NAME );
+			final String filter = viewInterestPointsElement.getAttributeValue( VIEWINTERESTPOINTS_FILTER_ATTRIBUTE_NAME );
+
 			final String interestPointFileName = viewInterestPointsElement.getTextTrim();
 
 			final ViewId viewId = new ViewId( timepointId, setupId );
@@ -100,7 +106,7 @@ public class XmlIoViewInterestPoints extends XmlIoSingleton< ViewInterestPoints 
 			}
 
 			// we do not load the interestpoints nor the correspondinginterestpoints, we just do that once it is requested
-			final InterestPoints list = InterestPoints.instantiatefromXML( basePath, interestPointFileName );
+			final InterestPoints list = InterestPoints.instantiatefromXML( basePath, interestPointFileName, baseLabel, filter );
 			//final InterestPoints list = new InterestPointList( basePath, new File( interestPointFileName ) );
 			list.setParameters( parameters );
 			collection.addInterestPointList( label, list );
@@ -116,6 +122,13 @@ public class XmlIoViewInterestPoints extends XmlIoSingleton< ViewInterestPoints 
 		elem.setAttribute( VIEWINTERESTPOINTS_SETUP_ATTRIBUTE_NAME, Integer.toString( viewId ) );
 		elem.setAttribute( VIEWINTERESTPOINTS_LABEL_ATTRIBUTE_NAME, label );
 		elem.setAttribute( VIEWINTERESTPOINTS_PARAMETERS_ATTRIBUTE_NAME, interestPointList.getParameters() );
+
+		// a filtered label has no points of its own, the XML records what it filters
+		if ( interestPointList instanceof VirtualFilteredInterestPointsN5 )
+		{
+			elem.setAttribute( VIEWINTERESTPOINTS_BASE_ATTRIBUTE_NAME, ( (VirtualFilteredInterestPointsN5)interestPointList ).getBaseLabel() );
+			elem.setAttribute( VIEWINTERESTPOINTS_FILTER_ATTRIBUTE_NAME, ( (VirtualFilteredInterestPointsN5)interestPointList ).getFilter().toString() );
+		}
 		// a hack so that windows does not put its backslashes in
 		//elem.setText( interestPointList.getFile().toString().replace( "\\", "/" ) );
 		elem.setText( interestPointList.getXMLRepresentation() );

@@ -60,8 +60,8 @@ import net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions;
 import net.preibisch.legacy.segmentation.SimplePeak;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointdetection.Localization;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.lazygauss.LazyDoG;
@@ -81,8 +81,9 @@ import util.ImgLib2Tools;
  * Octave o+1 is the Gaussian level 'steps' (sigma = 2*sigma_0) of octave o subsampled by 2 in all
  * dimensions, so pixel p of octave o sits at 2^o * p in octave 0 and the sigmas continue seamlessly.
  * Peaks are refined by a quadratic fit in space and scale (Localization.computeQuadraticLocalization).
- * Each point carries the refined DoG response and the lower sigma of its DoG level,
- * sigmaMin * k^(level-1) * 2^octave, in x pixels of octave 0.
+ * Each point carries the refined DoG response, the lower sigma of its DoG level,
+ * sigmaMin * k^(level-1) * 2^octave, in x pixels of octave 0, and the intensity of the (raw) input at
+ * its position.
  *
  * Anisotropic voxels: with ScaleSpaceParameters.anisotropy (voxel size per dimension relative to x)
  * the sigma of every level in dimension d is sigma_i / anisotropy[ d ], i.e. the less resolved
@@ -245,9 +246,9 @@ public class DoGScaleSpace
 	 * @param mask - peaks are only accepted where mask &gt; 0 (extended to infinity, e.g. Views.extendZero), can be null
 	 * @param p - the parameters
 	 * @param service - for multithreading
-	 * @return the peaks in pixels of octave 0 with their response and sigma (in pixels of octave 0), ids 0..n-1
+	 * @return the peaks in pixels of octave 0 with their response, sigma (in pixels of octave 0) and the intensity of the input, ids 0..n-1
 	 */
-	public static < T extends RealType< T >, M extends RealType< M > > ArrayList< InterestPointSS > computeDoGScaleSpace(
+	public static < T extends RealType< T >, M extends RealType< M > > ArrayList< InterestPoint > computeDoGScaleSpace(
 			final RandomAccessible< T > input,
 			final Interval imageInterval,
 			final Interval processInterval,
@@ -255,74 +256,25 @@ public class DoGScaleSpace
 			final ScaleSpaceParameters p,
 			final ExecutorService service )
 	{
-		return toInterestPoints( computeScaleSpacePeaks( input, imageInterval, processInterval, mask, p, service ), false );
-	}
-
-	/**
-	 * Detects the peaks for several thresholds at once: the candidates are computed once down to the lowest threshold
-	 * (computeScaleSpaceCandidates) and filtered per threshold (filterCandidates), so the cost is that of one run at the
-	 * lowest threshold plus a filter and a duplicate merge per threshold. The result for a threshold is the one of
-	 * computeDoGScaleSpace at that threshold, up to the initial pre-filter of the extrema, which is min( thresholds ) / 3
-	 * instead of threshold / 3 (identical on all data tested). BigStitcher-Spark calls this per block and merges the
-	 * blocks per threshold; the interactive preview is not involved.
-	 *
-	 * @param thresholds - the thresholds (finite, &gt; 0), the results are returned in this order
-	 * @return one list per threshold, each with its own InterestPointSS objects and positions (ids 0..n-1 per list)
-	 */
-	public static < T extends RealType< T >, M extends RealType< M > > ArrayList< ArrayList< InterestPointSS > > computeDoGScaleSpace(
-			final RandomAccessible< T > input,
-			final Interval imageInterval,
-			final Interval processInterval,
-			final RandomAccessible< M > mask,
-			final ScaleSpaceParameters p,
-			final double[] thresholds,
-			final ExecutorService service )
-	{
-		if ( thresholds == null || thresholds.length == 0 )
-			throw new IllegalArgumentException( "No thresholds given." );
-
-		double min = Double.POSITIVE_INFINITY;
-
-		for ( final double t : thresholds )
-		{
-			if ( !( t > 0 ) || Double.isInfinite( t ) )
-				throw new IllegalArgumentException( "Thresholds must be finite and > 0, but one of them is " + t + "." );
-
-			min = Math.min( min, t );
-		}
-
-		final ScaleSpaceParameters pMin = new ScaleSpaceParameters( p );
-		pMin.threshold = min;
-
-		// all candidates down to the lowest threshold (no cap, a raised floor would leave the lowest threshold incomplete)
-		final Candidates candidates = computeScaleSpaceCandidates( input, imageInterval, processInterval, mask, pMin, 0, service );
-
-		if ( candidates.threshold > min )
-			throw new IllegalStateException( "The candidates are complete down to " + candidates.threshold + " only, not to " + min + "." );
-
-		final ArrayList< ArrayList< InterestPointSS > > result = new ArrayList<>();
-
-		for ( final double t : thresholds )
-			result.add( toInterestPoints( filterCandidates( candidates, t, p.detectFinestLevel, p.findMin, p.findMax, p.localization, p.combineDistance ), true ) );
-
-		return result;
+		return toInterestPoints( computeScaleSpacePeaks( input, imageInterval, processInterval, mask, p, service ), input );
 	}
 
 	/**
 	 * @param peaks - merged peaks, sorted by |response|
-	 * @param clonePositions - whether to copy the positions: the lists of several thresholds share their ScaleSpacePeak objects,
-	 * and DownsampleTools.correctForDownsampling transforms the positions of InterestPoints in place
-	 * @return the peaks as InterestPointSS with ids 0..n-1 in the order of the list
+	 * @param input - the (raw, not normalized) image the peaks were detected in, their intensity is read from it
+	 * @return the peaks as InterestPoints with ids 0..n-1 in the order of the list, with response, sigma and intensity
 	 */
-	protected static ArrayList< InterestPointSS > toInterestPoints( final ArrayList< ScaleSpacePeak > peaks, final boolean clonePositions )
+	protected static < T extends RealType< T > > ArrayList< InterestPoint > toInterestPoints( final ArrayList< ScaleSpacePeak > peaks, final RandomAccessible< T > input )
 	{
-		final ArrayList< InterestPointSS > result = new ArrayList<>();
+		final ArrayList< InterestPoint > result = new ArrayList<>();
 
 		for ( int i = 0; i < peaks.size(); ++i )
 		{
 			final ScaleSpacePeak peak = peaks.get( i );
-			result.add( new InterestPointSS( i, clonePositions ? peak.l.clone() : peak.l, peak.value, peak.sigma ) );
+			result.add( new InterestPoint( i, peak.l, (float)peak.value, (float)peak.sigma, Float.NaN ) );
 		}
+
+		InterestPointTools.readIntensities( input, result );
 
 		return result;
 	}
@@ -783,7 +735,7 @@ public class DoGScaleSpace
 		if ( p.localization == 0 )
 		{
 			final RandomAccess< FloatType > ra = octave.stack.randomAccess();
-			final ArrayList< InterestPoint > ips = Localization.noLocalization( accepted, true, true, true );
+			final ArrayList< InterestPoint > ips = Localization.noLocalization( accepted, true, true );
 
 			for ( int i = 0; i < ips.size(); ++i )
 			{
@@ -964,7 +916,7 @@ public class DoGScaleSpace
 		if ( p.localization == 0 )
 		{
 			final RandomAccess< FloatType > ra1 = dog1.randomAccess();
-			final ArrayList< InterestPoint > ips = Localization.noLocalization( accepted, true, true, true );
+			final ArrayList< InterestPoint > ips = Localization.noLocalization( accepted, true, true );
 
 			for ( int i = 0; i < ips.size(); ++i )
 			{
@@ -1268,7 +1220,7 @@ public class DoGScaleSpace
 		final ArrayList< SimplePeak > peaks = DoGImgLib2.findPeaks( dog, mask, minInitialPeakValue, service );
 
 		if ( p.localization == 0 )
-			return Localization.noLocalization( peaks, p.findMin, p.findMax, true );
+			return Localization.noLocalization( peaks, p.findMin, p.findMax );
 
 		final long[] min = dog.minAsLongArray();
 
@@ -1278,7 +1230,7 @@ public class DoGScaleSpace
 
 		final RandomAccessibleInterval< FloatType > dogZeroMin = Views.zeroMin( dog );
 
-		final ArrayList< InterestPoint > refined = Localization.computeQuadraticLocalization( peaks, Views.extendMirrorDouble( dogZeroMin ), new FinalInterval( dogZeroMin ), p.findMin, p.findMax, minPeakValue, true, service );
+		final ArrayList< InterestPoint > refined = Localization.computeQuadraticLocalization( peaks, Views.extendMirrorDouble( dogZeroMin ), new FinalInterval( dogZeroMin ), p.findMin, p.findMax, minPeakValue, service );
 
 		for ( final InterestPoint ip : refined )
 		{

@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.tests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -116,6 +117,7 @@ public class TestInterestPointDetection
 	{
 		testDoG( spimData, STANDARD_LABEL );
 		assertDoGResults( spimData, STANDARD_LABEL );
+		assertDoGAttributes( spimData, STANDARD_LABEL );
 	}
 
 	/**
@@ -225,6 +227,27 @@ public class TestInterestPointDetection
 		assertEquals( 58.636172043717856, medianX0, POSITION_DELTA, "View 0 X median" );
 		assertEquals( 62.769406167213575, medianY1, POSITION_DELTA, "View 1 Y median" );
 		assertEquals( 25.405042944531267, medianZ2, POSITION_DELTA, "View 2 Z median" );
+	}
+
+	/**
+	 * Every detection carries its attributes: the DoG response (|response| above the threshold), the sigma of the
+	 * detection in full-resolution pixels (the sigma times the downsampling in xy) and the image intensity at its position
+	 */
+	public static void assertDoGAttributes( final SpimData2 spimData, final String label )
+	{
+		for ( int setup = 0; setup < 3; ++setup )
+		{
+			final Map< Integer, InterestPoint > points = spimData.getViewInterestPoints().getViewInterestPointLists( new ViewId( 0, setup ) ).getInterestPointList( label ).getInterestPointsCopy();
+
+			assertTrue( points.size() > 0 );
+
+			for ( final InterestPoint ip : points.values() )
+			{
+				assertTrue( Math.abs( ip.getResponse() ) > STANDARD_THRESHOLD, "response " + ip.getResponse() );
+				assertEquals( STANDARD_SIGMA * STANDARD_DOWNSAMPLE_XY, ip.getSigma(), 1e-6 ); // the sigma is a float
+				assertTrue( Double.isFinite( ip.getIntensity() ) && ip.getIntensity() > 0, "intensity " + ip.getIntensity() );
+			}
+		}
 	}
 
 	/**

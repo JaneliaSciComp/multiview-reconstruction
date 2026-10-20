@@ -46,5 +46,12 @@ public class ViewInterestPointLists extends ViewId
 	public boolean contains( final String label ) { return lookup.containsKey( label ); }
 	public HashMap< String, InterestPoints > getHashMap() { return lookup; }
 	public InterestPoints getInterestPointList( final String label ) { return lookup.get( label ); }
-	public void addInterestPointList( final String label, final InterestPoints pointList ) { lookup.put( label, pointList ); }
+	public void addInterestPointList( final String label, final InterestPoints pointList )
+	{
+		lookup.put( label, pointList );
+
+		// a filtered label looks its base label up in this view
+		if ( pointList instanceof VirtualFilteredInterestPointsN5 )
+			( (VirtualFilteredInterestPointsN5)pointList ).setOwner( this );
+	}
 }

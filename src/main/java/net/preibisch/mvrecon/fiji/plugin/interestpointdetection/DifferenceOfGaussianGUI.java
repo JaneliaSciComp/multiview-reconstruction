@@ -160,7 +160,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	}
 
 	/**
-	 * @return the parameters of the detection as set in the dialogs (the views and the downsampling in xy are set per view by the caller, the threshold per run)
+	 * @return the parameters of the detection as set in the dialogs (the views and the downsampling in xy are set per view by the caller)
 	 */
 	protected DoGParameters detectionParameters()
 	{
@@ -195,19 +195,11 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		return dog;
 	}
 
-	/**
-	 * The detections of all thresholds from one computation per view, see DoG.addInterestPoints( perThreshold, dog, thresholds )
-	 */
 	@Override
-	public LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > findInterestPointsPerSuffix( final TimePoint t )
+	public HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint t )
 	{
 		final DoGParameters dog = detectionParameters();
-		final double[] thresholds = thresholds();
-
-		final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = new ArrayList<>();
-
-		for ( int i = 0; i < thresholds.length; ++i )
-			perThreshold.add( new HashMap<>() );
+		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap< ViewId, List< InterestPoint > >();
 
 		for ( final ViewDescription vd : SpimData2.getAllViewIdsForTimePointSorted( spimData, viewIdsToProcess, t ) )
 		{
@@ -227,7 +219,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 				else
 					dog.downsampleXY = downsampleXYIndex;
 
-				DoG.addInterestPoints( perThreshold, dog, thresholds );
+				DoG.addInterestPoints( interestPoints, dog );
 			}
 			catch ( Exception  e )
 			{
@@ -237,16 +229,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 			}
 		}
 
-		return perSuffix( perThreshold );
-	}
-
-	/**
-	 * The detections at the first threshold (all of them with a single threshold), see findInterestPointsPerSuffix
-	 */
-	@Override
-	public HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint t )
-	{
-		return findInterestPointsPerSuffix( t ).values().iterator().next();
+		return interestPoints;
 	}
 
 	@Override
@@ -270,18 +253,12 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		return true;
 	}
 
-	/**
-	 * Sigma, the threshold, minima and maxima as a dialog. "Number_of_thresholds" asks for several thresholds in a
-	 * second dialog (after one for N if chosen), which give one label per threshold from a single computation per
-	 * view; the single "Threshold" is then not used.
-	 */
 	@Override
 	protected boolean setAdvancedValues()
 	{
 		final GenericDialog gd = new GenericDialog( "Advanced values" );
 
 		gd.addNumericField( "Sigma", defaultSigma, 5 );
-		gd.addChoice( "Number_of_thresholds (several give one label per threshold)", thresholdCountChoice, thresholdCountChoice[ defaultThresholdCountChoice ] );
 		gd.addNumericField( "Threshold", defaultThreshold, 5 );
 		gd.addCheckbox( "Find_minima", defaultFindMin );
 		gd.addCheckbox( "Find_maxima", defaultFindMax );
@@ -292,13 +269,11 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 			return false;
 
 		this.sigma = defaultSigma = gd.getNextNumber();
-		final int countChoice = gd.getNextChoiceIndex();
 		this.threshold = defaultThreshold = gd.getNextNumber();
 		this.findMin = defaultFindMin = gd.getNextBoolean();
 		this.findMax = defaultFindMax = gd.getNextBoolean();
 
-		// several thresholds: one label per threshold from a single computation per view
-		return queryMultipleThresholds( countChoice );
+		return true;
 	}
 
 	@Override
@@ -355,7 +330,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	}
 
 	@Override
-	protected String parameters( final double threshold )
+	public String getParameters()
 	{
 		return "DOG s=" + sigma + " t=" + threshold + " min=" + findMin + " max=" + findMax +
 				" imageSigmaX=" + imageSigmaX + " imageSigmaY=" + imageSigmaY + " imageSigmaZ=" + imageSigmaZ + " downsampleXYIndex=" + downsampleXYIndex +

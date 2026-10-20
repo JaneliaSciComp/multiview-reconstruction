@@ -25,6 +25,7 @@ package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 import java.net.URI;
 import java.util.Collection;
 import java.util.Map;
+import java.util.function.Function;
 
 import mpicbg.spim.data.sequence.ViewId;
 
@@ -54,6 +55,22 @@ public abstract class InterestPoints
 			throw new RuntimeException( "text-file based interest points not supported anymore.");
 		else
 			return new InterestPointsN5( baseDir, fromXMLInfo );
+	}
+
+	/**
+	 * @param baseLabel - the label a filtered label filters (XML attribute 'base'), null for a plain label
+	 * @param filter - the filter of a filtered label (XML attribute 'filter', InterestPointFilter.toString), null for a plain label
+	 * @return a plain label (InterestPointsN5) or a filtered one (VirtualFilteredInterestPointsN5)
+	 */
+	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo, final String baseLabel, final String filter )
+	{
+		if ( baseLabel == null && filter == null )
+			return instantiatefromXML( baseDir, fromXMLInfo );
+
+		if ( baseLabel == null || filter == null )
+			throw new RuntimeException( "A filtered label needs both the base label and the filter in the XML, got base='" + baseLabel + "', filter='" + filter + "' for '" + fromXMLInfo + "'." );
+
+		return new VirtualFilteredInterestPointsN5( baseDir, fromXMLInfo, baseLabel, InterestPointFilter.fromString( filter ) );
 	}
 
 	public static InterestPoints newInstance( final URI baseDir, final ViewId viewId, final String label )

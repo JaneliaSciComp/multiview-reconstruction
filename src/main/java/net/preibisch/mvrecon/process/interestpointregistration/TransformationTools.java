@@ -1058,7 +1058,7 @@ public class TransformationTools
 		{
 			final double[] l = new double[ 3 ];
 			m.apply( ip.getL(), l );
-			return new InterestPoint( ip.getId(), l );
+			return ip.derive( ip.getId(), l );
 		}).collect( Collectors.toList() );
 	}
 

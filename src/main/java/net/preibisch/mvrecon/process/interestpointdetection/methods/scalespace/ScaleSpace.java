@@ -22,8 +22,6 @@
  */
 package net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace;
 
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -43,7 +41,6 @@ import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
@@ -61,7 +58,7 @@ public class ScaleSpace
 	/**
 	 * Detects the interest points of all views in p.toProcess, see addInterestPoints
 	 *
-	 * @return the interest points per view (InterestPointSS with response and sigma, in full-resolution pixels)
+	 * @return the interest points per view (with response, sigma and intensity; positions and sigma in full-resolution pixels)
 	 */
 	public static HashMap< ViewId, List< InterestPoint >> findInterestPoints( final ScaleSpaceDetectionParameters p )
 	{
@@ -104,57 +101,19 @@ public class ScaleSpace
 	}
 
 	/**
-	 * Detects the interest points of all views in p.toProcess for several thresholds at once (one computation per
-	 * view), see addInterestPoints( perThreshold, p, thresholds )
-	 *
-	 * @return one map (the interest points per view) per threshold, in the order of the thresholds
-	 */
-	public static ArrayList< HashMap< ViewId, List< InterestPoint > > > findInterestPoints( final ScaleSpaceDetectionParameters p, final double[] thresholds )
-	{
-		final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = new ArrayList<>();
-
-		for ( int i = 0; i < thresholds.length; ++i )
-			perThreshold.add( new HashMap<>() );
-
-		addInterestPoints( perThreshold, p, thresholds );
-
-		return perThreshold;
-	}
-
-	/**
-	 * Detects the interest points of every present view in p.toProcess at the threshold p.scaleSpace.threshold and adds
-	 * them to the map, see addInterestPoints( perThreshold, p, thresholds )
+	 * Detects the interest points of every present view in p.toProcess and adds them to the map: the view is opened at
+	 * the starting resolution p.downsampling (DownsampleTools.openAndDownsample), the intensity range is the user's or
+	 * the one of the opened view, the anisotropy of the opened image is derived from the calibration and p.anisotropyZ,
+	 * DoGScaleSpace.computeDoGScaleSpace runs on the entire view, the detections are limited if requested and mapped
+	 * (positions and sigma) to full resolution with the mipmap transform. A failing view is logged and skipped.
+	 * p.scaleSpace is mutated per view (intensity range, anisotropy).
 	 *
 	 * @param interestPoints - the map the detections are added to, one list per view
 	 * @param p - the parameters (views, loader, starting resolution, anisotropy, intensity range, limit, the scale space)
 	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static void addInterestPoints( final HashMap< ViewId, List< InterestPoint > > interestPoints, final ScaleSpaceDetectionParameters p )
 	{
-		final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = new ArrayList<>();
-		perThreshold.add( interestPoints );
-
-		addInterestPoints( perThreshold, p, new double[] { p.scaleSpace.threshold } );
-	}
-
-	/**
-	 * Detects the interest points of every present view in p.toProcess for several thresholds at once and adds them to
-	 * the map of each threshold: the view is opened at the starting resolution p.downsampling
-	 * (DownsampleTools.openAndDownsample), the intensity range is the user's or the one of the opened view, the
-	 * anisotropy of the opened image is derived from the calibration and p.anisotropyZ, DoGScaleSpace.computeDoGScaleSpace
-	 * runs once on the entire view for all thresholds, and per threshold the detections are limited if requested and
-	 * mapped (positions and sigma) to full resolution with the mipmap transform. A failing view is logged and skipped.
-	 * p.scaleSpace is mutated per view (intensity range, anisotropy); p.scaleSpace.threshold is not used.
-	 *
-	 * @param perThreshold - one map per threshold the detections are added to, one list per view each
-	 * @param p - the parameters (views, loader, starting resolution, anisotropy, intensity range, limit, the scale space)
-	 * @param thresholds - the thresholds, in the order of perThreshold
-	 */
-	@SuppressWarnings({ "rawtypes", "unchecked" })
-	public static void addInterestPoints( final List< HashMap< ViewId, List< InterestPoint > > > perThreshold, final ScaleSpaceDetectionParameters p, final double[] thresholds )
-	{
-		if ( perThreshold.size() != thresholds.length )
-			throw new IllegalArgumentException( "One map per threshold is needed, got " + perThreshold.size() + " maps for " + thresholds.length + " thresholds." );
-
 		if ( p.showProgress() )
 			IJ.showProgress( p.showProgressMin );
 
@@ -170,8 +129,7 @@ public class ScaleSpace
 
 				final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
 
-				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Scale space of " + Group.pvid( vd ) + " starting at downsampling " + Util.printCoordinates( p.downsampling ) + ( thresholds.length > 1 ? ", thresholds " + Arrays.toString( thresholds ) : "" ) );
-
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Scale space of " + Group.pvid( vd ) + " starting at downsampling " + Util.printCoordinates( p.downsampling ) );
 
 				final Pair< RandomAccessibleInterval, AffineTransform3D > input =
 						DownsampleTools.openAndDownsample(
@@ -202,17 +160,16 @@ public class ScaleSpace
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): anisotropy of the opened image (voxel size per dimension relative to x) = " + Util.printCoordinates( p.scaleSpace.anisotropy ) +
 						", sigma of the finest level in pixels = (" + p.scaleSpace.sigmaMin / p.scaleSpace.anisotropy[ 0 ] + ", " + p.scaleSpace.sigmaMin / p.scaleSpace.anisotropy[ 1 ] + ", " + p.scaleSpace.sigmaMin / p.scaleSpace.anisotropy[ 2 ] + ")" );
 
-				final ArrayList< ArrayList< InterestPointSS > > peaksPerThreshold;
+				List< InterestPoint > ips;
 
 				try
 				{
-					peaksPerThreshold = DoGScaleSpace.computeDoGScaleSpace(
+					ips = DoGScaleSpace.computeDoGScaleSpace(
 						(RandomAccessible)Views.extendMirrorSingle( input.getA() ),
 						new FinalInterval( input.getA() ),
 						new FinalInterval( input.getA() ),
 						null, // mask
 						p.scaleSpace,
-						thresholds,
 						service );
 				}
 				finally
@@ -220,18 +177,13 @@ public class ScaleSpace
 					service.shutdown();
 				}
 
-				for ( int i = 0; i < thresholds.length; ++i )
-				{
-					List< InterestPoint > ips = new ArrayList<>( peaksPerThreshold.get( i ) );
+				if ( p.limitDetections )
+					ips = InterestPointTools.limitList( p.maxDetections, p.maxDetectionsTypeIndex, ips );
 
-					if ( p.limitDetections )
-						ips = InterestPointTools.limitList( p.maxDetections, p.maxDetectionsTypeIndex, ips );
+				// maps positions and sigmas to full resolution
+				DownsampleTools.correctForDownsampling( ips, input.getB() );
 
-					// maps positions and sigmas to full resolution (every threshold has its own positions)
-					DownsampleTools.correctForDownsampling( ips, input.getB() );
-
-					perThreshold.get( i ).put( vd, ips );
-				}
+				interestPoints.put( vd, ips );
 			}
 			catch ( Exception e )
 			{

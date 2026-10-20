@@ -77,7 +77,7 @@ public class RelativeThinOut
 			final VoxelDimensions voxelSize = vd.getViewSetup().getVoxelSize();
 
 			final List< RealPoint > list = new ArrayList< RealPoint >();
-			final List< double[] > points = new ArrayList< double[] >();
+			final List< InterestPoint > points = new ArrayList< InterestPoint >();
 
 			for ( final InterestPoint ip : oldIpl.getInterestPointsCopy().values() )
 			{
@@ -86,7 +86,7 @@ public class RelativeThinOut
 						ip.getL()[ 1 ] * voxelSize.dimension( 1 ),
 						ip.getL()[ 2 ] * voxelSize.dimension( 2 ) ) );
 
-				points.add( ip.getL() );
+				points.add( ip );
 			}
 
 			// assemble the list of relative
@@ -132,7 +132,7 @@ public class RelativeThinOut
 				final double d = nn.getDistance();
 				
 				if ( ( keepRange && d >= minDistance && d <= maxDistance ) || ( !keepRange && ( d < minDistance || d > maxDistance ) ) )
-					newIPs.add( new InterestPoint( id++, points.get( j ).clone() ) );
+					newIPs.add( points.get( j ).derive( id++, points.get( j ).getL().clone() ) );
 			}
 
 			newIpl.setInterestPoints( newIPs );

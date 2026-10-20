@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import ij.ImageJ;
 import ij.gui.GenericDialog;
@@ -48,6 +49,7 @@ import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AbstractImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
@@ -199,44 +201,45 @@ public class Interest_Point_Detection implements PlugIn
 		// if grouped, we need to get the min/max intensity for all groups
 		ipd.preprocess();
 
-		// one run can produce several labels (e.g. the scale space with one label per threshold), usually just the label itself
-		final List< String > suffixes = ipd.getLabelSuffixes();
+		// the filtered labels to create from the detections (VirtualFilteredInterestPointsN5), none by default
+		final List< InterestPointFilter > filters = ipd.getFilters();
 
-		// record action history before processing — params reflect the GUI choices that drive ipd (one record per label,
-		// so that removing a label removes its record)
-		for ( final String suffix : suffixes )
-		{
-			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
-			ActionHistoryRecorder.put( params, "label", label + suffix );
-			ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
-			ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
-			// which views this ran on -- record() below adds parsimonious --angleId/--tileId/
-			// --illuminationId/--channelId/--timepointId filters over spelling out every view id
-			// (see ActionHistoryRecorder.putViewSelection)
-			// individual detection params (sigma, threshold, type, localization, intensities,
-			// downsampling) so the BigStitcher-Spark translator can emit them as CLI flags
-			ActionHistoryRecorder.merge( params, ipd.describeParameters( suffix ) );
-			ActionHistoryRecorder.record(
-					data,
-					"detect-interestpoints",
-					Interest_Point_Detection.class.getName(),
-					params,
-					viewIds,
-					"interestpoints:" + label + suffix );
-		}
+		// record action history before processing — params reflect the GUI choices that drive ipd
+		final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+		ActionHistoryRecorder.put( params, "label", label );
+		ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
+		ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
+		// which views this ran on -- record() below adds parsimonious --angleId/--tileId/
+		// --illuminationId/--channelId/--timepointId filters over spelling out every view id
+		// (see ActionHistoryRecorder.putViewSelection)
+		// individual detection params (sigma, threshold, type, localization, intensities,
+		// downsampling) so the BigStitcher-Spark translator can emit them as CLI flags
+		ActionHistoryRecorder.merge( params, ipd.describeParameters() );
+		ActionHistoryRecorder.record(
+				data,
+				"detect-interestpoints",
+				Interest_Point_Detection.class.getName(),
+				params,
+				viewIds,
+				"interestpoints:" + label );
+
+		// one record per filtered label, so that removing a label removes its record
+		for ( final InterestPointFilter filter : filters )
+			Filter_Detections.recordFilterAction( data, label + filter.suffix(), label, filter, false, viewIds );
 
 		// now extract all the detections
 		for ( final TimePoint tp : SpimData2.getAllTimePointsSorted( data, viewIds ) )
 		{
-			final LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > points = ipd.findInterestPointsPerSuffix( tp );
+			final HashMap< ViewId, List< InterestPoint > > points = ipd.findInterestPoints( tp );
 
-			for ( final String suffix : suffixes )
-			{
-				InterestPointTools.addInterestPoints( data, label + suffix, points.get( suffix ), ipd.getParameters( suffix ) );
+			InterestPointTools.addInterestPoints( data, label, points, ipd.getParameters() );
 
-				if ( suffixes.size() > 1 )
-					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Stored the interest points of timepoint " + tp.getName() + " as '" + label + suffix + "'." );
-			}
+			// the filtered labels have no points of their own, they filter the label on the fly
+			for ( final InterestPointFilter filter : filters )
+				InterestPointTools.addFilteredInterestPoints( data, label + filter.suffix(), label, filter, points.keySet() );
+
+			if ( filters.size() > 0 )
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Stored the interest points of timepoint " + tp.getName() + " as '" + label + "' and the filtered labels " + filters.stream().map( f -> "'" + label + f.suffix() + "'" ).collect( Collectors.joining( ", " ) ) + "." );
 
 			// update metadata if necessary
 			if ( data.getSequenceDescription().getImgLoader() instanceof AbstractImgLoader )

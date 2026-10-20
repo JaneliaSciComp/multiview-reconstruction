@@ -28,7 +28,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -63,10 +62,9 @@ import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.simulation.imgloader.SimulatedBeadsImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointSS;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace.Candidates;
@@ -201,7 +199,7 @@ public class TestDoGScaleSpace
 			for ( int d = 0; d < 3; ++d )
 				assertEquals( legacy.get( i ).getL()[ d ], ours.get( i ).getL()[ d ], 0.0 );
 
-			assertEquals( ( (InterestPointValue)legacy.get( i ) ).getIntensity(), ( (InterestPointValue)ours.get( i ) ).getIntensity(), 0.0 );
+			assertEquals( legacy.get( i ).getResponse(), ours.get( i ).getResponse(), 0.0 );
 		}
 	}
 
@@ -228,10 +226,10 @@ public class TestDoGScaleSpace
 		p.maxIntensity = TestInterestPointDetection.GLOBAL_MAX_INTENSITY;
 
 		p.detectFinestLevel = true;
-		final ArrayList< InterestPointSS > withFinest = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( img ), interval, interval, null, p, service );
+		final ArrayList< InterestPoint > withFinest = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( img ), interval, interval, null, p, service );
 
 		p.detectFinestLevel = false;
-		final ArrayList< InterestPointSS > lowe = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( img ), interval, interval, null, p, service );
+		final ArrayList< InterestPoint > lowe = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( img ), interval, interval, null, p, service );
 
 		service.shutdown();
 
@@ -247,7 +245,7 @@ public class TestDoGScaleSpace
 		// the finest-level points carry sigma <= sigmaMin (sigmaMin, or the fitted size below it)
 		int atMostSigmaMin = 0;
 
-		for ( final InterestPointSS peak : withFinest )
+		for ( final InterestPoint peak : withFinest )
 			if ( peak.getSigma() <= p.sigmaMin + 1e-6 )
 				++atMostSigmaMin;
 
@@ -427,11 +425,11 @@ public class TestDoGScaleSpace
 
 		assertTrue( DoGScaleSpace.autoOctaves( img, p ) >= stds.length, "number of octaves" );
 
-		final ArrayList< InterestPointSS > peaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( img ), img, img, null, p, service );
+		final ArrayList< InterestPoint > peaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( img ), img, img, null, p, service );
 
 		service.shutdown();
 
-		for ( final InterestPointSS peak : peaks )
+		for ( final InterestPoint peak : peaks )
 			IOFunctions.println( "sigmaMin=" + sigmaMin + " peak: " + Util.printCoordinates( peak.getL() ) + " response=" + peak.getResponse() + " sigma=" + peak.getSigma() );
 
 		assertEquals( stds.length, peaks.size(), "number of peaks" );
@@ -442,7 +440,7 @@ public class TestDoGScaleSpace
 
 		for ( int i = 0; i < stds.length; ++i )
 		{
-			final InterestPointSS peak = peaks.get( i );
+			final InterestPoint peak = peaks.get( i );
 			final double f = 1L << i; // blob i is expected in octave i
 
 			for ( int d = 0; d < 3; ++d )
@@ -658,150 +656,99 @@ public class TestDoGScaleSpace
 	}
 
 	/**
-	 * Several thresholds at once (one computation) give the same points as one run per threshold: for the algorithm,
-	 * for the driver (own positions per threshold, mapped to full resolution once each, also with a limit of detections)
-	 * and for the GUI (one label suffix per threshold with its own parameter string)
+	 * The intensity of a point is the (raw) image at its refined position, linearly interpolated: unit blobs give ~1 in
+	 * the scale space and in the legacy DoG (which also stores its sigma), and readIntensities interpolates linearly
 	 */
 	@Test
-	@SuppressWarnings({ "rawtypes", "unchecked" })
-	public void testMultiThreshold()
+	public void testIntensity()
 	{
-		final SpimData2 spimData = SpimData2.convert( SimulatedBeadsImgLoader.spimdataExample( new int[] { 0, 90 }, 0, 100, new double[] { 2, 2, 2 }, new FinalInterval( 128, 128, 64 ) ) );
-		final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( 0, 0 );
-		final RandomAccessibleInterval img = DownsampleTools.openAndDownsample( spimData.getSequenceDescription().getImgLoader(), vd, new long[] { 1, 1, 1 }, false ).getA();
-		final Interval interval = new FinalInterval( img );
 		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
-		final double[] thresholds = new double[] { 0.004, 0.02 };
 
-		// the algorithm
-		final ScaleSpaceParameters p = new ScaleSpaceParameters( 1.5, 3, -1, 0.004 );
-		final float[] minmax = FusionTools.minMax( img );
-		p.minIntensity = minmax[ 0 ];
-		p.maxIntensity = minmax[ 1 ];
+		final double[][] centers = new double[][] { { 40.3, 60.2, 30.6 }, { 90.7, 70.4, 33.3 } };
+		final Img< FloatType > img = blobs( new long[] { 128, 128, 64 }, centers, new double[] { 4, 6 } );
 
-		final ArrayList< ArrayList< InterestPointSS > > multi = DoGScaleSpace.computeDoGScaleSpace( (RandomAccessible)Views.extendMirrorSingle( img ), interval, interval, null, p, thresholds, service );
+		// the scale space normalizes to [0,1] internally, the intensity is the raw value
+		final ScaleSpaceParameters p = new ScaleSpaceParameters( 2.0, 3, -1, 0.05 );
+		p.minIntensity = 0;
+		p.maxIntensity = 1;
 
-		assertEquals( thresholds.length, multi.size() );
+		final ArrayList< InterestPoint > ss = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( img ), img, img, null, p, service );
 
-		for ( int i = 0; i < thresholds.length; ++i )
+		assertTrue( ss.size() >= 2 );
+
+		for ( final InterestPoint ip : ss )
 		{
-			final ScaleSpaceParameters pt = new ScaleSpaceParameters( p );
-			pt.threshold = thresholds[ i ];
-
-			final ArrayList< InterestPointSS > single = DoGScaleSpace.computeDoGScaleSpace( (RandomAccessible)Views.extendMirrorSingle( img ), interval, interval, null, pt, service );
-
-			assertTrue( single.size() > 0, "threshold " + thresholds[ i ] );
-			assertSamePoints( single, multi.get( i ), "algorithm, threshold " + thresholds[ i ] );
+			assertTrue( Double.isFinite( ip.getIntensity() ) && ip.getIntensity() >= 0 && ip.getIntensity() <= 1, "intensity " + ip.getIntensity() );
+			assertTrue( Double.isFinite( ip.getResponse() ) && Double.isFinite( ip.getSigma() ) );
 		}
 
-		// the positions of the lists are independent (correctForDownsampling transforms in place)
-		assertTrue( multi.get( 0 ).get( 0 ).getL() != multi.get( 1 ).get( 0 ).getL() );
-
-		// the driver, with a limit of detections
-		for ( final boolean limit : new boolean[] { false, true } )
+		for ( final double[] c : centers )
 		{
-			final ScaleSpaceDetectionParameters pd = new ScaleSpaceDetectionParameters();
-			pd.imgloader = spimData.getSequenceDescription().getImgLoader();
-			pd.toProcess = new ArrayList<>();
-			pd.toProcess.add( vd );
-			pd.downsampling = new long[] { 2, 2, 1 };
-			pd.limitDetections = limit;
-			pd.maxDetections = 20;
-			pd.maxDetectionsTypeIndex = 0;
-			pd.scaleSpace.sigmaMin = 1.5;
-			pd.scaleSpace.steps = 3;
-
-			final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = ScaleSpace.findInterestPoints( pd, thresholds );
-
-			assertEquals( thresholds.length, perThreshold.size() );
-
-			for ( int i = 0; i < thresholds.length; ++i )
-			{
-				pd.scaleSpace.threshold = thresholds[ i ];
-				final List< InterestPoint > single = ScaleSpace.findInterestPoints( pd ).get( vd );
-
-				assertTrue( single.size() > 0 );
-				assertSamePoints( single, perThreshold.get( i ).get( vd ), "driver, limit " + limit + ", threshold " + thresholds[ i ] );
-			}
+			final InterestPoint nearest = nearest( ss, c );
+			assertTrue( dist( nearest.getL(), c ) < 1.0, "scale space found the blob at " + Util.printCoordinates( c ) );
+			assertEquals( 1.0, nearest.getIntensity(), 0.05 );
 		}
 
-		// the GUI: one label per threshold
-		final ArrayList< ViewId > views = new ArrayList<>();
-		views.add( vd );
+		// the legacy DoG: the same intensity, the sigma of the detection
+		final ArrayList< InterestPoint > dog = DoGImgLib2.computeDoG( Views.extendMirrorSingle( img ), null, img, 4.0, 0.05, 1, false, true, 0, 1, service );
 
-		final ScaleSpaceGUI gui = new ScaleSpaceGUI( spimData, views )
-		{{
-			localization = 1;
-			downsampling = new long[] { 2, 2, 1 };
-			anisotropyZ = 1.0;
-			minIntensity = Double.NaN;
-			maxIntensity = Double.NaN;
-			sigma = 1.5;
-			steps = 3;
-			octaves = -1;
-			detectFinestLevel = true;
-			findMin = false;
-			findMax = true;
-			thresholds = new double[] { 0.004, 0.02 };
-			threshold = 0.004;
-		}};
+		final InterestPoint nearest = nearest( dog, centers[ 0 ] );
+		assertTrue( dist( nearest.getL(), centers[ 0 ] ) < 1.0, "DoG found the blob" );
+		assertEquals( 1.0, nearest.getIntensity(), 0.05 );
 
-		assertEquals( Arrays.asList( "_t0.004", "_t0.02" ), gui.getLabelSuffixes() );
-		assertTrue( gui.getParameters( "_t0.02" ).contains( " t=0.02 " ) );
-		assertTrue( gui.getParameters( "_t0.004" ).contains( " t=0.004 " ) );
-		assertEquals( "0.02", gui.describeParameters( "_t0.02" ).get( "threshold" ) );
-		assertEquals( "0.004;0.02", gui.describeParameters( "_t0.02" ).get( "thresholds" ) );
-
-		final TimePoint tp = spimData.getSequenceDescription().getTimePoints().getTimePointsOrdered().get( 0 );
-		final LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > perSuffix = gui.findInterestPointsPerSuffix( tp );
-
-		assertEquals( gui.getLabelSuffixes(), new ArrayList<>( perSuffix.keySet() ) );
-
-		final ScaleSpaceDetectionParameters pd = new ScaleSpaceDetectionParameters();
-		pd.imgloader = spimData.getSequenceDescription().getImgLoader();
-		pd.toProcess = new ArrayList<>();
-		pd.toProcess.add( vd );
-		pd.downsampling = new long[] { 2, 2, 1 };
-		pd.scaleSpace.sigmaMin = 1.5;
-		pd.scaleSpace.steps = 3;
-
-		for ( int i = 0; i < thresholds.length; ++i )
+		for ( final InterestPoint ip : dog )
 		{
-			pd.scaleSpace.threshold = thresholds[ i ];
-			assertSamePoints( ScaleSpace.findInterestPoints( pd ).get( vd ), perSuffix.get( gui.getLabelSuffixes().get( i ) ).get( vd ), "GUI, threshold " + thresholds[ i ] );
+			assertEquals( 4.0, ip.getSigma(), 0.0 );
+			assertTrue( Math.abs( ip.getResponse() ) > 0.05 );
+			assertTrue( Double.isFinite( ip.getIntensity() ) );
 		}
 
-		// a single threshold keeps the plain label
-		final ScaleSpaceGUI single = new ScaleSpaceGUI( spimData, views )
-		{{
-			thresholds = new double[] { 0.02 };
-			threshold = 0.02;
-		}};
+		// readIntensities interpolates linearly in the image handed in
+		final Img< FloatType > ramp = ArrayImgs.floats( 4, 4, 4 );
+		final Cursor< FloatType > cursor = ramp.localizingCursor();
 
-		assertEquals( Arrays.asList( "" ), single.getLabelSuffixes() );
+		while ( cursor.hasNext() )
+		{
+			cursor.fwd();
+			cursor.get().set( cursor.getIntPosition( 0 ) + 10 * cursor.getIntPosition( 1 ) + 100 * cursor.getIntPosition( 2 ) );
+		}
+
+		final InterestPoint a = new InterestPoint( 0, new double[] { 2, 1, 0 } );
+		final InterestPoint b = new InterestPoint( 1, new double[] { 1.5, 2, 3 } );
+
+		assertTrue( Double.isNaN( a.getIntensity() ) );
+
+		InterestPointTools.readIntensities( Views.extendBorder( ramp ), Arrays.asList( a, b ) );
+
+		assertEquals( 12.0, a.getIntensity(), 1e-6 );
+		assertEquals( 321.5, b.getIntensity(), 1e-4 );
 
 		service.shutdown();
 	}
 
-	protected static void assertSamePoints( final List< ? extends InterestPoint > expected, final List< ? extends InterestPoint > actual, final String message )
+	protected static InterestPoint nearest( final List< InterestPoint > points, final double[] c )
 	{
-		assertEquals( expected.size(), actual.size(), message );
+		InterestPoint nearest = null;
 
-		for ( int j = 0; j < expected.size(); ++j )
-		{
-			final InterestPointSS a = (InterestPointSS)expected.get( j ), b = (InterestPointSS)actual.get( j );
+		for ( final InterestPoint ip : points )
+			if ( nearest == null || dist( ip.getL(), c ) < dist( nearest.getL(), c ) )
+				nearest = ip;
 
-			assertEquals( a.getId(), b.getId(), message );
-			assertEquals( a.getResponse(), b.getResponse(), 0.0, message );
-			assertEquals( a.getSigma(), b.getSigma(), 0.0, message );
+		return nearest;
+	}
 
-			for ( int d = 0; d < 3; ++d )
-				assertEquals( a.getL()[ d ], b.getL()[ d ], 0.0, message + ", point " + j );
-		}
+	protected static double dist( final double[] a, final double[] b )
+	{
+		double d = 0;
+
+		for ( int i = 0; i < a.length; ++i )
+			d += ( a[ i ] - b[ i ] ) * ( a[ i ] - b[ i ] );
+
+		return Math.sqrt( d );
 	}
 
 	/**
-	 * The whole-view driver (ScaleSpace.findInterestPoints) returns InterestPointSS mapped to full
+	 * The whole-view driver (ScaleSpace.findInterestPoints) returns the points mapped to full
 	 * resolution, identical to DoGScaleSpace.computeDoGScaleSpace plus DownsampleTools.correctForDownsampling
 	 */
 	@Test
@@ -834,14 +781,14 @@ public class TestDoGScaleSpace
 		final Pair< RandomAccessibleInterval, AffineTransform3D > input =
 				DownsampleTools.openAndDownsample( p.imgloader, vd, new long[] { p.downsampleXY, p.downsampleXY, p.downsampleZ }, false );
 
-		final ArrayList< InterestPointSS > helper = DoGScaleSpace.computeDoGScaleSpace( (RandomAccessible)Views.extendMirrorSingle( input.getA() ), new FinalInterval( input.getA() ), new FinalInterval( input.getA() ), null, p.scaleSpace, service );
+		final ArrayList< InterestPoint > helper = DoGScaleSpace.computeDoGScaleSpace( (RandomAccessible)Views.extendMirrorSingle( input.getA() ), new FinalInterval( input.getA() ), new FinalInterval( input.getA() ), null, p.scaleSpace, service );
 
 		service.shutdown();
 
 		final double sigmaScale = Math.sqrt( Math.abs( input.getB().get( 0, 0 ) * input.getB().get( 1, 1 ) ) );
 		final ArrayList< double[] > expectedSigmas = new ArrayList<>();
 
-		for ( final InterestPointSS ip : helper )
+		for ( final InterestPoint ip : helper )
 			expectedSigmas.add( new double[] { ip.getSigma() * sigmaScale } );
 
 		DownsampleTools.correctForDownsampling( helper, input.getB() );
@@ -853,14 +800,14 @@ public class TestDoGScaleSpace
 
 		for ( int i = 0; i < driver.size(); ++i )
 		{
-			assertTrue( InterestPointSS.class.isInstance( driver.get( i ) ) );
+			assertFalse( Double.isNaN( driver.get( i ).getSigma() ) );
 
-			final InterestPointSS d = (InterestPointSS)driver.get( i );
-			final InterestPointSS h = helper.get( i );
+			final InterestPoint d = driver.get( i );
+			final InterestPoint h = helper.get( i );
 
 			assertEquals( h.getId(), d.getId() );
 			assertEquals( h.getSigma(), d.getSigma(), 0.0 );
-			assertEquals( expectedSigmas.get( i )[ 0 ], d.getSigma(), 1e-12 );
+			assertEquals( expectedSigmas.get( i )[ 0 ], d.getSigma(), expectedSigmas.get( i )[ 0 ] * 1e-6 ); // the sigma is a float
 			assertEquals( h.getResponse(), d.getResponse(), 0.0 );
 
 			for ( int dd = 0; dd < 3; ++dd )
@@ -944,8 +891,8 @@ public class TestDoGScaleSpace
 
 			for ( int i = 0; i < viaDriver.get( viewId ).size(); ++i )
 			{
-				assertTrue( InterestPointSS.class.isInstance( viaGUI.get( viewId ).get( i ) ) );
-				assertEquals( ( (InterestPointSS)viaDriver.get( viewId ).get( i ) ).getSigma(), ( (InterestPointSS)viaGUI.get( viewId ).get( i ) ).getSigma(), 0.0 );
+				assertFalse( Double.isNaN( viaGUI.get( viewId ).get( i ).getSigma() ) );
+				assertEquals( viaDriver.get( viewId ).get( i ).getSigma(), viaGUI.get( viewId ).get( i ).getSigma(), 0.0 );
 				assertArrayEquals( viaDriver.get( viewId ).get( i ).getL(), viaGUI.get( viewId ).get( i ).getL(), 0.0 );
 			}
 		}
@@ -988,21 +935,21 @@ public class TestDoGScaleSpace
 		p.maxIntensity = 1;
 
 		p.anisotropy = null;
-		final ArrayList< InterestPointSS > isoPeaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( iso ), iso, iso, null, p, service );
+		final ArrayList< InterestPoint > isoPeaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( iso ), iso, iso, null, p, service );
 
 		p.anisotropy = new double[] { 1, 1, a };
-		final ArrayList< InterestPointSS > anisoPeaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( aniso ), aniso, aniso, null, p, service );
+		final ArrayList< InterestPoint > anisoPeaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( aniso ), aniso, aniso, null, p, service );
 
 		p.anisotropy = null;
-		final ArrayList< InterestPointSS > pixelIsoPeaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( aniso ), aniso, aniso, null, p, service );
+		final ArrayList< InterestPoint > pixelIsoPeaks = DoGScaleSpace.computeDoGScaleSpace( Views.extendMirrorSingle( aniso ), aniso, aniso, null, p, service );
 
 		service.shutdown();
 
-		for ( final InterestPointSS peak : isoPeaks )
+		for ( final InterestPoint peak : isoPeaks )
 			IOFunctions.println( "isotropic grid: " + Util.printCoordinates( peak.getL() ) + " response=" + peak.getResponse() + " sigma=" + peak.getSigma() );
-		for ( final InterestPointSS peak : anisoPeaks )
+		for ( final InterestPoint peak : anisoPeaks )
 			IOFunctions.println( "anisotropic grid, anisotropy " + a + ": " + Util.printCoordinates( peak.getL() ) + " response=" + peak.getResponse() + " sigma=" + peak.getSigma() );
-		for ( final InterestPointSS peak : pixelIsoPeaks )
+		for ( final InterestPoint peak : pixelIsoPeaks )
 			IOFunctions.println( "anisotropic grid, pixel-isotropic: " + Util.printCoordinates( peak.getL() ) + " response=" + peak.getResponse() + " sigma=" + peak.getSigma() );
 
 		assertEquals( 2, isoPeaks.size() );
@@ -1015,8 +962,8 @@ public class TestDoGScaleSpace
 
 		for ( int i = 0; i < 2; ++i )
 		{
-			final InterestPointSS pi = isoPeaks.get( i );
-			final InterestPointSS pa = anisoPeaks.get( i );
+			final InterestPoint pi = isoPeaks.get( i );
+			final InterestPoint pa = anisoPeaks.get( i );
 			final double f = 1L << ( i + 1 ); // blob 8 is found in octave 1, blob 16 in octave 2
 
 			assertEquals( pi.getResponse(), pa.getResponse(), 0.1 * Math.abs( pi.getResponse() ), "response of blob " + i );
@@ -1026,9 +973,9 @@ public class TestDoGScaleSpace
 			assertEquals( pi.getL()[ 2 ], pa.getL()[ 2 ] * a, 0.2 * f, "z of blob " + i );
 
 			// pixel-isotropic Gaussians see a blob that is squeezed in z and select a smaller scale
-			InterestPointSS nearest = null;
+			InterestPoint nearest = null;
 
-			for ( final InterestPointSS q : pixelIsoPeaks )
+			for ( final InterestPoint q : pixelIsoPeaks )
 				if ( nearest == null || distance( q, pa ) < distance( nearest, pa ) )
 					nearest = q;
 

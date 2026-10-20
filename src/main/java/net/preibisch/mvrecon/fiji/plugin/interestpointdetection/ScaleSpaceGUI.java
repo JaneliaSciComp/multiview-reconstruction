@@ -54,9 +54,8 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  * resolution, the anisotropy and the initial blur (queried before the brightness is dispatched, so that
  * the interactive preview, {@link InteractiveScaleSpace}, knows them); threshold(s), steps per octave, octaves,
  * finest structures and minima/maxima are set in the preview or the "Advanced ..." dialog, the only two entries
- * of "Interest_point_specification" (no presets). "Number_of_thresholds" in the Advanced dialog asks for several
- * thresholds, which give one label per threshold ("label_t0.004", ...) from a single computation per view
- * (ScaleSpace.findInterestPoints with a list of thresholds).
+ * of "Interest_point_specification" (no presets). Filtered labels (by |response|, intensity or sigma, see
+ * DifferenceOfGUI.queryFilters) can be created from the detections right away.
  *
  * @author Stephan Preibisch
  */
@@ -164,19 +163,11 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		return new ScaleSpaceGUI( spimData, viewIdsToProcess );
 	}
 
-	/**
-	 * The detections of all thresholds from one computation per view, see ScaleSpace.findInterestPoints( p, thresholds )
-	 */
 	@Override
-	public LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > findInterestPointsPerSuffix( final TimePoint t )
+	public HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint t )
 	{
 		final ScaleSpaceDetectionParameters p = detectionParameters();
-		final double[] thresholds = thresholds();
-
-		final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = new ArrayList<>();
-
-		for ( int i = 0; i < thresholds.length; ++i )
-			perThreshold.add( new HashMap<>() );
+		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap< ViewId, List< InterestPoint > >();
 
 		for ( final ViewDescription vd : SpimData2.getAllViewIdsForTimePointSorted( spimData, viewIdsToProcess, t ) )
 		{
@@ -189,7 +180,7 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 				p.toProcess.clear();
 				p.toProcess.add( vd );
 
-				ScaleSpace.addInterestPoints( perThreshold, p, thresholds );
+				ScaleSpace.addInterestPoints( interestPoints, p );
 			}
 			catch ( Exception  e )
 			{
@@ -199,20 +190,11 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 			}
 		}
 
-		return perSuffix( perThreshold );
+		return interestPoints;
 	}
 
 	/**
-	 * The detections at the first threshold (all of them with a single threshold), see findInterestPointsPerSuffix
-	 */
-	@Override
-	public HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint t )
-	{
-		return findInterestPointsPerSuffix( t ).values().iterator().next();
-	}
-
-	/**
-	 * @return the parameters of the detection as set in the dialogs (the threshold is set per run by the caller)
+	 * @return the parameters of the detection as set in the dialogs
 	 */
 	protected ScaleSpaceDetectionParameters detectionParameters()
 	{
@@ -271,16 +253,19 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	protected boolean setDefaultValues( final int brightness ) { return false; }
 
 	/**
-	 * Everything the interactive preview can set, as a dialog. "Number_of_thresholds" asks for several thresholds in a
-	 * second dialog (after one for N if chosen), which give one label per threshold from a single computation; the
-	 * single "Threshold" is then not used.
+	 * The sigma varies per point in the scale space, so filtered labels by sigma make sense
+	 */
+	@Override
+	protected boolean hasSigmaFilter() { return true; }
+
+	/**
+	 * Everything the interactive preview can set, as a dialog
 	 */
 	@Override
 	protected boolean setAdvancedValues()
 	{
 		final GenericDialog gd = new GenericDialog( "Advanced values" );
 
-		gd.addChoice( "Number_of_thresholds (several give one label per threshold)", thresholdCountChoice, thresholdCountChoice[ defaultThresholdCountChoice ] );
 		gd.addNumericField( "Threshold (minimal |response| at any scale)", defaultThreshold, 5 );
 		gd.addNumericField( "Steps_per_octave", defaultSteps, 0 );
 		gd.addNumericField( "Octaves (-1 = as many as the image allows)", defaultOctaves, 0 );
@@ -293,7 +278,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		if ( gd.wasCanceled() )
 			return false;
 
-		final int countChoice = gd.getNextChoiceIndex();
 		this.threshold = gd.getNextNumber();
 		this.steps = (int)Math.round( gd.getNextNumber() );
 		this.octaves = (int)Math.round( gd.getNextNumber() );
@@ -326,8 +310,7 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		defaultFindMin = findMin;
 		defaultFindMax = findMax;
 
-		// several thresholds: one label per threshold from a single computation per view
-		return queryMultipleThresholds( countChoice );
+		return true;
 	}
 
 	/**
@@ -372,7 +355,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 			return false;
 
 		this.threshold = defaultThreshold = session.getThreshold();
-		this.thresholds = new double[] { threshold };
 		this.detectFinestLevel = lastDetectFinestLevel = session.getDetectFinestLevel();
 		this.findMin = defaultFindMin = session.getFindMin();
 		this.findMax = defaultFindMax = session.getFindMax();
@@ -402,10 +384,10 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	}
 
 	/**
-	 * @return the parameter string stored with a label, with this threshold
+	 * @return the parameter string stored with a label
 	 */
 	@Override
-	protected String parameters( final double threshold )
+	public String getParameters()
 	{
 		return "DOG-SS s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + detectFinestLevel + " t=" + threshold + " min=" + findMin + " max=" + findMax +
 				" downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] + " anisotropy=" + anisotropyZ +

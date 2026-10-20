@@ -30,4 +30,7 @@ public class XmlKeysInterestPoints
 	public static final String VIEWINTERESTPOINTS_SETUP_ATTRIBUTE_NAME = "setup";
 	public static final String VIEWINTERESTPOINTS_LABEL_ATTRIBUTE_NAME = "label";
 	public static final String VIEWINTERESTPOINTS_PARAMETERS_ATTRIBUTE_NAME = "params";
+	// a filtered label (VirtualFilteredInterestPointsN5) only: the label it filters and the filter (InterestPointFilter.toString)
+	public static final String VIEWINTERESTPOINTS_BASE_ATTRIBUTE_NAME = "base";
+	public static final String VIEWINTERESTPOINTS_FILTER_ATTRIBUTE_NAME = "filter";
 }

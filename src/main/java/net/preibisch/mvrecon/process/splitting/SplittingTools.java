@@ -805,7 +805,7 @@ public class SplittingTools
 								for ( int d = 0; d < interval.numDimensions(); ++d )
 									l[ d ] -= interval.min( d );
 
-								newIpList.add( new InterestPoint( ip.getId(), l ) );
+								newIpList.add( ip.derive( ip.getId(), l ) );
 							}
 						}
 
@@ -860,7 +860,7 @@ public class SplittingTools
 										final double[] l = ip.getL().clone();
 										for ( int d = 0; d < n; ++d )
 											l[ d ] += otherInterval.min( d );
-										otherIPglobal.add( new InterestPoint( ip.getId(), l ) );
+										otherIPglobal.add( ip.derive( ip.getId(), l ) );
 									}
 
 									if ( otherIPglobal.size() > 0 )

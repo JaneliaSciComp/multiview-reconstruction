@@ -65,7 +65,7 @@ public class ThinOut
 			// we assume that the order of list2 and points is preserved!
 			final List< RealPoint > list1 = new ArrayList< RealPoint >();
 			final List< RealPoint > list2 = new ArrayList< RealPoint >();
-			final List< double[] > points = new ArrayList< double[] >();
+			final List< InterestPoint > points = new ArrayList< InterestPoint >();
 
 			for ( final InterestPoint ip : oldIpl.getInterestPointsCopy().values() )
 			{
@@ -79,7 +79,7 @@ public class ThinOut
 						ip.getL()[ 1 ] * voxelSize.dimension( 1 ),
 						ip.getL()[ 2 ] * voxelSize.dimension( 2 ) ) );
 
-				points.add( ip.getL() );
+				points.add( ip );
 			}
 
 			// make the KDTree
@@ -106,7 +106,7 @@ public class ThinOut
 				final double d = nn.getDistance( 1 );
 				
 				if ( ( keepRange && d >= minDistance && d <= maxDistance ) || ( !keepRange && ( d < minDistance || d > maxDistance ) ) )
-					newIPs.add( new InterestPoint( id++, points.get( j ).clone() ) );
+					newIPs.add( points.get( j ).derive( id++, points.get( j ).getL().clone() ) );
 			}
 
 			newIpl.setInterestPoints( newIPs );

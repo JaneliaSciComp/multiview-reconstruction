@@ -24,13 +24,12 @@ package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import net.preibisch.mvrecon.fiji.plugin.util.DescribesParameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
@@ -71,32 +70,10 @@ public abstract class InterestPointDetectionGUI implements DescribesParameters
 	public abstract HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint tp );
 
 	/**
-	 * The labels one run produces, as suffixes of the label of the detection dialog: a single empty suffix (the label
-	 * itself) by default; a detection that produces several labels at once (e.g. the scale space with one label per
-	 * threshold) overrides this together with findInterestPointsPerSuffix, getParameters( suffix ) and describeParameters( suffix )
+	 * The filtered labels to create from the detections of this run (VirtualFilteredInterestPointsN5): each filters the label of
+	 * the detection on the fly and is named label + filter.suffix(); none by default
 	 */
-	public List< String > getLabelSuffixes() { return Collections.singletonList( "" ); }
-
-	/**
-	 * The interest points of one timepoint for every label suffix (see getLabelSuffixes), by default the ones of
-	 * findInterestPoints under the empty suffix
-	 */
-	public LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > findInterestPointsPerSuffix( final TimePoint tp )
-	{
-		final LinkedHashMap< String, HashMap< ViewId, List< InterestPoint > > > result = new LinkedHashMap<>();
-		result.put( "", findInterestPoints( tp ) );
-		return result;
-	}
-
-	/**
-	 * @return the parameter string stored with the label of this suffix (see getLabelSuffixes), by default getParameters()
-	 */
-	public String getParameters( final String suffix ) { return getParameters(); }
-
-	/**
-	 * @return the parameters recorded in the action history for the label of this suffix (see getLabelSuffixes), by default describeParameters()
-	 */
-	public Map< String, String > describeParameters( final String suffix ) { return describeParameters(); }
+	public List< InterestPointFilter > getFilters() { return Collections.emptyList(); }
 	
 	/**
 	 * Query the necessary parameters for the interestpoint detection

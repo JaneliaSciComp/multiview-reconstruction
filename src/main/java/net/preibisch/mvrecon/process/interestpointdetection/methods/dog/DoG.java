@@ -22,7 +22,6 @@
  */
 package net.preibisch.mvrecon.process.interestpointdetection.methods.dog;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -124,55 +123,17 @@ public class DoG
 	}
 
 	/**
-	 * Detects the interest points of all views in dog.toProcess for several thresholds at once (one computation per
-	 * view), see addInterestPoints( perThreshold, dog, thresholds )
-	 *
-	 * @return one map (the interest points per view) per threshold, in the order of the thresholds
-	 */
-	public static ArrayList< HashMap< ViewId, List< InterestPoint > > > findInterestPoints( final DoGParameters dog, final double[] thresholds )
-	{
-		final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = new ArrayList<>();
-
-		for ( int i = 0; i < thresholds.length; ++i )
-			perThreshold.add( new HashMap<>() );
-
-		addInterestPoints( perThreshold, dog, thresholds );
-
-		return perThreshold;
-	}
-
-	/**
-	 * Detects the interest points of every present view in dog.toProcess at the threshold dog.threshold and adds them
-	 * to the map, see addInterestPoints( perThreshold, dog, thresholds )
+	 * Detects the interest points of every present view in dog.toProcess and adds them to the map: the view is opened
+	 * at the downsampling (DownsampleTools.openAndDownsample, not virtual), DoGImgLib2.computeDoG runs on the entire
+	 * view, the detections are limited if requested and mapped to full resolution with the mipmap transform. A failing
+	 * view is logged and skipped.
 	 *
 	 * @param interestPoints - the map the detections are added to, one list per view
 	 * @param dog - the parameters (views, loader, downsampling, sigma, threshold, localization, intensity range, limit, CUDA)
 	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static void addInterestPoints( final HashMap< ViewId, List< InterestPoint > > interestPoints, final DoGParameters dog )
 	{
-		final ArrayList< HashMap< ViewId, List< InterestPoint > > > perThreshold = new ArrayList<>();
-		perThreshold.add( interestPoints );
-
-		addInterestPoints( perThreshold, dog, new double[] { dog.threshold } );
-	}
-
-	/**
-	 * Detects the interest points of every present view in dog.toProcess for several thresholds at once and adds them
-	 * to the map of each threshold: the view is opened at the downsampling (DownsampleTools.openAndDownsample, not
-	 * virtual), DoGImgLib2.computeDoG runs once on the entire view for all thresholds, and per threshold the detections
-	 * are limited if requested and mapped to full resolution with the mipmap transform. A failing view is logged and
-	 * skipped. dog.threshold is not used.
-	 *
-	 * @param perThreshold - one map per threshold the detections are added to, one list per view each
-	 * @param dog - the parameters (views, loader, downsampling, sigma, localization, intensity range, limit, CUDA)
-	 * @param thresholds - the thresholds, in the order of perThreshold
-	 */
-	@SuppressWarnings({ "rawtypes", "unchecked" })
-	public static void addInterestPoints( final List< HashMap< ViewId, List< InterestPoint > > > perThreshold, final DoGParameters dog, final double[] thresholds )
-	{
-		if ( perThreshold.size() != thresholds.length )
-			throw new IllegalArgumentException( "One map per threshold is needed, got " + perThreshold.size() + " maps for " + thresholds.length + " thresholds." );
-
 		if ( dog.showProgress() )
 			IJ.showProgress( dog.showProgressMin );
 
@@ -200,16 +161,16 @@ public class DoG
 								new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
 								false );
 
-				final ArrayList< ArrayList< InterestPoint > > ipsPerThreshold;
+				List< InterestPoint > ips;
 
 				try
 				{
-					ipsPerThreshold = DoGImgLib2.computeDoG(
+					ips = DoGImgLib2.computeDoG(
 							(RandomAccessible)Views.extendMirrorSingle( input.getA() ),
 							null, // mask
 							new FinalInterval( input.getA() ),
 							dog.sigma,
-							thresholds,
+							dog.threshold,
 							dog.localization,
 							dog.findMin,
 							dog.findMax,
@@ -227,18 +188,13 @@ public class DoG
 					service.shutdown();
 				}
 
-				for ( int i = 0; i < thresholds.length; ++i )
-				{
-					List< InterestPoint > ips = ipsPerThreshold.get( i );
+				if ( dog.limitDetections )
+					ips = InterestPointTools.limitList( dog.maxDetections, dog.maxDetectionsTypeIndex, ips );
 
-					if ( dog.limitDetections )
-						ips = InterestPointTools.limitList( dog.maxDetections, dog.maxDetectionsTypeIndex, ips );
+				// maps the positions to full resolution
+				DownsampleTools.correctForDownsampling( ips, input.getB() );
 
-					// maps the positions to full resolution (every threshold has its own positions)
-					DownsampleTools.correctForDownsampling( ips, input.getB() );
-
-					perThreshold.get( i ).put( vd, ips );
-				}
+				interestPoints.put( vd, ips );
 			} catch ( Exception e )
 			{
 				IOFunctions.println( "An error occured (DOG): " + e );

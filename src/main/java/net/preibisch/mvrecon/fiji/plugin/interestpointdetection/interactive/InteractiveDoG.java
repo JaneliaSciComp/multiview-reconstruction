@@ -52,7 +52,6 @@ import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 
@@ -79,7 +78,7 @@ public class InteractiveDoG
 	Rectangle rectangle;
 
 	/** the detections of DoGImgLib2.computeDoG in the current region down to detectionThreshold (maxima and minima of the image), filtered by the threshold slider */
-	ArrayList< InterestPointValue > peaksMax = null, peaksMin = null;
+	ArrayList< InterestPoint > peaksMax = null, peaksMin = null;
 
 	/** thresholdMin, or the threshold if a lower one was typed */
 	double detectionThreshold = thresholdMin;
@@ -366,20 +365,14 @@ public class InteractiveDoG
 		this.peaksMin = params.findMinima ? detect( image, interval, true, false ) : new ArrayList<>();
 	}
 
-	protected ArrayList< InterestPointValue > detect( final RandomAccessible<FloatType> image, final Interval interval, final boolean findMin, final boolean findMax )
+	protected ArrayList< InterestPoint > detect( final RandomAccessible<FloatType> image, final Interval interval, final boolean findMin, final boolean findMax )
 	{
 		final boolean silent = DoGImgLib2.silent;
 		DoGImgLib2.silent = true;
 
 		try
 		{
-			final ArrayList< InterestPointValue > peaks = new ArrayList<>();
-
-			for ( final InterestPoint point : DoGImgLib2.computeDoG( image, null, interval, params.sigma, detectionThreshold, 1, findMin, findMax, min, max, service ) )
-				if ( InterestPointValue.class.isInstance( point ) )
-					peaks.add( (InterestPointValue)point );
-
-			return peaks;
+			return DoGImgLib2.computeDoG( image, null, interval, params.sigma, detectionThreshold, 1, findMin, findMax, min, max, service );
 		}
 		finally
 		{

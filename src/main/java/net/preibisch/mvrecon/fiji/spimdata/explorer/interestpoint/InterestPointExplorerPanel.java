@@ -541,30 +541,45 @@ public class InterestPointExplorerPanel extends JPanel
 			{
 				final int row = selectedRows[ rowIndex ];
 	
-				final String label = InterestPointTableModel.label( labels, row );
-	
-				IOFunctions.println( "Removing label '" + label + "' for timepoint_id " + vd.getTimePointId() + " viewsetup_id " + vd.getViewSetupId() );
+				final String selectedLabel = InterestPointTableModel.label( labels, row );
 
-				// Remove symmetric correspondences from other views (multithreaded)
-				final int removed = CorrespondenceTools.removeCorrespondencesForViewLabel(
-						vip, vd, label, Runtime.getRuntime().availableProcessors() );
-				IOFunctions.println( "Removed " + removed + " corresponding entries from other views." );
+				// the filtered labels of this label (VirtualFilteredInterestPointsN5) cannot exist without it, they are removed, too
+				final List< String > toRemove = new ArrayList<>();
+				toRemove.add( selectedLabel );
+				toRemove.addAll( InterestPointTools.dependentLabels( vip.getViewInterestPointLists( vd ), selectedLabel ) );
 
-				// remember to delete the files
-				this.delete.add( new ValuePair< InterestPoints, ViewId >(
-						vip.getViewInterestPointLists( vd ).getInterestPointList( label ),
-						vd ) );
-	
-				vip.getViewInterestPointLists( vd ).getHashMap().remove( label );
+				if ( toRemove.size() > 1 )
+					IOFunctions.println( "Label '" + selectedLabel + "' is the base of the filtered label(s) " + toRemove.subList( 1, toRemove.size() ) + ", removing them as well." );
 
-				// drop matching action-history entries so the history reflects current data state
-				try
+				for ( final String label : toRemove )
 				{
-					final SpimData2 sd = viewSetupExplorer.getSpimData();
-					if ( sd != null && sd.getActionHistory() != null )
-						sd.getActionHistory().removeByResultRef( "interestpoints:" + label );
+					// already removed as a dependant of another selected label
+					if ( !vip.getViewInterestPointLists( vd ).contains( label ) )
+						continue;
+
+					IOFunctions.println( "Removing label '" + label + "' for timepoint_id " + vd.getTimePointId() + " viewsetup_id " + vd.getViewSetupId() );
+
+					// Remove symmetric correspondences from other views (multithreaded)
+					final int removed = CorrespondenceTools.removeCorrespondencesForViewLabel(
+							vip, vd, label, Runtime.getRuntime().availableProcessors() );
+					IOFunctions.println( "Removed " + removed + " corresponding entries from other views." );
+
+					// remember to delete the files
+					this.delete.add( new ValuePair< InterestPoints, ViewId >(
+							vip.getViewInterestPointLists( vd ).getInterestPointList( label ),
+							vd ) );
+
+					vip.getViewInterestPointLists( vd ).getHashMap().remove( label );
+
+					// drop matching action-history entries so the history reflects current data state
+					try
+					{
+						final SpimData2 sd = viewSetupExplorer.getSpimData();
+						if ( sd != null && sd.getActionHistory() != null )
+							sd.getActionHistory().removeByResultRef( "interestpoints:" + label );
+					}
+					catch ( final Throwable ignore ) {}
 				}
-				catch ( final Throwable ignore ) {}
 			}
 		}
 

@@ -31,6 +31,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -63,18 +64,20 @@ public class InterestPointsN5 extends InterestPoints
 	public static int defaultBlockSize = 300_000;
 	public static final String baseN5 = "interestpoints.n5";
 
-	// datasets of scale-space points (InterestPointSS) next to 'id' and 'loc'
+	// the attributes of the points (InterestPoint) next to 'id' and 'loc', NaN where unknown; labels stored before they existed lack them
 	public static final String responseDataset = "response"; // FLOAT32, 1 x N
-	public static final String sigmaDataset = "sigma"; // FLOAT64, 1 x N
+	public static final String sigmaDataset = "sigma"; // FLOAT32, 1 x N (FLOAT64 in labels stored before 2026-10-19, read transparently)
+	public static final String intensityDataset = "intensity"; // FLOAT32, 1 x N
 
 	final String n5dataset;
 
 	int[] ids = null;
 	double[][] locations = null;
 
-	// only for scale-space points (InterestPointSS), null otherwise
+	// the attributes per point in the order of ids (NaN where unknown), null if the label was stored without them
 	float[] responses = null;
-	double[] sigmas = null;
+	float[] sigmas = null;
+	float[] intensities = null;
 
 	ArrayList< CorrespondingInterestPoints > correspondingInterestPoints;
 
@@ -103,13 +106,18 @@ public class InterestPointsN5 extends InterestPoints
 		if ( this.locations == null || this.ids == null )
 			loadInterestPoints();
 
+		if ( this.locations == null || this.ids == null )
+			throw new RuntimeException( "Could not load the interest points of '" + n5dataset + "' (missing, or of a type this reader does not know, see the log), stopping." );
+
 		if ( ids.length == 0 )
 			return new HashMap<>();
 
-		if ( responses != null && sigmas != null )
-			return IntStream.range( 0, ids.length ).parallel().mapToObj( i -> (InterestPoint)new InterestPointSS( ids[ i ], locations[ i ].clone(), responses[ i ], sigmas[ i ] ) ).collect( Collectors.toMap( InterestPoint::getId, ip -> ip ) );
-		else
-			return IntStream.range( 0, ids.length ).parallel().mapToObj( i -> new InterestPoint( ids[ i ], locations[ i ].clone() ) ).collect( Collectors.toMap( InterestPoint::getId, ip -> ip ) );
+		return IntStream.range( 0, ids.length ).parallel().mapToObj( i -> new InterestPoint(
+				ids[ i ],
+				locations[ i ].clone(),
+				responses == null ? Float.NaN : responses[ i ],
+				sigmas == null ? Float.NaN : sigmas[ i ],
+				intensities == null ? Float.NaN : intensities[ i ] ) ).collect( Collectors.toMap( InterestPoint::getId, ip -> ip ) );
 	}
 
 	/**
@@ -136,36 +144,18 @@ public class InterestPointsN5 extends InterestPoints
 		{
 			this.ids = new int[0];
 			this.locations = new double[0][0];
-			this.responses = null;
-			this.sigmas = null;
+			this.responses = new float[0];
+			this.sigmas = new float[0];
+			this.intensities = new float[0];
 
 			return;
 		}
 
 		this.ids = new int[ collection.size() ];
 		this.locations = new double[ collection.size() ][];
-
-		// scale-space points carry response and sigma, either all of them or none
-		int numSS = 0;
-
-		for ( final InterestPoint ip : collection )
-			if ( InterestPointSS.class.isInstance( ip ) )
-				++numSS;
-
-		if ( numSS == 0 )
-		{
-			this.responses = null;
-			this.sigmas = null;
-		}
-		else if ( numSS == collection.size() )
-		{
-			this.responses = new float[ collection.size() ];
-			this.sigmas = new double[ collection.size() ];
-		}
-		else
-		{
-			throw new IllegalArgumentException( "Mixed list of InterestPoint and InterestPointSS for '" + n5dataset + "', cannot store response and sigma." );
-		}
+		this.responses = new float[ collection.size() ];
+		this.sigmas = new float[ collection.size() ];
+		this.intensities = new float[ collection.size() ];
 
 		final Iterator< InterestPoint > it = collection.iterator();
 
@@ -173,12 +163,9 @@ public class InterestPointsN5 extends InterestPoints
 			final InterestPoint ip = it.next();
 			ids[ i ] = ip.getId();
 			locations[ i ] = ip.getL().clone();
-
-			if ( responses != null )
-			{
-				responses[ i ] = (float)( (InterestPointSS)ip ).getResponse();
-				sigmas[ i ] = ( (InterestPointSS)ip ).getSigma();
-			}
+			responses[ i ] = ip.getResponse();
+			sigmas[ i ] = ip.getSigma();
+			intensities[ i ] = ip.getIntensity();
 		});
 	}
 
@@ -206,7 +193,7 @@ public class InterestPointsN5 extends InterestPoints
 		if ( ids == null || locations == null )
 			return false;
 
-		final boolean success = saveInterestPointsStatic( basePath, n5dataset, ids, locations, responses, sigmas );
+		final boolean success = saveInterestPointsStatic( basePath, n5dataset, ids, locations, responses, sigmas, intensities );
 
 		if ( success )
 			modifiedInterestPoints = false;
@@ -243,7 +230,7 @@ public class InterestPointsN5 extends InterestPoints
 		if ( ids == null || locations == null )
 			return false;
 
-		final boolean success = saveInterestPointsStatic( n5Writer, n5dataset, ids, locations, responses, sigmas );
+		final boolean success = saveInterestPointsStatic( n5Writer, n5dataset, ids, locations, responses, sigmas, intensities );
 
 		if ( success )
 			modifiedInterestPoints = false;
@@ -291,7 +278,7 @@ public class InterestPointsN5 extends InterestPoints
 
 			if ( !type.equals("list") )
 			{
-				IOFunctions.println( "unsupported point cloud type: " + type );
+				IOFunctions.println( "InterestPointsN5.loadInterestPoints(): unsupported point cloud type '" + type + "' of '" + dataset + "'" + ( VirtualFilteredInterestPointsN5.filteredType.equals( type ) ? " (a filtered label, the XML must declare its base label and filter)" : "" ) );
 				return false;
 			}
 
@@ -353,25 +340,21 @@ public class InterestPointsN5 extends InterestPoints
 				}
 			}
 
-			// scale-space points additionally store response and sigma
-			final boolean hasResponse = n5.datasetExists( dataset + "/" + responseDataset );
-			final boolean hasSigma = n5.datasetExists( dataset + "/" + sigmaDataset );
-
-			if ( hasResponse != hasSigma )
-				throw new RuntimeException( "Only one of '" + responseDataset + "' and '" + sigmaDataset + "' exists in '" + dataset + "', stopping." );
-
-			if ( hasResponse && n > 0 )
+			// the attributes of the points (null if the label was stored before they existed, the points then have NaN)
+			if ( n > 0 )
 			{
 				this.responses = loadResponses( n5, dataset );
 				this.sigmas = loadSigmas( n5, dataset );
+				this.intensities = loadIntensities( n5, dataset );
 
-				if ( responses.length != size || sigmas.length != size )
-					throw new RuntimeException( "Sizes of N5 datasets for response/sigma do not match the interest points, stopping." );
+				if ( ( responses != null && responses.length != size ) || ( sigmas != null && sigmas.length != size ) || ( intensities != null && intensities.length != size ) )
+					throw new RuntimeException( "Sizes of N5 datasets for response/sigma/intensity do not match the interest points of '" + dataset + "', stopping." );
 			}
 			else
 			{
 				this.responses = null;
 				this.sigmas = null;
+				this.intensities = null;
 			}
 
 			n5.close();
@@ -384,6 +367,7 @@ public class InterestPointsN5 extends InterestPoints
 			this.locations = new double[0][0];
 			this.responses = null;
 			this.sigmas = null;
+			this.intensities = null;
 			IOFunctions.println( "InterestPointsN5.loadInterestPoints(): " + e );
 			e.printStackTrace();
 			return false;
@@ -393,31 +377,49 @@ public class InterestPointsN5 extends InterestPoints
 	/**
 	 * @param n5 - reader of interestpoints.n5
 	 * @param ipDataset - the interest point group, e.g. ipDataset( createN5datasetPath( tp, setup, label ) )
-	 * @return the DoG response of each point in the order of 'id' (scale-space points only), null if not stored
+	 * @return the DoG response of each point in the order of 'id' (NaN where unknown), null if not stored
 	 */
 	public static float[] loadResponses( final N5Reader n5, final String ipDataset )
 	{
-		final double[] values = load1xN( n5, ipDataset + "/" + responseDataset, new FloatType() );
-
-		if ( values == null )
-			return null;
-
-		final float[] responses = new float[ values.length ];
-
-		for ( int i = 0; i < values.length; ++i )
-			responses[ i ] = (float)values[ i ];
-
-		return responses;
+		return loadFloat1xN( n5, ipDataset + "/" + responseDataset );
 	}
 
 	/**
 	 * @param n5 - reader of interestpoints.n5
 	 * @param ipDataset - the interest point group, e.g. ipDataset( createN5datasetPath( tp, setup, label ) )
-	 * @return the sigma of each point in the order of 'id' (scale-space points only), null if not stored
+	 * @return the sigma of each point in the order of 'id' (NaN where unknown), null if not stored (FLOAT64 datasets of older labels are read, too)
 	 */
-	public static double[] loadSigmas( final N5Reader n5, final String ipDataset )
+	public static float[] loadSigmas( final N5Reader n5, final String ipDataset )
 	{
-		return load1xN( n5, ipDataset + "/" + sigmaDataset, new DoubleType() );
+		return loadFloat1xN( n5, ipDataset + "/" + sigmaDataset );
+	}
+
+	/**
+	 * @param n5 - reader of interestpoints.n5
+	 * @param ipDataset - the interest point group, e.g. ipDataset( createN5datasetPath( tp, setup, label ) )
+	 * @return the image intensity at each point in the order of 'id' (NaN where unknown), null if not stored
+	 */
+	public static float[] loadIntensities( final N5Reader n5, final String ipDataset )
+	{
+		return loadFloat1xN( n5, ipDataset + "/" + intensityDataset );
+	}
+
+	/**
+	 * @return a 1 x N dataset as floats (whatever its stored type), null if it does not exist
+	 */
+	protected static float[] loadFloat1xN( final N5Reader n5, final String dataset )
+	{
+		final double[] values = load1xN( n5, dataset, new FloatType() );
+
+		if ( values == null )
+			return null;
+
+		final float[] floats = new float[ values.length ];
+
+		for ( int i = 0; i < values.length; ++i )
+			floats[ i ] = (float)values[ i ];
+
+		return floats;
 	}
 
 	protected static < T extends RealType< T > & NativeType< T > > double[] load1xN( final N5Reader n5, final String dataset, final T type )
@@ -726,6 +728,8 @@ public class InterestPointsN5 extends InterestPoints
 	 * Serializable data container for interest points and correspondences.
 	 * Enables Spark-compatible parallel saving by containing only primitive/serializable data.
 	 * Uses zero-copy references to internal arrays of InterestPointsN5.
+	 * A filtered label (VirtualFilteredInterestPointsN5) has no points of its own: it carries its base label and filter
+	 * instead of the arrays (isVirtual), saveInterestPointDataStatic writes its marker, so callers treat both kinds alike.
 	 */
 	public static class InterestPointData implements java.io.Serializable
 	{
@@ -735,13 +739,18 @@ public class InterestPointsN5 extends InterestPoints
 		public final int setupId;
 		public final String label;
 
-		// Interest points data (direct references to InterestPointsN5 internal arrays)
+		// Interest points data (direct references to InterestPointsN5 internal arrays), null for a filtered label
 		public final int[] ids;
 		public final double[][] locations;
 
-		// Scale-space points only (response and sigma per point), null otherwise
+		// the attributes per point (NaN where unknown), null if the label was stored without them (or for a filtered label)
 		public final float[] responses;
-		public final double[] sigmas;
+		public final float[] sigmas;
+		public final float[] intensities;
+
+		// a filtered label only: the label it filters and the filter (InterestPointFilter.toString), null otherwise
+		public final String baseLabel;
+		public final String filter;
 
 		// Correspondences (direct reference to InterestPointsN5 internal list)
 		public final ArrayList< CorrespondingInterestPoints > correspondences;
@@ -754,7 +763,21 @@ public class InterestPointsN5 extends InterestPoints
 				final double[][] locations,
 				final ArrayList< CorrespondingInterestPoints > correspondences )
 		{
-			this( timepointId, setupId, label, ids, locations, null, null, correspondences );
+			this( timepointId, setupId, label, ids, locations, null, null, null, correspondences );
+		}
+
+		/**
+		 * A filtered label: no points of its own, the base label and the filter instead
+		 */
+		public InterestPointData(
+				final int timepointId,
+				final int setupId,
+				final String label,
+				final String baseLabel,
+				final String filter,
+				final ArrayList< CorrespondingInterestPoints > correspondences )
+		{
+			this( timepointId, setupId, label, null, null, null, null, null, baseLabel, filter, correspondences );
 		}
 
 		public InterestPointData(
@@ -764,7 +787,37 @@ public class InterestPointsN5 extends InterestPoints
 				final int[] ids,
 				final double[][] locations,
 				final float[] responses,
-				final double[] sigmas,
+				final float[] sigmas,
+				final ArrayList< CorrespondingInterestPoints > correspondences )
+		{
+			this( timepointId, setupId, label, ids, locations, responses, sigmas, null, correspondences );
+		}
+
+		public InterestPointData(
+				final int timepointId,
+				final int setupId,
+				final String label,
+				final int[] ids,
+				final double[][] locations,
+				final float[] responses,
+				final float[] sigmas,
+				final float[] intensities,
+				final ArrayList< CorrespondingInterestPoints > correspondences )
+		{
+			this( timepointId, setupId, label, ids, locations, responses, sigmas, intensities, null, null, correspondences );
+		}
+
+		protected InterestPointData(
+				final int timepointId,
+				final int setupId,
+				final String label,
+				final int[] ids,
+				final double[][] locations,
+				final float[] responses,
+				final float[] sigmas,
+				final float[] intensities,
+				final String baseLabel,
+				final String filter,
 				final ArrayList< CorrespondingInterestPoints > correspondences )
 		{
 			this.timepointId = timepointId;
@@ -774,6 +827,9 @@ public class InterestPointsN5 extends InterestPoints
 			this.locations = locations;
 			this.responses = responses;
 			this.sigmas = sigmas;
+			this.intensities = intensities;
+			this.baseLabel = baseLabel;
+			this.filter = filter;
 			this.correspondences = correspondences;
 		}
 
@@ -788,17 +844,30 @@ public class InterestPointsN5 extends InterestPoints
 		 */
 		public static InterestPointData from( final ViewId viewId, final String label, final InterestPointsN5 ips )
 		{
+			if ( ips.correspondingInterestPoints == null )
+				ips.getCorrespondingInterestPointsCopy();
+
+			// a filtered label has no points of its own, only its base label and filter
+			if ( ips instanceof VirtualFilteredInterestPointsN5 )
+			{
+				final VirtualFilteredInterestPointsN5 virtual = (VirtualFilteredInterestPointsN5)ips;
+
+				return new InterestPointData(
+						viewId.getTimePointId(), viewId.getViewSetupId(), label,
+						virtual.getBaseLabel(), virtual.getFilter().toString(), ips.correspondingInterestPoints );
+			}
+
 			// Trigger lazy loading if needed (results discarded, we reference internal fields directly)
 			if ( ips.ids == null || ips.locations == null )
 				ips.getInterestPointsCopy();
 
-			if ( ips.correspondingInterestPoints == null )
-				ips.getCorrespondingInterestPointsCopy();
-
 			return new InterestPointData(
 					viewId.getTimePointId(), viewId.getViewSetupId(), label,
-					ips.ids, ips.locations, ips.responses, ips.sigmas, ips.correspondingInterestPoints );
+					ips.ids, ips.locations, ips.responses, ips.sigmas, ips.intensities, ips.correspondingInterestPoints );
 		}
+
+		/** @return whether this is a filtered label (base label and filter instead of points) */
+		public boolean isVirtual() { return baseLabel != null; }
 
 		public boolean hasInterestPoints() { return ids != null && ids.length > 0; }
 		public boolean hasCorrespondences() { return correspondences != null && !correspondences.isEmpty(); }
@@ -822,15 +891,11 @@ public class InterestPointsN5 extends InterestPoints
 			final int[] ids,
 			final double[][] locations )
 	{
-		return saveInterestPointsStatic( n5Writer, n5path, ids, locations, null, null );
+		return saveInterestPointsStatic( n5Writer, n5path, ids, locations, null, null, null );
 	}
 
 	/**
-	 * Same as above, additionally storing the DoG response (FLOAT32) and the sigma (FLOAT64) of
-	 * scale-space points (InterestPointSS) as 1 x N datasets 'response' and 'sigma' next to 'id' and 'loc'.
-	 *
-	 * @param responses response per point in the order of ids, or null (then sigmas must be null, too)
-	 * @param sigmas sigma per point in the order of ids, or null
+	 * Same as below without the intensities (stored as NaN)
 	 */
 	public static boolean saveInterestPointsStatic(
 			final N5Writer n5Writer,
@@ -838,15 +903,39 @@ public class InterestPointsN5 extends InterestPoints
 			final int[] ids,
 			final double[][] locations,
 			final float[] responses,
-			final double[] sigmas )
+			final float[] sigmas )
+	{
+		return saveInterestPointsStatic( n5Writer, n5path, ids, locations, responses, sigmas, null );
+	}
+
+	/**
+	 * Same as above, additionally storing the attributes of the points as 1 x N FLOAT32 datasets next to 'id' and 'loc': the
+	 * DoG response ('response'), the sigma ('sigma') and the image intensity ('intensity'). They are always written; an
+	 * array that is null is written as NaN (unknown).
+	 *
+	 * @param responses response per point in the order of ids, or null
+	 * @param sigmas sigma per point in the order of ids, or null
+	 * @param intensities image intensity per point in the order of ids, or null
+	 */
+	public static boolean saveInterestPointsStatic(
+			final N5Writer n5Writer,
+			final String n5path,
+			final int[] ids,
+			final double[][] locations,
+			final float[] responsesIn,
+			final float[] sigmasIn,
+			final float[] intensitiesIn )
 	{
 		final String dataset = ipDataset( n5path );// new File( n5path, "interestpoints" ).getPath();
 
-		if ( ( responses == null ) != ( sigmas == null ) )
-			throw new IllegalArgumentException( "responses and sigmas must both be null or both be set." );
+		final int numPoints = ids == null ? 0 : ids.length;
 
-		if ( responses != null && ids != null && ( responses.length != ids.length || sigmas.length != ids.length ) )
-			throw new IllegalArgumentException( "responses/sigmas and ids have different lengths." );
+		if ( ( responsesIn != null && responsesIn.length != numPoints ) || ( sigmasIn != null && sigmasIn.length != numPoints ) || ( intensitiesIn != null && intensitiesIn.length != numPoints ) )
+			throw new IllegalArgumentException( "responses/sigmas/intensities and ids have different lengths." );
+
+		final float[] responses = responsesIn == null ? nanFloats( numPoints ) : responsesIn;
+		final float[] sigmas = sigmasIn == null ? nanFloats( numPoints ) : sigmasIn;
+		final float[] intensities = intensitiesIn == null ? nanFloats( numPoints ) : intensitiesIn;
 
 		try
 		{
@@ -878,11 +967,9 @@ public class InterestPointsN5 extends InterestPoints
 						DataType.FLOAT64,
 						new GzipCompression() );
 
-				if ( responses != null )
-				{
-					n5Writer.createDataset( dataset + "/" + responseDataset, new long[] { 0 }, new int[] { 1 }, DataType.FLOAT32, new GzipCompression() );
-					n5Writer.createDataset( dataset + "/" + sigmaDataset, new long[] { 0 }, new int[] { 1 }, DataType.FLOAT64, new GzipCompression() );
-				}
+				n5Writer.createDataset( dataset + "/" + responseDataset, new long[] { 0 }, new int[] { 1 }, DataType.FLOAT32, new GzipCompression() );
+				n5Writer.createDataset( dataset + "/" + sigmaDataset, new long[] { 0 }, new int[] { 1 }, DataType.FLOAT32, new GzipCompression() );
+				n5Writer.createDataset( dataset + "/" + intensityDataset, new long[] { 0 }, new int[] { 1 }, DataType.FLOAT32, new GzipCompression() );
 
 				IOFunctions.println( "Saved: " + dataset + " (was empty)" );
 			}
@@ -913,24 +1000,28 @@ public class InterestPointsN5 extends InterestPoints
 				N5Utils.save( idData, n5Writer, idDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
 				N5Utils.save( locData, n5Writer, locDataset, new int[] { (int) locData.dimension( 0 ), defaultBlockSize }, new GzipCompression() );
 
-				if ( responses != null )
-				{
-					// 1 x N arrays (which are 2D arrays)
-					final FunctionRandomAccessible< FloatType > response =
-							new FunctionRandomAccessible<>(
-									2,
-									( location, value ) -> value.set( responses[ location.getIntPosition( 1 ) ] ),
-									FloatType::new );
+				// the attributes, 1 x N arrays (which are 2D arrays)
+				final FunctionRandomAccessible< FloatType > response =
+						new FunctionRandomAccessible<>(
+								2,
+								( location, value ) -> value.set( responses[ location.getIntPosition( 1 ) ] ),
+								FloatType::new );
 
-					final FunctionRandomAccessible< DoubleType > sigma =
-							new FunctionRandomAccessible<>(
-									2,
-									( location, value ) -> value.set( sigmas[ location.getIntPosition( 1 ) ] ),
-									DoubleType::new );
+				final FunctionRandomAccessible< FloatType > sigma =
+						new FunctionRandomAccessible<>(
+								2,
+								( location, value ) -> value.set( sigmas[ location.getIntPosition( 1 ) ] ),
+								FloatType::new );
 
-					N5Utils.save( Views.interval( response, new long[] { 0, 0 }, new long[] { 0, ids.length - 1 } ), n5Writer, dataset + "/" + responseDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
-					N5Utils.save( Views.interval( sigma, new long[] { 0, 0 }, new long[] { 0, ids.length - 1 } ), n5Writer, dataset + "/" + sigmaDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
-				}
+				final FunctionRandomAccessible< FloatType > intensity =
+						new FunctionRandomAccessible<>(
+								2,
+								( location, value ) -> value.set( intensities[ location.getIntPosition( 1 ) ] ),
+								FloatType::new );
+
+				N5Utils.save( Views.interval( response, new long[] { 0, 0 }, new long[] { 0, ids.length - 1 } ), n5Writer, dataset + "/" + responseDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
+				N5Utils.save( Views.interval( sigma, new long[] { 0, 0 }, new long[] { 0, ids.length - 1 } ), n5Writer, dataset + "/" + sigmaDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
+				N5Utils.save( Views.interval( intensity, new long[] { 0, 0 }, new long[] { 0, ids.length - 1 } ), n5Writer, dataset + "/" + intensityDataset, new int[] { 1, defaultBlockSize }, new GzipCompression() );
 
 				IOFunctions.println( "Saved: " + dataset );
 			}
@@ -943,6 +1034,13 @@ public class InterestPointsN5 extends InterestPoints
 			e.printStackTrace();
 			return false;
 		}
+	}
+
+	protected static float[] nanFloats( final int n )
+	{
+		final float[] values = new float[ n ];
+		java.util.Arrays.fill( values, Float.NaN );
+		return values;
 	}
 
 	/**
@@ -963,11 +1061,11 @@ public class InterestPointsN5 extends InterestPoints
 			final int[] ids,
 			final double[][] locations )
 	{
-		return saveInterestPointsStatic( baseDir, n5path, ids, locations, null, null );
+		return saveInterestPointsStatic( baseDir, n5path, ids, locations, null, null, null );
 	}
 
 	/**
-	 * Same as above, additionally storing response and sigma of scale-space points (see the N5Writer overload)
+	 * Same as below without the intensities (stored as NaN)
 	 */
 	public static boolean saveInterestPointsStatic(
 			final URI baseDir,
@@ -975,11 +1073,26 @@ public class InterestPointsN5 extends InterestPoints
 			final int[] ids,
 			final double[][] locations,
 			final float[] responses,
-			final double[] sigmas )
+			final float[] sigmas )
+	{
+		return saveInterestPointsStatic( baseDir, n5path, ids, locations, responses, sigmas, null );
+	}
+
+	/**
+	 * Same as above, additionally storing the attributes of the points (see the N5Writer overload)
+	 */
+	public static boolean saveInterestPointsStatic(
+			final URI baseDir,
+			final String n5path,
+			final int[] ids,
+			final double[][] locations,
+			final float[] responses,
+			final float[] sigmas,
+			final float[] intensities )
 	{
 		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) ) )
 		{
-			return saveInterestPointsStatic( n5Writer, n5path, ids, locations, responses, sigmas );
+			return saveInterestPointsStatic( n5Writer, n5path, ids, locations, responses, sigmas, intensities );
 		}
 		catch ( Exception e )
 		{
@@ -1008,7 +1121,7 @@ public class InterestPointsN5 extends InterestPoints
 	}
 
 	/**
-	 * Convenience overload for scale-space points (response and sigma per point).
+	 * Convenience overload with the attributes of the points (response, sigma and intensity per point, null = NaN).
 	 */
 	public static boolean saveInterestPointsStatic(
 			final URI baseDir,
@@ -1018,11 +1131,12 @@ public class InterestPointsN5 extends InterestPoints
 			final int[] ids,
 			final double[][] locations,
 			final float[] responses,
-			final double[] sigmas )
+			final float[] sigmas,
+			final float[] intensities )
 	{
 		return saveInterestPointsStatic( baseDir,
 				createN5datasetPath( timepointId, setupId, label ),
-				ids, locations, responses, sigmas );
+				ids, locations, responses, sigmas, intensities );
 	}
 
 	/**
@@ -1194,7 +1308,10 @@ public class InterestPointsN5 extends InterestPoints
 	{
 		final String n5path = createN5datasetPath( data.timepointId, data.setupId, data.label );
 
-		boolean success = saveInterestPointsStatic( n5Writer, n5path, data.ids, data.locations, data.responses, data.sigmas );
+		// a filtered label has no points of its own, its marker is written instead
+		boolean success = data.isVirtual() ?
+				VirtualFilteredInterestPointsN5.saveMarkerStatic( n5Writer, n5path, data.baseLabel, InterestPointFilter.fromString( data.filter ) ) :
+				saveInterestPointsStatic( n5Writer, n5path, data.ids, data.locations, data.responses, data.sigmas, data.intensities );
 
 		if ( success && data.hasCorrespondences() )
 			success = saveCorrespondencesStatic( n5Writer, n5path, data.correspondences );
@@ -1215,14 +1332,16 @@ public class InterestPointsN5 extends InterestPoints
 	 */
 	public static boolean saveInterestPointDataStatic( final URI baseDir, final InterestPointData data )
 	{
-		final String n5path = createN5datasetPath( data.timepointId, data.setupId, data.label );
-
-		boolean success = saveInterestPointsStatic( baseDir, n5path, data.ids, data.locations, data.responses, data.sigmas );
-
-		if ( success && data.hasCorrespondences() )
-			success = saveCorrespondencesStatic( baseDir, n5path, data.correspondences );
-
-		return success;
+		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) ) )
+		{
+			return saveInterestPointDataStatic( n5Writer, data );
+		}
+		catch ( final Exception e )
+		{
+			IOFunctions.println( "Couldn't write interest points of '" + data.label + "' to N5 '" + URITools.appendName( baseDir, baseN5 ) + "': " + e );
+			e.printStackTrace();
+			return false;
+		}
 	}
 
 }
