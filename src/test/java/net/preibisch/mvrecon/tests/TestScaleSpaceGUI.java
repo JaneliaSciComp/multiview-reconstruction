@@ -51,10 +51,12 @@ public class TestScaleSpaceGUI
 	@Test
 	public void testFilters()
 	{
-		// no filter unless chosen in the dialog, "Do not filter interest points" is the default of both methods
-		assertEquals( 3, DifferenceOfGUI.filterChoice.length );
+		// no filter unless chosen in the dialog, "Do not filter interest points" is the initial default of both methods (the last choice is remembered)
+		assertEquals( 4, DifferenceOfGUI.filterChoice.length );
+		assertEquals( DifferenceOfGUI.filterChoice.length - 1, DifferenceOfGUI.defaultFilterChoice );
+		assertEquals( "Filter interest points (threshold ramp)", DifferenceOfGUI.filterChoice[ 2 ] );
 		assertEquals( "Do not filter interest points", DifferenceOfGUI.filterChoice[ DifferenceOfGUI.filterChoice.length - 1 ] );
-		assertNull( new DifferenceOfGaussianGUI( null, null ).getFilter() );
-		assertNull( new ScaleSpaceGUI( null, null ).getFilter() );
+		assertTrue( new DifferenceOfGaussianGUI( null, null ).getFilters().isEmpty() );
+		assertTrue( new ScaleSpaceGUI( null, null ).getFilters().isEmpty() );
 	}
 }

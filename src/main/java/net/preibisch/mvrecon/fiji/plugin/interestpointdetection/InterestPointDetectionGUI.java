@@ -22,6 +22,7 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
@@ -69,11 +70,11 @@ public abstract class InterestPointDetectionGUI implements DescribesParameters
 	public abstract HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint tp );
 
 	/**
-	 * The filter chosen for the detections of this run (the range or the fixed-number dialog of the explorer, opened by the
-	 * detection dialog as a shortcut): Interest_Point_Detection creates the filtered label (or the plain copy) once the
-	 * points exist; null = none
+	 * The filters chosen for the detections of this run (the range dialog, the fixed-number dialog or the threshold ramp
+	 * of the explorer, opened by the detection dialog as a shortcut): Interest_Point_Detection creates the filtered labels
+	 * (or the plain copies) once the points exist; empty = none
 	 */
-	public FilterParameters getFilter() { return null; }
+	public List< FilterParameters > getFilters() { return Collections.emptyList(); }
 	
 	/**
 	 * Query the necessary parameters for the interestpoint detection

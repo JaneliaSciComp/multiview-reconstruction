@@ -197,8 +197,22 @@ public class Interest_Point_Detection implements PlugIn
 		// if grouped, we need to get the min/max intensity for all groups
 		ipd.preprocess();
 
-		// the filter chosen in the dialog: a filtered label (VirtualFilteredInterestPointsN5) or a plain copy of the detections, null = none
-		final FilterParameters filter = ipd.getFilter();
+		// the filters chosen in the dialog: filtered labels (VirtualFilteredInterestPointsN5) or plain copies of the detections, none by default
+		final List< FilterParameters > filters = ipd.getFilters();
+
+		// the labels that exist already are overwritten: the correspondences of other views that point to them and their
+		// history records go first (as when a filter dialog overwrites a label), their dependants follow the new points
+		final ArrayList< String > overwritten = new ArrayList<>();
+		overwritten.add( label );
+		filters.forEach( f -> overwritten.add( f.newLabel ) );
+
+		for ( final String l : overwritten )
+		{
+			final List< ViewId > existing = InterestPointTools.viewsWithLabel( data, l, viewIds );
+
+			if ( !existing.isEmpty() )
+				InterestPointTools.removeReferences( data, l, existing );
+		}
 
 		// record action history before processing — params reflect the GUI choices that drive ipd
 		final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
@@ -219,8 +233,8 @@ public class Interest_Point_Detection implements PlugIn
 				viewIds,
 				"interestpoints:" + label );
 
-		// one record for the filtered label, so that removing the label removes its record
-		if ( filter != null )
+		// one record per filtered label, so that removing a label removes its record
+		for ( final FilterParameters filter : filters )
 			Filter_Detections.recordFilterAction( data, filter.newLabel, label, filter.filter, filter.copy, viewIds );
 
 		// now extract all the detections
@@ -230,8 +244,8 @@ public class Interest_Point_Detection implements PlugIn
 
 			InterestPointTools.addInterestPoints( data, label, points, ipd.getParameters() );
 
-			// the filtered label has no points of its own, it filters the label on the fly (or is a plain copy of the points that pass)
-			if ( filter != null )
+			// the filtered labels have no points of their own, they filter the label on the fly (or are plain copies of the points that pass)
+			for ( final FilterParameters filter : filters )
 			{
 				if ( filter.copy )
 					InterestPointTools.addFilteredInterestPointsCopy( data, filter.newLabel, label, filter.filter, points.keySet() );

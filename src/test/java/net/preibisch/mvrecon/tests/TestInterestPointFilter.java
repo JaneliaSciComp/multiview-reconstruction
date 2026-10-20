@@ -45,8 +45,8 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Ax
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Limit;
 
 /**
- * The filter of a filtered label (InterestPointFilter): the grammar of a range, the canonical string of the XML, the label
- * suffixes, the descriptions, the count limit and what passes
+ * The filter of a filtered label (InterestPointFilter): the grammar of a range and of the dialog entries, the canonical
+ * string of the XML, the label suffixes, the descriptions, the count limit and what passes
  */
 public class TestInterestPointFilter
 {
@@ -64,6 +64,30 @@ public class TestInterestPointFilter
 		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.parseRange( "3-1.5" ) );
 		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.parseRange( "1-2-3" ) );
 		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.parseRange( "" ) );
+	}
+
+	@Test
+	public void testParseEntries()
+	{
+		// one filter per entry, sorted by the lower then the upper bound (unbounded last), duplicates dropped
+		final List< InterestPointFilter > filters = InterestPointFilter.parseEntries( "0.01, 0.004-0.02; 0.004", Axis.RESPONSE );
+
+		assertEquals( 3, filters.size() );
+		assertEquals( InterestPointFilter.of( Axis.RESPONSE, 0.004, 0.02 ), filters.get( 0 ) );
+		assertEquals( InterestPointFilter.of( Axis.RESPONSE, 0.004, Double.NaN ), filters.get( 1 ) );
+		assertEquals( InterestPointFilter.of( Axis.RESPONSE, 0.01, Double.NaN ), filters.get( 2 ) );
+
+		assertEquals( 1, InterestPointFilter.parseEntries( "200, 200", Axis.INTENSITY ).size() );
+		assertEquals( InterestPointFilter.of( Axis.SIGMA, 1.5, 3 ), InterestPointFilter.parseEntries( "1.5-3", Axis.SIGMA ).get( 0 ) );
+
+		// empty = none
+		assertTrue( InterestPointFilter.parseEntries( "", Axis.RESPONSE ).isEmpty() );
+		assertTrue( InterestPointFilter.parseEntries( "  ", Axis.RESPONSE ).isEmpty() );
+		assertTrue( InterestPointFilter.parseEntries( null, Axis.RESPONSE ).isEmpty() );
+
+		// a malformed entry: null (and a log line)
+		assertNull( InterestPointFilter.parseEntries( "0.004, abc", Axis.RESPONSE ) );
+		assertNull( InterestPointFilter.parseEntries( "0.02-0.004", Axis.RESPONSE ) );
 	}
 
 	@Test

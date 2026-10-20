@@ -93,7 +93,10 @@ public class InteractiveInterestPointFilter extends JFrame
 	public static int numBins = 100;
 	public static int sliderResolution = 1000;
 	public static int chartWidth = 520;
+	/** log10 binning per axis (response, intensity, sigma) when all values are > 0; the last toggle is remembered */
 	public static boolean[] defaultLog = new boolean[] { true, true, false };
+	/** the "Apply_to" of "Create filtered label ...": 0 = the selected views, 1 = all views with the label; the last choice is remembered */
+	public static int defaultApplyTo = 0;
 	/** whether the histograms are linked (each shows only the points that pass the bounds of the other two), the last choice is kept */
 	public static boolean defaultLinked = false;
 
@@ -359,16 +362,16 @@ public class InteractiveInterestPointFilter extends JFrame
 
 		final GenericDialog gd = new GenericDialog( "Create filtered label" );
 		gd.addMessage( filter.describe( label ), GUIHelper.smallStatusFont );
-		gd.addChoice( "Apply_to", choices, choices[ 0 ] );
+		gd.addChoice( "Apply_to", choices, choices[ defaultApplyTo ] );
 		gd.addStringField( "New_label", label + filter.suffix(), 30 );
-		gd.addCheckbox( "Store_as_plain_label (copy the points instead of filtering on the fly; needed to overwrite an existing label)", Filter_Detections.defaultCopy );
+		gd.addCheckbox( "Store_as_plain_label (copy the points instead of filtering on the fly; the only way to replace the base label itself)", Filter_Detections.defaultCopy );
 
 		gd.showDialog();
 
 		if ( gd.wasCanceled() )
 			return;
 
-		final List< ViewId > target = gd.getNextChoiceIndex() == 0 ? views : all;
+		final List< ViewId > target = ( defaultApplyTo = gd.getNextChoiceIndex() ) == 0 ? views : all;
 		final String newLabel = gd.getNextString().trim();
 		final boolean copy = Filter_Detections.defaultCopy = gd.getNextBoolean();
 
@@ -378,7 +381,7 @@ public class InteractiveInterestPointFilter extends JFrame
 	/**
 	 * Creates the filtered label (or a plain copy) with the current filter for the views and refreshes the explorer
 	 *
-	 * @return whether it was created (not if the filter is empty, the name is empty, or the label exists in one of the views (the base label included) and copy is false, see Filter_Detections.checkNewLabel)
+	 * @return whether it was created (not if the filter is empty, the name is empty, or it is this label and copy is false, see Filter_Detections.checkNewLabel)
 	 */
 	public boolean createLabel( final List< ViewId > target, final String newLabel, final boolean copy )
 	{
@@ -388,7 +391,7 @@ public class InteractiveInterestPointFilter extends JFrame
 			return false;
 		}
 
-		// an existing label (this one included) can only be overwritten by a plain copy of the points that pass
+		// an existing label is overwritten, this one only by a plain copy of the points that pass (a filtered label cannot filter itself)
 		if ( !Filter_Detections.checkNewLabel( data, target, label, newLabel == null ? null : newLabel.trim(), copy ) )
 			return false;
 
@@ -753,7 +756,7 @@ public class InteractiveInterestPointFilter extends JFrame
 			minField.addFocusListener( focusListener );
 			maxField.addFocusListener( focusListener );
 
-			logBox.addActionListener( e -> { log = logBox.isSelected(); rebin(); toWidgets(); } );
+			logBox.addActionListener( e -> { log = defaultLog[ axis.ordinal() ] = logBox.isSelected(); rebin(); toWidgets(); } );
 		}
 
 		public double min() { return min; }

@@ -71,6 +71,7 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		final JMenuItem createFromCorr = new JMenuItem( "New interest points from correspondences ..." );
 		final JMenuItem createFiltered = new JMenuItem( "New filtered interest points ..." );
 		final JMenuItem createLimited = new JMenuItem( "Keep n points per view ..." );
+		final JMenuItem createRamp = new JMenuItem( "New filtered interest points (threshold ramp) ..." );
 		final JMenu showDistanceHist = new JMenu( "Show Distance Histogram" );
 		final JMenuItem showRelativeDistanceHist = new JMenuItem( "Show Relative Distance Histogram ... " );
 		final JMenuItem byDistance = new JMenuItem( "Remove by Distance ..." );
@@ -85,6 +86,8 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		this.add( createFiltered );
 		createLimited.addActionListener( new LimitListener() );
 		this.add( createLimited );
+		createRamp.addActionListener( new RampListener() );
+		this.add( createRamp );
 
 		this.add( new Separator() );
 
@@ -375,6 +378,40 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 				public void run()
 				{
 					if ( Limit_Detections.limit( spimData, views ) )
+						panel.updateContent(); // update interestpoint panel if available
+				}
+			} ).start();
+		}
+	}
+
+	/**
+	 * "New filtered interest points (threshold ramp) ...": the range dialog prefilled with thresholds relative to the detection threshold of the label (Filter_Detections.filterRamp)
+	 */
+	public class RampListener implements ActionListener
+	{
+		@Override
+		public void actionPerformed( final ActionEvent e )
+		{
+			if ( panel == null )
+			{
+				IOFunctions.println( "Panel not set for " + this.getClass().getSimpleName() );
+				return;
+			}
+
+			final SpimData2 spimData = (SpimData2)panel.getSpimData();
+
+			final ArrayList< ViewId > views = new ArrayList<>();
+			views.addAll( ApplyTransformationPopup.getSelectedViews( panel ) );
+
+			// filter not present ViewIds
+			SpimData2.filterMissingViews( spimData, views );
+
+			new Thread( new Runnable()
+			{
+				@Override
+				public void run()
+				{
+					if ( Filter_Detections.filterRamp( spimData, views ) )
 						panel.updateContent(); // update interestpoint panel if available
 				}
 			} ).start();

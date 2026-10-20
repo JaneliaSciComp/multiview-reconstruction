@@ -30,6 +30,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.regex.Matcher;
@@ -359,8 +360,45 @@ public class InterestPointTools
 	}
 
 	/**
-	 * Before a label is overwritten in the views (a plain copy of the points that pass a filter replacing it, as a
-	 * re-detection does): removes the correspondences of other views that point to it
+	 * @return whether a filtered label named newLabel with the base baseLabel would filter itself in the view: newLabel is
+	 * the base, or one of the labels the base is filtered from (the chain of bases; a base that does not exist ends it,
+	 * e.g. the label a detection is about to create). The only overwrite that cannot work.
+	 */
+	public static boolean wouldCycle( final ViewInterestPointLists vipl, final String newLabel, final String baseLabel )
+	{
+		final HashSet< String > seen = new HashSet<>();
+		String label = baseLabel;
+
+		while ( label != null && seen.add( label ) )
+		{
+			if ( label.equals( newLabel ) )
+				return true;
+
+			final InterestPoints ips = vipl == null ? null : vipl.getInterestPointList( label );
+
+			label = ips instanceof VirtualFilteredInterestPointsN5 ? ( (VirtualFilteredInterestPointsN5)ips ).getBaseLabel() : null;
+		}
+
+		return false;
+	}
+
+	/**
+	 * @return the views (of the given ones) in which a filtered label named newLabel with the base baseLabel would filter itself (wouldCycle)
+	 */
+	public static List< ViewId > cyclingViews( final SpimData2 data, final Collection< ? extends ViewId > viewIds, final String newLabel, final String baseLabel )
+	{
+		final ArrayList< ViewId > views = new ArrayList<>();
+
+		for ( final ViewId viewId : viewIds )
+			if ( wouldCycle( data.getViewInterestPoints().getViewInterestPointLists( viewId ), newLabel, baseLabel ) )
+				views.add( viewId );
+
+		return views;
+	}
+
+	/**
+	 * Before a label is overwritten in the views (by a re-detection, a filtered label or a plain copy of the points that
+	 * pass a filter): removes the correspondences of other views that point to it
 	 * (CorrespondenceTools.removeCorrespondencesForViewLabel) and the records of the action history that produced it
 	 * ("interestpoints:" + label). Its dependants (filtered labels of it) stay and follow the new points; their
 	 * correspondences may be stale, which is logged.

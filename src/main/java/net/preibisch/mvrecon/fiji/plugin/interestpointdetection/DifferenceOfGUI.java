@@ -138,11 +138,12 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	/** the threshold of the detection */
 	protected double threshold;
 
-	/** the entries of "Filter_interest_points": the range dialog (Filter_Detections), the fixed-number dialog (Limit_Detections) or none; the last one is the default every time */
-	public static final String[] filterChoice = new String[] { "Filter interest points (thresholds)", "Filter interest points (fixed number)", "Do not filter interest points" };
+	/** the entries of "Filter_interest_points": the range dialog (Filter_Detections), the fixed-number dialog (Limit_Detections), the threshold ramp (the range dialog prefilled) or none; the last choice is remembered, initially none */
+	public static final String[] filterChoice = new String[] { "Filter interest points (thresholds)", "Filter interest points (fixed number)", "Filter interest points (threshold ramp)", "Do not filter interest points" };
+	public static int defaultFilterChoice = filterChoice.length - 1;
 
-	/** the filter chosen for the detections of this run, a filtered label or a plain copy that Interest_Point_Detection creates once the points exist; null = none */
-	protected FilterParameters filter = null;
+	/** the filters chosen for the detections of this run (one, or the labels of a ramp), filtered labels or plain copies that Interest_Point_Detection creates once the points exist; empty = none */
+	protected final ArrayList< FilterParameters > filters = new ArrayList<>();
 
 	public DifferenceOfGUI( final SpimData2 spimData, final List< ViewId > viewIdsToProcess )
 	{
@@ -224,8 +225,8 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			gd.addCheckbox( "Use_same_min & max intensity for all views", defaultSameMinMax );
 		}
 
-		// a shortcut to the filter dialogs of the explorer for the label of this detection (the chosen dialog opens after this one); none by default, never remembered
-		gd.addChoice( "Filter_interest_points", filterChoice, filterChoice[ filterChoice.length - 1 ] );
+		// a shortcut to the filter dialogs of the explorer for the label of this detection (the chosen dialog opens after this one)
+		gd.addChoice( "Filter_interest_points", filterChoice, filterChoice[ defaultFilterChoice ] );
 
 		addAddtionalParameters( gd );
 
@@ -257,7 +258,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		if ( !dispatchSpecification( brightness ) )
 			return false;
 
-		final int filterIndex = gd.getNextChoiceIndex();
+		final int filterIndex = defaultFilterChoice = gd.getNextChoiceIndex();
 
 		if ( !queryAdditionalParameters( gd ) )
 			return false;
@@ -268,31 +269,46 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 	/**
 	 * Opens the dialog of the chosen entry of "Filter_interest_points" for the label of this detection: the ranges
-	 * (Filter_Detections) or the fixed number per view (Limit_Detections); the label is created by Interest_Point_Detection
-	 * once the points exist (getFilter), so this is only a shortcut to the dialogs of the explorer
+	 * (Filter_Detections, several entries per field give several labels), the fixed number per view (Limit_Detections) or
+	 * the threshold ramp (the range dialog prefilled with thresholds relative to the threshold of this detection,
+	 * Filter_Detections.rampEntries); the labels are created by Interest_Point_Detection once the points exist
+	 * (getFilters), so this is only a shortcut to the dialogs of the explorer
 	 *
 	 * @return false if the dialog was cancelled
 	 */
 	protected boolean queryFilter( final String label, final int choice )
 	{
-		if ( choice == 0 )
-			filter = Filter_Detections.getParameters( spimData, viewIdsToProcess, label );
+		filters.clear();
+
+		if ( choice == 0 || choice == 2 )
+		{
+			// the threshold ramp is the range dialog with the response field prefilled relative to the threshold of this detection
+			final String preset = choice == 2 ? Filter_Detections.rampEntries( threshold, Filter_Detections.rampFactor, Filter_Detections.rampSteps, Filter_Detections.rampMinEnd ) : null;
+			final List< FilterParameters > ranges = Filter_Detections.getParameters( spimData, viewIdsToProcess, label, preset );
+
+			if ( ranges == null )
+				return false;
+
+			filters.addAll( ranges );
+		}
 		else if ( choice == 1 )
-			filter = Limit_Detections.getParameters( spimData, viewIdsToProcess, label );
-		else
-			filter = null;
+		{
+			final FilterParameters p = Limit_Detections.getParameters( spimData, viewIdsToProcess, label );
 
-		if ( choice != filterChoice.length - 1 && filter == null )
-			return false;
+			if ( p == null )
+				return false;
 
-		if ( filter != null )
-			IOFunctions.println( getDescription() + ": also creating the " + ( filter.copy ? "label" : "filtered label" ) + " '" + filter.newLabel + "' (" + filter.filter.describe( label ) + ")" );
+			filters.add( p );
+		}
+
+		for ( final FilterParameters p : filters )
+			IOFunctions.println( getDescription() + ": also creating the " + ( p.copy ? "label" : "filtered label" ) + " '" + p.newLabel + "' (" + p.filter.describe( label ) + ")" );
 
 		return true;
 	}
 
 	@Override
-	public FilterParameters getFilter() { return filter; }
+	public List< FilterParameters > getFilters() { return filters; }
 
 	/**
 	 * @return the entries of "Interest_point_specification" (the presets, "Advanced ...", "Interactive ..."); a subclass

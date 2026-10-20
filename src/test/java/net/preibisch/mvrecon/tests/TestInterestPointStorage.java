@@ -670,9 +670,10 @@ public class TestInterestPointStorage
 	}
 
 	/**
-	 * An existing label (the base label included) is overwritten only by a plain copy of the points that pass: a filtered
-	 * label is refused; the copy replaces the points, drops the correspondences of other views that pointed to the label and
-	 * the history records that produced it, keeps the dependants; a former filtered label becomes a plain one, on disk too
+	 * Overwriting: only a filtered label that would filter itself is refused, a plain copy can replace anything (the base
+	 * label included) and a filtered label anything but its own chain; the overwrite drops the correspondences of other
+	 * views that pointed to the old label and the history records that produced it, keeps the dependants; a former
+	 * filtered label becomes a plain one, on disk too
 	 */
 	@Test
 	public void testOverwrite() throws Exception
@@ -706,18 +707,26 @@ public class TestInterestPointStorage
 		assertTrue( InterestPointTools.addFilteredInterestPoints( spimData, "beads_r0.5", "beads", byResponse, views ) );
 		final TreeSet< Integer > filteredBefore = new TreeSet<>( spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" ).getInterestPointsCopy().keySet() );
 
-		// a filtered label cannot replace an existing label, a plain copy can
+		// only a filtered label that would filter itself is refused (its name is the base, or a label the base is filtered from); a plain copy can replace anything
 		final List< ViewId > only0 = Arrays.asList( v0 );
 		assertFalse( Filter_Detections.checkNewLabel( spimData, only0, "beads", "beads", false ) );
-		assertFalse( Filter_Detections.checkNewLabel( spimData, only0, "beads", "beads_r0.5", false ) );
+		assertFalse( Filter_Detections.checkNewLabel( spimData, only0, "beads_r0.5", "beads", false ) ); // beads_r0.5 is filtered from beads
 		assertFalse( Filter_Detections.checkNewLabel( spimData, only0, "beads", " ", true ) );
 		assertFalse( Filter_Detections.checkNewLabel( spimData, only0, "beads", null, true ) );
 		assertTrue( Filter_Detections.checkNewLabel( spimData, only0, "beads", "fresh", false ) );
+		assertTrue( Filter_Detections.checkNewLabel( spimData, only0, "beads", "beads_r0.5", false ) ); // a dependant is simply redefined
 		assertTrue( Filter_Detections.checkNewLabel( spimData, only0, "beads", "beads", true ) );
-		assertTrue( Filter_Detections.checkNewLabel( spimData, only0, "beads", "beads_r0.5", true ) );
+		assertTrue( Filter_Detections.checkNewLabel( spimData, only0, "beads_r0.5", "beads", true ) );
 		assertThrows( IllegalArgumentException.class, () -> Filter_Detections.create( spimData, only0, "beads", "beads", byResponse, false ) );
-		assertThrows( IllegalArgumentException.class, () -> Filter_Detections.create( spimData, only0, "beads", "beads_r0.5", byResponse, false ) );
+		assertThrows( IllegalArgumentException.class, () -> Filter_Detections.create( spimData, only0, "beads_r0.5", "beads", byResponse, false ) );
 		assertEquals( map.get( v0 ).size(), spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads" ).getInterestPointsCopy().size() );
+
+		// a filtered label overwritten by another filtered label is redefined (the same base, the new filter)
+		final InterestPointFilter byResponse07 = InterestPointFilter.of( Axis.RESPONSE, 0.7, Double.NaN );
+		assertTrue( Filter_Detections.create( spimData, only0, "beads", "beads_r0.5", byResponse07, false ) );
+		assertEquals( byResponse07, ( (VirtualFilteredInterestPointsN5)spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" ) ).getFilter() );
+		assertEquals( idsPassing( map.get( v0 ), byResponse07 ), new TreeSet<>( spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" ).getInterestPointsCopy().keySet() ) );
+		assertTrue( Filter_Detections.create( spimData, only0, "beads", "beads_r0.5", byResponse, false ) ); // and back
 
 		// the base label of v0 replaced by its own points that pass (with their ids), v1 untouched
 		final TreeSet< Integer > expected = idsPassing( map.get( v0 ), byResponse );
