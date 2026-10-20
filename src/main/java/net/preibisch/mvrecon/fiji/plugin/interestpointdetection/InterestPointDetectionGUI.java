@@ -22,14 +22,13 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
 import net.preibisch.mvrecon.fiji.plugin.util.DescribesParameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections.FilterParameters;
 
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
@@ -70,20 +69,23 @@ public abstract class InterestPointDetectionGUI implements DescribesParameters
 	public abstract HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint tp );
 
 	/**
-	 * The filtered labels to create from the detections of this run (VirtualFilteredInterestPointsN5): each filters the label of
-	 * the detection on the fly and is named label + filter.suffix(); none by default
+	 * The filter chosen for the detections of this run (the range or the fixed-number dialog of the explorer, opened by the
+	 * detection dialog as a shortcut): Interest_Point_Detection creates the filtered label (or the plain copy) once the
+	 * points exist; null = none
 	 */
-	public List< InterestPointFilter > getFilters() { return Collections.emptyList(); }
+	public FilterParameters getFilter() { return null; }
 	
 	/**
 	 * Query the necessary parameters for the interestpoint detection
 	 * 
+	 * @param label - the label the detections are stored under (a filter chosen in the dialog names its label after it)
 	 * @param setMinMax - whether to define minimal and maximal intensity relative to whom everything is normalized to [0...1]
 	 * @param groupTiles - if grouping of tiles is wanted
 	 * @param groupIllums - if grouping of illums is wanted
 	 * @return - if it was successful
 	 */
 	public abstract boolean queryParameters(
+			final String label,
 			final boolean setMinMax,
 			final boolean groupTiles,
 			final boolean groupIllums );

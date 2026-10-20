@@ -51,8 +51,8 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  * resolution, the anisotropy and the initial blur (queried before the brightness is dispatched, so that
  * the interactive preview, {@link InteractiveScaleSpace}, knows them); threshold(s), steps per octave, octaves,
  * finest structures and minima/maxima are set in the preview or the "Advanced ..." dialog, the only two entries
- * of "Interest_point_specification" (no presets). Filtered labels (by |response|, intensity or sigma, see
- * DifferenceOfGUI.queryFilters) can be created from the detections right away.
+ * of "Interest_point_specification" (no presets). "Filter_interest_points" opens the range or the fixed-number dialog
+ * of the explorer for the new label (DifferenceOfGUI.queryFilter).
  *
  * @author Stephan Preibisch
  */
@@ -216,12 +216,6 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	 */
 	@Override
 	protected boolean setDefaultValues( final int brightness ) { return false; }
-
-	/**
-	 * The sigma varies per point in the scale space, so filtered labels by sigma make sense
-	 */
-	@Override
-	protected boolean hasSigmaFilter() { return true; }
 
 	/**
 	 * Everything the interactive preview can set, as a dialog

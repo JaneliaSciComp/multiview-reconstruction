@@ -30,9 +30,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeSet;
 
-import net.preibisch.legacy.io.IOFunctions;
 
 /**
  * A filter on the attributes of interest points ({@link InterestPoint}): a range per attribute (|response|, intensity,
@@ -40,9 +38,9 @@ import net.preibisch.legacy.io.IOFunctions;
  * ({@link VirtualFilteredInterestPointsN5}) and is stored in the XML as its canonical string, e.g.
  * "response=0.004..;sigma=1.5..3" (the filtered axes in the order of {@link Axis}, an unbounded side is empty).
  *
- * One grammar for the dialogs and the label suffixes: an entry "a" keeps values &gt;= a, "a-b" keeps a &lt;= value &lt;= b;
- * a dialog field holds comma separated entries, one filter (and one label) each. The suffix of a label is "_" + the
- * letter of the axis + the entry, e.g. "_r0.004", "_r0.004-0.01", "_i200", "_s1.5-3".
+ * One grammar for the dialogs and the label suffixes: an entry "a" keeps values &gt;= a, "a-b" keeps a &lt;= value &lt;= b
+ * (parseRange). The suffix of a label is "_" + the letter of the axis + the entry, e.g. "_r0.004", "_r0.004-0.01", "_i200",
+ * "_s1.5-3".
  *
  * Units: the response in the units of the DoG (the image normalized to [0,1]), the intensity in the units of the image,
  * the sigma in full-resolution pixels (x).
@@ -573,52 +571,6 @@ public class InterestPointFilter implements Serializable
 				limitAxis, limit, limitCount );
 	}
 
-	/**
-	 * Parses the entries of the "Filtered_labels_by_count" field of the detection dialogs (counts separated by ',' or ';')
-	 * into one filter per entry that keeps the n highest by |response| per view (other attributes and modes: the dialog
-	 * "Keep n points per view" of the explorer), duplicates dropped
-	 *
-	 * @return the filters (empty for an empty field), null with a log line if an entry is malformed
-	 */
-	public static List< InterestPointFilter > parseLimitEntries( final String field )
-	{
-		final ArrayList< InterestPointFilter > filters = new ArrayList<>();
-
-		if ( field == null || field.trim().isEmpty() )
-			return filters;
-
-		for ( final String entry : field.split( "[,;]" ) )
-		{
-			if ( entry.trim().isEmpty() )
-				continue;
-
-			final int count;
-
-			try
-			{
-				count = Integer.parseInt( entry.trim() );
-			}
-			catch ( final NumberFormatException e )
-			{
-				IOFunctions.println( "Cannot parse the count entry '" + entry.trim() + "' of '" + field + "': expected a number of points." );
-				return null;
-			}
-
-			if ( count < 1 )
-			{
-				IOFunctions.println( "Cannot use the count entry '" + entry.trim() + "' of '" + field + "': the number of points must be >= 1." );
-				return null;
-			}
-
-			final InterestPointFilter f = of( Axis.RESPONSE, Limit.HIGHEST, count );
-
-			if ( !filters.contains( f ) )
-				filters.add( f );
-		}
-
-		return filters;
-	}
-
 	protected static double parseBound( final String value, final String whole )
 	{
 		try
@@ -713,46 +665,6 @@ public class InterestPointFilter implements Serializable
 			p.put( limitKey, limitAxis.key + ":" + limit.key + ":" + limitCount );
 
 		return p;
-	}
-
-	/**
-	 * Parses the entries of a dialog field into one filter per entry on the axis: entries separated by ',' (or ';'),
-	 * each "a" (&gt;= a) or "a-b" (a..b), sorted by the lower then the upper bound, duplicates dropped
-	 *
-	 * @return the filters (empty for an empty field), null with a log line if an entry is malformed
-	 */
-	public static List< InterestPointFilter > parseEntries( final String field, final Axis axis )
-	{
-		final ArrayList< InterestPointFilter > filters = new ArrayList<>();
-
-		if ( field == null || field.trim().isEmpty() )
-			return filters;
-
-		final TreeSet< double[] > ranges = new TreeSet<>( ( a, b ) -> {
-			final int c = Double.compare( a[ 0 ], b[ 0 ] );
-			return c != 0 ? c : Double.compare( a[ 1 ], b[ 1 ] );
-		} );
-
-		for ( final String entry : field.split( "[,;]" ) )
-		{
-			if ( entry.trim().isEmpty() )
-				continue;
-
-			try
-			{
-				ranges.add( parseRange( entry ) );
-			}
-			catch ( final IllegalArgumentException e )
-			{
-				IOFunctions.println( "Cannot parse the " + axis.description + " entry '" + entry.trim() + "' of '" + field + "': " + e.getMessage() );
-				return null;
-			}
-		}
-
-		for ( final double[] range : ranges )
-			filters.add( of( axis, range[ 0 ], range[ 1 ] ) );
-
-		return filters;
 	}
 
 	/**

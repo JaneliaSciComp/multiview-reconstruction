@@ -46,8 +46,9 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
  * copy on request) that keeps the n highest, the n around the median or the n lowest points by intensity, |response| or
  * sigma of every view. This is the former "Limit amount of detections" of the detection dialog as a filter: no
  * re-detection, the base label stays, and the limit can be stacked on a range label (a filter of a filter). Reachable
- * from "Manage Interest Points" of the explorer ("Keep n points per view ...") and as a plugin; the ranges have their
- * own dialog (Filter_Detections, "New filtered interest points ...").
+ * from "Manage Interest Points" of the explorer ("Keep n points per view ...") and as a plugin, and "Filter_interest_points
+ * (fixed number)" of the detection dialogs opens it for the label being detected (DifferenceOfGUI.queryFilter); the ranges
+ * have their own dialog (Filter_Detections, "New filtered interest points ...").
  *
  * @author Stephan Preibisch
  */
@@ -104,18 +105,27 @@ public class Limit_Detections implements PlugIn
 
 	public static FilterParameters getParameters( final SpimData2 spimData, final List< ViewId > viewIds )
 	{
-		final String[] labels = InterestPointTools.getAllInterestPointLabels( spimData, viewIds );
+		return getParameters( spimData, viewIds, null );
+	}
 
-		if ( labels.length == 0 )
+	/**
+	 * @param fixedBaseLabel - the base label if it is given (the detection dialogs limit the label they are about to detect,
+	 * which does not exist yet), null = ask for one of the existing labels of the views
+	 */
+	public static FilterParameters getParameters( final SpimData2 spimData, final List< ViewId > viewIds, final String fixedBaseLabel )
+	{
+		final String[] labels = fixedBaseLabel != null ? new String[ 0 ] : InterestPointTools.getAllInterestPointLabels( spimData, viewIds );
+
+		if ( fixedBaseLabel == null && labels.length == 0 )
 		{
 			IOFunctions.println( "No interest points for the selected views." );
 			return null;
 		}
 
 		// the base label chosen last in this or the range dialog, otherwise the first complete one
-		int defaultLabel = Filter_Detections.defaultLabelIndex( labels, Filter_Detections.defaultBaseLabel );
+		int defaultLabel = fixedBaseLabel != null ? -1 : Filter_Detections.defaultLabelIndex( labels, Filter_Detections.defaultBaseLabel );
 
-		if ( defaultLabel < 0 )
+		if ( fixedBaseLabel == null && defaultLabel < 0 )
 		{
 			defaultLabel = 0;
 
@@ -129,7 +139,10 @@ public class Limit_Detections implements PlugIn
 
 		final GenericDialog gd = new GenericDialog( "Keep n points per view" );
 
-		gd.addChoice( "Interest_points", labels, labels[ defaultLabel ] );
+		if ( fixedBaseLabel == null )
+			gd.addChoice( "Interest_points", labels, labels[ defaultLabel ] );
+		else
+			gd.addMessage( "Keeps n of the interest points '" + fixedBaseLabel + "' of this detection per view once they are detected", GUIHelper.smallStatusFont );
 		gd.addNumericField( "Number_of_points to keep per view", defaultCount, 0 );
 		gd.addChoice( "Filter_by", axisChoice, axisChoice[ defaultAxis ] );
 		gd.addChoice( "Keep", modeChoice, modeChoice[ defaultMode ] );
@@ -144,7 +157,10 @@ public class Limit_Detections implements PlugIn
 
 		final FilterParameters params = new FilterParameters();
 
-		params.baseLabel = Filter_Detections.defaultBaseLabel = InterestPointTools.getSelectedLabel( labels, gd.getNextChoiceIndex() );
+		if ( fixedBaseLabel == null )
+			params.baseLabel = Filter_Detections.defaultBaseLabel = InterestPointTools.getSelectedLabel( labels, gd.getNextChoiceIndex() );
+		else
+			params.baseLabel = fixedBaseLabel;
 
 		final int count = (int)Math.round( gd.getNextNumber() );
 		final int axis = defaultAxis = gd.getNextChoiceIndex();

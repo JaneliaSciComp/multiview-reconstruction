@@ -45,8 +45,9 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
  * Creates a filtered label from an existing label: a label without points of its own that filters the points of the
  * base label by |response|, intensity and/or sigma on the fly and has its own correspondences (VirtualFilteredInterestPointsN5),
  * or, on request, a plain copy of the points that pass the filter (for readers that do not know filtered labels).
- * Reachable from "Manage Interest Points" of the explorer and as a plugin; the detection dialogs offer the same
- * filters right after a detection (Interest_Point_Detection, DifferenceOfGUI.queryFilters).
+ * Reachable from "Manage Interest Points" of the explorer and as a plugin; "Filter_interest_points (thresholds)" of the
+ * detection dialogs opens this dialog for the label being detected (DifferenceOfGUI.queryFilter), the label is created
+ * once the points exist.
  *
  * @author Stephan Preibisch
  */
@@ -148,38 +149,53 @@ public class Filter_Detections implements PlugIn
 
 	public static FilterParameters getParameters( final SpimData2 spimData, final List< ViewId > viewIds )
 	{
-		final String[] labels = InterestPointTools.getAllInterestPointLabels( spimData, viewIds );
+		return getParameters( spimData, viewIds, null );
+	}
 
-		if ( labels.length == 0 )
+	/**
+	 * @param fixedBaseLabel - the base label if it is given (the detection dialogs filter the label they are about to detect,
+	 * which does not exist yet), null = ask for one of the existing labels of the views
+	 */
+	public static FilterParameters getParameters( final SpimData2 spimData, final List< ViewId > viewIds, final String fixedBaseLabel )
+	{
+		final String[] labels = fixedBaseLabel != null ? new String[ 0 ] : InterestPointTools.getAllInterestPointLabels( spimData, viewIds );
+
+		if ( fixedBaseLabel == null && labels.length == 0 )
 		{
 			IOFunctions.println( "No interest points for the selected views." );
 			return null;
 		}
 
-		// choose the first label that is complete if possible
-		if ( defaultLabel < 0 || defaultLabel >= labels.length )
+		if ( fixedBaseLabel == null )
 		{
-			defaultLabel = -1;
+			// choose the first label that is complete if possible
+			if ( defaultLabel < 0 || defaultLabel >= labels.length )
+			{
+				defaultLabel = -1;
 
-			for ( int i = 0; i < labels.length; ++i )
-				if ( !labels[ i ].contains( InterestPointTools.warningLabel ) )
-				{
-					defaultLabel = i;
-					break;
-				}
+				for ( int i = 0; i < labels.length; ++i )
+					if ( !labels[ i ].contains( InterestPointTools.warningLabel ) )
+					{
+						defaultLabel = i;
+						break;
+					}
 
-			if ( defaultLabel == -1 )
-				defaultLabel = 0;
+				if ( defaultLabel == -1 )
+					defaultLabel = 0;
+			}
+
+			final int byName = defaultLabelIndex( labels, defaultBaseLabel );
+
+			if ( byName >= 0 )
+				defaultLabel = byName;
 		}
-
-		final int byName = defaultLabelIndex( labels, defaultBaseLabel );
-
-		if ( byName >= 0 )
-			defaultLabel = byName;
 
 		final GenericDialog gd = new GenericDialog( "Filter interest points" );
 
-		gd.addChoice( "Interest_points", labels, labels[ defaultLabel ] );
+		if ( fixedBaseLabel == null )
+			gd.addChoice( "Interest_points", labels, labels[ defaultLabel ] );
+		else
+			gd.addMessage( "Filters the interest points '" + fixedBaseLabel + "' of this detection once they are detected", GUIHelper.smallStatusFont );
 		gd.addMessage( "A range is 'a' (keeps values >= a) or 'a-b' (keeps a <= value <= b), empty = no restriction", GUIHelper.smallStatusFont );
 		gd.addStringField( "Response_range (|DoG response|)", defaultResponse, 20 );
 		gd.addStringField( "Intensity_range (image units)", defaultIntensity, 20 );
@@ -194,7 +210,10 @@ public class Filter_Detections implements PlugIn
 
 		final FilterParameters params = new FilterParameters();
 
-		params.baseLabel = defaultBaseLabel = InterestPointTools.getSelectedLabel( labels, defaultLabel = gd.getNextChoiceIndex() );
+		if ( fixedBaseLabel == null )
+			params.baseLabel = defaultBaseLabel = InterestPointTools.getSelectedLabel( labels, defaultLabel = gd.getNextChoiceIndex() );
+		else
+			params.baseLabel = fixedBaseLabel;
 
 		final String response = defaultResponse = gd.getNextString();
 		final String intensity = defaultIntensity = gd.getNextString();

@@ -30,7 +30,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import ij.IJ;
 import ij.ImagePlus;
@@ -56,6 +55,9 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections.FilterParameters;
+import net.preibisch.mvrecon.fiji.plugin.Limit_Detections;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
@@ -63,8 +65,6 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.ViewSetupUtils;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DisplayFusedImagesPopup;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.export.DisplayImage;
@@ -138,8 +138,11 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	/** the threshold of the detection */
 	protected double threshold;
 
-	/** the filtered labels to create from the detections (VirtualFilteredInterestPointsN5), one per entry of the "Filtered_labels_by_..." fields; none by default (never remembered) */
-	protected final ArrayList< InterestPointFilter > filters = new ArrayList<>();
+	/** the entries of "Filter_interest_points": the range dialog (Filter_Detections), the fixed-number dialog (Limit_Detections) or none; the last one is the default every time */
+	public static final String[] filterChoice = new String[] { "Filter interest points (thresholds)", "Filter interest points (fixed number)", "Do not filter interest points" };
+
+	/** the filter chosen for the detections of this run, a filtered label or a plain copy that Interest_Point_Detection creates once the points exist; null = none */
+	protected FilterParameters filter = null;
 
 	public DifferenceOfGUI( final SpimData2 spimData, final List< ViewId > viewIdsToProcess )
 	{
@@ -192,6 +195,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 	@Override
 	public boolean queryParameters(
+			final String label,
 			final boolean setMinMax,
 			final boolean groupTiles,
 			final boolean groupIllums )
@@ -220,16 +224,8 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			gd.addCheckbox( "Use_same_min & max intensity for all views", defaultSameMinMax );
 		}
 
-		// filtered labels of the detections (VirtualFilteredInterestPointsN5), one per entry; none by default and never remembered
-		gd.addMessage( "Also create filtered labels of the detections (one label per entry, empty = none; 'a' keeps values >= a, 'a-b' keeps a..b,\n" +
-				"a count keeps the n highest by |response| per view; other attributes and modes: 'Keep n points per view ...' in the explorer):", GUIHelper.smallStatusFont );
-		gd.addStringField( "Filtered_labels_by_response (|DoG response|)", "", 20 );
-		gd.addStringField( "Filtered_labels_by_intensity (image units)", "", 20 );
-
-		if ( hasSigmaFilter() )
-			gd.addStringField( "Filtered_labels_by_sigma (px at full resolution)", "", 20 );
-
-		gd.addStringField( "Filtered_labels_by_count (the n highest by |response| per view, e.g. 3000)", "", 20 );
+		// a shortcut to the filter dialogs of the explorer for the label of this detection (the chosen dialog opens after this one); none by default, never remembered
+		gd.addChoice( "Filter_interest_points", filterChoice, filterChoice[ filterChoice.length - 1 ] );
 
 		addAddtionalParameters( gd );
 
@@ -261,50 +257,42 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		if ( !dispatchSpecification( brightness ) )
 			return false;
 
-		if ( !queryFilters( gd ) )
-			return false;
+		final int filterIndex = gd.getNextChoiceIndex();
 
 		if ( !queryAdditionalParameters( gd ) )
 			return false;
-		else
-			return true;
+
+		// the dialog of the chosen filter opens last, when the main dialog is complete
+		return queryFilter( label, filterIndex );
 	}
 
 	/**
-	 * @return whether the dialog offers filtered labels by sigma (the scale space, where the sigma varies per point)
-	 */
-	protected boolean hasSigmaFilter() { return false; }
-
-	/**
-	 * Reads the "Filtered_labels_by_..." fields of the dialog (see InterestPointFilter.parseEntries and parseLimitEntries) into filters
+	 * Opens the dialog of the chosen entry of "Filter_interest_points" for the label of this detection: the ranges
+	 * (Filter_Detections) or the fixed number per view (Limit_Detections); the label is created by Interest_Point_Detection
+	 * once the points exist (getFilter), so this is only a shortcut to the dialogs of the explorer
 	 *
-	 * @return false if an entry is malformed (logged)
+	 * @return false if the dialog was cancelled
 	 */
-	protected boolean queryFilters( final GenericDialog gd )
+	protected boolean queryFilter( final String label, final int choice )
 	{
-		filters.clear();
+		if ( choice == 0 )
+			filter = Filter_Detections.getParameters( spimData, viewIdsToProcess, label );
+		else if ( choice == 1 )
+			filter = Limit_Detections.getParameters( spimData, viewIdsToProcess, label );
+		else
+			filter = null;
 
-		final List< InterestPointFilter > byResponse = InterestPointFilter.parseEntries( gd.getNextString(), Axis.RESPONSE );
-		final List< InterestPointFilter > byIntensity = InterestPointFilter.parseEntries( gd.getNextString(), Axis.INTENSITY );
-		final List< InterestPointFilter > bySigma = hasSigmaFilter() ? InterestPointFilter.parseEntries( gd.getNextString(), Axis.SIGMA ) : new ArrayList<>();
-		final List< InterestPointFilter > byCount = InterestPointFilter.parseLimitEntries( gd.getNextString() );
-
-		if ( byResponse == null || byIntensity == null || bySigma == null || byCount == null )
+		if ( choice != filterChoice.length - 1 && filter == null )
 			return false;
 
-		filters.addAll( byResponse );
-		filters.addAll( byIntensity );
-		filters.addAll( bySigma );
-		filters.addAll( byCount );
-
-		if ( filters.size() > 0 )
-			IOFunctions.println( getDescription() + ": also creating " + filters.size() + " filtered label(s): " + filters.stream().map( InterestPointFilter::suffix ).collect( Collectors.joining( ", " ) ) );
+		if ( filter != null )
+			IOFunctions.println( getDescription() + ": also creating the " + ( filter.copy ? "label" : "filtered label" ) + " '" + filter.newLabel + "' (" + filter.filter.describe( label ) + ")" );
 
 		return true;
 	}
 
 	@Override
-	public List< InterestPointFilter > getFilters() { return filters; }
+	public FilterParameters getFilter() { return filter; }
 
 	/**
 	 * @return the entries of "Interest_point_specification" (the presets, "Advanced ...", "Interactive ..."); a subclass

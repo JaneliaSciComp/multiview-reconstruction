@@ -24,11 +24,13 @@ package net.preibisch.mvrecon.tests;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGaussianGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.ScaleSpaceGUI;
 
@@ -49,17 +51,10 @@ public class TestScaleSpaceGUI
 	@Test
 	public void testFilters()
 	{
-		// no filtered labels unless asked for; the scale space also offers filters by sigma, the DoG does not (one sigma for all points)
-		final DifferenceOfGaussianGUI dog = new DifferenceOfGaussianGUI( null, null )
-		{{
-			assertFalse( hasSigmaFilter() );
-		}};
-		assertTrue( dog.getFilters().isEmpty() );
-
-		final ScaleSpaceGUI ss = new ScaleSpaceGUI( null, null )
-		{{
-			assertTrue( hasSigmaFilter() );
-		}};
-		assertTrue( ss.getFilters().isEmpty() );
+		// no filter unless chosen in the dialog, "Do not filter interest points" is the default of both methods
+		assertEquals( 3, DifferenceOfGUI.filterChoice.length );
+		assertEquals( "Do not filter interest points", DifferenceOfGUI.filterChoice[ DifferenceOfGUI.filterChoice.length - 1 ] );
+		assertNull( new DifferenceOfGaussianGUI( null, null ).getFilter() );
+		assertNull( new ScaleSpaceGUI( null, null ).getFilter() );
 	}
 }

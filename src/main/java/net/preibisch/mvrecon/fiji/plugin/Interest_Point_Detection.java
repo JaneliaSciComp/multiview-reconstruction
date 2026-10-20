@@ -29,7 +29,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import ij.ImageJ;
 import ij.gui.GenericDialog;
@@ -49,7 +48,7 @@ import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AbstractImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections.FilterParameters;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
@@ -138,10 +137,8 @@ public class Interest_Point_Detection implements PlugIn
 
 		gd.addCheckbox( "Set_minimal_and_maximal_intensity", defaultSetMinMax );
 
-		gd.addMessage( "Limiting the number of detections moved to the filtered labels: the next dialog can create labels that keep the\n" +
-				"n highest points by |response| per view next to the ones by ranges of |response|, intensity or sigma, and the interest\n" +
-				"point explorer offers 'Keep n points per view ...' (highest / around median / lowest by intensity, |response| or sigma),\n" +
-				"'New filtered interest points ...' and 'Filter interactively ...' for any label, no re-detection needed.", GUIHelper.smallStatusFont );
+		gd.addMessage( "To keep only some of the detections (by thresholds or a fixed number per view) choose a filter in the next dialog;\n" +
+				"the interest point explorer offers the same for any label ('Manage Interest Points'), no re-detection needed.", GUIHelper.smallStatusFont );
 
 		gd.addMessage( "" );
 
@@ -194,14 +191,14 @@ public class Interest_Point_Detection implements PlugIn
 				viewIds );
 
 		// the interest point detection should query its parameters
-		if ( !ipd.queryParameters( setMinMax, groupTiles, groupIllums ) )
+		if ( !ipd.queryParameters( label, setMinMax, groupTiles, groupIllums ) )
 			return false;
 
 		// if grouped, we need to get the min/max intensity for all groups
 		ipd.preprocess();
 
-		// the filtered labels to create from the detections (VirtualFilteredInterestPointsN5), none by default
-		final List< InterestPointFilter > filters = ipd.getFilters();
+		// the filter chosen in the dialog: a filtered label (VirtualFilteredInterestPointsN5) or a plain copy of the detections, null = none
+		final FilterParameters filter = ipd.getFilter();
 
 		// record action history before processing — params reflect the GUI choices that drive ipd
 		final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
@@ -222,9 +219,9 @@ public class Interest_Point_Detection implements PlugIn
 				viewIds,
 				"interestpoints:" + label );
 
-		// one record per filtered label, so that removing a label removes its record
-		for ( final InterestPointFilter filter : filters )
-			Filter_Detections.recordFilterAction( data, label + filter.suffix(), label, filter, false, viewIds );
+		// one record for the filtered label, so that removing the label removes its record
+		if ( filter != null )
+			Filter_Detections.recordFilterAction( data, filter.newLabel, label, filter.filter, filter.copy, viewIds );
 
 		// now extract all the detections
 		for ( final TimePoint tp : SpimData2.getAllTimePointsSorted( data, viewIds ) )
@@ -233,12 +230,16 @@ public class Interest_Point_Detection implements PlugIn
 
 			InterestPointTools.addInterestPoints( data, label, points, ipd.getParameters() );
 
-			// the filtered labels have no points of their own, they filter the label on the fly
-			for ( final InterestPointFilter filter : filters )
-				InterestPointTools.addFilteredInterestPoints( data, label + filter.suffix(), label, filter, points.keySet() );
+			// the filtered label has no points of its own, it filters the label on the fly (or is a plain copy of the points that pass)
+			if ( filter != null )
+			{
+				if ( filter.copy )
+					InterestPointTools.addFilteredInterestPointsCopy( data, filter.newLabel, label, filter.filter, points.keySet() );
+				else
+					InterestPointTools.addFilteredInterestPoints( data, filter.newLabel, label, filter.filter, points.keySet() );
 
-			if ( filters.size() > 0 )
-				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Stored the interest points of timepoint " + tp.getName() + " as '" + label + "' and the filtered labels " + filters.stream().map( f -> "'" + label + f.suffix() + "'" ).collect( Collectors.joining( ", " ) ) + "." );
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Stored the interest points of timepoint " + tp.getName() + " as '" + label + "' and the " + ( filter.copy ? "label" : "filtered label" ) + " '" + filter.newLabel + "'." );
+			}
 
 			// update metadata if necessary
 			if ( data.getSequenceDescription().getImgLoader() instanceof AbstractImgLoader )
