@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.process.interestpointdetection;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.TreeSet;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -41,6 +42,9 @@ import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
+import mpicbg.spim.data.sequence.ViewDescription;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -327,6 +331,58 @@ public class InterestPointTools
 		}
 
 		return addInterestPoints( data, label, points, filter.describe( baseLabel ) + " (copied)" );
+	}
+
+	/**
+	 * @return the views (sorted) of the collection that are present and have the label
+	 */
+	public static List< ViewId > viewsWithLabel( final SpimData2 data, final String label, final Collection< ? extends ViewId > viewCollection )
+	{
+		final ArrayList< ViewId > views = new ArrayList<>();
+
+		for ( final ViewId viewId : viewCollection )
+		{
+			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
+
+			if ( vd == null || !vd.isPresent() )
+				continue;
+
+			final ViewInterestPointLists vipl = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+
+			if ( vipl != null && vipl.contains( label ) )
+				views.add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
+		}
+
+		Collections.sort( views );
+
+		return views;
+	}
+
+	/**
+	 * Before a label is overwritten in the views (a plain copy of the points that pass a filter replacing it, as a
+	 * re-detection does): removes the correspondences of other views that point to it
+	 * (CorrespondenceTools.removeCorrespondencesForViewLabel) and the records of the action history that produced it
+	 * ("interestpoints:" + label). Its dependants (filtered labels of it) stay and follow the new points; their
+	 * correspondences may be stale, which is logged.
+	 */
+	public static void removeReferences( final SpimData2 data, final String label, final Collection< ? extends ViewId > views )
+	{
+		int removed = 0;
+		final TreeSet< String > dependants = new TreeSet<>();
+
+		for ( final ViewId viewId : views )
+		{
+			removed += CorrespondenceTools.removeCorrespondencesForViewLabel( data.getViewInterestPoints(), viewId, label, Threads.numThreads() );
+			dependants.addAll( dependentLabels( data.getViewInterestPoints().getViewInterestPointLists( viewId ), label ) );
+		}
+
+		IOFunctions.println( "Overwriting label '" + label + "' in " + views.size() + " view(s): removed " + removed + " corresponding entries of other views that pointed to it." );
+
+		if ( !dependants.isEmpty() )
+			IOFunctions.println( "The filtered label(s) " + dependants + " filter '" + label + "' and now follow its new points, their correspondences may be stale." );
+
+		if ( data.getActionHistory() != null )
+			data.getActionHistory().removeByResultRef( "interestpoints:" + label );
 	}
 
 	/**

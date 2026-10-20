@@ -34,7 +34,6 @@ import java.math.MathContext;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -72,6 +71,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
  * The interactive filter of the interest point explorer: one histogram per attribute (|response|, intensity, sigma) of
@@ -361,7 +361,7 @@ public class InteractiveInterestPointFilter extends JFrame
 		gd.addMessage( filter.describe( label ), GUIHelper.smallStatusFont );
 		gd.addChoice( "Apply_to", choices, choices[ 0 ] );
 		gd.addStringField( "New_label", label + filter.suffix(), 30 );
-		gd.addCheckbox( "Store_as_plain_label (copy the points instead of filtering on the fly)", Filter_Detections.defaultCopy );
+		gd.addCheckbox( "Store_as_plain_label (copy the points instead of filtering on the fly; needed to overwrite an existing label)", Filter_Detections.defaultCopy );
 
 		gd.showDialog();
 
@@ -378,7 +378,7 @@ public class InteractiveInterestPointFilter extends JFrame
 	/**
 	 * Creates the filtered label (or a plain copy) with the current filter for the views and refreshes the explorer
 	 *
-	 * @return whether it was created (not if the filter is empty, the name is empty or the base label, or the label exists in one of the views)
+	 * @return whether it was created (not if the filter is empty, the name is empty, or the label exists in one of the views (the base label included) and copy is false, see Filter_Detections.checkNewLabel)
 	 */
 	public boolean createLabel( final List< ViewId > target, final String newLabel, final boolean copy )
 	{
@@ -388,24 +388,22 @@ public class InteractiveInterestPointFilter extends JFrame
 			return false;
 		}
 
-		if ( newLabel == null || newLabel.trim().isEmpty() || newLabel.trim().equals( label ) )
-		{
-			IOFunctions.println( "The new label must be set and differ from '" + label + "'." );
+		// an existing label (this one included) can only be overwritten by a plain copy of the points that pass
+		if ( !Filter_Detections.checkNewLabel( data, target, label, newLabel == null ? null : newLabel.trim(), copy ) )
 			return false;
-		}
-
-		for ( final ViewId viewId : target )
-			if ( data.getViewInterestPoints().getViewInterestPointLists( viewId ).contains( newLabel.trim() ) )
-			{
-				IOFunctions.println( "Label '" + newLabel.trim() + "' exists already in view " + viewId.getTimePointId() + "/" + viewId.getViewSetupId() + ", not creating it." );
-				return false;
-			}
 
 		Filter_Detections.create( data, target, label, newLabel.trim(), filter, copy );
 		Filter_Detections.defaultNewLabel = "";
 
 		if ( onCreated != null )
 			onCreated.run();
+
+		// the points of this window are gone if its own label was replaced by the points that pass
+		if ( newLabel.trim().equals( label ) )
+		{
+			IOFunctions.println( "Label '" + label + "' was replaced by the points that pass, closing its filter window." );
+			dispose();
+		}
 
 		return true;
 	}
@@ -415,24 +413,7 @@ public class InteractiveInterestPointFilter extends JFrame
 	 */
 	public static List< ViewId > viewsWithLabel( final SpimData2 data, final String label, final Collection< ? extends ViewId > viewCollection )
 	{
-		final ArrayList< ViewId > views = new ArrayList<>();
-
-		for ( final ViewId viewId : viewCollection )
-		{
-			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
-
-			if ( vd == null || !vd.isPresent() )
-				continue;
-
-			final ViewInterestPointLists vipl = data.getViewInterestPoints().getViewInterestPointLists( viewId );
-
-			if ( vipl != null && vipl.contains( label ) )
-				views.add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
-		}
-
-		Collections.sort( views );
-
-		return views;
+		return InterestPointTools.viewsWithLabel( data, label, viewCollection );
 	}
 
 	/**

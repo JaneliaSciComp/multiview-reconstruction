@@ -148,7 +148,7 @@ public class Limit_Detections implements PlugIn
 		gd.addChoice( "Keep", modeChoice, modeChoice[ defaultMode ] );
 		gd.addMessage( "The points are ranked per view by the attribute (|response| for the response), a point without it does not pass.", GUIHelper.smallStatusFont );
 		gd.addStringField( "New_label (empty = base label + suffix, e.g. _rh3000)", defaultNewLabel, 30 );
-		gd.addCheckbox( "Store_as_plain_label (copy the points instead of filtering on the fly)", Filter_Detections.defaultCopy );
+		gd.addCheckbox( "Store_as_plain_label (copy the points instead of filtering on the fly; needed to overwrite an existing label)", Filter_Detections.defaultCopy );
 
 		gd.showDialog();
 
@@ -178,11 +178,8 @@ public class Limit_Detections implements PlugIn
 		params.filter = filterFor( count, axis, mode );
 		params.newLabel = newLabel.trim().isEmpty() ? params.baseLabel + params.filter.suffix() : newLabel.trim();
 
-		if ( params.newLabel.equals( params.baseLabel ) )
-		{
-			IOFunctions.println( "The new label must differ from the base label '" + params.baseLabel + "'." );
+		if ( !Filter_Detections.checkNewLabel( spimData, viewIds, params.baseLabel, params.newLabel, params.copy ) )
 			return null;
-		}
 
 		return params;
 	}

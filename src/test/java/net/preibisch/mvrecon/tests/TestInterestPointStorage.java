@@ -33,6 +33,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -55,6 +56,9 @@ import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionRecord;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -663,6 +667,106 @@ public class TestInterestPointStorage
 			assertEquals( brightest, ( (VirtualFilteredInterestPointsN5)ips ).getFilter() );
 			assertEquals( expected.get( viewId ), new TreeSet<>( ips.getInterestPointsCopy().keySet() ) );
 		}
+	}
+
+	/**
+	 * An existing label (the base label included) is overwritten only by a plain copy of the points that pass: a filtered
+	 * label is refused; the copy replaces the points, drops the correspondences of other views that pointed to the label and
+	 * the history records that produced it, keeps the dependants; a former filtered label becomes a plain one, on disk too
+	 */
+	@Test
+	public void testOverwrite() throws Exception
+	{
+		final SpimData2 spimData = SimulateUtil.setUp();
+		spimData.setBasePathURI( tempDir.toUri() );
+
+		final List< ViewId > views = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		Collections.sort( views );
+		final ViewId v0 = views.get( 0 ), v1 = views.get( 1 );
+		final HashMap< ViewId, List< InterestPoint > > map = new HashMap<>();
+		int seed = 0;
+
+		for ( final ViewId viewId : views )
+			map.put( viewId, points( 200 + 10 * seed, 500 + seed++ ) );
+
+		InterestPointTools.addInterestPoints( spimData, "beads", map, "DOG s=1.8 t=0.001" );
+
+		// a record that produced "beads", (symmetric) correspondences between (v0, beads) and (v1, beads), a filtered label of beads
+		ActionHistoryRecorder.record( spimData, "detect-interestpoints", "test", ActionHistoryRecorder.params(), views, "interestpoints:beads" );
+
+		final ArrayList< CorrespondingInterestPoints > corr0 = new ArrayList<>(), corr1 = new ArrayList<>();
+		corr0.add( new CorrespondingInterestPoints( 5, v1, "beads", 3 ) );
+		corr0.add( new CorrespondingInterestPoints( 6, v1, "beads", 4 ) );
+		corr1.add( new CorrespondingInterestPoints( 3, v0, "beads", 5 ) );
+		corr1.add( new CorrespondingInterestPoints( 4, v0, "beads", 6 ) );
+		spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads" ).setCorrespondingInterestPoints( corr0 );
+		spimData.getViewInterestPoints().getViewInterestPointLists( v1 ).getInterestPointList( "beads" ).setCorrespondingInterestPoints( corr1 );
+
+		final InterestPointFilter byResponse = InterestPointFilter.of( Axis.RESPONSE, 0.5, Double.NaN );
+		assertTrue( InterestPointTools.addFilteredInterestPoints( spimData, "beads_r0.5", "beads", byResponse, views ) );
+		final TreeSet< Integer > filteredBefore = new TreeSet<>( spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" ).getInterestPointsCopy().keySet() );
+
+		// a filtered label cannot replace an existing label, a plain copy can
+		final List< ViewId > only0 = Arrays.asList( v0 );
+		assertFalse( Filter_Detections.checkNewLabel( spimData, only0, "beads", "beads", false ) );
+		assertFalse( Filter_Detections.checkNewLabel( spimData, only0, "beads", "beads_r0.5", false ) );
+		assertFalse( Filter_Detections.checkNewLabel( spimData, only0, "beads", " ", true ) );
+		assertFalse( Filter_Detections.checkNewLabel( spimData, only0, "beads", null, true ) );
+		assertTrue( Filter_Detections.checkNewLabel( spimData, only0, "beads", "fresh", false ) );
+		assertTrue( Filter_Detections.checkNewLabel( spimData, only0, "beads", "beads", true ) );
+		assertTrue( Filter_Detections.checkNewLabel( spimData, only0, "beads", "beads_r0.5", true ) );
+		assertThrows( IllegalArgumentException.class, () -> Filter_Detections.create( spimData, only0, "beads", "beads", byResponse, false ) );
+		assertThrows( IllegalArgumentException.class, () -> Filter_Detections.create( spimData, only0, "beads", "beads_r0.5", byResponse, false ) );
+		assertEquals( map.get( v0 ).size(), spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads" ).getInterestPointsCopy().size() );
+
+		// the base label of v0 replaced by its own points that pass (with their ids), v1 untouched
+		final TreeSet< Integer > expected = idsPassing( map.get( v0 ), byResponse );
+		assertTrue( expected.size() > 0 && expected.size() < map.get( v0 ).size() );
+		assertTrue( Filter_Detections.create( spimData, only0, "beads", "beads", byResponse, true ) );
+
+		final InterestPoints beads0 = spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads" );
+		assertFalse( beads0 instanceof VirtualFilteredInterestPointsN5 );
+		assertEquals( expected, new TreeSet<>( beads0.getInterestPointsCopy().keySet() ) );
+		assertEquals( map.get( v1 ).size(), spimData.getViewInterestPoints().getViewInterestPointLists( v1 ).getInterestPointList( "beads" ).getInterestPointsCopy().size() );
+
+		// the correspondences of v1 that pointed to (v0, beads) are gone (the mirrors of the old label's own), as are the old label's, the old record too (the new label has its filter record)
+		assertEquals( 0, spimData.getViewInterestPoints().getViewInterestPointLists( v1 ).getInterestPointList( "beads" ).getCorrespondingInterestPointsCopy().size() );
+		assertEquals( 0, beads0.getCorrespondingInterestPointsCopy().size() );
+		final List< ActionRecord > records = spimData.getActionHistory().getRecords();
+		assertEquals( 1, records.stream().filter( r -> "interestpoints:beads".equals( r.getResultRef() ) ).count() );
+		assertEquals( "filter-interestpoints", records.stream().filter( r -> "interestpoints:beads".equals( r.getResultRef() ) ).findFirst().get().getActionId() );
+
+		// the dependant follows the new points (the same ids as before, the filter is idempotent)
+		assertEquals( filteredBefore, new TreeSet<>( spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" ).getInterestPointsCopy().keySet() ) );
+
+		// a filtered label overwritten by a plain copy becomes a plain label, on disk too
+		final InterestPointFilter bySigma = InterestPointFilter.of( Axis.SIGMA, 2, 4 );
+		assertTrue( Filter_Detections.create( spimData, views, "beads", "beads_r0.5", bySigma, true ) );
+
+		for ( final ViewId viewId : views )
+			assertFalse( spimData.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_r0.5" ) instanceof VirtualFilteredInterestPointsN5 );
+
+		final URI xmlURI = tempDir.resolve( "dataset.xml" ).toUri();
+		assertTrue( new XmlIoSpimData2().save( spimData, xmlURI ) );
+
+		final String xml = new String( Files.readAllBytes( tempDir.resolve( "dataset.xml" ) ) );
+		assertTrue( xml.contains( "label=\"beads_r0.5\"" ) );
+		assertFalse( xml.contains( "base=\"beads\"" ) );
+		assertFalse( xml.contains( "filter=" ) );
+
+		final String path = InterestPointsN5.createN5datasetPath( v0.getTimePointId(), v0.getViewSetupId(), "beads_r0.5" );
+
+		try ( final N5Reader n5 = openN5() )
+		{
+			assertEquals( "list", n5.getAttribute( InterestPointsN5.ipDataset( path ), "type", String.class ) );
+			assertNull( n5.getAttribute( InterestPointsN5.ipDataset( path ), VirtualFilteredInterestPointsN5.filterAttribute, String.class ) );
+			assertTrue( n5.datasetExists( InterestPointsN5.ipDataset( path ) + "/loc" ) );
+		}
+
+		final SpimData2 loaded = new XmlIoSpimData2().load( xmlURI );
+		final InterestPoints reloaded = loaded.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" );
+		assertFalse( reloaded instanceof VirtualFilteredInterestPointsN5 );
+		assertEquals( idsPassing( new ArrayList<>( beads0.getInterestPointsCopy().values() ), bySigma ), new TreeSet<>( reloaded.getInterestPointsCopy().keySet() ) );
 	}
 
 	@Test

@@ -44,7 +44,8 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 /**
  * Creates a filtered label from an existing label: a label without points of its own that filters the points of the
  * base label by |response|, intensity and/or sigma on the fly and has its own correspondences (VirtualFilteredInterestPointsN5),
- * or, on request, a plain copy of the points that pass the filter (for readers that do not know filtered labels).
+ * or, on request, a plain copy of the points that pass the filter (for readers that do not know filtered labels, and the
+ * only way to overwrite an existing label, the base label itself included: checkNewLabel).
  * Reachable from "Manage Interest Points" of the explorer and as a plugin; "Filter_interest_points (thresholds)" of the
  * detection dialogs opens this dialog for the label being detected (DifferenceOfGUI.queryFilter), the label is created
  * once the points exist.
@@ -113,6 +114,15 @@ public class Filter_Detections implements PlugIn
 	 */
 	public static boolean create( final SpimData2 data, final Collection< ? extends ViewId > viewIds, final String baseLabel, final String newLabel, final InterestPointFilter filter, final boolean copy )
 	{
+		// an existing label (the base label included) can only be overwritten by a plain copy of the points that pass
+		final List< ViewId > existing = InterestPointTools.viewsWithLabel( data, newLabel, viewIds );
+
+		if ( !copy && ( !existing.isEmpty() || newLabel.equals( baseLabel ) ) )
+			throw new IllegalArgumentException( "Label '" + newLabel + "' exists: a filtered label cannot replace an existing label, store a plain copy of the points that pass instead." );
+
+		if ( !existing.isEmpty() )
+			InterestPointTools.removeReferences( data, newLabel, existing );
+
 		if ( copy )
 			InterestPointTools.addFilteredInterestPointsCopy( data, newLabel, baseLabel, filter, viewIds );
 		else
@@ -120,7 +130,38 @@ public class Filter_Detections implements PlugIn
 
 		recordFilterAction( data, newLabel, baseLabel, filter, copy, viewIds );
 
-		IOFunctions.println( new Date( System.currentTimeMillis() ) + ": Created " + ( copy ? "label" : "filtered label" ) + " '" + newLabel + "' (" + filter.describe( baseLabel ) + ") for " + viewIds.size() + " views." );
+		IOFunctions.println( new Date( System.currentTimeMillis() ) + ": " + ( existing.isEmpty() ? "Created " : "Overwrote " ) + ( copy ? "label" : "filtered label" ) + " '" + newLabel + "' (" + filter.describe( baseLabel ) + ") for " + viewIds.size() + " views." );
+
+		return true;
+	}
+
+	/**
+	 * Whether a filtered label (or a plain copy) may be created under the name for the views: the name must be set, and an
+	 * existing label (the base label included) can only be overwritten by a plain copy of the points that pass; a filtered
+	 * label cannot replace an existing label (it would filter itself, or leave the dependants and correspondences of the
+	 * old label inconsistent)
+	 *
+	 * @return true if it may, otherwise false with a log line saying why
+	 */
+	public static boolean checkNewLabel( final SpimData2 data, final Collection< ? extends ViewId > viewIds, final String baseLabel, final String newLabel, final boolean copy )
+	{
+		if ( newLabel == null || newLabel.trim().isEmpty() )
+		{
+			IOFunctions.println( "The new label must be set." );
+			return false;
+		}
+
+		final List< ViewId > existing = InterestPointTools.viewsWithLabel( data, newLabel, viewIds );
+		final boolean isBase = newLabel.equals( baseLabel );
+
+		if ( !copy && ( !existing.isEmpty() || isBase ) )
+		{
+			IOFunctions.println( "Label '" + newLabel + "' " + ( isBase ? "is the base label" : "exists in " + existing.size() + " of the views" ) + ". To overwrite it with the points that pass, tick 'Store_as_plain_label': a filtered label cannot replace an existing label." );
+			return false;
+		}
+
+		if ( !existing.isEmpty() )
+			IOFunctions.println( "Label '" + newLabel + "' exists in " + existing.size() + " of the views and will be overwritten with the points that pass" + ( isBase ? " (its own filtered points)" : "" ) + "." );
 
 		return true;
 	}
@@ -201,7 +242,7 @@ public class Filter_Detections implements PlugIn
 		gd.addStringField( "Intensity_range (image units)", defaultIntensity, 20 );
 		gd.addStringField( "Sigma_range (px at full resolution)", defaultSigma, 20 );
 		gd.addStringField( "New_label (empty = base label + suffix of the filter)", defaultNewLabel, 30 );
-		gd.addCheckbox( "Store_as_plain_label (copy the points instead of filtering on the fly)", defaultCopy );
+		gd.addCheckbox( "Store_as_plain_label (copy the points instead of filtering on the fly; needed to overwrite an existing label)", defaultCopy );
 
 		gd.showDialog();
 
@@ -240,11 +281,8 @@ public class Filter_Detections implements PlugIn
 
 		params.newLabel = newLabel.trim().isEmpty() ? params.baseLabel + params.filter.suffix() : newLabel.trim();
 
-		if ( params.newLabel.equals( params.baseLabel ) )
-		{
-			IOFunctions.println( "The new label must differ from the base label '" + params.baseLabel + "'." );
+		if ( !checkNewLabel( spimData, viewIds, params.baseLabel, params.newLabel, params.copy ) )
 			return null;
-		}
 
 		return params;
 	}
