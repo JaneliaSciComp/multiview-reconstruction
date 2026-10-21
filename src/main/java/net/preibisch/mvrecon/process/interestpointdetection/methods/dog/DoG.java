@@ -44,7 +44,6 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
-import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 public class DoG
 {
@@ -108,9 +107,6 @@ public class DoG
 				maxIntensity,
 				service );
 
-		//if ( dog.limitDetections )
-		//	ips = InterestPointTools.limitList( dog.maxDetections, dog.maxDetectionsTypeIndex, ips );
-
 		// adjust detections for min coordinates of the RandomAccessibleInterval
 		for ( final InterestPoint ip : ips )
 		{
@@ -127,7 +123,7 @@ public class DoG
 	/**
 	 * Detects the interest points of every present view in dog.toProcess and adds them to the map: the view is opened
 	 * at the downsampling (DownsampleTools.openAndDownsample, not virtual), DoGImgLib2.computeDoG runs on the entire
-	 * view, the detections are limited if requested and mapped to full resolution with the mipmap transform. A failing
+	 * view, the detections are mapped to full resolution with the mipmap transform. A failing
 	 * view is logged and skipped.
 	 *
 	 * @param interestPoints - the map the detections are added to, one list per view
@@ -197,9 +193,6 @@ public class DoG
 				{
 					service.shutdown();
 				}
-
-				if ( dog.limitDetections )
-					ips = InterestPointTools.limitList( dog.maxDetections, dog.maxDetectionsTypeIndex, ips );
 
 				// maps the positions to full resolution
 				DownsampleTools.correctForDownsampling( ips, input.getB() );

@@ -42,7 +42,6 @@ import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
-import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 /**
@@ -83,7 +82,7 @@ public class ScaleSpace
 	 * Detects the interest points of every present view in p.toProcess and adds them to the map: the view is opened at
 	 * the starting resolution p.downsampling (DownsampleTools.openAndDownsample), the intensity range is the user's or
 	 * the one of the opened view, the anisotropy of the opened image is derived from the calibration and p.anisotropyZ,
-	 * DoGScaleSpace.computeDoGScaleSpace runs on the entire view, the detections are limited if requested and mapped
+	 * DoGScaleSpace.computeDoGScaleSpace runs on the entire view, the detections are mapped
 	 * (positions and sigma) to full resolution with the mipmap transform. A failing view is logged and skipped.
 	 * p.scaleSpace is mutated per view (intensity range, anisotropy).
 	 *
@@ -155,9 +154,6 @@ public class ScaleSpace
 				{
 					service.shutdown();
 				}
-
-				if ( p.limitDetections )
-					ips = InterestPointTools.limitList( p.maxDetections, p.maxDetectionsTypeIndex, ips );
 
 				// maps positions and sigmas to full resolution
 				DownsampleTools.correctForDownsampling( ips, input.getB() );

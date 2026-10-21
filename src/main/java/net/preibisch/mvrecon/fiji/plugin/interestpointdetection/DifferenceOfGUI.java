@@ -98,15 +98,6 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	public static int defaultLocalization = 1;
 	public static int defaultBrightness = 5;
 
-	/** @deprecated the image sigmas were never used by the detectors and left the dialogs on 2026-10-20 (the anisotropy replaces them); kept until BigStitcher-Spark drops its assignment */
-	@Deprecated
-	public static double defaultImageSigmaX = 0.5;
-	/** @deprecated see defaultImageSigmaX */
-	@Deprecated
-	public static double defaultImageSigmaY = 0.5;
-	/** @deprecated see defaultImageSigmaX */
-	@Deprecated
-	public static double defaultImageSigmaZ = 0.5;
 
 	public static int defaultViewChoice = 0;
 	public static int defaultGroupChoice = 0;
