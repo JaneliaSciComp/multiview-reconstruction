@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection.interactive;
 
 import java.awt.BasicStroke;
+import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
@@ -41,6 +42,7 @@ import java.awt.event.WindowEvent;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -84,12 +86,14 @@ import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions;
 import net.preibisch.mvrecon.Threads;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.ScaleSpaceGUI;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace;
+import net.preibisch.mvrecon.process.interestpointdetection.NoiseFloor;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace.Candidates;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace.ScaleSpacePeak;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.ScaleSpace;
@@ -183,10 +187,27 @@ public class InteractiveScaleSpace
 		long[] downsampling = null;
 		int resolutionIndex = -1;
 
+		/** estimates the noise floor of all views of the detection at a resolution and steps (DifferenceOfGUI.noiseEstimator), null = the windows have no "Estimate noise floor" button */
+		final NoiseFloor.Estimator noiseEstimator;
+
+		/** once a window asked for the noise floor (noiseWanted): the pooled floors per resolution and steps (cached), the threshold as a multiple of the floor and the lock, shared by all windows */
+		final HashMap< String, Double > noiseFloors = new HashMap<>();
+		boolean noiseWanted = false, noiseLocked = false;
+		double noiseFactor = Double.NaN;
+
 		volatile boolean finished = false, cancelled = false;
 
 		public Session( final SpimData2 data, final ViewDescription vd, final String[] resolutions, final ScaleSpaceParameters base, final double anisotropyZ )
 		{
+			this( data, vd, resolutions, base, anisotropyZ, null );
+		}
+
+		/**
+		 * @param noiseEstimator - estimates the noise floor of all views of the detection for the "Estimate noise floor" button, null = no button
+		 */
+		public Session( final SpimData2 data, final ViewDescription vd, final String[] resolutions, final ScaleSpaceParameters base, final double anisotropyZ, final NoiseFloor.Estimator noiseEstimator )
+		{
+			this.noiseEstimator = noiseEstimator;
 			this.data = data;
 			this.vd = vd;
 			this.voxelSize = vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null;
@@ -267,7 +288,7 @@ public class InteractiveScaleSpace
 			resolutionIndex = window.resolutionIndex;
 			finished = true;
 
-			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Scale-space preview: threshold = " + threshold + ", finest structures = " + detectFinestLevel + ", maxima = " + findMax + ", minima = " + findMin + ", steps per octave = " + steps + ", octaves = " + octaves + ", starting resolution (downsampling x, y, z) = " + Util.printCoordinates( downsampling ) );
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Scale-space preview: threshold = " + threshold + ( window.noiseFloor > 0 ? " = " + format( threshold / window.noiseFloor, "0.00" ) + " x the noise floor " + window.noiseFloor + " of all views at this resolution" : "" ) + ", finest structures = " + detectFinestLevel + ", maxima = " + findMax + ", minima = " + findMin + ", steps per octave = " + steps + ", octaves = " + octaves + ", starting resolution (downsampling x, y, z) = " + Util.printCoordinates( downsampling ) );
 
 			closeAll();
 		}
@@ -355,6 +376,23 @@ public class InteractiveScaleSpace
 	final JFrame frame;
 	final BoundedValueSlider thresholdSlider;
 	final JCheckBox finestBox, maximaBox, minimaBox;
+
+	/** the pooled noise floor of all views at this resolution and the current steps (session.noiseEstimator), NaN before the button was pressed and while estimating; the threshold as a multiple of it is the second slider */
+	double noiseFloor = Double.NaN;
+	String noiseKeyRunning = null;
+	boolean updatingFactor = false;
+	/** the button was pressed: the threshold jumps to the default factor x the floor once it is there (DifferenceOfGUI.defaultNoiseFactor) */
+	boolean noiseJump = false;
+	/** the delay after the last change of the steps before the floor is estimated again */
+	final Timer noiseTimer = new Timer( 500, e -> updateNoiseFloor() );
+
+	{
+		noiseTimer.setRepeats( false );
+	}
+	final BoundedValueSlider factorSlider;
+	final JButton noiseButton;
+	final JCheckBox lockBox;
+	final JLabel noiseLabel;
 	final JComboBox< String > resolutionBox, octavesBox;
 	final JSpinner stepsSpinner;
 	boolean updatingOctavesBox = false;
@@ -418,9 +456,9 @@ public class InteractiveScaleSpace
 		this.p.findMin = findMin;
 		this.p.findMax = findMax;
 		this.p.detectFinestLevel = detectFinestLevel;
-		this.p.threshold = threshold;
 		this.p.steps = steps;
 		this.p.octaves = octaves;
+		this.p.threshold = threshold;
 
 		this.imp = FusionTools.getImagePlusInstance( img, Intervals.numElements( img ) > maxVoxelsInMemory, name, p.minIntensity, p.maxIntensity, null );
 		this.imp.setDimensions( 1, imp.getStackSize(), 1 );
@@ -445,7 +483,7 @@ public class InteractiveScaleSpace
 			imp.setRoi( new Rectangle( (int)roi.min( 0 ), (int)roi.min( 1 ), (int)roi.dimension( 0 ), (int)roi.dimension( 1 ) ) );
 
 		// the control window
-		this.thresholdSlider = new BoundedValueSlider( threshold, defaultLowerBound, defaultUpperBound, true, "0.00000", 0.0005 );
+		this.thresholdSlider = new BoundedValueSlider( p.threshold, Math.min( defaultLowerBound, p.threshold ), Math.max( defaultUpperBound, p.threshold ), true, "0.00000", 0.0005 );
 		this.thresholdSlider.addPreset( "set bounds 0.001 .. 0.03 (beads)", 0.001, 0.03 );
 		this.thresholdSlider.addPreset( "set bounds 0.01 .. 0.3 (sample)", 0.01, 0.3 );
 		this.finestBox = new JCheckBox( "Finest structures", detectFinestLevel );
@@ -465,6 +503,19 @@ public class InteractiveScaleSpace
 		this.cancelButton = new JButton( "Cancel" );
 		this.countsLabel = new JLabel( " " );
 		this.statusLabel = new JLabel( " " );
+		this.noiseButton = new JButton( "Estimate noise floor (all " + ( session.noiseEstimator == null ? 0 : session.noiseEstimator.numViews() ) + " views)" );
+		this.noiseButton.setToolTipText( "<html>the robust noise of the finest level at this resolution in random blocks of all views of the detection, the highest of them;<br>it follows the steps and the resolution from then on and the threshold can be set as a multiple of it (the second slider)</html>" );
+		this.noiseButton.setEnabled( session.noiseEstimator != null );
+		this.noiseLabel = new JLabel( " " );
+		this.noiseLabel.setFont( GUIHelper.smallStatusFont );
+		// the label takes what is left of the row and truncates (the full text is its tooltip): a long text must not widen the window
+		this.noiseLabel.setPreferredSize( new Dimension( 10, noiseLabel.getPreferredSize().height ) );
+		this.noiseLabel.setMinimumSize( new Dimension( 10, noiseLabel.getPreferredSize().height ) );
+		this.factorSlider = new BoundedValueSlider( 1, 0, 50, false, "0.00", 0.1 );
+		this.factorSlider.setEnabled( false );
+		this.lockBox = new JCheckBox( "Lock noise factor", session.noiseLocked );
+		this.lockBox.setToolTipText( "<html>locked, the noise factor stays when the steps or the resolution change and the threshold follows the noise floor;<br>unlocked, the threshold stays and the factor follows</html>" );
+		this.lockBox.setEnabled( false );
 		this.legend = new ScaleLegend();
 		this.filterTimer = new Timer( 50, e -> refilter() );
 		this.filterTimer.setRepeats( false );
@@ -482,7 +533,18 @@ public class InteractiveScaleSpace
 		this.thresholdSlider.addListener( new BoundedValueSlider.Listener()
 		{
 			@Override
-			public void valueChanged( final double value ) { filterTimer.restart(); }
+			public void valueChanged( final double value )
+			{
+				// the factor follows the threshold
+				if ( noiseFloor > 0 && !updatingFactor )
+				{
+					session.noiseFactor = value / noiseFloor;
+					showFactor();
+				}
+
+				updateNoiseLabel();
+				filterTimer.restart();
+			}
 
 			@Override
 			public void boundsChanged( final double min, final double max )
@@ -493,6 +555,17 @@ public class InteractiveScaleSpace
 			}
 		} );
 
+		this.noiseButton.addActionListener( e -> estimateNoise() );
+		this.lockBox.addItemListener( e -> { session.noiseLocked = lockBox.isSelected(); updateNoiseLabel(); } );
+		this.factorSlider.addListener( value ->
+		{
+			// the factor slider sets the threshold to factor x noise floor
+			if ( noiseFloor > 0 && !updatingFactor )
+			{
+				session.noiseFactor = value;
+				thresholdSlider.setValue( value * noiseFloor );
+			}
+		} );
 		this.finestBox.addItemListener( e -> refilter() );
 		this.maximaBox.addItemListener( e -> refilter() );
 		this.minimaBox.addItemListener( e -> refilter() );
@@ -504,6 +577,11 @@ public class InteractiveScaleSpace
 			if ( value != p.steps && !computing )
 			{
 				p.steps = value;
+
+				// k changed with the steps, so did the finest level and its noise floor (locked, the threshold follows it), estimated once the steps have settled
+				if ( session.noiseWanted )
+					noiseTimer.restart();
+
 				recompute();
 			}
 		} );
@@ -776,6 +854,145 @@ public class InteractiveScaleSpace
 	}
 
 	/**
+	 * The "Estimate noise floor" button: the threshold jumps to the default noise factor x the floor, from now on the
+	 * pooled floor of all views follows the steps and the resolution of the windows (updateNoiseFloor), and the factor
+	 * slider and the lock become usable
+	 */
+	protected void estimateNoise()
+	{
+		if ( session.noiseEstimator == null )
+			return;
+
+		session.noiseWanted = true;
+		session.noiseFactor = DifferenceOfGUI.defaultNoiseFactor;
+		noiseJump = true;
+		updateNoiseFloor();
+	}
+
+	/**
+	 * The noise floor of all views at this resolution and the current steps (session.noiseEstimator, cached in the
+	 * session): applied at once if known, otherwise estimated in the background and applied when it arrives (applyNoiseFloor)
+	 */
+	protected void updateNoiseFloor()
+	{
+		if ( disposed )
+			return;
+
+		final int steps = p.steps;
+		final String key = Util.printCoordinates( downsampling ) + " steps " + steps;
+		final Double cached = session.noiseFloors.get( key );
+
+		if ( cached != null )
+		{
+			applyNoiseFloor( cached );
+			return;
+		}
+
+		// one estimate at a time: when the running one arrives and the steps have moved on, the current ones are estimated next
+		if ( noiseKeyRunning != null )
+			return;
+
+		noiseKeyRunning = key;
+		noiseFloor = Double.NaN;
+		updateNoiseLabel();
+
+		new Thread( () ->
+		{
+			double floor;
+
+			try
+			{
+				final NoiseFloor.Pooled pooled = session.noiseEstimator.estimate( downsampling, p.sigmaMin, steps );
+				floor = pooled == null ? Double.NaN : pooled.floor();
+			}
+			catch ( final Exception e )
+			{
+				IOFunctions.println( "Scale-space preview: could not estimate the noise floor: " + e );
+				floor = Double.NaN;
+			}
+
+			final double result = floor;
+
+			SwingUtilities.invokeLater( () ->
+			{
+				session.noiseFloors.put( key, result );
+
+				if ( key.equals( noiseKeyRunning ) )
+					noiseKeyRunning = null;
+
+				if ( disposed )
+					return;
+
+				// the steps moved on meanwhile: this floor is stale, the current ones are estimated once they have settled
+				if ( steps != p.steps )
+					noiseTimer.restart();
+				else
+					applyNoiseFloor( result );
+			} );
+		}, "InteractiveScaleSpace-noise" ).start();
+	}
+
+	/**
+	 * A floor for this resolution and the current steps: after the button or locked, the threshold becomes factor x floor
+	 * (and the points are filtered with it); otherwise the factor becomes threshold / floor
+	 */
+	protected void applyNoiseFloor( final double floor )
+	{
+		noiseFloor = floor;
+
+		if ( floor > 0 )
+		{
+			if ( noiseJump || ( session.noiseLocked && session.noiseFactor > 0 ) )
+				thresholdSlider.setValue( session.noiseFactor * floor );
+			else
+				session.noiseFactor = thresholdSlider.getValue() / floor;
+
+			showFactor();
+		}
+
+		noiseJump = false;
+		updateNoiseLabel();
+	}
+
+	/**
+	 * Shows the session's factor on its slider without acting on it
+	 */
+	protected void showFactor()
+	{
+		updatingFactor = true;
+		factorSlider.setValue( session.noiseFactor );
+		updatingFactor = false;
+	}
+
+	/**
+	 * The noise line (not estimated, estimating, or the floor of all views at this resolution and the threshold as a
+	 * multiple of it), the factor slider and the lock, which are usable once there is a floor
+	 */
+	protected void updateNoiseLabel()
+	{
+		final boolean available = noiseFloor > 0;
+
+		final String text;
+
+		if ( session.noiseEstimator == null )
+			text = "no noise floor (no views to estimate it from)";
+		else if ( !session.noiseWanted )
+			text = "noise floor: not estimated";
+		else if ( noiseKeyRunning != null )
+			text = "estimating at this resolution, " + p.steps + " steps per octave ...";
+		else if ( !available )
+			text = "not available at this resolution (see the log)";
+		else
+			text = "at this resolution: " + format( noiseFloor, "0.00000" ) + " (robust std of the finest level), threshold = " + format( thresholdSlider.getValue() / noiseFloor, "0.00" ) + " x floor";
+
+		noiseLabel.setText( text );
+		noiseLabel.setToolTipText( text );
+
+		factorSlider.setEnabled( available && !computing );
+		lockBox.setEnabled( available );
+	}
+
+	/**
 	 * Opens another preview at the resolution selected in the drop-down with the current threshold, flags and (scaled) region;
 	 * the drop-down then shows this window's resolution again
 	 */
@@ -815,6 +1032,7 @@ public class InteractiveScaleSpace
 		this.computing = computing;
 
 		thresholdSlider.setEnabled( !computing );
+		factorSlider.setEnabled( !computing && noiseFloor > 0 );
 		finestBox.setEnabled( !computing );
 		maximaBox.setEnabled( !computing );
 		minimaBox.setEnabled( !computing );
@@ -915,6 +1133,26 @@ public class InteractiveScaleSpace
 
 		++c.gridy;
 		panel.add( thresholdSlider, c );
+
+		// the noise floor of all views (the button starts it, it follows the steps and the resolution from then on), the threshold as a multiple of it on a second slider, and the lock
+		final JPanel noiseRow = new JPanel( new BorderLayout( 8, 0 ) );
+		noiseRow.add( noiseButton, BorderLayout.WEST );
+		noiseRow.add( noiseLabel, BorderLayout.CENTER );
+		noiseRow.add( lockBox, BorderLayout.EAST );
+
+		++c.gridy;
+		panel.add( noiseRow, c );
+
+		++c.gridy;
+		panel.add( new JLabel( "Noise factor (threshold = factor x noise floor):" ), c );
+
+		++c.gridy;
+		panel.add( factorSlider, c );
+		updateNoiseLabel();
+
+		// a window opened after the button was pressed estimates the floor at its resolution right away
+		if ( session.noiseWanted )
+			updateNoiseFloor();
 
 		// the finest level, the steps and the sign in one row (the details are tooltips)
 		final JPanel options = new JPanel( new FlowLayout( FlowLayout.LEFT, 12, 0 ) );

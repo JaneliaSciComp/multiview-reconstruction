@@ -225,7 +225,9 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	{
 		final GenericDialog gd = new GenericDialog( "Advanced values" );
 
+		gd.addChoice( "Threshold_type", thresholdChoices, thresholdChoices[ defaultThresholdChoice ] );
 		gd.addNumericField( "Threshold (minimal |response| at any scale)", defaultThreshold, 5 );
+		gd.addNumericField( "Noise_factor", defaultNoiseFactor, 2 );
 		gd.addNumericField( "Steps_per_octave", defaultSteps, 0 );
 		gd.addNumericField( "Octaves (-1 = as many as the image allows)", defaultOctaves, 0 );
 		gd.addCheckbox( "Finest_structures (also keep the extrema at the initial blur that are no extremum in scale)", defaultDetectFinestLevel( downsampling ) );
@@ -237,14 +239,16 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		if ( gd.wasCanceled() )
 			return false;
 
+		final int thresholdChoice = gd.getNextChoiceIndex();
 		this.threshold = gd.getNextNumber();
+		this.noiseFactor = gd.getNextNumber();
 		this.steps = (int)Math.round( gd.getNextNumber() );
 		this.octaves = (int)Math.round( gd.getNextNumber() );
 		this.detectFinestLevel = gd.getNextBoolean();
 		this.findMin = gd.getNextBoolean();
 		this.findMax = gd.getNextBoolean();
 
-		if ( !( threshold > 0 ) || Double.isInfinite( threshold ) )
+		if ( thresholdChoice == 0 && ( !( threshold > 0 ) || Double.isInfinite( threshold ) ) )
 		{
 			IOFunctions.println( "Scale space: the threshold must be > 0, but is " + threshold + "." );
 			return false;
@@ -262,7 +266,13 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 			return false;
 		}
 
+		// the threshold from the noise floor of all views at the starting resolution and these steps: estimated now, logged and remembered as the default threshold
+		if ( thresholdChoice == 1 && !thresholdFromNoiseFloor( sigma, steps ) )
+			return false;
+
 		defaultThreshold = threshold;
+		defaultThresholdChoice = thresholdChoice;
+		defaultNoiseFactor = noiseFactor;
 		defaultSteps = steps;
 		defaultOctaves = octaves;
 		lastDetectFinestLevel = detectFinestLevel;
@@ -305,7 +315,8 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		p.minIntensity = minIntensity;
 		p.maxIntensity = maxIntensity;
 
-		final InteractiveScaleSpace.Session session = new InteractiveScaleSpace.Session( spimData, spimData.getSequenceDescription().getViewDescription( viewId ), resolutions, p, anisotropyZ );
+		// the "Estimate noise floor" button of the windows estimates the floor of all views to process
+		final InteractiveScaleSpace.Session session = new InteractiveScaleSpace.Session( spimData, spimData.getSequenceDescription().getViewDescription( viewId ), resolutions, p, anisotropyZ, noiseEstimator() );
 
 		session.open( downsampling, defaultManual ? -1 : defaultResolutionIndex );
 		session.waitUntilFinished();

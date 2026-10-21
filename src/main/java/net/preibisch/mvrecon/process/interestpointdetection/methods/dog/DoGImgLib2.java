@@ -493,12 +493,21 @@ public class DoGImgLib2
 	 */
 	public static Pair<double[][], Float > computeSigmas( final float initialSigma, final double[] anisotropy, final int n )
 	{
-		final float k = LaPlaceFunctions.computeK( 4 );
+		return computeSigmas( initialSigma, LaPlaceFunctions.computeK( 4 ), anisotropy, n );
+	}
+
+	/**
+	 * The two Gaussian sigmas of the DoG per dimension for any ratio k of the two Gaussians (the DoG uses 2^(1/4), the
+	 * finest level of a scale space 2^(1/steps)), see computeSigmas( initialSigma, anisotropy, n ); an anisotropy with
+	 * more dimensions than the image (a 2d preview of a 3d view) is cut to the image
+	 */
+	public static Pair<double[][], Float > computeSigmas( final float initialSigma, final float k, final double[] anisotropy, final int n )
+	{
 		final float K_MIN1_INV = LaPlaceFunctions.computeKWeight(k);
 		final int steps = 3;
 		final float imageSigma = 0.5f;
 
-		if ( anisotropy != null && anisotropy.length != n )
+		if ( anisotropy != null && anisotropy.length < n )
 			throw new IllegalArgumentException( "The anisotropy has " + anisotropy.length + " dimensions, the image " + n + "." );
 
 		//

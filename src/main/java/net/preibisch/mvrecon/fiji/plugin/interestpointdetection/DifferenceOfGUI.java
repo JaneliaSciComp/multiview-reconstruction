@@ -26,6 +26,7 @@ import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.concurrent.ExecutorService;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -62,6 +63,7 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.ViewSetupUtils;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DisplayFusedImagesPopup;
@@ -71,6 +73,9 @@ import net.preibisch.mvrecon.process.export.DisplayImage;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.interestpointdetection.NoiseFloor;
+import net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
@@ -138,9 +143,21 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	/** the threshold of the detection */
 	protected double threshold;
 
+	/** the factor of "Estimate from noise floor": the threshold becomes noiseFactor x the pooled noise floor of all views (thresholdFromNoiseFloor) */
+	protected double noiseFactor = defaultNoiseFactor;
+
+	/** the intensity ranges of the views at the dialog's resolution once computed for a noise floor (a full pass per view), so the previews' estimates at other sigmas skip it */
+	private final HashMap< ViewId, double[] > noiseRangeCache = new HashMap<>();
+	private long[] noiseRangeDownsampling = null;
+
 	/** the entries of "Filter_interest_points": the range dialog (Filter_Detections), the fixed-number dialog (Limit_Detections), the threshold ramp (the range dialog prefilled) or none; the last choice is remembered, initially none */
 	public static final String[] filterChoice = new String[] { "Filter interest points (thresholds)", "Filter interest points (fixed number)", "Filter interest points (threshold ramp)", "Do not filter interest points" };
 	public static int defaultFilterChoice = filterChoice.length - 1;
+
+	/** the entries of "Threshold_type" of the Advanced dialogs: the threshold as typed, or noiseFactor x the noise floor of all views (NoiseFloor), estimated when the dialog closes; the last choice is remembered */
+	public static final String[] thresholdChoices = new String[] { "Fixed threshold", "Estimate from noise floor (noise factor x the noise floor of all views)" };
+	public static int defaultThresholdChoice = 0;
+	public static double defaultNoiseFactor = 2.5;
 
 	/** the filters chosen for the detections of this run (one, or the labels of a ramp), filtered labels or plain copies that Interest_Point_Detection creates once the points exist; empty = none */
 	protected final ArrayList< FilterParameters > filters = new ArrayList<>();
@@ -265,6 +282,119 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 		// the dialog of the chosen filter opens last, when the main dialog is complete
 		return queryFilter( label, filterIndex );
+	}
+
+	/**
+	 * The noise floor (NoiseFloor) of the finest DoG level in every view to process, pooled as the highest of them: at a resolution
+	 * (null = the one chosen in the dialog), with the sigma of the finest level, k = 2^(1/steps), the method's anisotropy
+	 * and the intensity range the detection will use (preprocess computes a common range first if one is wanted). Logs
+	 * every view's floor, the pooled one and a warning if they spread by more than a factor of two, because the views are
+	 * normalized with their own ranges unless a range is given.
+	 *
+	 * @return the pooled floors, null if none could be estimated (logged)
+	 */
+	public NoiseFloor.Pooled estimateNoiseFloor( final long[] downsampling, final double sigma, final int steps )
+	{
+		preprocess();
+
+		final long[] ds = downsampling == null ? this.downsampling : downsampling;
+
+		// the cached ranges belong to one resolution
+		if ( !Arrays.equals( ds, noiseRangeDownsampling ) )
+		{
+			noiseRangeCache.clear();
+			noiseRangeDownsampling = ds.clone();
+		}
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): " + getDescription() + ": estimating the noise floor of " + viewIdsToProcess.size() + " view(s) at downsampling " + Util.printCoordinates( ds ) + ", sigma " + sigma + ", k = 2^(1/" + steps + "), " + NoiseFloor.defaultNumBlocks + " random blocks of " + Util.printCoordinates( NoiseFloor.defaultBlockSize ) + " each ..." );
+
+		final long time = System.currentTimeMillis();
+		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
+		final NoiseFloor.Pooled pooled;
+
+		try
+		{
+			pooled = NoiseFloor.estimate(
+					spimData.getSequenceDescription().getImgLoader(),
+					NoiseFloor.presentViews( spimData, viewIdsToProcess ),
+					ds,
+					sigma,
+					LaPlaceFunctions.computeK( steps ),
+					( vd, t ) -> DownsampleTools.anisotropy( vd, t, anisotropyZ ),
+					minIntensity,
+					maxIntensity,
+					noiseRangeCache,
+					NoiseFloor.defaultNumBlocks,
+					NoiseFloor.defaultBlockSize,
+					NoiseFloor.defaultSeed,
+					service );
+		}
+		catch ( final Exception e )
+		{
+			IOFunctions.println( "ERROR: Could not estimate the noise floor: " + e );
+			return null;
+		}
+		finally
+		{
+			service.shutdown();
+		}
+
+		if ( pooled.perView.isEmpty() || !( pooled.floor() > 0 ) )
+		{
+			IOFunctions.println( "ERROR: Could not estimate the noise floor (" + pooled.describe() + ")." );
+			return null;
+		}
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): " + pooled.describe() + " (" + ( System.currentTimeMillis() - time ) + " ms)" );
+
+		if ( pooled.max() > 2 * pooled.min() )
+			IOFunctions.println( "WARNING: the noise floors of the views spread by more than a factor of two [" + InterestPointFilter.plain( pooled.min() ) + " .. " + InterestPointFilter.plain( pooled.max() ) +
+					"]: the views are normalized with their own intensity ranges, so one threshold is not equally selective for all of them ('Use_same_min & max intensity for all views' or a fixed range makes them comparable)." );
+
+		return pooled;
+	}
+
+	/**
+	 * @return estimateNoiseFloor for the previews, which know only their own view
+	 */
+	public NoiseFloor.Estimator noiseEstimator()
+	{
+		return new NoiseFloor.Estimator()
+		{
+			@Override
+			public int numViews() { return viewIdsToProcess.size(); }
+
+			@Override
+			public NoiseFloor.Pooled estimate( final long[] downsampling, final double sigma, final int steps ) { return estimateNoiseFloor( downsampling, sigma, steps ); }
+		};
+	}
+
+	/**
+	 * "Estimate from noise floor" of the Advanced dialogs: the threshold becomes noiseFactor x the pooled noise floor of all
+	 * views at the dialog's resolution (estimateNoiseFloor), logged; the caller remembers it as the default threshold
+	 *
+	 * @param sigma - the sigma of the finest level (the DoG sigma, the initial blur of the scale space)
+	 * @param steps - k = 2^(1/steps), 4 for the single-scale DoG
+	 * @return false if no floor could be estimated
+	 */
+	protected boolean thresholdFromNoiseFloor( final double sigma, final int steps )
+	{
+		if ( !( noiseFactor > 0 ) || Double.isInfinite( noiseFactor ) )
+		{
+			IOFunctions.println( "The noise factor must be > 0, but is " + noiseFactor + "." );
+			return false;
+		}
+
+		final NoiseFloor.Pooled pooled = estimateNoiseFloor( null, sigma, steps );
+
+		if ( pooled == null )
+			return false;
+
+		threshold = noiseFactor * pooled.floor();
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): threshold = " + noiseFactor + " x " + InterestPointFilter.plain( pooled.floor() ) + " (the noise floor) = " + InterestPointFilter.plain( threshold ) );
+
+		return true;
 	}
 
 	/**

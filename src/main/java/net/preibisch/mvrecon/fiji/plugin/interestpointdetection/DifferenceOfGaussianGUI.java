@@ -220,7 +220,9 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		final GenericDialog gd = new GenericDialog( "Advanced values" );
 
 		gd.addNumericField( "Sigma", defaultSigma, 5 );
+		gd.addChoice( "Threshold_type", thresholdChoices, thresholdChoices[ defaultThresholdChoice ] );
 		gd.addNumericField( "Threshold", defaultThreshold, 5 );
+		gd.addNumericField( "Noise_factor", defaultNoiseFactor, 2 );
 		gd.addCheckbox( "Find_minima", defaultFindMin );
 		gd.addCheckbox( "Find_maxima", defaultFindMax );
 
@@ -230,9 +232,20 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 			return false;
 
 		this.sigma = defaultSigma = gd.getNextNumber();
+		final int thresholdChoice = defaultThresholdChoice = gd.getNextChoiceIndex();
 		this.threshold = defaultThreshold = gd.getNextNumber();
+		this.noiseFactor = defaultNoiseFactor = gd.getNextNumber();
 		this.findMin = defaultFindMin = gd.getNextBoolean();
 		this.findMax = defaultFindMax = gd.getNextBoolean();
+
+		// the threshold from the noise floor of all views at this sigma: estimated now, logged and remembered as the default threshold
+		if ( thresholdChoice == 1 )
+		{
+			if ( !thresholdFromNoiseFloor( sigma, 4 ) )
+				return false;
+
+			defaultThreshold = threshold;
+		}
 
 		return true;
 	}
@@ -262,13 +275,14 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		params.findMinima = defaultFindMin;
 		params.anisotropy = previewAnisotropy; // of the opened image (set by getImagePlusForInteractive / getGroupedImagePlusForInteractive)
 
-		// the user's intensity range, otherwise the exact one of this image (what the detection computes for every view)
+		// the user's intensity range, otherwise the exact one of this image (what the detection computes for every view);
+		// the "Estimate noise floor" button estimates the floor of all views to process
 		final InteractiveDoG idog;
 
 		if ( Double.isNaN( minIntensity ) || Double.isNaN( maxIntensity ) )
-			idog = new InteractiveDoG( imp, params );
+			idog = new InteractiveDoG( imp, params, noiseEstimator() );
 		else
-			idog = new InteractiveDoG( imp, params, minIntensity, maxIntensity );
+			idog = new InteractiveDoG( imp, params, minIntensity, maxIntensity, noiseEstimator() );
 		do
 		{
 			try

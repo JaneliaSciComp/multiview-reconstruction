@@ -28,8 +28,12 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Date;
 import java.util.concurrent.ExecutorService;
+
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 
 import fiji.tool.SliceObserver;
 import ij.ImageJ;
@@ -54,6 +58,8 @@ import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
+import net.preibisch.mvrecon.process.interestpointdetection.NoiseFloor;
 
 public class InteractiveDoG
 {
@@ -82,6 +88,30 @@ public class InteractiveDoG
 
 	/** thresholdMin, or the threshold if a lower one was typed */
 	double detectionThreshold = thresholdMin;
+
+	/** estimates the noise floor of all views of the detection at a sigma (DifferenceOfGUI.noiseEstimator), null = the preview has no "Estimate noise floor" button */
+	final NoiseFloor.Estimator noiseEstimator;
+
+	/** the pooled noise floor of all views at the current sigma (NoiseFloor) once the button was pressed (noiseWanted; cached per sigma, estimated in the background), NaN before and while estimating */
+	double noiseFloor = Double.NaN;
+	final HashMap< Double, Double > noiseFloors = new HashMap<>();
+	boolean noiseWanted = false;
+	double noiseSigmaRunning = Double.NaN;
+
+	/** the sigma the current floor belongs to (shown while the slider moves on), and the delay after the last sigma change before the floor is estimated again (dragging the slider would otherwise estimate all the time) */
+	double noiseSigma = Double.NaN;
+	final Timer noiseTimer = new Timer( 500, e -> updateNoiseFloor() );
+
+	{
+		noiseTimer.setRepeats( false );
+	}
+
+	/** the threshold as a multiple of the noise floor (the second slider); locked, it stays when sigma changes and the threshold follows the floor, otherwise the threshold stays */
+	double noiseFactor = Double.NaN;
+	boolean noiseLocked = false;
+
+	/** the button was pressed: the threshold jumps to the default factor x the floor once it is there (DifferenceOfGUI.defaultNoiseFactor) */
+	boolean noiseJump = false;
 
 	// TODO: always process only this part of the initial image READ ONLY
 	RandomAccessibleInterval<FloatType> imgTmp;
@@ -139,12 +169,20 @@ public class InteractiveDoG
 	 */
 	public InteractiveDoG( final ImagePlus imp, final InteractiveDoGParams params )
 	{
-		this( imp, params, minMax( imp ) );
+		this( imp, params, null );
 	}
 
-	private InteractiveDoG( final ImagePlus imp, final InteractiveDoGParams params, final double[] minmax )
+	/**
+	 * @param noiseEstimator - estimates the noise floor of all views of the detection for the "Estimate noise floor" button, null = no button
+	 */
+	public InteractiveDoG( final ImagePlus imp, final InteractiveDoGParams params, final NoiseFloor.Estimator noiseEstimator )
 	{
-		this( imp, params, minmax[ 0 ], minmax[ 1 ] );
+		this( imp, params, minMax( imp ), noiseEstimator );
+	}
+
+	private InteractiveDoG( final ImagePlus imp, final InteractiveDoGParams params, final double[] minmax, final NoiseFloor.Estimator noiseEstimator )
+	{
+		this( imp, params, minmax[ 0 ], minmax[ 1 ], noiseEstimator );
 	}
 
 	/**
@@ -156,10 +194,19 @@ public class InteractiveDoG
 	 * @param min - min intensity of the image (the detection normalizes with it)
 	 * @param max - max intensity of the image
 	 */
-	@SuppressWarnings("unchecked")
 	public InteractiveDoG( final ImagePlus imp, final InteractiveDoGParams params, final double min, final double max )
 	{
+		this( imp, params, min, max, null );
+	}
+
+	/**
+	 * @param noiseEstimator - estimates the noise floor of all views of the detection for the "Estimate noise floor" button, null = no button
+	 */
+	@SuppressWarnings("unchecked")
+	public InteractiveDoG( final ImagePlus imp, final InteractiveDoGParams params, final double min, final double max, final NoiseFloor.Estimator noiseEstimator )
+	{
 		this.imagePlus = imp;
+		this.noiseEstimator = noiseEstimator;
 
 		if ( Double.isNaN( min ) || Double.isNaN( max ) )
 			throw new IllegalArgumentException( "min/max not set for interactive DoG." );
@@ -339,6 +386,19 @@ public class InteractiveDoG
 			roiChanged = true;
 		}
 
+		// the noise floor of all views at this sigma, once asked for (when sigma has settled): locked, the threshold follows it, otherwise the factor
+		if ( noiseWanted && ( change == ValueChange.SIGMA || change == ValueChange.ALL ) )
+		{
+			noiseTimer.restart();
+
+			if ( dogWindow != null )
+				dogWindow.updateNoise();
+		}
+		else if ( change == ValueChange.THRESHOLD && noiseFloor > 0 )
+		{
+			setNoiseFactor( params.threshold / noiseFloor, false );
+		}
+
 		// only recalculate DOG & gradient image if: sigma, roi (also through support region), slider
 		if (roiChanged || peaksMax == null || peaksMin == null || change == ValueChange.SIGMA || change == ValueChange.SLICE || change == ValueChange.MINMAX || change == ValueChange.ALL || params.threshold < detectionThreshold )
 		{
@@ -380,12 +440,161 @@ public class InteractiveDoG
 		}
 	}
 
+	/**
+	 * The "Estimate noise floor" button: the threshold jumps to the default noise factor x the floor, from now on the
+	 * pooled floor of all views follows sigma (updateNoiseFloor), and the factor slider and the lock become usable
+	 */
+	protected void estimateNoise()
+	{
+		if ( noiseEstimator == null )
+			return;
+
+		noiseWanted = true;
+		noiseFactor = DifferenceOfGUI.defaultNoiseFactor;
+		noiseJump = true;
+		updateNoiseFloor();
+	}
+
+	/**
+	 * The noise floor of all views at the current sigma (noiseEstimator, cached per sigma): applied at once if known,
+	 * otherwise estimated in the background (the window says so) and applied when it arrives (applyNoiseFloor)
+	 */
+	protected void updateNoiseFloor()
+	{
+		if ( isFinished )
+			return;
+
+		final double sigma = params.sigma;
+		final Double cached = noiseFloors.get( sigma );
+
+		if ( cached != null )
+		{
+			applyNoiseFloor( cached );
+			return;
+		}
+
+		// one estimate at a time: when the running one arrives and sigma has moved on, the current sigma is estimated next
+		if ( !Double.isNaN( noiseSigmaRunning ) )
+			return;
+
+		noiseSigmaRunning = sigma;
+		noiseFloor = Double.NaN;
+
+		if ( dogWindow != null )
+			dogWindow.updateNoise();
+
+		new Thread( () ->
+		{
+			double floor;
+
+			try
+			{
+				final NoiseFloor.Pooled pooled = noiseEstimator.estimate( null, sigma, 4 );
+				floor = pooled == null ? Double.NaN : pooled.floor();
+			}
+			catch ( final Exception e )
+			{
+				IOFunctions.println( "Interactive DoG: could not estimate the noise floor: " + e );
+				floor = Double.NaN;
+			}
+
+			final double result = floor;
+
+			SwingUtilities.invokeLater( () ->
+			{
+				noiseFloors.put( sigma, result );
+
+				if ( sigma == noiseSigmaRunning )
+					noiseSigmaRunning = Double.NaN;
+
+				if ( isFinished )
+					return;
+
+				// sigma moved on meanwhile: this floor is stale, the current one is estimated once sigma has settled
+				if ( sigma != params.sigma )
+					noiseTimer.restart();
+				else
+					applyNoiseFloor( result );
+			} );
+		}, "InteractiveDoG-noise" ).start();
+	}
+
+	/**
+	 * A floor for the current sigma: after the button or locked, the threshold becomes factor x floor and the preview
+	 * filters with it; otherwise the factor becomes threshold / floor
+	 */
+	protected void applyNoiseFloor( final double floor )
+	{
+		noiseFloor = floor;
+		noiseSigma = params.sigma;
+
+		if ( floor > 0 )
+		{
+			if ( noiseJump || ( noiseLocked && noiseFactor > 0 ) )
+			{
+				params.threshold = noiseFactor * floor;
+
+				if ( dogWindow != null )
+					dogWindow.showThreshold( params.threshold );
+
+				// inside an update (a sigma change) the new threshold filters right away, a floor that arrived later filters now
+				if ( isStarted && !isComputing )
+					updatePreview( ValueChange.THRESHOLD );
+			}
+			else
+			{
+				noiseFactor = params.threshold / floor;
+			}
+		}
+
+		noiseJump = false;
+
+		if ( dogWindow != null )
+			dogWindow.updateNoise();
+	}
+
+	/**
+	 * The factor slider or its text (apply: the threshold becomes factor x floor), or a threshold change (the shown factor follows)
+	 */
+	protected void setNoiseFactor( final double factor, final boolean apply )
+	{
+		noiseFactor = factor;
+
+		if ( apply && noiseFloor > 0 && factor > 0 )
+		{
+			params.threshold = factor * noiseFloor;
+
+			if ( dogWindow != null )
+				dogWindow.showThreshold( params.threshold );
+
+			if ( !isComputing )
+				updatePreview( ValueChange.THRESHOLD );
+		}
+
+		if ( dogWindow != null )
+			dogWindow.updateNoise();
+	}
+
+	/**
+	 * Locked, the factor stays when sigma changes and the threshold follows the noise floor; otherwise the threshold stays
+	 */
+	protected void setLocked( final boolean locked )
+	{
+		noiseLocked = locked;
+
+		if ( dogWindow != null )
+			dogWindow.updateNoise();
+	}
+
 	protected final void dispose()
 	{
 		if ( isFinished )
 			return;
 
 		isFinished = true;
+
+		if ( !wasCanceled && noiseFloor > 0 )
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Interactive DoG: threshold = " + params.threshold + " = " + HelperFunctions.formatValue( params.threshold / noiseFloor, 2 ) + " x the noise floor " + noiseFloor + " of all views at sigma " + params.sigma );
 
 		if ( dogWindow != null && dogWindow.getFrame() != null)
 			dogWindow.getFrame().dispose();
