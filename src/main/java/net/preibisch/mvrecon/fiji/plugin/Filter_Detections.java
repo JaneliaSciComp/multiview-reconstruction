@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -54,11 +55,12 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
  * base label by |response|, intensity and/or sigma on the fly and has its own correspondences (VirtualFilteredInterestPointsN5),
  * or, on request, a plain copy of the points that pass the filter (for readers that do not know filtered labels, and the
  * only way to replace the base label itself; any other existing label is overwritten by either: checkNewLabel).
- * Several entries per range field give one label per combination. Reachable from "Manage Interest Points" of the
- * explorer (also as "New filtered interest points (threshold ramp) ...", which prefills the response field with thresholds
- * relative to the detection threshold of the label, filterRamp) and as a plugin; "Filter_interest_points (thresholds)" and
- * "(threshold ramp)" of the detection dialogs open this dialog for the label being detected (DifferenceOfGUI.queryFilter),
- * the labels are created once the points exist.
+ * Several entries per range field give one label per combination. Reachable from "Filter/Manage Interest Points" of the
+ * explorer as "Filter interest points (response/sigma/intensity) ..." (also as "Filter interest points (threshold ramp)",
+ * one entry per label, which prefills the response field with thresholds relative to the detection threshold of that
+ * label, filterRamp) and as a plugin; "Filter_interest_points (response/sigma/intensity)" and "(threshold ramp)" of the
+ * detection dialogs open this dialog for the label being detected (DifferenceOfGUI.queryFilter), the labels are created
+ * once the points exist.
  *
  * @author Stephan Preibisch
  */
@@ -140,45 +142,58 @@ public class Filter_Detections implements PlugIn
 	}
 
 	/**
-	 * The threshold ramp, a convenience entry: the range dialog with the response field prefilled with thresholds relative
-	 * to the detection threshold t of the preselected label (rampEntries: t x rampFactor^k for k = 1 .. rampSteps; t is the
-	 * lower response bound of a filtered label or the "t=" of the parameter string of a detection, thresholdOf); if t is
-	 * unknown the field is left as it was and a log line says so
+	 * The threshold ramp of a label, a convenience entry: the range dialog for that label (the label is given, the dialog
+	 * says which threshold it was detected with) with the response field prefilled with thresholds relative to its detection
+	 * threshold t (rampEntries: t x rampFactor^k for k = 1 .. rampSteps; t is the lower response bound of a filtered label
+	 * or the "t=" of the parameter string of a detection, thresholdOf); if t is unknown the field is prefilled as last time
+	 * and the dialog and a log line say so
 	 */
-	public static boolean filterRamp( final SpimData2 data, final Collection< ? extends ViewId > viewCollection )
+	public static boolean filterRamp( final SpimData2 data, final Collection< ? extends ViewId > viewCollection, final String label )
 	{
 		final ArrayList< ViewId > viewIds = new ArrayList<>( viewCollection );
 		SpimData2.filterMissingViews( data, viewIds );
 
-		final String[] labels = InterestPointTools.getAllInterestPointLabels( data, viewIds );
-		String preset = null;
+		final double t = thresholdOf( data, viewIds, label );
+		final String preset, message;
 
-		if ( labels.length > 0 )
+		if ( Double.isNaN( t ) )
 		{
-			final String label = InterestPointTools.getSelectedLabel( labels, defaultLabelIndex( labels ) );
-			final double t = thresholdOf( data, viewIds, label );
-
-			if ( Double.isNaN( t ) )
-			{
-				IOFunctions.println( "No detection threshold found in the parameters of '" + label + "', type the thresholds of the ramp yourself." );
-			}
-			else
-			{
-				preset = rampEntries( t, rampFactor, rampSteps, rampMinEnd );
-				IOFunctions.println( "Threshold ramp of '" + label + "' (t = " + InterestPointFilter.plain( t ) + ", x " + rampFactor + " per step): " + preset );
-			}
+			preset = null;
+			message = "Threshold ramp of the interest points '" + label + "' (no detection threshold found in its parameters, type the thresholds yourself)";
+			IOFunctions.println( "No detection threshold found in the parameters of '" + label + "', type the thresholds of the ramp yourself." );
+		}
+		else
+		{
+			preset = rampEntries( t, rampFactor, rampSteps, rampMinEnd );
+			message = "Threshold ramp of the interest points '" + label + "' (detected with threshold " + InterestPointFilter.plain( t ) + "), one label per entry";
+			IOFunctions.println( "Threshold ramp of '" + label + "' (t = " + InterestPointFilter.plain( t ) + ", x " + rampFactor + " per step): " + preset );
 		}
 
-		return filter( data, viewIds, preset );
+		final List< FilterParameters > params = getParameters( data, viewIds, label, preset, message );
+
+		if ( params == null )
+			return false;
+
+		defaultBaseLabel = label;
+
+		for ( final FilterParameters p : params )
+			create( data, viewIds, p.baseLabel, p.newLabel, p.filter, p.copy );
+
+		return true;
 	}
 
 	/**
 	 * Creates the filtered label (or the plain copy) for the views and records it in the action history; nothing is saved
 	 *
-	 * @throws IllegalArgumentException if a view lacks the base label
+	 * @throws IllegalArgumentException if a view lacks the base label, or if its points do not store an attribute the filter needs (checkAttributes)
 	 */
 	public static boolean create( final SpimData2 data, final Collection< ? extends ViewId > viewIds, final String baseLabel, final String newLabel, final InterestPointFilter filter, final boolean copy )
 	{
+		final EnumSet< Axis > missing = missingAttributes( data, viewIds, baseLabel, Collections.singletonList( filter ) );
+
+		if ( !missing.isEmpty() )
+			throw new IllegalArgumentException( missingAttributesMessage( baseLabel, missing ) );
+
 		// an existing label is overwritten (its references removed first); only a filtered label that would filter itself cannot be
 		if ( !copy && !InterestPointTools.cyclingViews( data, viewIds, newLabel, baseLabel ).isEmpty() )
 			throw new IllegalArgumentException( "A filtered label '" + newLabel + "' of '" + baseLabel + "' would filter itself (it is the base or one of the labels the base is filtered from), store a plain copy of the points that pass instead." );
@@ -231,6 +246,43 @@ public class Filter_Detections implements PlugIn
 	}
 
 	/**
+	 * Whether the points of the base label store the attributes the filters need (response, intensity, sigma): a label
+	 * stored before the attributes existed has none, and a filtered label of it would throw whenever its points are read
+	 * (Stephan ran the ramp on such a label on 2026-10-21 and the explorer threw at every repaint), so nothing is created.
+	 * A base label that no view has yet (a detection about to run) passes, its points will store everything.
+	 *
+	 * @return true if they do, otherwise false with a log line saying what is missing
+	 */
+	public static boolean checkAttributes( final SpimData2 data, final Collection< ? extends ViewId > viewIds, final String baseLabel, final Collection< InterestPointFilter > filters )
+	{
+		final EnumSet< Axis > missing = missingAttributes( data, viewIds, baseLabel, filters );
+
+		if ( missing.isEmpty() )
+			return true;
+
+		IOFunctions.println( missingAttributesMessage( baseLabel, missing ) );
+		return false;
+	}
+
+	/**
+	 * @return the attributes any of the filters needs that the points of the base label lack in any of the views that have it (InterestPointTools.missingAttributes)
+	 */
+	protected static EnumSet< Axis > missingAttributes( final SpimData2 data, final Collection< ? extends ViewId > viewIds, final String baseLabel, final Collection< InterestPointFilter > filters )
+	{
+		final EnumSet< Axis > axes = EnumSet.noneOf( Axis.class );
+
+		for ( final InterestPointFilter filter : filters )
+			axes.addAll( filter.axes() );
+
+		return InterestPointTools.missingAttributes( data, InterestPointTools.viewsWithLabel( data, baseLabel, viewIds ), baseLabel, axes );
+	}
+
+	protected static String missingAttributesMessage( final String baseLabel, final EnumSet< Axis > missing )
+	{
+		return "The interest points '" + baseLabel + "' store no " + missing.stream().map( a -> a.key ).collect( Collectors.joining( ", " ) ) + " (they were stored before the attributes existed), cannot filter by it; detect them again to store it.";
+	}
+
+	/**
 	 * Records a "filter-interestpoints" action, one per label so that removing the label removes its record (resultRef "interestpoints:" + label)
 	 */
 	public static void recordFilterAction( final SpimData2 data, final String label, final String baseLabel, final InterestPointFilter filter, final boolean copy, final Collection< ? extends ViewId > viewIds )
@@ -267,6 +319,15 @@ public class Filter_Detections implements PlugIn
 	 */
 	public static List< FilterParameters > getParameters( final SpimData2 spimData, final List< ViewId > viewIds, final String fixedBaseLabel, final String presetResponse )
 	{
+		return getParameters( spimData, viewIds, fixedBaseLabel, presetResponse, fixedBaseLabel == null ? null : "Filters the interest points '" + fixedBaseLabel + "' of this detection once they are detected" );
+	}
+
+	/**
+	 * @param fixedBaseMessage - what the dialog says instead of the label choice when the base label is given (which label and why)
+	 * @return see getParameters( spimData, viewIds, fixedBaseLabel, presetResponse )
+	 */
+	public static List< FilterParameters > getParameters( final SpimData2 spimData, final List< ViewId > viewIds, final String fixedBaseLabel, final String presetResponse, final String fixedBaseMessage )
+	{
 		final String[] labels = fixedBaseLabel != null ? new String[ 0 ] : InterestPointTools.getAllInterestPointLabels( spimData, viewIds );
 
 		if ( fixedBaseLabel == null && labels.length == 0 )
@@ -283,7 +344,7 @@ public class Filter_Detections implements PlugIn
 		if ( fixedBaseLabel == null )
 			gd.addChoice( "Interest_points", labels, labels[ defaultLabel ] );
 		else
-			gd.addMessage( "Filters the interest points '" + fixedBaseLabel + "' of this detection once they are detected", GUIHelper.smallStatusFont );
+			gd.addMessage( fixedBaseMessage, GUIHelper.smallStatusFont );
 
 		gd.addMessage( "A range is 'a' (keeps values >= a) or 'a-b' (keeps a <= value <= b), empty = no restriction;\n" +
 				"several entries separated by ',' give one label per entry (per combination across the fields), named base label + suffix", GUIHelper.smallStatusFont );
@@ -321,6 +382,9 @@ public class Filter_Detections implements PlugIn
 			IOFunctions.println( "No range given, nothing to filter by (" + Axis.RESPONSE.description + ", " + Axis.INTENSITY.description + " or " + Axis.SIGMA.description + ")." );
 			return null;
 		}
+
+		if ( !checkAttributes( spimData, viewIds, baseLabel, filters ) )
+			return null;
 
 		final ArrayList< FilterParameters > params = new ArrayList<>();
 

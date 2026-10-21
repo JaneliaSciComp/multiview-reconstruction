@@ -27,6 +27,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -45,6 +46,10 @@ import net.preibisch.mvrecon.fiji.plugin.Show_Relative_Histogram;
 import net.preibisch.mvrecon.fiji.plugin.ThinOut_Detections;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorerPanel;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointExplorer;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
@@ -66,12 +71,13 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 
 	public RemoveDetectionsPopup()
 	{
-		super( "Manage Interest Points" );
+		super( "Filter/Manage Interest Points" );
 
+		final JMenuItem createFiltered = new JMenuItem( "Filter interest points (response/sigma/intensity) ..." );
+		final JMenuItem createLimited = new JMenuItem( "Filter interest points (keep fixed number) ..." );
+		final JMenu createRamp = new JMenu( "Filter interest points (threshold ramp)" );
+		final JMenu filterInteractively = new JMenu( "Filter interest points (interactively)" );
 		final JMenuItem createFromCorr = new JMenuItem( "New interest points from correspondences ..." );
-		final JMenuItem createFiltered = new JMenuItem( "New filtered interest points ..." );
-		final JMenuItem createLimited = new JMenuItem( "Keep n points per view ..." );
-		final JMenuItem createRamp = new JMenuItem( "New filtered interest points (threshold ramp) ..." );
 		final JMenu showDistanceHist = new JMenu( "Show Distance Histogram" );
 		final JMenuItem showRelativeDistanceHist = new JMenuItem( "Show Relative Distance Histogram ... " );
 		final JMenuItem byDistance = new JMenuItem( "Remove by Distance ..." );
@@ -80,14 +86,118 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		final JMenuItem interactivelyXZ = new JMenuItem( "Remove Interactively (XZ Projection) ..." );
 		final JMenuItem interactivelyYZ = new JMenuItem( "Remove Interactively (YZ Projection) ..." );
 
-		createFromCorr.addActionListener( new CreateFromCorrespondencesListener() );
-		this.add( createFromCorr );
 		createFiltered.addActionListener( new FilterListener() );
 		this.add( createFiltered );
 		createLimited.addActionListener( new LimitListener() );
 		this.add( createLimited );
-		createRamp.addActionListener( new RampListener() );
+
+		// one entry per label, so that it is clear which detection threshold the ramp starts from
+		createRamp.addMenuListener( new MenuListener()
+		{
+			@Override
+			public void menuSelected( final MenuEvent e )
+			{
+				createRamp.removeAll();
+
+				final SpimData2 spimData = (SpimData2)panel.getSpimData();
+
+				final ArrayList< ViewId > views = new ArrayList<>();
+				views.addAll( ApplyTransformationPopup.getSelectedViews( panel ) );
+
+				// filter not present ViewIds
+				SpimData2.filterMissingViews( spimData, views );
+
+				final String[] labels = InterestPointTools.getAllInterestPointLabels( spimData, views );
+
+				if ( labels.length == 0 )
+				{
+					final JMenuItem item = new JMenuItem( "No interest points found" );
+					item.setForeground( Color.GRAY );
+					createRamp.add( item );
+				}
+				else
+				{
+					for ( int i = 0; i < labels.length; ++i )
+					{
+						final String label = InterestPointTools.getSelectedLabel( labels, i );
+						final String warning = labels[ i ].substring( label.length() );
+						final double t = Filter_Detections.thresholdOf( spimData, views, label );
+						// a label stored before the attributes existed has no response to filter by (the points are loaded, the table loaded them already)
+						final boolean response = InterestPointTools.missingAttributes( spimData, views, label, EnumSet.of( Axis.RESPONSE ) ).isEmpty();
+						final JMenuItem item;
+
+						if ( !response || Double.isNaN( t ) )
+						{
+							item = new JMenuItem( label + ( response ? " (no detection threshold)" : " (no response stored, detect again)" ) + warning );
+							item.setForeground( Color.GRAY );
+							item.setEnabled( false );
+						}
+						else
+						{
+							item = new JMenuItem( label + " (t = " + InterestPointFilter.plain( t ) + ")" + warning );
+							item.addActionListener( new RampListener( label ) );
+						}
+
+						createRamp.add( item );
+					}
+				}
+			}
+
+			@Override
+			public void menuDeselected( final MenuEvent e ) {}
+
+			@Override
+			public void menuCanceled( final MenuEvent e ) {}
+		} );
 		this.add( createRamp );
+
+		// a shortcut to "Filter interactively ..." of the Interest Point Explorer, one entry per label
+		filterInteractively.addMenuListener( new MenuListener()
+		{
+			@Override
+			public void menuSelected( final MenuEvent e )
+			{
+				filterInteractively.removeAll();
+
+				final SpimData2 spimData = (SpimData2)panel.getSpimData();
+
+				final ArrayList< ViewId > views = new ArrayList<>();
+				views.addAll( ApplyTransformationPopup.getSelectedViews( panel ) );
+
+				// filter not present ViewIds
+				SpimData2.filterMissingViews( spimData, views );
+
+				final String[] labels = InterestPointTools.getAllInterestPointLabels( spimData, views );
+
+				if ( labels.length == 0 )
+				{
+					final JMenuItem item = new JMenuItem( "No interest points found" );
+					item.setForeground( Color.GRAY );
+					filterInteractively.add( item );
+				}
+				else
+				{
+					for ( int i = 0; i < labels.length; ++i )
+					{
+						final JMenuItem item = new JMenuItem( labels[ i ] );
+						item.addActionListener( new InteractiveFilterListener( InterestPointTools.getSelectedLabel( labels, i ) ) );
+						filterInteractively.add( item );
+					}
+				}
+			}
+
+			@Override
+			public void menuDeselected( final MenuEvent e ) {}
+
+			@Override
+			public void menuCanceled( final MenuEvent e ) {}
+		} );
+		this.add( filterInteractively );
+
+		this.add( new Separator() );
+
+		createFromCorr.addActionListener( new CreateFromCorrespondencesListener() );
+		this.add( createFromCorr );
 
 		this.add( new Separator() );
 
@@ -351,7 +461,7 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 	}
 
 	/**
-	 * "Keep n points per view ...": a filtered label that keeps the n highest / around the median / lowest points by an attribute of every view (Limit_Detections)
+	 * "Filter interest points (keep fixed number) ...": a filtered label that keeps the n highest / around the median / lowest points by an attribute of every view (Limit_Detections)
 	 */
 	public class LimitListener implements ActionListener
 	{
@@ -385,10 +495,17 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 	}
 
 	/**
-	 * "New filtered interest points (threshold ramp) ...": the range dialog prefilled with thresholds relative to the detection threshold of the label (Filter_Detections.filterRamp)
+	 * An entry of "Filter interest points (threshold ramp)": the range dialog for the label prefilled with thresholds relative to its detection threshold (Filter_Detections.filterRamp)
 	 */
 	public class RampListener implements ActionListener
 	{
+		final String label;
+
+		public RampListener( final String label )
+		{
+			this.label = label;
+		}
+
 		@Override
 		public void actionPerformed( final ActionEvent e )
 		{
@@ -411,11 +528,52 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 				@Override
 				public void run()
 				{
-					if ( Filter_Detections.filterRamp( spimData, views ) )
+					if ( Filter_Detections.filterRamp( spimData, views, label ) )
 						panel.updateContent(); // update interestpoint panel if available
 				}
 			} ).start();
 		}
+	}
+
+	/**
+	 * An entry of "Filter interest points (interactively)": opens the Interest Point Explorer if it is not open, selects the
+	 * label there (which shows all of its points in BigDataViewer) and opens its interactive filter for the selected views
+	 * (InterestPointExplorerPanel.filterInteractively); on the event thread like the explorer's own menu entry
+	 */
+	public class InteractiveFilterListener implements ActionListener
+	{
+		final String label;
+
+		public InteractiveFilterListener( final String label )
+		{
+			this.label = label;
+		}
+
+		@Override
+		public void actionPerformed( final ActionEvent e )
+		{
+			if ( panel == null )
+			{
+				IOFunctions.println( "Panel not set for " + this.getClass().getSimpleName() );
+				return;
+			}
+
+			if ( !( panel instanceof FilteredAndGroupedExplorerPanel ) )
+			{
+				IOFunctions.println( "Only supported from the ViewSetup Explorer: " + this.getClass().getSimpleName() );
+				return;
+			}
+
+			final InterestPointExplorer< ? > ipe = openExplorer( (FilteredAndGroupedExplorerPanel< ? >)panel );
+
+			ipe.frame().toFront();
+			ipe.panel().filterInteractively( label );
+		}
+	}
+
+	private static InterestPointExplorer< ? > openExplorer( final FilteredAndGroupedExplorerPanel< ? > panel )
+	{
+		return InterestPointExplorer.open( panel.xml(), panel.io(), panel.explorer() );
 	}
 
 	public class InteractiveListener implements ActionListener

@@ -30,7 +30,6 @@ import javax.swing.JMenuItem;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointExplorer;
 
@@ -41,7 +40,6 @@ public class InterestPointsExplorerPopup extends JMenuItem implements ExplorerWi
 	private static final long serialVersionUID = 5234649267634013390L;
 
 	ViewSetupExplorerPanel< ? > panel;
-	InterestPointExplorer< ? > ipe = null;
 
 	public InterestPointsExplorerPopup()
 	{
@@ -80,22 +78,15 @@ public class InterestPointsExplorerPopup extends JMenuItem implements ExplorerWi
 				@Override
 				public void run()
 				{
-					if ( ipe == null || !ipe.frame().isVisible() )
-					{
-						ipe = instanceFor( (ViewSetupExplorerPanel)panel );
-					}
+					// on if it is off and off if it is on (the shortcuts of RemoveDetectionsPopup may have opened it, too)
+					final InterestPointExplorer< ? > current = InterestPointExplorer.current( panel.explorer() );
+
+					if ( current == null )
+						InterestPointExplorer.open( panel.xml(), panel.io(), panel.explorer() );
 					else
-					{
-						ipe.quit();
-						ipe = null;
-					}
+						current.quit();
 				}
 			}).start();
 		}
-	}
-
-	private static < AS extends SpimData2 > InterestPointExplorer< AS > instanceFor( final FilteredAndGroupedExplorerPanel< AS > panel )
-	{
-		return new InterestPointExplorer<>( panel.xml(), panel.io(), panel.explorer() );
 	}
 }

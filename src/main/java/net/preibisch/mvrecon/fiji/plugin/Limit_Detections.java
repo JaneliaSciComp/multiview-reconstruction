@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.fiji.plugin;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 
@@ -46,9 +47,9 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
  * copy on request) that keeps the n highest, the n around the median or the n lowest points by intensity, |response| or
  * sigma of every view. This is the former "Limit amount of detections" of the detection dialog as a filter: no
  * re-detection, the base label stays, and the limit can be stacked on a range label (a filter of a filter). Reachable
- * from "Manage Interest Points" of the explorer ("Keep n points per view ...") and as a plugin, and "Filter_interest_points
- * (fixed number)" of the detection dialogs opens it for the label being detected (DifferenceOfGUI.queryFilter); the ranges
- * have their own dialog (Filter_Detections, "New filtered interest points ...").
+ * from "Filter/Manage Interest Points" of the explorer ("Filter interest points (keep fixed number) ...") and as a plugin, and
+ * "Filter_interest_points (keep fixed number)" of the detection dialogs opens it for the label being detected
+ * (DifferenceOfGUI.queryFilter); the ranges have their own dialog (Filter_Detections, "Filter interest points (response/sigma/intensity) ...").
  *
  * @author Stephan Preibisch
  */
@@ -137,7 +138,7 @@ public class Limit_Detections implements PlugIn
 				}
 		}
 
-		final GenericDialog gd = new GenericDialog( "Keep n points per view" );
+		final GenericDialog gd = new GenericDialog( "Filter interest points (keep fixed number)" );
 
 		if ( fixedBaseLabel == null )
 			gd.addChoice( "Interest_points", labels, labels[ defaultLabel ] );
@@ -177,6 +178,9 @@ public class Limit_Detections implements PlugIn
 		defaultCount = count;
 		params.filter = filterFor( count, axis, mode );
 		params.newLabel = newLabel.trim().isEmpty() ? params.baseLabel + params.filter.suffix() : newLabel.trim();
+
+		if ( !Filter_Detections.checkAttributes( spimData, viewIds, params.baseLabel, Collections.singletonList( params.filter ) ) )
+			return null;
 
 		if ( !Filter_Detections.checkNewLabel( spimData, viewIds, params.baseLabel, params.newLabel, params.copy ) )
 			return null;

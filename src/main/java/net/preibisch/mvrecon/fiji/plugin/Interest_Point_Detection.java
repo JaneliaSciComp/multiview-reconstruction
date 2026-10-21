@@ -138,7 +138,7 @@ public class Interest_Point_Detection implements PlugIn
 		gd.addCheckbox( "Set_minimal_and_maximal_intensity", defaultSetMinMax );
 
 		gd.addMessage( "To keep only some of the detections (by thresholds or a fixed number per view) choose a filter in the next dialog;\n" +
-				"the interest point explorer offers the same for any label ('Manage Interest Points'), no re-detection needed.", GUIHelper.smallStatusFont );
+				"the interest point explorer offers the same for any label ('Filter/Manage Interest Points'), no re-detection needed.", GUIHelper.smallStatusFont );
 
 		gd.addMessage( "" );
 

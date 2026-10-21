@@ -31,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 
@@ -44,6 +45,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Limit;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
@@ -197,6 +199,64 @@ public class TestFilterDetections
 		assertFalse( Filter_Detections.checkNewLabel( spimData, views, "beads_r0.2", "beads", false ) );
 		assertThrows( IllegalArgumentException.class, () -> Filter_Detections.create( spimData, views, "beads_r0.2", "beads", filters.get( 0 ), false ) );
 		assertTrue( Filter_Detections.checkNewLabel( spimData, views, "beads_r0.2", "beads", true ) );
+	}
+
+	/**
+	 * A label stored before the attributes existed (NaN everywhere) has a threshold for the ramp but nothing to filter by:
+	 * the dialogs refuse it before anything is created, create throws and leaves nothing behind
+	 */
+	@Test
+	public void testMissingAttributes()
+	{
+		final SpimData2 spimData = SimulateUtil.setUp();
+		spimData.setBasePathURI( tempDir.toUri() );
+
+		final List< ViewId > views = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		Collections.sort( views );
+		final HashMap< ViewId, List< InterestPoint > > old = new HashMap<>();
+		final HashMap< ViewId, List< InterestPoint > > fresh = new HashMap<>();
+
+		for ( final ViewId viewId : views )
+		{
+			final ArrayList< InterestPoint > points = new ArrayList<>();
+
+			for ( int i = 0; i < 50; ++i )
+				points.add( new InterestPoint( i, new double[] { i, 2 * i, 3 * i } ) );
+
+			old.put( viewId, points );
+			fresh.put( viewId, TestInterestPointStorage.points( 50, 123 ) );
+		}
+
+		InterestPointTools.addInterestPoints( spimData, "old", old, "DOG s=1.8 t=0.1 min=false max=true" );
+		InterestPointTools.addInterestPoints( spimData, "fresh", fresh, "DOG s=1.8 t=0.1 min=false max=true" );
+
+		// the threshold alone would offer the ramp
+		assertEquals( 0.1, Filter_Detections.thresholdOf( spimData, views, "old" ), 0.0 );
+
+		// what a filter needs
+		final List< InterestPointFilter > ramp = Filter_Detections.filtersFor( Filter_Detections.rampEntries( 0.1, 2, 2 ), "", "" );
+		assertEquals( EnumSet.of( Axis.RESPONSE ), ramp.get( 0 ).axes() );
+		assertEquals( EnumSet.of( Axis.INTENSITY, Axis.SIGMA ), InterestPointFilter.of( Axis.INTENSITY, 10, Double.NaN ).withLimit( Axis.SIGMA, Limit.HIGHEST, 5 ).axes() );
+		assertTrue( InterestPointFilter.fromString( "" ).axes().isEmpty() );
+
+		// what the points lack
+		assertEquals( EnumSet.of( Axis.RESPONSE ), ramp.get( 0 ).missingAttributes( old.get( views.get( 0 ) ) ) );
+		assertTrue( ramp.get( 0 ).missingAttributes( fresh.get( views.get( 0 ) ) ).isEmpty() );
+		assertEquals( EnumSet.of( Axis.RESPONSE ), InterestPointTools.missingAttributes( spimData, views, "old", EnumSet.of( Axis.RESPONSE ) ) );
+		assertEquals( EnumSet.allOf( Axis.class ), InterestPointTools.missingAttributes( spimData, views, "old", EnumSet.allOf( Axis.class ) ) );
+		assertTrue( InterestPointTools.missingAttributes( spimData, views, "fresh", EnumSet.of( Axis.RESPONSE ) ).isEmpty() );
+		assertTrue( InterestPointTools.missingAttributes( spimData, views, "missing", EnumSet.allOf( Axis.class ) ).isEmpty() );
+
+		assertFalse( Filter_Detections.checkAttributes( spimData, views, "old", ramp ) );
+		assertTrue( Filter_Detections.checkAttributes( spimData, views, "fresh", ramp ) );
+		// a label that does not exist yet (a detection about to run) passes
+		assertTrue( Filter_Detections.checkAttributes( spimData, views, "nuclei", ramp ) );
+
+		// nothing is created, as a virtual label or as a copy
+		assertThrows( IllegalArgumentException.class, () -> Filter_Detections.create( spimData, views, "old", "old_r0.2", ramp.get( 0 ), false ) );
+		assertThrows( IllegalArgumentException.class, () -> Filter_Detections.create( spimData, views, "old", "old_r0.2", ramp.get( 0 ), true ) );
+		assertTrue( InterestPointTools.viewsWithLabel( spimData, "old_r0.2", views ).isEmpty() );
+		assertTrue( Filter_Detections.create( spimData, views, "fresh", "fresh_r0.2", ramp.get( 0 ), false ) );
 	}
 
 	/**

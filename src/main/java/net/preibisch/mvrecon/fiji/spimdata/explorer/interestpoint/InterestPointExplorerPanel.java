@@ -504,6 +504,11 @@ public class InterestPointExplorerPanel extends JPanel
 			final Component c = super.getTableCellRendererComponent( table, value, isSelected, hasFocus, row, column );
 			final InterestPointTableModel model = (InterestPointTableModel) table.getModel();
 
+			// a virtual label (filters its base label on the fly, no points of its own) is marked: the row in italics, "(virtual)" after the label, base and filter as the tooltip
+			final String virtual = model.virtualTooltip( row );
+			c.setFont( c.getFont().deriveFont( virtual == null ? Font.PLAIN : Font.ITALIC ) );
+			setToolTipText( virtual );
+
 			final int state = model.getState( row, column );
 
 			if ( state == 1 )
@@ -613,7 +618,35 @@ public class InterestPointExplorerPanel extends JPanel
 	 */
 	protected void filterInteractively()
 	{
-		final int row = table.getSelectedRow();
+		filterInteractively( table.getSelectedRow() );
+	}
+
+	/**
+	 * Opens the interactive filter for a label of the table, as if its row were selected and "Filter interactively ..." chosen
+	 * (the shortcut "Filter interest points (interactively)" of the ViewSetup Explorer's menu, RemoveDetectionsPopup)
+	 *
+	 * @return false if the selected views have no such label
+	 */
+	public boolean filterInteractively( final String label )
+	{
+		final List< BasicViewDescription< ? > > vds = tableModel.getCurrentViewDescriptions();
+		// the rows are the labels in the order of label( labels, row )
+		final int row = vds == null ? -1 : InterestPointTools.sortLabels( InterestPointTools.getAllInterestPointMap( tableModel.getViewInterestPoints(), vds ).keySet() ).indexOf( label );
+
+		if ( row < 0 )
+		{
+			IOFunctions.println( "The selected views have no interest points '" + label + "', cannot filter them interactively." );
+			return false;
+		}
+
+		table.setRowSelectionInterval( row, row );
+		filterInteractively( row );
+
+		return true;
+	}
+
+	protected void filterInteractively( final int row )
+	{
 		final List< BasicViewDescription< ? > > vds = tableModel.getCurrentViewDescriptions();
 
 		if ( row < 0 || vds == null || vds.size() == 0 )

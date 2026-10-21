@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,7 +53,7 @@ import net.preibisch.legacy.io.IOFunctions;
  * view: the n highest, the n around the median or the n lowest by one attribute (intensity, |response| or sigma), applied
  * after the ranges; it needs the points of the whole view, so it is applied by {@link #filter(Collection)} (called per view
  * by every data path) and not by {@link #accept(InterestPoint)}. Canonical "limit=response:highest:3000", suffix "_rh3000"
- * (the letters of the axis and of the mode), set in the dialog "Keep n points per view" (Limit_Detections).
+ * (the letters of the axis and of the mode), set in the dialog "Filter interest points (keep fixed number)" (Limit_Detections).
  *
  * @author Stephan Preibisch
  */
@@ -252,6 +253,47 @@ public class InterestPointFilter implements Serializable
 				return false;
 
 		return limit == null;
+	}
+
+	/**
+	 * @return the attributes the filter needs: the axes it restricts and the one a count limit ranks by
+	 */
+	public EnumSet< Axis > axes()
+	{
+		final EnumSet< Axis > axes = EnumSet.noneOf( Axis.class );
+
+		for ( final Axis axis : Axis.values() )
+			if ( filters( axis ) || axis == limitAxis )
+				axes.add( axis );
+
+		return axes;
+	}
+
+	/**
+	 * @return the attributes this filter needs (axes) that any of the points lacks, see missingAttributes( points, axes )
+	 */
+	public EnumSet< Axis > missingAttributes( final Collection< ? extends InterestPoint > points )
+	{
+		return missingAttributes( points, axes() );
+	}
+
+	/**
+	 * @return the attributes (of the given ones) that any of the points lacks (NaN, e.g. a label stored before the
+	 * attributes existed); filtering by them throws (filter, accept), so the dialogs check this before creating a label
+	 */
+	public static EnumSet< Axis > missingAttributes( final Collection< ? extends InterestPoint > points, final Collection< Axis > axes )
+	{
+		final EnumSet< Axis > missing = EnumSet.noneOf( Axis.class );
+
+		for ( final Axis axis : axes )
+			for ( final InterestPoint ip : points )
+				if ( Float.isNaN( value( ip, axis ) ) )
+				{
+					missing.add( axis );
+					break;
+				}
+
+		return missing;
 	}
 
 	/**

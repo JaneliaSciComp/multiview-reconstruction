@@ -29,6 +29,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -50,6 +51,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
@@ -332,6 +334,26 @@ public class InterestPointTools
 		}
 
 		return addInterestPoints( data, label, points, filter.describe( baseLabel ) + " (copied)" );
+	}
+
+	/**
+	 * @return the attributes (of the given ones) that the points of the label lack in any of the views that have it (NaN,
+	 * e.g. a label stored before the attributes existed; a filter by them throws, InterestPointFilter.missingAttributes);
+	 * empty if nothing is missing or no view has the label. Loads the points of the label.
+	 */
+	public static EnumSet< Axis > missingAttributes( final SpimData2 data, final Collection< ? extends ViewId > views, final String label, final Collection< Axis > axes )
+	{
+		final EnumSet< Axis > missing = EnumSet.noneOf( Axis.class );
+
+		for ( final ViewId viewId : views )
+		{
+			final InterestPoints ips = data.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
+
+			if ( ips != null )
+				missing.addAll( InterestPointFilter.missingAttributes( ips.getInterestPointsCopy().values(), axes ) );
+		}
+
+		return missing;
 	}
 
 	/**

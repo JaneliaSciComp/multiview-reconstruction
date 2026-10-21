@@ -142,7 +142,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	private long[] noiseRangeDownsampling = null;
 
 	/** the entries of "Filter_interest_points": the range dialog (Filter_Detections), the fixed-number dialog (Limit_Detections), the threshold ramp (the range dialog prefilled) or none; the last choice is remembered, initially none */
-	public static final String[] filterChoice = new String[] { "Filter interest points (thresholds)", "Filter interest points (fixed number)", "Filter interest points (threshold ramp)", "Do not filter interest points" };
+	public static final String[] filterChoice = new String[] { "Filter interest points (response/sigma/intensity)", "Filter interest points (keep fixed number)", "Filter interest points (threshold ramp)", "Do not filter interest points" };
 	public static int defaultFilterChoice = filterChoice.length - 1;
 
 	/** the entries of "Threshold_type" of the Advanced dialogs: the threshold as typed, or noiseFactor x the noise floor of all views (NoiseFloor), estimated when the dialog closes; the last choice is remembered */

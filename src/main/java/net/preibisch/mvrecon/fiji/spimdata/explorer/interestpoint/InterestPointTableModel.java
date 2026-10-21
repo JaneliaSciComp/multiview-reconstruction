@@ -46,6 +46,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import util.BDVTools;
@@ -72,6 +73,9 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	volatile InterestPointOverlay interestPointOverlay = null;
 
 	HashMap< ViewId, Collection< ? extends RealLocalizable > > points = new HashMap<>();
+
+	// the labels whose points could not be read (e.g. a filtered label of a base label that stores no response): logged once, the cell says so, the label can still be deleted
+	private final HashSet< String > failed = new HashSet<>();
 
 	// the preview of the interactive filter (InteractiveInterestPointFilter): only the points that pass it are drawn
 	private volatile InterestPointFilter previewFilter = null;
@@ -105,6 +109,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	protected void updateViewDescription( final List< BasicViewDescription< ? > > vds )
 	{
 		this.currentVDs = vds;
+		this.failed.clear();
 
 		// update everything
 		fireTableDataChanged();
@@ -164,9 +169,21 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 			final String label = label( labels, row );
 
 			if ( column == 0 )
-				return label;
+				return virtualList( viewInterestPoints, currentVDs, label ) == null ? label : label + " (virtual)";
 			else if ( column == 1 )
-				return numDetections( viewInterestPoints, currentVDs, label );
+			{
+				try
+				{
+					return numDetections( viewInterestPoints, currentVDs, label );
+				}
+				catch ( final RuntimeException e )
+				{
+					if ( failed.add( label ) )
+						IOFunctions.println( "Cannot read the interest points '" + label + "': " + e.getMessage() );
+
+					return "ERROR (see log)";
+				}
+			}
 			else if ( column == 2 )
 			{
 				// Show fraction when in green state (state 2) for the selected row
@@ -200,6 +217,45 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 			else
 				return -1;
 		}
+	}
+
+	/**
+	 * @return the label's list of the first of the views where it is a virtual label (VirtualFilteredInterestPointsN5: filters
+	 * its base label on the fly, has no points of its own), null if it is a plain label everywhere
+	 */
+	protected static VirtualFilteredInterestPointsN5 virtualList( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )
+	{
+		for ( final ViewId v : views )
+		{
+			final InterestPoints ips = vip.getViewInterestPointLists( v ).getInterestPointList( label );
+
+			if ( ips instanceof VirtualFilteredInterestPointsN5 )
+				return (VirtualFilteredInterestPointsN5)ips;
+		}
+
+		return null;
+	}
+
+	/**
+	 * @return whether the row shows a virtual label (for the renderer, which marks it)
+	 */
+	public boolean isVirtual( final int row )
+	{
+		return virtualTooltip( row ) != null;
+	}
+
+	/**
+	 * @return the tooltip of a row that shows a virtual label (its base label and filter), null for a plain label
+	 */
+	public String virtualTooltip( final int row )
+	{
+		if ( currentVDs == null || currentVDs.isEmpty() )
+			return null;
+
+		final String label = label( InterestPointTools.getAllInterestPointMap( viewInterestPoints, currentVDs ), row );
+		final VirtualFilteredInterestPointsN5 virtual = label == null ? null : virtualList( viewInterestPoints, currentVDs, label );
+
+		return virtual == null ? null : "Virtual label, no points of its own: " + virtual.getFilter().describe( virtual.getBaseLabel() );
 	}
 
 	protected String getParameters( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )

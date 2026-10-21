@@ -89,6 +89,31 @@ public class InterestPointExplorer< AS extends SpimData2 >
 
 	public JFrame frame() { return frame; }
 
+	/**
+	 * @return the open interest point explorer of the view setup explorer (the one among its listeners whose window shows;
+	 * a closed one stays a listener), null if there is none
+	 */
+	@SuppressWarnings( "unchecked" )
+	public static < AS extends SpimData2 > InterestPointExplorer< AS > current( final FilteredAndGroupedExplorer< AS > viewSetupExplorer )
+	{
+		for ( final SelectedViewDescriptionListener< AS > l : viewSetupExplorer.getListeners() )
+			if ( l instanceof InterestPointExplorer && ( (InterestPointExplorer< ? >)l ).frame().isVisible() )
+				return (InterestPointExplorer< AS >)l;
+
+		return null;
+	}
+
+	/**
+	 * @return the open interest point explorer of the view setup explorer, opened if there is none (the menu of the
+	 * ViewSetup Explorer toggles it and its shortcuts need it open)
+	 */
+	public static < AS extends SpimData2 > InterestPointExplorer< AS > open( final URI xml, final XmlIoSpimData2 io, final FilteredAndGroupedExplorer< AS > viewSetupExplorer )
+	{
+		final InterestPointExplorer< AS > current = current( viewSetupExplorer );
+
+		return current != null ? current : new InterestPointExplorer<>( xml, io, viewSetupExplorer );
+	}
+
 	@Override
 	public void selectedViewDescriptions( final List< List< BasicViewDescription< ? > > > viewDescriptions )
 	{
