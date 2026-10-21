@@ -24,7 +24,8 @@ package net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
 
 import net.imglib2.KDTree;
 import net.imglib2.neighborsearch.KNearestNeighborSearchOnKDTree;
@@ -37,13 +38,28 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.exception.NoSuit
 import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.SubsetMatcher;
 
 /**
- * Class that actually computes the geometric hashing
- * 
- * @author Stephan Preibisch (stephan.preibisch@gmx.de)
+ * Geometric hashing: every point gets a rotation-invariant {@link LocalCoordinateSystemPointDescriptor} from its three
+ * nearest neighbors, B's descriptors go into a KD-tree, and an A descriptor yields a candidate when its nearest B
+ * descriptor is {@code ratioOfDistance} times closer (in squared descriptor distance) than the nearest descriptor of a
+ * different B point.
+ * <p>
+ * With redundancy r every point has C = (3 + r choose 3) descriptors, one per 3-subset of its 3 + r nearest neighbors,
+ * and all of them sit in the same tree. The nearest descriptor of a different point is therefore looked for among the
+ * C + 1 nearest descriptors, which always contain one: at most C of them can belong to the nearest point. This is the
+ * C + 1 construction of the flat KD-tree search of RGLDM, applied per descriptor. Until 2026-10 the second-nearest
+ * descriptor was used whatever its point, so another descriptor of the nearest point could veto a match; on synthetic
+ * clouds that cost about 2 % of the true candidates at redundancy 2 and nothing at redundancy 0.
+ * <p>
+ * Folding the C queries of an A point into one distance per B point, the minimum over all descriptor pairs as in RGLDM,
+ * was measured and is much worse for these descriptors: the second-best point gets the minimum over C&sup2; pairs too, and
+ * at realistic localization errors the ratio test then rejects most true matches.
  *
+ * @author Stephan Preibisch (stephan.preibisch@gmx.de)
  */
 public class GeometricHasher< I extends InterestPoint >
 {
+	private static final int NUM_NEIGHBORS = 3;
+
 	public ArrayList< PointMatchGeneric< I > > extractCorrespondenceCandidates(
 			final ArrayList< I > nodeListA,
 			final ArrayList< I > nodeListB,
@@ -51,105 +67,102 @@ public class GeometricHasher< I extends InterestPoint >
 			final int redundancy,
 			final double ratioOfDistance )
 	{
-		final KDTree< I > tree1 = new KDTree<>( nodeListA, nodeListA );
-		final KDTree< I > tree2 = new KDTree<>( nodeListB, nodeListB );
+		final ArrayList< PointMatchGeneric< I > > candidates = new ArrayList<>();
+		if ( nodeListA.isEmpty() || nodeListB.isEmpty() )
+			return candidates;
 
-		final ArrayList< LocalCoordinateSystemPointDescriptor< I > > descriptors1 =
-			createLocalCoordinateSystemPointDescriptors( tree1, nodeListA, redundancy, false );
-		
-		final ArrayList< LocalCoordinateSystemPointDescriptor< I > > descriptors2 =
-			createLocalCoordinateSystemPointDescriptors( tree2, nodeListB, redundancy, false );
-		
-		// create lookup tree for descriptors2
-		final KDTree< LocalCoordinateSystemPointDescriptor< I > > lookUpTree2 = new KDTree<>( descriptors2, descriptors2 );
-		final KNearestNeighborSearchOnKDTree< LocalCoordinateSystemPointDescriptor< I > > nnsearch = new KNearestNeighborSearchOnKDTree<>( lookUpTree2, 2 );
+		final ArrayList< LocalCoordinateSystemPointDescriptor< I > > descriptorsA =
+				createLocalCoordinateSystemPointDescriptors( new KDTree<>( nodeListA, nodeListA ), nodeListA, redundancy, false );
+		final ArrayList< LocalCoordinateSystemPointDescriptor< I > > descriptorsB =
+				createLocalCoordinateSystemPointDescriptors( new KDTree<>( nodeListB, nodeListB ), nodeListB, redundancy, false );
+		if ( descriptorsB.isEmpty() )
+			return candidates;
 
-		// store the candidates for corresponding beads
-		final ArrayList< PointMatchGeneric< I > > correspondences = new ArrayList<>();
-		
-		/* compute matching */
-		computeMatching( descriptors1, nnsearch, correspondences, differenceThreshold, ratioOfDistance );
-		
-		return correspondences;
-	}
-	
-	protected void computeMatching( 
-			final ArrayList< LocalCoordinateSystemPointDescriptor< I > > descriptors1,
-			final KNearestNeighborSearchOnKDTree< LocalCoordinateSystemPointDescriptor< I > > nnsearch2,
-			final ArrayList< PointMatchGeneric< I > > correspondences,
-			final double differenceThreshold, 
-			final double ratioOfDistance )
-	{
-		final HashSet< Pair< I, I > > pairs = new HashSet<>();
+		// the C + 1 nearest B descriptors always include one of a point other than the nearest (see the class comment)
+		final int numSubsets = SubsetMatcher.computePD( NUM_NEIGHBORS + redundancy, NUM_NEIGHBORS, 1 ).length;
+		final int numNearest = Math.min( numSubsets + 1, descriptorsB.size() );
+		final KDTree< LocalCoordinateSystemPointDescriptor< I > > lookUpTreeB = new KDTree<>( descriptorsB, descriptorsB );
+		final KNearestNeighborSearchOnKDTree< LocalCoordinateSystemPointDescriptor< I > > searchB =
+				new KNearestNeighborSearchOnKDTree<>( lookUpTreeB, numNearest );
 
-		//System.out.println( "BeadA" + "\t" + "BeadB1" + "\t" + "BeadB2" + "\t" + "Diff1" + "\t" + "Diff2" );
+		// the same pair can show up once per descriptor of the A point
+		final LinkedHashSet< Pair< I, I > > pairs = new LinkedHashSet<>();
 
-		for ( final LocalCoordinateSystemPointDescriptor< I > descriptorA : descriptors1 )
+		for ( final LocalCoordinateSystemPointDescriptor< I > descriptorA : descriptorsA )
 		{
-			nnsearch2.search( descriptorA );
+			searchB.search( descriptorA );
+			final LocalCoordinateSystemPointDescriptor< I > nearest = searchB.getSampler( 0 ).get();
+			final double best = descriptorA.descriptorDistance( nearest );
 
-			double best = descriptorA.descriptorDistance( nnsearch2.getSampler( 0 ).get() );
-			double secondBest = descriptorA.descriptorDistance( nnsearch2.getSampler( 1 ).get() );
-
-			if ( best < differenceThreshold && best * ratioOfDistance <= secondBest )
+			// the nearest descriptor of a different B point
+			double secondBest = Double.MAX_VALUE;
+			for ( int n = 1; n < numNearest; ++n )
 			{
-				final I detectionA = descriptorA.getBasisPoint();
-				final I detectionB = nnsearch2.getSampler( 0 ).get().getBasisPoint();
-
-				//System.out.println( beadA.getID() + "\t" + matches[ 0 ].getBasisPoint().getID() + "\t" + matches[ 1 ].getBasisPoint().getID() + "\t" + best + "\t" + secondBest );
-
-				//detectionA.addPointDescriptorCorrespondence( detectionB, 1 );
-				//detectionB.addPointDescriptorCorrespondence( detectionA, 1 );
-
-				// twice the same pair could potentially show up due to redundancy
-				pairs.add( new ValuePair<>( detectionA, detectionB ) );
-
-				//correspondences.add( new PointMatchGeneric< I >( detectionA, detectionB, 1 ) );
+				final LocalCoordinateSystemPointDescriptor< I > other = searchB.getSampler( n ).get();
+				if ( other.getBasisPoint() != nearest.getBasisPoint() )
+				{
+					secondBest = descriptorA.descriptorDistance( other );
+					break;
+				}
 			}
+
+			if ( secondBest < Double.MAX_VALUE && best < differenceThreshold && best * ratioOfDistance <= secondBest )
+				pairs.add( new ValuePair<>( descriptorA.getBasisPoint(), nearest.getBasisPoint() ) );
 		}
 
 		for ( final Pair< I, I > pair : pairs )
-			correspondences.add( new PointMatchGeneric< I >( pair.getA(), pair.getB(), 1 ) );
+			candidates.add( new PointMatchGeneric< I >( pair.getA(), pair.getB(), 1 ) );
+
+		return candidates;
 	}
 
-	public static < I extends InterestPoint > ArrayList< LocalCoordinateSystemPointDescriptor< I > > createLocalCoordinateSystemPointDescriptors( 
+	/**
+	 * One {@link LocalCoordinateSystemPointDescriptor} per 3-subset of the 3 + redundancy nearest neighbors of every point,
+	 * in the order of the points.
+	 */
+	public static < I extends InterestPoint > ArrayList< LocalCoordinateSystemPointDescriptor< I > > createLocalCoordinateSystemPointDescriptors(
 			final KDTree< I > tree,
 			final Collection< I > basisPoints,
 			final int redundancy,
 			final boolean normalize )
 	{
-		final int numNeighbors = 3;
+		final int[][] subsets = SubsetMatcher.computePD( NUM_NEIGHBORS + redundancy, NUM_NEIGHBORS, 1 );
+		final KNearestNeighborSearchOnKDTree< I > neighborSearch = new KNearestNeighborSearchOnKDTree<>( tree, NUM_NEIGHBORS + redundancy + 1 );
+		final ArrayList< LocalCoordinateSystemPointDescriptor< I > > descriptors = new ArrayList<>();
 
-		final KNearestNeighborSearchOnKDTree< I > nnsearch = new KNearestNeighborSearchOnKDTree<>( tree, numNeighbors + redundancy + 1 );
-		final ArrayList< LocalCoordinateSystemPointDescriptor< I > > descriptors = new ArrayList<> ( );
-
-		final int[][] neighborIndicies = SubsetMatcher.computePD( numNeighbors + redundancy, numNeighbors, 1 );
-
-		for ( final I p : basisPoints )
-		{
-			nnsearch.search( p );
-
-			for ( final int[] neighbors : neighborIndicies )
-			{
-				final ArrayList< I > neighborPoints = new ArrayList<>();
-
-				// the first hit is always the point itself
-				for ( int n = 0; n < numNeighbors; ++n )
-					neighborPoints.add( nnsearch.getSampler( neighbors[ n ] ).get() );
-	
-				try
-				{
-					descriptors.add( new LocalCoordinateSystemPointDescriptor< I >( p, neighborPoints, normalize ) );
-				}
-				catch ( NoSuitablePointsException e )
-				{
-					// exceptions are thrown here when two identical points exist and no local coordinate system can be built
-					// TOOD: why do identical points exist?
-					//e.printStackTrace();
-				}
-			}
-		}
+		for ( final I point : basisPoints )
+			addDescriptors( neighborSearch, point, subsets, normalize, descriptors );
 
 		return descriptors;
+	}
+
+	/**
+	 * Adds the descriptors of one point, one per subset of its nearest neighbors (indices into the neighbor search, where
+	 * 0 is the point itself). A subset that does not span a local coordinate system (identical points) is skipped.
+	 */
+	private static < I extends InterestPoint > void addDescriptors(
+			final KNearestNeighborSearchOnKDTree< I > neighborSearch,
+			final I point,
+			final int[][] subsets,
+			final boolean normalize,
+			final List< LocalCoordinateSystemPointDescriptor< I > > descriptors )
+	{
+		neighborSearch.search( point );
+
+		for ( final int[] subset : subsets )
+		{
+			final ArrayList< I > neighbors = new ArrayList<>( subset.length );
+			for ( final int neighbor : subset )
+				neighbors.add( neighborSearch.getSampler( neighbor ).get() );
+
+			try
+			{
+				descriptors.add( new LocalCoordinateSystemPointDescriptor< I >( point, neighbors, normalize ) );
+			}
+			catch ( final NoSuitablePointsException e )
+			{
+				// two identical points, no local coordinate system
+			}
+		}
 	}
 }

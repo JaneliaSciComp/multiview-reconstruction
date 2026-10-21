@@ -215,6 +215,16 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
 - Layout: `RGLDMMatcher` builds the descriptors and dispatches; the old loop is `rgldm.legacy.RGLDMLegacy` (reference
   implementation for the test), the fast paths are `rgldm.subsetvector` (`SubsetVectorMatching` public, the strategies
   `FlatTreeSearch` / `BruteForceSearch` and `BestMatches` package-private).
+- Geometric hashing (2026-10-10): `GeometricHasher` takes the second-best from a *different* B point. With redundancy r
+  every point has C = (3+r choose 3) descriptors in one tree, and the C+1 nearest descriptors of a query always contain
+  one of another point, so the per-descriptor ratio test is no longer vetoed by another descriptor of the nearest point
+  (RGLDM's C+1 construction, applied per descriptor). Synthetic clouds, n=2000, 5 px jitter, r=2: before 174 candidates /
+  152 correct, now 179 / 155; identical at r=0. Folding the C queries of an A point into one min-over-all-pairs distance
+  per B point (RGLDM's definition) was tried and is much worse for these 6-D descriptors: the second-best point also gets
+  the minimum over C² pairs and the ratio test then rejects most true matches at realistic noise (34 / 33 in the same
+  setting). `GeometricHasherTest` checks the implementation against a brute-force evaluation of the definition at 0.3
+  and 5 px jitter. Both matchers compare squared descriptor distances, so `ratioOfDistance` is a ratio of squared
+  distances (RGLDM default 3, GH default 10).
 - FRGLDM (`fastrgldm` package, `FRGLDMGUI`, `--method FAST_TRANSLATION` in BigStitcher-Spark) was removed on 2026-09-30
   together with its descriptor `TranslationInvariantLocalCoordinateSystemPointDescriptor`, whose `localize(double[])` had
   filled only 6 of 9 components since 2017. RGLDM in AUTO mode is faster and exact. BigStitcher-Spark still references the
