@@ -307,4 +307,26 @@ public class TestInterestPointFilter
 		// equality is id and position only
 		assertEquals( p, new InterestPoint( 7, new double[] { 1, 2, 3 } ) );
 	}
+
+	/**
+	 * The lenient range of the command line (BigStitcher-Spark): the dialog grammar and the canonical one
+	 */
+	@Test
+	public void testParseAnyRange()
+	{
+		assertArrayEquals( new double[] { 0.004, Double.NaN }, InterestPointFilter.parseAnyRange( "0.004" ), 0.0 );
+		assertArrayEquals( new double[] { 0.004, 0.01 }, InterestPointFilter.parseAnyRange( "0.004-0.01" ), 0.0 );
+		assertArrayEquals( new double[] { 0.004, Double.NaN }, InterestPointFilter.parseAnyRange( "0.004.." ), 0.0 );
+		assertArrayEquals( new double[] { 0.004, 0.01 }, InterestPointFilter.parseAnyRange( " 0.004 .. 0.01 " ), 0.0 );
+		assertArrayEquals( new double[] { Double.NaN, 500 }, InterestPointFilter.parseAnyRange( "..500" ), 0.0 );
+		assertArrayEquals( new double[] { Double.NaN, Double.NaN }, InterestPointFilter.parseAnyRange( ".." ), 0.0 );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.parseAnyRange( "5..1" ) );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.parseAnyRange( "a..b" ) );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.parseAnyRange( "x" ) );
+
+		// the canonical string of an axis round-trips
+		final InterestPointFilter f = InterestPointFilter.fromString( "response=0.004..;intensity=..500;sigma=1.5..3" );
+		for ( final Axis axis : Axis.values() )
+			assertArrayEquals( new double[] { f.min( axis ), f.max( axis ) }, InterestPointFilter.parseAnyRange( f.describeParameters().get( axis.key ) ), 0.0 );
+	}
 }

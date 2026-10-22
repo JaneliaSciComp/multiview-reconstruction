@@ -37,6 +37,7 @@ import net.imglib2.Cursor;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.KDTree;
+import net.imglib2.RealPoint;
 import net.imglib2.Point;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
@@ -1256,28 +1257,113 @@ public class DoGScaleSpace
 		if ( sorted.size() < 2 || combineDistance <= 0 )
 			return sorted;
 
-		int maxOctave = 0;
-		final ArrayList< Integer > indices = new ArrayList<>();
+		final double[] values = new double[ sorted.size() ];
+		final int[] octaves = new int[ sorted.size() ];
 
 		for ( int i = 0; i < sorted.size(); ++i )
 		{
-			maxOctave = Math.max( maxOctave, sorted.get( i ).octave );
+			values[ i ] = sorted.get( i ).value;
+			octaves[ i ] = sorted.get( i ).octave;
+		}
+
+		final ArrayList< ScaleSpacePeak > result = new ArrayList<>();
+
+		for ( final int i : mergeDuplicates( sorted, values, octaves, combineDistance ) )
+			result.add( sorted.get( i ) );
+
+		return result;
+	}
+
+	/**
+	 * The duplicate merge of mergeDuplicates for detections made in blocks of one image (BigStitcher-Spark): two points of
+	 * different blocks that a run on the whole image would have merged (same sign of the response, closer than
+	 * combineDistance * 2^octave in pixels of octave 0) are merged here, keeping the higher |response|. The octave of a
+	 * point follows from its sigma (octaveOf): level 1 of octave o has sigma = sigmaMin * 2^o.
+	 *
+	 * @param points - the detections, positions and sigmas scaled to full resolution (DownsampleTools.correctForDownsampling) or not
+	 * @param scale - full-resolution pixels per pixel of octave 0 per dimension (the diagonal of the mipmap transform), { 1, 1, 1 } for unscaled points
+	 * @param sigmaMin - the sigma of level 1 of octave 0 in pixels of octave 0 (ScaleSpaceParameters.sigmaMin)
+	 * @param combineDistance - in pixels of octave 0 (ScaleSpaceParameters.combineDistance)
+	 * @return the points that remain, sorted by |response| descending, ids as they were
+	 */
+	public static ArrayList< InterestPoint > mergeDuplicates( final List< InterestPoint > points, final double[] scale, final double sigmaMin, final double combineDistance )
+	{
+		final ArrayList< InterestPoint > sorted = new ArrayList<>( points );
+		sorted.sort( ( a, b ) -> Double.compare( Math.abs( b.getResponse() ), Math.abs( a.getResponse() ) ) );
+
+		if ( sorted.size() < 2 || combineDistance <= 0 )
+			return sorted;
+
+		final int n = sorted.get( 0 ).getL().length;
+		final ArrayList< RealPoint > positions = new ArrayList<>( sorted.size() );
+		final double[] values = new double[ sorted.size() ];
+		final int[] octaves = new int[ sorted.size() ];
+
+		for ( int i = 0; i < sorted.size(); ++i )
+		{
+			final InterestPoint ip = sorted.get( i );
+			final double[] l = new double[ n ];
+
+			for ( int d = 0; d < n; ++d )
+				l[ d ] = ip.getL()[ d ] / scale[ d ];
+
+			positions.add( new RealPoint( l ) );
+			values[ i ] = ip.getResponse();
+			octaves[ i ] = octaveOf( ip.getSigma() / scale[ 0 ], sigmaMin );
+		}
+
+		final ArrayList< InterestPoint > result = new ArrayList<>();
+
+		for ( final int i : mergeDuplicates( positions, values, octaves, combineDistance ) )
+			result.add( sorted.get( i ) );
+
+		return result;
+	}
+
+	/**
+	 * @param sigma - the sigma of a detection in pixels of octave 0
+	 * @param sigmaMin - the sigma of level 1 of octave 0
+	 * @return the octave the detection was made in: o for sigmaMin * 2^o &lt;= sigma &lt; sigmaMin * 2^(o+1), 0 below sigmaMin (the fitted finest-level sigmas)
+	 */
+	public static int octaveOf( final double sigma, final double sigmaMin )
+	{
+		if ( !( sigma > sigmaMin ) )
+			return 0;
+
+		// level 1 has exactly sigmaMin * 2^o, up to the float precision of a stored sigma
+		return (int)Math.floor( Math.log( sigma / sigmaMin ) / Math.log( 2 ) + 1e-3 );
+	}
+
+	/**
+	 * The merge itself: entries sorted by |value| descending, a weaker entry closer to a stronger one than
+	 * combineDistance * 2^max( their octaves ) with the same sign is a duplicate
+	 *
+	 * @return the indices of the entries that remain, ascending
+	 */
+	protected static ArrayList< Integer > mergeDuplicates( final List< ? extends RealLocalizable > positions, final double[] values, final int[] octaves, final double combineDistance )
+	{
+		int maxOctave = 0;
+		final ArrayList< Integer > indices = new ArrayList<>();
+
+		for ( int i = 0; i < positions.size(); ++i )
+		{
+			maxOctave = Math.max( maxOctave, octaves[ i ] );
 			indices.add( i );
 		}
 
 		final double maxRadius = combineDistance * ( 1L << maxOctave );
-		final RadiusNeighborSearchOnKDTree< Integer > search = new RadiusNeighborSearchOnKDTree<>( new KDTree<>( indices, sorted ) );
-		final boolean[] duplicate = new boolean[ sorted.size() ];
-		final ArrayList< ScaleSpacePeak > result = new ArrayList<>();
+		final RadiusNeighborSearchOnKDTree< Integer > search = new RadiusNeighborSearchOnKDTree<>( new KDTree<>( indices, positions ) );
+		final boolean[] duplicate = new boolean[ positions.size() ];
+		final ArrayList< Integer > kept = new ArrayList<>();
 
-		for ( int i = 0; i < sorted.size(); ++i )
+		for ( int i = 0; i < positions.size(); ++i )
 		{
 			if ( duplicate[ i ] )
 				continue;
 
-			final ScaleSpacePeak a = sorted.get( i );
-			result.add( a );
+			kept.add( i );
 
+			final RealLocalizable a = positions.get( i );
 			search.search( a, maxRadius, false );
 
 			for ( int j = 0; j < search.numNeighbors(); ++j )
@@ -1288,17 +1374,15 @@ public class DoGScaleSpace
 				if ( index <= i || duplicate[ index ] )
 					continue;
 
-				final ScaleSpacePeak b = sorted.get( index );
-
-				if ( Math.signum( a.value ) != Math.signum( b.value ) )
+				if ( Math.signum( values[ i ] ) != Math.signum( values[ index ] ) )
 					continue;
 
-				if ( distance( a, b ) <= combineDistance * ( 1L << Math.max( a.octave, b.octave ) ) )
+				if ( distance( a, positions.get( index ) ) <= combineDistance * ( 1L << Math.max( octaves[ i ], octaves[ index ] ) ) )
 					duplicate[ index ] = true;
 			}
 		}
 
-		return result;
+		return kept;
 	}
 
 	/**

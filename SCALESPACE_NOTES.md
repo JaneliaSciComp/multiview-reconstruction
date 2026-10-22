@@ -4,8 +4,9 @@ Companion to `SCALESPACE_TASK.md` (the brief). Branch `scalespace` (core committ
 separation into its own detection method on 2026-10-02). Implemented: the MVR core, the whole-view driver
 and a second Fiji detection method "Scale-space (Difference-of-Gaussian)" (renamed by Stephan on 2026-10-20, was "Scale-space (Difference-of-Gaussian)"); since 2026-10-19 one `InterestPoint`
 class with response, sigma and intensity for both methods and filtered (virtual) labels. The single-scale DoG
-algorithm (`DoGImgLib2`, `DoG`) detects exactly as master, it only stores the attributes in addition. Not implemented:
-BigStitcher-Spark, Python (brief sections 5.3, 5.4, 7). The noise-floor threshold (brief 5.1) exists since 2026-10-20 (row
+algorithm (`DoGImgLib2`, `DoG`) detects exactly as master, it only stores the attributes in addition. BigStitcher-Spark has it since
+2026-10-21 (section 6, items 1 and 2: `detect-interestpoints --method SCALE_SPACE`, the attributes, `--anisotropy`, `--noiseFactor`,
+`filter-interestpoints`, filtered labels in `clear-interestpoints` and `split-images`). Not implemented: Python (brief sections 5.4, 7). The noise-floor threshold (brief 5.1) exists since 2026-10-20 (row
 `NoiseFloor` below, section 6 item 3).
 
 ## 1. What exists
@@ -272,15 +273,30 @@ pixel-isotropic Gaussians select a 20-24% smaller scale for the same blobs.
 
 ## 6. Next steps (from the brief)
 
-1. BigStitcher-Spark `detect-interestpoints --scaleSpace --steps --octaves [--finestLevel]`: call
-   `DoGScaleSpace.computeDoGScaleSpace( input, viewInterval, blockInterval, mask, params, service )` per block, carry response, sigma and
-   intensity through the temporary N5 and the block merge (radius `combineDistance * 2^octave`, keep the higher |response|),
-   `DownsampleTools.correctForDownsampling` once per view, params string `DOG-SS (Spark) ...`; the legacy Spark detection stores the
-   attributes, too (`InterestPointTools.readIntensities` replaces its own `--storeIntensities` code, the sigma is the dialog's).
-   Consider the halo alternative (blur the raw image per octave) if the compounding halo hurts.
-2. A Spark `filter-interestpoints` command that creates filtered labels like `Filter_Detections.create` (a driver-side XML edit plus
-   marker writes, no job; and `--filters` on `detect-interestpoints` like the dialogs), then the `ActionToSparkCli` recipe for
-   `filter-interestpoints`. Match-time filters only if still wanted (a filtered label does the same).
+1. DONE (2026-10-21, BigStitcher-Spark branch `scalespace`, user: "bring everything in BSS up-to-date"): `detect-interestpoints
+   --method SCALE_SPACE [--steps 4] [--octaves -1] [--no-finestLevel]` calls `DoGScaleSpace.computeDoGScaleSpace( input, imageInterval,
+   blockInterval, null, params, service )` per block; both methods store response, sigma and intensity (the per-block and per-view
+   temporary results go through `InterestPointsN5.saveInterestPointsStatic( writer, path, points )` / `loadInterestPointsStatic`, the
+   points keep their attributes, `--storeIntensities` is gone); `DownsampleTools.correctForDownsampling` per block as before; the
+   scale space merges duplicates across blocks per view with `DoGScaleSpace.mergeDuplicates( points, scale, sigmaMin, combineDistance )`
+   (the rule of the whole-image run: same sign, closer than combineDistance * 2^octave in pixels of octave 0, the octave from the
+   sigma via `octaveOf`; 0 merges on the simulated beads); `--anisotropy` (DoG: NaN = isotropic in pixels as always, scale space: NaN =
+   calibration, `DownsampleTools.anisotropy`), `--noiseFactor` (one Spark job per view: `NoiseFloor.estimate` on the virtually
+   downsampled view with the given intensity range, pooled as the highest on the driver, the threshold is a fixed number in the params
+   string `DOG-SS (Spark) s=.. steps=.. octaves=.. finestLevel=.. t=.. ... anisotropy=..`); `--maxSpots` = `InterestPointFilter.limit(
+   .., INTENSITY, HIGHEST, n, true )`. The Spark test constants (sigma 1.8, max intensity 65535) had found ZERO points silently since
+   the count assertion was commented out; they are the shared `TestInterestPointDetection` constants now and the counts are asserted
+   (163 / 92 / 60 as in MVR). The compounding-halo alternative was not needed.
+2. DONE (2026-10-21): `filter-interestpoints` (`FilterInterestPoints`, driver-only: `-l base`, `--response/--intensity/--sigma`
+   with the dialog grammar and the canonical `a..b`, several entries = one label each, `--keepPoints/--keepBy/--keepMode`, `--newLabel`,
+   `--copy`, view selection, `--dryRun`) through `Filter_Detections.checkAttributes/checkNewLabel/create`; the `ActionToSparkCli`
+   recipe renders the GUI's `filter-interestpoints` records as it (the limit `axis:mode:count` becomes the three flags) and the
+   `detect-interestpoints` recipe renders `--method SCALE_SPACE --steps --octaves [--no-finestLevel] --anisotropy` (the SCALE_SPACE
+   unsupported-value and the anisotropy warning are gone). `clear-interestpoints REMOVE_LABEL` removes the dependants
+   (`InterestPointTools.dependentLabels`), `FIX_INTERESTPOINTS` drops filtered labels whose base is gone, `split-images` re-instantiates
+   split filtered labels as filtered (`SplitDatasets.splitLabelLike`; `SplittingTools.copyTo` had created them right, the driver's
+   XML had turned them into plain labels over a `filtered` marker, which does not load). No `--filters` on `detect-interestpoints`
+   (the GUI's shortcut is not duplicated, as decided for the dialogs). Not done: match-time filters (a filtered label does the same).
 3. Noise-floor threshold: implemented (row `NoiseFloor`), reworked on 2026-10-21 to "a way of finding the threshold" (button + two
    sliders in the previews, a drop-down in the Advanced dialogs, the threshold is the only output) after Stephan's tests. Spark: nothing changes for the workers; an optional driver-side `--noiseFactor` can pool the floors before the job and
    launch it with the resulting fixed threshold (the recipe already renders the resolved threshold). ds1 at (2, 2, 1), sigma 1.8,

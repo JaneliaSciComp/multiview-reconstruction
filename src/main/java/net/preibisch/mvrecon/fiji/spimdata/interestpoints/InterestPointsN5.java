@@ -331,80 +331,12 @@ public class InterestPointsN5 extends InterestPoints
 				return false;
 			}
 
-			final String idDataset = dataset + "/id";
-			final String locDataset = dataset + "/loc";
-
-			// 1 x N array (which is a 2D array)
-			final RandomAccessibleInterval< UnsignedLongType > idData = N5Utils.open( n5, idDataset );
-
-			// DIM x N array (which is a 2D array)
-			final RandomAccessibleInterval< DoubleType > locData = N5Utils.open( n5, locDataset );
-			final int n = (int)locData.dimension( 0 );
-			final int size = (int)idData.dimension( 1 );
-
-			if( locData.dimension( 1 ) != size )
-				throw new RuntimeException( "Sizes of N5 datasets for interest points do not match, stopping." );
-
-			//System.out.println( "Version: " + version + ", type: " + type + " loading: " + URITools.appendName( baseDir, baseN5 ) + "/" + dataset + " " + n + " " + size );
-
-			// empty list (n is correct here, it's a contract, check saveInterestPoints())
-			if ( n == 0 )
-			{
-				this.ids = new int[0];
-				this.locations = new double[0][0];
-			}
-			else
-			{
-				this.ids = new int[size];
-				this.locations = new double[size][n];
-
-				final RandomAccess< UnsignedLongType > idRA = idData.randomAccess();
-				final RandomAccess< DoubleType > locRA = locData.randomAccess();
-
-				idRA.setPosition( 0, 0 );
-				idRA.setPosition( 0, 1 );
-				locRA.setPosition( 0, 0 );
-				locRA.setPosition( 0, 1 );
-
-				for ( int i = 0; i < size; ++ i )
-				{
-					ids[ i ] = (int)idRA.get().get();
-
-					for ( int d = 0; d < n; ++d )
-					{
-						locations[ i ][ d ] = locRA.get().get();
-
-						if ( d != n - 1 )
-							locRA.fwd( 0 );
-					}
-
-					for ( int d = 0; d < n - 1; ++d )
-						locRA.bck( 0 );
-
-					if ( i != idData.dimension( 1 ) - 1 )
-					{
-						idRA.fwd( 1 );
-						locRA.fwd( 1 );
-					}
-				}
-			}
-
-			// the attributes of the points (null if the label was stored before they existed, the points then have NaN)
-			if ( n > 0 )
-			{
-				this.responses = loadResponses( n5, dataset );
-				this.sigmas = loadSigmas( n5, dataset );
-				this.intensities = loadIntensities( n5, dataset );
-
-				if ( ( responses != null && responses.length != size ) || ( sigmas != null && sigmas.length != size ) || ( intensities != null && intensities.length != size ) )
-					throw new RuntimeException( "Sizes of N5 datasets for response/sigma/intensity do not match the interest points of '" + dataset + "', stopping." );
-			}
-			else
-			{
-				this.responses = null;
-				this.sigmas = null;
-				this.intensities = null;
-			}
+			final PointArrays a = loadPointArrays( n5, dataset );
+			this.ids = a.ids;
+			this.locations = a.locations;
+			this.responses = a.responses;
+			this.sigmas = a.sigmas;
+			this.intensities = a.intensities;
 
 			n5.close();
 			modifiedInterestPoints = false;
@@ -421,6 +353,149 @@ public class InterestPointsN5 extends InterestPoints
 			e.printStackTrace();
 			return false;
 		}
+	}
+
+	/** the arrays of a stored label (loadPointArrays): ids, locations [point][dimension] and the attributes (null where not stored) */
+	protected static class PointArrays
+	{
+		int[] ids;
+		double[][] locations;
+		float[] responses, sigmas, intensities;
+	}
+
+	/**
+	 * Reads 'id', 'loc' and the attributes of an interest point group of type 'list'
+	 *
+	 * @param n5 - reader of interestpoints.n5
+	 * @param dataset - the interest point group, ipDataset( n5path )
+	 * @throws RuntimeException if the datasets do not fit together
+	 */
+	protected static PointArrays loadPointArrays( final N5Reader n5, final String dataset )
+	{
+		final PointArrays a = new PointArrays();
+
+		// 1 x N array (which is a 2D array)
+		final RandomAccessibleInterval< UnsignedLongType > idData = N5Utils.open( n5, dataset + "/id" );
+
+		// DIM x N array (which is a 2D array)
+		final RandomAccessibleInterval< DoubleType > locData = N5Utils.open( n5, dataset + "/loc" );
+		final int n = (int)locData.dimension( 0 );
+		final int size = (int)idData.dimension( 1 );
+
+		if( locData.dimension( 1 ) != size )
+			throw new RuntimeException( "Sizes of N5 datasets for interest points do not match, stopping." );
+
+		// empty list (n is correct here, it's a contract, check saveInterestPoints())
+		if ( n == 0 )
+		{
+			a.ids = new int[0];
+			a.locations = new double[0][0];
+		}
+		else
+		{
+			a.ids = new int[size];
+			a.locations = new double[size][n];
+
+			final RandomAccess< UnsignedLongType > idRA = idData.randomAccess();
+			final RandomAccess< DoubleType > locRA = locData.randomAccess();
+
+			idRA.setPosition( 0, 0 );
+			idRA.setPosition( 0, 1 );
+			locRA.setPosition( 0, 0 );
+			locRA.setPosition( 0, 1 );
+
+			for ( int i = 0; i < size; ++ i )
+			{
+				a.ids[ i ] = (int)idRA.get().get();
+
+				for ( int d = 0; d < n; ++d )
+				{
+					a.locations[ i ][ d ] = locRA.get().get();
+
+					if ( d != n - 1 )
+						locRA.fwd( 0 );
+				}
+
+				for ( int d = 0; d < n - 1; ++d )
+					locRA.bck( 0 );
+
+				if ( i != idData.dimension( 1 ) - 1 )
+				{
+					idRA.fwd( 1 );
+					locRA.fwd( 1 );
+				}
+			}
+		}
+
+		// the attributes of the points (null if the label was stored before they existed, the points then have NaN)
+		if ( n > 0 )
+		{
+			a.responses = loadResponses( n5, dataset );
+			a.sigmas = loadSigmas( n5, dataset );
+			a.intensities = loadIntensities( n5, dataset );
+
+			if ( ( a.responses != null && a.responses.length != size ) || ( a.sigmas != null && a.sigmas.length != size ) || ( a.intensities != null && a.intensities.length != size ) )
+				throw new RuntimeException( "Sizes of N5 datasets for response/sigma/intensity do not match the interest points of '" + dataset + "', stopping." );
+		}
+
+		return a;
+	}
+
+	/**
+	 * The points of an interest point group as a list in stored order, with their attributes (NaN where not stored), e.g.
+	 * the temporary blocks of BigStitcher-Spark written with saveInterestPointsStatic
+	 *
+	 * @param n5 - reader of the container
+	 * @param n5path - the group of the label (e.g. createN5datasetPath), its points are in ipDataset( n5path )
+	 * @throws RuntimeException if the group is missing, not of type 'list' or inconsistent
+	 */
+	public static ArrayList< InterestPoint > loadInterestPointsStatic( final N5Reader n5, final String n5path )
+	{
+		final String dataset = ipDataset( n5path );
+
+		if ( !n5.exists( dataset ) )
+			throw new RuntimeException( "Interest point group '" + dataset + "' does not exist." );
+
+		final String type = n5.getAttribute( dataset, "type", String.class );
+
+		if ( !"list".equals( type ) )
+			throw new RuntimeException( "Unsupported point cloud type '" + type + "' of '" + dataset + "', expected 'list'." );
+
+		final PointArrays a = loadPointArrays( n5, dataset );
+		final ArrayList< InterestPoint > points = new ArrayList<>( a.ids.length );
+
+		for ( int i = 0; i < a.ids.length; ++i )
+			points.add( new InterestPoint(
+					a.ids[ i ],
+					a.locations[ i ],
+					a.responses == null ? Float.NaN : a.responses[ i ],
+					a.sigmas == null ? Float.NaN : a.sigmas[ i ],
+					a.intensities == null ? Float.NaN : a.intensities[ i ] ) );
+
+		return points;
+	}
+
+	/**
+	 * Writes points with their attributes (saveInterestPointsStatic with the arrays of the points), ids and order as given
+	 */
+	public static boolean saveInterestPointsStatic( final N5Writer n5Writer, final String n5path, final List< ? extends InterestPoint > points )
+	{
+		final int size = points.size();
+		final int[] ids = new int[ size ];
+		final double[][] locations = size == 0 ? new double[ 0 ][ 0 ] : new double[ size ][];
+		final float[] responses = new float[ size ], sigmas = new float[ size ], intensities = new float[ size ];
+
+		for ( int i = 0; i < size; ++i )
+		{
+			final InterestPoint ip = points.get( i );
+			ids[ i ] = ip.getId();
+			locations[ i ] = ip.getL();
+			responses[ i ] = ip.getResponse();
+			sigmas[ i ] = ip.getSigma();
+			intensities[ i ] = ip.getIntensity();
+		}
+
+		return saveInterestPointsStatic( n5Writer, n5path, ids, locations, responses, sigmas, intensities );
 	}
 
 	/**

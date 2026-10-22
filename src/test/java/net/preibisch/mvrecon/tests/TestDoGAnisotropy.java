@@ -356,8 +356,8 @@ public class TestDoGAnisotropy
 		for ( final String line : lines )
 			IOFunctions.println( line );
 
-		assertTrue( lines.stream().anyMatch( l -> l.startsWith( "#" ) && l.contains( "anisotropy 1.5" ) ), "warning about the anisotropy" );
-		assertTrue( lines.stream().anyMatch( l -> !l.startsWith( "#" ) && l.contains( "-dsxy 2" ) && l.contains( "-dsz 1" ) && !l.contains( "anisotropy" ) ), "the command is rendered without the anisotropy" );
+		assertTrue( lines.stream().noneMatch( l -> l.startsWith( "#" ) && l.contains( "anisotropy" ) ), "no warning: the anisotropy is an option of detect-interestpoints" );
+		assertTrue( lines.stream().anyMatch( l -> !l.startsWith( "#" ) && l.contains( "-dsxy 2" ) && l.contains( "-dsz 1" ) && l.contains( "--anisotropy 1.5" ) && !l.contains( "--method" ) ), "the command is rendered with the anisotropy" );
 
 		// different factors for x and y: rendered with the x factor and a warning
 		params.remove( "downsampleXY" );

@@ -35,6 +35,8 @@ import java.util.regex.Pattern;
 
 import mpicbg.spim.data.sequence.ViewId;
 
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+
 /**
  * Renders an {@link ActionRecord} as one or more BigStitcher-Spark CLI command lines.
  *
@@ -217,10 +219,6 @@ public class ActionToSparkCli
 					"--method NO_OPTIMIZATION is not supported in BigStitcher-Spark (global optimization is always run). "
 					+ "The solver step was therefore not translated.",
 					true ),
-			new UnsupportedValue( "detectionMethod", "SCALE_SPACE",
-					"The scale-space Difference-of-Gaussian is not supported in BigStitcher-Spark yet. "
-					+ "The detect-interestpoints step was therefore not translated.",
-					true ),
 			new UnsupportedValue( "localization", "GAUSS_FIT",
 					"-localization GAUSS_FIT is not supported in BigStitcher-Spark (only NONE/QUADRATIC). "
 					+ "It was therefore not translated; QUADRATIC (Spark's default) will be used instead.",
@@ -257,13 +255,38 @@ public class ActionToSparkCli
 				new String[]{ "maxIntensity", "-i1" },
 				new String[]{ "downsampleXY", "-dsxy" },
 				new String[]{ "downsampleZ", "-dsz" },
+				// z voxel / x voxel at full resolution (the Gaussians isotropic in physical units); "NaN" = none is dropped in render()
+				new String[]{ "anisotropy", "--anisotropy" },
+				// the scale space (ScaleSpaceGUI): the method, its steps per octave, octaves (-1 = all) and whether the finest
+				// level keeps all its spatial extrema; finestLevel=false is rendered as the negated flag (see render())
+				new String[]{ "detectionMethod", "--method" },
+				new String[]{ "steps", "--steps" },
+				new String[]{ "octaves", "--octaves" },
+				new String[]{ "noFinestLevel", "--no-finestLevel" },
 				new String[]{ "overlappingOnly", "--overlappingOnly" },
 				new String[]{ "blockSize", "--blockSize" },
 				new String[]{ "medianFilter", "--medianFilter" },
 				new String[]{ "maxSpots", "--maxSpots" }
 		);
-		detectRecipe.skipWhen = p -> isUnsupported( p, "detectionMethod", true );
 		r.put( "detect-interestpoints", Collections.singletonList( detectRecipe ) );
+
+		// a filtered label (Filter_Detections, Limit_Detections, the interactive filter): the base label is the label the
+		// command works on (-l), the recorded label is the new one; a count limit is recorded as axis:mode:count under
+		// InterestPointFilter.limitKey and split into three flags in render()
+		final Recipe filterRecipe = new Recipe(
+				"filter-interestpoints", true,
+				new FlagGroup[]{ SELECTABLE_VIEWS },
+				new String[]{ "base", "-l" },
+				new String[]{ "label", "--newLabel" },
+				new String[]{ "response", "--response" },
+				new String[]{ "intensity", "--intensity" },
+				new String[]{ "sigma", "--sigma" },
+				new String[]{ "keepPoints", "--keepPoints" },
+				new String[]{ "keepBy", "--keepBy" },
+				new String[]{ "keepMode", "--keepMode" },
+				new String[]{ "copy", "--copy" }
+		);
+		r.put( "filter-interestpoints", Collections.singletonList( filterRecipe ) );
 
 		// registration in the mvrecon GUI is two Spark stages: descriptor matching + global solve.
 		// Either can run without the other: LoadCorrespondencesGUI reuses existing correspondences
@@ -484,13 +507,31 @@ public class ActionToSparkCli
 					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
 					+ "before running the command below." );
 
-		// the Difference-of-Gaussian of mvrecon blurs anisotropically since 2026-10 ("anisotropy" = z voxel / xy voxel at
-		// full resolution, the Gaussians are isotropic in physical units); BigStitcher-Spark's detect-interestpoints has no
-		// such option yet and blurs isotropically in pixels, so the rendered command finds somewhat different points
-		if ( params.containsKey( "anisotropy" ) && !isUnsupported( params, "detectionMethod", true ) )
-			warnUntranslated( out, "WARNING: mvrecon ran the Difference-of-Gaussian with anisotropy " + params.get( "anisotropy" )
-					+ " (z / xy voxel at full resolution, Gaussians isotropic in physical units) — BigStitcher-Spark has no anisotropy "
-					+ "option yet and blurs isotropically in pixels, so the command below detects somewhat different points." );
+		// the anisotropy (z voxel / x voxel at full resolution, the Gaussians isotropic in physical units) is an option of
+		// detect-interestpoints; NaN = none (the Difference-of-Gaussian then blurs isotropically in pixels) is omitted
+		if ( "NaN".equals( params.get( "anisotropy" ) ) )
+			params.remove( "anisotropy" );
+
+		// the scale space records finestLevel=true|false; the Spark flag is negatable (the default --finestLevel is
+		// omitted, --no-finestLevel turns it off)
+		if ( "false".equalsIgnoreCase( params.get( "finestLevel" ) ) )
+			params.put( "noFinestLevel", "true" );
+		params.remove( "finestLevel" );
+
+		// the count limit of a filtered label, recorded as axis:mode:count, is three flags of filter-interestpoints
+		if ( "filter-interestpoints".equals( record.getActionId() ) && params.containsKey( InterestPointFilter.limitKey ) )
+		{
+			final String[] parts = params.remove( InterestPointFilter.limitKey ).split( ":" );
+
+			if ( parts.length == 3 )
+			{
+				params.put( "keepBy", parts[ 0 ] );
+				params.put( "keepMode", parts[ 1 ] );
+				params.put( "keepPoints", parts[ 2 ] );
+			}
+			else
+				warnUntranslated( out, "WARNING: malformed count limit '" + String.join( ":", parts ) + "' (expected axis:mode:count), it is omitted below." );
+		}
 
 		// -dsxy takes one factor for x and y; a resolution level with different x and y factors is rendered with the x factor
 		if ( !params.containsKey( "downsampleXY" ) && params.containsKey( "downsampleX" ) )

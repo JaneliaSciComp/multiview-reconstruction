@@ -1197,4 +1197,67 @@ public class TestDoGScaleSpace
 		while ( ca.hasNext() )
 			assertEquals( ca.next().get(), cb.next().get(), 0.0f );
 	}
+
+	/**
+	 * The duplicate merge of points detected in blocks (BigStitcher-Spark): the octave from the sigma, the radius
+	 * combineDistance * 2^octave in pixels of octave 0 (also for points scaled to full resolution), same sign only,
+	 * the higher |response| survives, the result is sorted by |response|
+	 */
+	@Test
+	public void testMergeDuplicatesPoints()
+	{
+		final double sigmaMin = 1.6;
+		final float k = net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions.computeK( 4 );
+
+		assertEquals( 0, DoGScaleSpace.octaveOf( 1.0, sigmaMin ) );
+		assertEquals( 0, DoGScaleSpace.octaveOf( sigmaMin, sigmaMin ) );
+		assertEquals( 0, DoGScaleSpace.octaveOf( sigmaMin * Math.pow( k, 3 ), sigmaMin ) );
+		assertEquals( 1, DoGScaleSpace.octaveOf( sigmaMin * 2, sigmaMin ) );
+		assertEquals( 1, DoGScaleSpace.octaveOf( (float)( sigmaMin * 2 ) * 0.9999999, sigmaMin ) );
+		assertEquals( 1, DoGScaleSpace.octaveOf( sigmaMin * 2 * Math.pow( k, 3 ), sigmaMin ) );
+		assertEquals( 2, DoGScaleSpace.octaveOf( (float)( sigmaMin * 4 ), sigmaMin ) );
+		assertEquals( 3, DoGScaleSpace.octaveOf( sigmaMin * 8, sigmaMin ) );
+
+		final double[] one = new double[] { 1, 1, 1 };
+		final ArrayList< InterestPoint > points = new ArrayList<>();
+		points.add( new InterestPoint( 0, new double[] { 10, 10, 10 }, 0.5f, (float)sigmaMin, 1f ) );
+		points.add( new InterestPoint( 1, new double[] { 10.3, 10, 10 }, 0.4f, (float)sigmaMin, 1f ) ); // duplicate of 0 (0.3 < 0.5)
+		points.add( new InterestPoint( 2, new double[] { 10, 10.4, 10 }, -0.45f, (float)sigmaMin, 1f ) ); // other sign, kept
+		points.add( new InterestPoint( 3, new double[] { 50, 50, 50 }, 0.2f, (float)( sigmaMin * 4 ), 1f ) ); // octave 2
+		points.add( new InterestPoint( 4, new double[] { 51.5, 50, 50 }, 0.3f, (float)sigmaMin, 1f ) ); // octave 0, 1.5 from 3 <= 0.5 * 4: 3 is the duplicate (weaker)
+		points.add( new InterestPoint( 5, new double[] { 50, 52.5, 50 }, 0.1f, (float)( sigmaMin * 4 ), 1f ) ); // 2.5 from 3, 2.9 from 4: kept
+
+		final ArrayList< InterestPoint > merged = DoGScaleSpace.mergeDuplicates( points, one, sigmaMin, 0.5 );
+		final ArrayList< Integer > ids = new ArrayList<>();
+		for ( final InterestPoint ip : merged )
+			ids.add( ip.getId() );
+		assertEquals( Arrays.asList( 0, 2, 4, 5 ), ids ); // sorted by |response|: 0.5, 0.45, 0.3, 0.1
+
+		// scaled to full resolution by (2, 2, 1): the same decisions, distances in pixels of octave 0
+		final double[] scale = new double[] { 2, 2, 1 };
+		final ArrayList< InterestPoint > scaled = new ArrayList<>();
+		for ( final InterestPoint ip : points )
+			scaled.add( new InterestPoint( ip.getId(), new double[] { ip.getL()[ 0 ] * 2, ip.getL()[ 1 ] * 2, ip.getL()[ 2 ] }, ip.getResponse(), (float)( ip.getSigma() * 2 ), ip.getIntensity() ) );
+		final ArrayList< Integer > idsScaled = new ArrayList<>();
+		for ( final InterestPoint ip : DoGScaleSpace.mergeDuplicates( scaled, scale, sigmaMin, 0.5 ) )
+			idsScaled.add( ip.getId() );
+		assertEquals( ids, idsScaled );
+
+		// positions scaled but the sigmas not (octaves unchanged): without the scale the distance of point 1 is 0.6 > 0.5 and it survives, with the scale it is a duplicate again
+		final ArrayList< InterestPoint > positionsScaled = new ArrayList<>();
+		for ( final InterestPoint ip : points )
+			positionsScaled.add( new InterestPoint( ip.getId(), new double[] { ip.getL()[ 0 ] * 2, ip.getL()[ 1 ] * 2, ip.getL()[ 2 ] }, ip.getResponse(), ip.getSigma(), ip.getIntensity() ) );
+		final ArrayList< Integer > idsUnscaled = new ArrayList<>();
+		for ( final InterestPoint ip : DoGScaleSpace.mergeDuplicates( positionsScaled, one, sigmaMin, 0.5 ) )
+			idsUnscaled.add( ip.getId() );
+		assertTrue( idsUnscaled.contains( 1 ) );
+		final ArrayList< Integer > idsRescaled = new ArrayList<>();
+		for ( final InterestPoint ip : DoGScaleSpace.mergeDuplicates( positionsScaled, new double[] { 2, 2, 1 }, sigmaMin, 0.5 ) )
+			idsRescaled.add( ip.getId() );
+		assertTrue( !idsRescaled.contains( 1 ) && idsRescaled.contains( 4 ) );
+
+		// no merge for one point or combineDistance 0
+		assertEquals( 1, DoGScaleSpace.mergeDuplicates( points.subList( 0, 1 ), one, sigmaMin, 0.5 ).size() );
+		assertEquals( points.size(), DoGScaleSpace.mergeDuplicates( points, one, sigmaMin, 0 ).size() );
+	}
 }

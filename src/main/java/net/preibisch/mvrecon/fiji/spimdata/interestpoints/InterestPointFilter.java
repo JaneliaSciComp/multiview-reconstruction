@@ -790,6 +790,30 @@ public class InterestPointFilter implements Serializable
 	}
 
 	/**
+	 * @param entry - a range as a dialog entry ("a" or "a-b", parseRange) or as the canonical string of one axis ("a..b",
+	 *        "a.." or "..b", toString / describeParameters), e.g. on the command line of BigStitcher-Spark
+	 * @return { min, max }, NaN for an open side
+	 * @throws IllegalArgumentException if malformed
+	 */
+	public static double[] parseAnyRange( final String entry )
+	{
+		final String s = entry.trim();
+		final int dots = s.indexOf( ".." );
+
+		if ( dots < 0 )
+			return parseRange( s );
+
+		final String lo = s.substring( 0, dots ).trim(), hi = s.substring( dots + 2 ).trim();
+		final double min = lo.isEmpty() ? Double.NaN : parseBound( lo, s );
+		final double max = hi.isEmpty() ? Double.NaN : parseBound( hi, s );
+
+		if ( !Double.isNaN( min ) && !Double.isNaN( max ) && min > max )
+			throw new IllegalArgumentException( "the lower bound " + plain( min ) + " is above the upper bound " + plain( max ) + " in '" + s + "'" );
+
+		return new double[] { min, max };
+	}
+
+	/**
 	 * @return the shortest plain decimal representation (no exponent, no trailing zeros), e.g. 1.0E-4 as "0.0001"
 	 */
 	public static String plain( final double value )

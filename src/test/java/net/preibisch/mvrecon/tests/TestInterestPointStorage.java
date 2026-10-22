@@ -1063,4 +1063,44 @@ public class TestInterestPointStorage
 		for ( final ViewId viewId : views )
 			assertEquals( idsPassing( map.get( viewId ), byResponse ), new TreeSet<>( loaded.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_r0.25-0.75" ).getInterestPointsCopy().keySet() ) );
 	}
+
+	/**
+	 * The static list round trip BigStitcher-Spark uses for its temporary blocks: points with attributes in, the same
+	 * points in the same order out; an empty list; a missing group and a filtered marker are refused
+	 */
+	@Test
+	public void testStaticListRoundTrip()
+	{
+		final ArrayList< InterestPoint > points = new ArrayList<>();
+		points.add( new InterestPoint( 7, new double[] { 1.5, 2.5, 3.5 }, -0.25f, 1.8f, 120f ) );
+		points.add( new InterestPoint( 3, new double[] { 10, 20, 30 }, 0.5f, Float.NaN, Float.NaN ) );
+		points.add( new InterestPoint( 5, new double[] { 0, 0, 0 }, Float.NaN, 3.6f, 0f ) );
+
+		final String n5path = "spark_tmp_test/tp0_setup1_block_0_0_0";
+
+		try ( final N5Writer n5 = openN5Writer() )
+		{
+			assertTrue( InterestPointsN5.saveInterestPointsStatic( n5, n5path, points ) );
+
+			final ArrayList< InterestPoint > loaded = InterestPointsN5.loadInterestPointsStatic( n5, n5path );
+			assertEquals( points.size(), loaded.size() );
+
+			for ( int i = 0; i < points.size(); ++i )
+			{
+				assertEquals( points.get( i ).getId(), loaded.get( i ).getId() );
+				assertArrayEquals( points.get( i ).getL(), loaded.get( i ).getL(), 0.0 );
+				assertEquals( points.get( i ).getResponse(), loaded.get( i ).getResponse(), 0.0f );
+				assertEquals( points.get( i ).getSigma(), loaded.get( i ).getSigma(), 0.0f );
+				assertEquals( points.get( i ).getIntensity(), loaded.get( i ).getIntensity(), 0.0f );
+			}
+
+			assertTrue( InterestPointsN5.saveInterestPointsStatic( n5, n5path + "_empty", new ArrayList< InterestPoint >() ) );
+			assertEquals( 0, InterestPointsN5.loadInterestPointsStatic( n5, n5path + "_empty" ).size() );
+
+			assertThrows( RuntimeException.class, () -> InterestPointsN5.loadInterestPointsStatic( n5, n5path + "_missing" ) );
+
+			VirtualFilteredInterestPointsN5.saveMarkerStatic( n5, n5path + "_filtered", "beads", InterestPointFilter.fromString( "response=0.1.." ) );
+			assertThrows( RuntimeException.class, () -> InterestPointsN5.loadInterestPointsStatic( n5, n5path + "_filtered" ) );
+		}
+	}
 }
