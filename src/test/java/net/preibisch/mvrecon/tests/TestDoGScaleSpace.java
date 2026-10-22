@@ -286,6 +286,21 @@ public class TestDoGScaleSpace
 			}
 		}
 
+		// the lower end of the range: the point-source profile (b = 0) is recovered exactly, and a profile that decays faster
+		// than a point source ends at b = 0 as well (a boundary minimum, no size information; fitFinestSizes stores the image blur)
+		{
+			final double[][] totalSigma = DoGScaleSpace.totalSigmaOctave0( sigma, null, 0.5, n );
+			final double[] pointSource = new double[ 4 ];
+			DoGScaleSpace.modelResponses( 0, totalSigma, null, kMin1Inv, pointSource );
+
+			final double[] fitPointSource = DoGScaleSpace.fitBlobSize( pointSource, totalSigma, null, kMin1Inv, 4.0 );
+			assertEquals( 0.0, fitPointSource[ 0 ], 0.0, "a point source fits with b = 0" );
+			assertTrue( fitPointSource[ 2 ] < 1e-6, "residual of the point source: " + fitPointSource[ 2 ] );
+
+			final double[] fitFaster = DoGScaleSpace.fitBlobSize( new double[] { 1, 0.1, 0.01, 0.001 }, totalSigma, null, kMin1Inv, 4.0 );
+			assertEquals( 0.0, fitFaster[ 0 ], 0.0, "a faster decay than a point source ends at the lower end of the range" );
+		}
+
 		// synthetic isotropic Gaussian blobs (the assumed image blur of 0.5 px is part of their width), all of them are
 		// finest-level detections at sigmaMin 1.6 and their sigma is the fitted scale of maximal response, b * sqrt( 2 / 3 )
 		final double[] sizes = new double[] { 0.5, 1.0, 1.5 };
@@ -347,6 +362,68 @@ public class TestDoGScaleSpace
 			assertTrue( nearest.finest, "blob " + j + " is a finest-level detection" );
 			assertEquals( expected, nearest.sigma, Math.max( 0.2, 0.15 * expected ), "fitted sigma of blob size " + sizes[ j ] );
 		}
+
+		// no finest-level peak has a sigma below the image blur
+		for ( final ScaleSpacePeak peak : peaks )
+			if ( peak.finest )
+				assertTrue( peak.sigma >= p.imageSigma, "finest-level sigma " + peak.sigma + " below the image blur at " + Util.printCoordinates( peak.l ) );
+
+		// a point source (one voxel), a blob smaller than the image blur and a zero-mean structure (its profile decays faster than
+		// a point source) on a constant background: the first two get exactly the image blur, the third the image blur or the
+		// fallback, none of them 0 (the fit runs into b = 0 for all three; a size of 0 was stored for 12-15% of the finest-level
+		// points of ds1 before 2026-10-22)
+		final double[] pointSource = new double[] { 16, 20, 14 }, tinyBlob = new double[] { 44.7, 18.4, 30.3 }, zeroMean = new double[] { 20, 50, 42 };
+		final Img< FloatType > small = ArrayImgs.floats( 64, 64, 56 );
+		final Cursor< FloatType > c2 = small.localizingCursor();
+
+		while ( c2.hasNext() )
+		{
+			c2.fwd();
+			double r2 = 0;
+
+			for ( int d = 0; d < n; ++d )
+				r2 += Math.pow( c2.getDoublePosition( d ) - tinyBlob[ d ], 2 );
+
+			// background 0.5, the blob of size 0.25 (plus the image blur) with amplitude 0.5
+			c2.get().set( (float)( 0.5 + 0.5 * Math.exp( -r2 / ( 2 * ( 0.25 * 0.25 + 0.25 ) ) ) ) );
+		}
+
+		final RandomAccess< FloatType > ra = small.randomAccess();
+		ra.setPosition( new long[] { 16, 20, 14 } );
+		ra.get().set( 1.0f );
+		ra.setPosition( new long[] { 20, 50, 42 } );
+		ra.get().set( 1.0f );
+
+		for ( int d = 0; d < n; ++d )
+			for ( final int step : new int[] { -1, 1 } )
+			{
+				ra.setPosition( new long[] { 20, 50, 42 } );
+				ra.move( step, d );
+				ra.get().set( 0.5f - 0.5f / 6 );
+			}
+
+		final ExecutorService service3 = Threads.createFixedExecutorService( Threads.numThreads() );
+		final ArrayList< ScaleSpacePeak > smallPeaks = DoGScaleSpace.computeScaleSpacePeaks( Views.extendMirrorSingle( small ), new FinalInterval( small ), new FinalInterval( small ), null, p, service3 );
+		service3.shutdown();
+
+		for ( final ScaleSpacePeak peak : smallPeaks )
+		{
+			IOFunctions.println( "small structures: peak at " + Util.printCoordinates( peak.l ) + ", finest = " + peak.finest + ", sigma = " + peak.sigma + ", response = " + peak.value );
+
+			if ( peak.finest )
+				assertTrue( peak.sigma >= p.imageSigma, "finest-level sigma " + peak.sigma + " below the image blur at " + Util.printCoordinates( peak.l ) );
+		}
+
+		for ( final double[] center : new double[][] { pointSource, tinyBlob } )
+		{
+			final ScaleSpacePeak peak = nearestPeak( smallPeaks, center );
+			assertTrue( peak != null && dist( peak.l, center ) < 1.0 && peak.finest, "a finest-level peak at " + Util.printCoordinates( center ) );
+			assertEquals( p.imageSigma, peak.sigma, 0.0, "a structure at or below the image blur gets the image blur as its sigma" );
+		}
+
+		final ScaleSpacePeak peakZeroMean = nearestPeak( smallPeaks, zeroMean );
+		assertTrue( peakZeroMean != null && dist( peakZeroMean.l, zeroMean ) < 1.0 && peakZeroMean.finest, "a finest-level peak at the zero-mean structure" );
+		assertTrue( peakZeroMean.sigma == p.imageSigma || peakZeroMean.sigma == p.finestFallbackSigma, "the zero-mean structure gets the image blur or the fallback, not " + peakZeroMean.sigma );
 
 		// an unreliable fit (here: no residual is accepted) gives the fallback, which is never above sigmaMin
 		p.finestFitMaxResidual = -1;
@@ -725,6 +802,25 @@ public class TestDoGScaleSpace
 		assertEquals( 321.5, b.getIntensity(), 1e-4 );
 
 		service.shutdown();
+	}
+
+	protected static ScaleSpacePeak nearestPeak( final List< ScaleSpacePeak > peaks, final double[] c )
+	{
+		ScaleSpacePeak nearest = null;
+		double nearestDistance = Double.MAX_VALUE;
+
+		for ( final ScaleSpacePeak peak : peaks )
+		{
+			final double d = dist( peak.l, c );
+
+			if ( d < nearestDistance )
+			{
+				nearestDistance = d;
+				nearest = peak;
+			}
+		}
+
+		return nearest;
 	}
 
 	protected static InterestPoint nearest( final List< InterestPoint > points, final double[] c )

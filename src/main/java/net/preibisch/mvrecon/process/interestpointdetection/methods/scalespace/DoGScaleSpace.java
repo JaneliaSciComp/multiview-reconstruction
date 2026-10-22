@@ -973,7 +973,11 @@ public class DoGScaleSpace
 	/**
 	 * Replaces the sigma of the finest-level peaks (sigmaMin, an upper bound as they are no extremum in scale) by the
 	 * scale of maximal response of a Gaussian blob fitted to the responses of the first p.finestFitLevels DoG levels at
-	 * the (refined) peak position, see fitBlobSize, or by p.finestFallbackSigma where the fit is unreliable; never above sigmaMin.
+	 * the (refined) peak position, see fitBlobSize. Three outcomes, never above sigmaMin: the fitted scale; p.imageSigma
+	 * where the fitted scale lies below the blur the image carries (a point source or anything smaller: the fit runs into
+	 * b = 0 for a profile that decays as fast as a point source or faster, which is the finest scale the image can resolve,
+	 * not a size of 0); p.finestFallbackSigma where the fit is unreliable (the residual, or the size at the upper end of
+	 * the range), i.e. the size is unknown.
 	 */
 	protected static void fitFinestSizes( final ArrayList< ScaleSpacePeak > peaks, final Octave octave, final ScaleSpaceParameters p, final float k )
 	{
@@ -994,7 +998,7 @@ public class DoGScaleSpace
 
 		final double[] responses = new double[ m ];
 		final double[] pos = new double[ n ];
-		int fitted = 0;
+		int fitted = 0, atImageBlur = 0, unknown = 0;
 
 		for ( int j = 0; j < peaks.size(); ++j )
 		{
@@ -1011,17 +1015,33 @@ public class DoGScaleSpace
 
 			final double[] fit = fitBlobSize( responses, totalSigma, p.anisotropy, kMin1Inv, bMax );
 			final boolean reliable = fit[ 0 ] < 0.98 * bMax && fit[ 2 ] <= p.finestFitMaxResidual;
-			final double sigmaFit = Math.min( peak.sigma, reliable ? fit[ 0 ] * sigmaPerSize : p.finestFallbackSigma );
+			final double sigmaFit;
 
-			if ( reliable )
+			if ( !reliable )
+			{
+				// no blob, or larger than the range: the size is unknown
+				sigmaFit = Math.min( peak.sigma, p.finestFallbackSigma );
+				++unknown;
+			}
+			else if ( fit[ 0 ] * sigmaPerSize < p.imageSigma )
+			{
+				// a point source (the fit runs into b = 0) or a blob below the image blur: no level reaches its scale of
+				// maximal response, the finest scale the image resolves is the image blur
+				sigmaFit = Math.min( peak.sigma, p.imageSigma );
+				++atImageBlur;
+			}
+			else
+			{
+				sigmaFit = Math.min( peak.sigma, fit[ 0 ] * sigmaPerSize );
 				++fitted;
+			}
 
 			if ( sigmaFit != peak.sigma )
 				peaks.set( j, new ScaleSpacePeak( peak.l, peak.value, sigmaFit, peak.octave, peak.isMax, peak.finest, peak.level1Key ) );
 		}
 
 		if ( !DoGImgLib2.silent )
-			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Octave " + octave.o + ": size fitted for " + fitted + " of " + peaks.size() + " finest-level peaks (" + m + " levels), the others get sigma = " + Math.min( p.sigmaMin, p.finestFallbackSigma ) );
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Octave " + octave.o + ": " + peaks.size() + " finest-level peaks (" + m + " levels): size fitted for " + fitted + ", " + atImageBlur + " at the image blur (point sources or smaller, sigma = " + Math.min( p.sigmaMin, p.imageSigma ) + "), " + unknown + " unknown (sigma = " + Math.min( p.sigmaMin, p.finestFallbackSigma ) + ")" );
 	}
 
 	/**
@@ -1079,7 +1099,9 @@ public class DoGScaleSpace
 	 * @param anisotropy - voxel size per dimension relative to x (null = isotropic)
 	 * @param kMin1Inv - the weight of the DoG, 1 / ( k - 1 )
 	 * @param bMax - the largest size tried
-	 * @return { b (in x pixels), C, relative residual sqrt( sum( ( d - C m )^2 ) / sum( d^2 ) ) }; b == bMax means the minimum is at the end of the range
+	 * @return { b (in x pixels), C, relative residual sqrt( sum( ( d - C m )^2 ) / sum( d^2 ) ) }; b == 0 or b == bMax means the
+	 *         minimum is at an end of the range (no parabolic refinement there): b == bMax a blob larger than the range, b == 0 a
+	 *         profile that decays as fast as a point source or faster (no size information below the image blur)
 	 */
 	public static double[] fitBlobSize( final double[] responses, final double[][] totalSigma, final double[] anisotropy, final double kMin1Inv, final double bMax )
 	{

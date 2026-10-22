@@ -119,9 +119,11 @@ public class ScaleSpaceParameters
 	 * estimate the size of the finest-level detections (they are no extremum in scale, so sigmaMin is only
 	 * an upper bound of their scale) by fitting a Gaussian blob to the responses of the first finestFitLevels
 	 * DoG levels at the peak (DoGScaleSpace.fitBlobSize); their sigma is then the scale of maximal response
-	 * of that blob, size * sqrt( 2 / n ) (never above sigmaMin); if the fit is unreliable (relative residual
-	 * above finestFitMaxResidual, or the size at the end of the tried range) they get finestFallbackSigma, a
-	 * best guess a bit below sigmaMin (also never above it)
+	 * of that blob, size * sqrt( 2 / n ) (never above sigmaMin), but at least imageSigma: a point source (the
+	 * fit runs into size 0) or a blob smaller than the image blur gets the finest scale the image resolves,
+	 * not 0; if the fit is unreliable (relative residual above finestFitMaxResidual, or the size at the upper
+	 * end of the tried range) the size is unknown and they get finestFallbackSigma, a best guess a bit below
+	 * sigmaMin (also never above it)
 	 */
 	public boolean fitFinestSize = true;
 	public int finestFitLevels = 4;
