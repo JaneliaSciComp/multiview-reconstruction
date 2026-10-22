@@ -24,11 +24,15 @@ package net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.Insets;
+import java.awt.Point;
 import java.awt.FlowLayout;
 import java.awt.event.ActionListener;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.geom.Rectangle2D;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.util.ArrayList;
@@ -41,15 +45,19 @@ import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
+import javax.swing.plaf.basic.BasicSliderUI;
 
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.ChartPanel;
 import org.jfree.chart.JFreeChart;
 import org.jfree.chart.axis.NumberAxis;
+import org.jfree.chart.event.ChartProgressEvent;
 import org.jfree.chart.plot.IntervalMarker;
 import org.jfree.chart.plot.PlotOrientation;
 import org.jfree.chart.plot.XYPlot;
@@ -58,6 +66,7 @@ import org.jfree.chart.renderer.xy.XYBarRenderer;
 import org.jfree.chart.ui.Layer;
 import org.jfree.data.xy.XYSeries;
 import org.jfree.data.xy.XYSeriesCollection;
+
 
 import bdv.ui.rangeslider.RangeSlider;
 import ij.gui.GenericDialog;
@@ -93,7 +102,7 @@ public class InteractiveInterestPointFilter extends JFrame
 	public static int numBins = 100;
 	public static int sliderResolution = 1000;
 	public static int chartWidth = 520;
-	/** log10 binning per axis (response, intensity, sigma) when all values are > 0; the last toggle is remembered */
+	/** log10 binning per axis (response, intensity, sigma), a generalized log (glog10) where values <= 0 exist; the last toggle is remembered */
 	public static boolean[] defaultLog = new boolean[] { true, true, false };
 	/** the "Apply_to" of "Create filtered label ...": 0 = the selected views, 1 = all views with the label; the last choice is remembered */
 	public static int defaultApplyTo = 0;
@@ -221,6 +230,12 @@ public class InteractiveInterestPointFilter extends JFrame
 		buttons.add( close );
 		content.add( buttons );
 
+		// a vertical BoxLayout places every component by its own alignmentX, and a JLabel centers itself (the header, a
+		// paragraph of chartWidth, floated in the middle of a wide window): everything flush left, all with the same
+		// alignment since BoxLayout lines up the alignment points of mixed alignments in surprising ways
+		for ( final Component c : content.getComponents() )
+			( (JComponent)c ).setAlignmentX( Component.LEFT_ALIGNMENT );
+
 		add( content, BorderLayout.CENTER );
 
 		setDefaultCloseOperation( DISPOSE_ON_CLOSE );
@@ -252,6 +267,12 @@ public class InteractiveInterestPointFilter extends JFrame
 
 	/** @return the count line under the histogram of the axis */
 	public String getCountText( final Axis axis ) { return axisPanels[ axis.ordinal() ].count.getText(); }
+
+	/** @return whether the histogram of the axis is binned in log space (log10, or glog10 where values &lt;= 0 exist) */
+	public boolean isLog( final Axis axis ) { return axisPanels[ axis.ordinal() ].log; }
+
+	/** @return the label of the x axis of the histogram, e.g. "log10 |response|" or "glog10 intensity (c = 16)" */
+	public String getAxisLabel( final Axis axis ) { return axisPanels[ axis.ordinal() ].axisLabel(); }
 
 	/**
 	 * Links or unlinks the histograms, as the checkbox does
@@ -537,14 +558,15 @@ public class InteractiveInterestPointFilter extends JFrame
 	}
 
 	/**
+	 * @param c - the constant of the generalized log (glogConstant), 0 = plain log10, ignored if not log
 	 * @return the bin of a value in numBins equal bins over [lo, lo + size] of the (linear or log) space, -1 if the value is not finite
 	 */
-	public static int bin( final float v, final double lo, final double size, final boolean log, final int numBins )
+	public static int bin( final float v, final double lo, final double size, final boolean log, final double c, final int numBins )
 	{
 		if ( !finite( v ) )
 			return -1;
 
-		return Math.max( 0, Math.min( numBins - 1, (int)( ( space( v, log ) - lo ) / size * numBins ) ) );
+		return Math.max( 0, Math.min( numBins - 1, (int)( ( space( v, log, c ) - lo ) / size * numBins ) ) );
 	}
 
 	/**
@@ -596,21 +618,22 @@ public class InteractiveInterestPointFilter extends JFrame
 
 	/**
 	 * @param sorted - the values
-	 * @param log - whether to bin log10( value ) (all values must be &gt; 0)
+	 * @param log - whether to bin log10( value ) (glog10 with the constant c where values &lt;= 0 exist)
+	 * @param c - the constant of the generalized log (glogConstant), 0 = plain log10, ignored if not log
 	 * @return { the bin centers (in value units), the counts } of numBins equal bins between the smallest and the largest value (in linear or log space)
 	 */
-	public static double[][] histogram( final float[] sorted, final boolean log, final int numBins )
+	public static double[][] histogram( final float[] sorted, final boolean log, final double c, final int numBins )
 	{
 		final double[] centers = new double[ numBins ], counts = new double[ numBins ];
 
 		if ( sorted.length == 0 )
 			return new double[][] { centers, counts };
 
-		final double lo = space( sorted[ 0 ], log ), hi = space( sorted[ sorted.length - 1 ], log );
+		final double lo = space( sorted[ 0 ], log, c ), hi = space( sorted[ sorted.length - 1 ], log, c );
 		final double size = Math.max( hi - lo, 1e-12 );
 
 		for ( final float v : sorted )
-			++counts[ bin( v, lo, size, log, numBins ) ];
+			++counts[ bin( v, lo, size, log, c, numBins ) ];
 
 		for ( int b = 0; b < numBins; ++b )
 			centers[ b ] = lo + size * ( b + 0.5 ) / numBins;
@@ -618,11 +641,47 @@ public class InteractiveInterestPointFilter extends JFrame
 		return new double[][] { centers, counts };
 	}
 
-	/** value to slider space */
-	protected static double space( final double value, final boolean log ) { return log ? Math.log10( value ) : value; }
+	/**
+	 * The constant c of the generalized log of some values: 0 if all of them are &gt; 0 (a plain log10 does), otherwise the
+	 * smallest positive value, so that glog10 is log10 for the values above it and linear around 0 (if none is positive, the range of the values)
+	 *
+	 * @param sorted - the finite values, ascending
+	 */
+	public static double glogConstant( final float[] sorted )
+	{
+		if ( sorted.length == 0 || sorted[ 0 ] > 0 )
+			return 0;
 
-	/** slider space to value */
-	protected static double value( final double space, final boolean log ) { return log ? Math.pow( 10, space ) : space; }
+		final int firstPositive = upperIndex( sorted, 0f );
+
+		if ( firstPositive < sorted.length )
+			return sorted[ firstPositive ];
+
+		return Math.max( sorted[ sorted.length - 1 ] - sorted[ 0 ], 1e-12 );
+	}
+
+	/**
+	 * The generalized log of a value: log10( ( x + sqrt( x^2 + c^2 ) ) / 2 ), which is log10( x ) for x &gt;&gt; c and linear around 0
+	 * (defined for every x, e.g. the intensity 0 of a detection on a black voxel), and exactly log10( x ) for c = 0
+	 */
+	public static double glog10( final double x, final double c )
+	{
+		return c == 0 ? Math.log10( x ) : Math.log10( ( x + Math.sqrt( x * x + c * c ) ) / 2 );
+	}
+
+	/** the inverse of glog10 */
+	public static double glog10Inverse( final double s, final double c )
+	{
+		final double y = Math.pow( 10, s );
+
+		return c == 0 ? y : y - c * c / ( 4 * y );
+	}
+
+	/** value to slider space (c = the constant of the generalized log, 0 = plain log10, ignored if not log) */
+	protected static double space( final double value, final boolean log, final double c ) { return log ? glog10( value, c ) : value; }
+
+	/** slider space to value (c = the constant of the generalized log, 0 = plain log10, ignored if not log) */
+	protected static double value( final double space, final boolean log, final double c ) { return log ? glog10Inverse( space, c ) : space; }
 
 	/**
 	 * @return the value rounded to three significant digits (what a knob position becomes), e.g. 0.00432
@@ -647,11 +706,13 @@ public class InteractiveInterestPointFilter extends JFrame
 		final float[] sorted; // the finite values, ascending
 		final boolean present;
 		final boolean constant; // all points have the same value (e.g. the sigma of a single-scale DoG), nothing to filter
+		final double glogC; // the constant of the generalized log (glogConstant), 0 = all values > 0, a plain log10
 
 		// per point: the bin in the current space (-1 = no value) and whether it passes the bounds of this axis
 		final int[] bin;
 		final boolean[] pass;
 
+		final ChartPanel chartPanel;
 		final RangeSlider slider;
 		final JTextField minField, maxField;
 		final JCheckBox logBox;
@@ -677,7 +738,8 @@ public class InteractiveInterestPointFilter extends JFrame
 			this.sorted = sortedFinite( value );
 			this.present = sorted.length > 0;
 			this.constant = present && sorted[ 0 ] == sorted[ sorted.length - 1 ];
-			this.log = defaultLog[ axis.ordinal() ] && present && !constant && sorted[ 0 ] > 0;
+			this.glogC = glogConstant( sorted );
+			this.log = defaultLog[ axis.ordinal() ] && present && !constant;
 			this.bin = new int[ numPoints ];
 			this.pass = new boolean[ numPoints ];
 			Arrays.fill( pass, true ); // no bounds yet
@@ -698,8 +760,14 @@ public class InteractiveInterestPointFilter extends JFrame
 			plot.addDomainMarker( marker, Layer.BACKGROUND );
 			plot.setBackgroundPaint( Color.white );
 
-			final ChartPanel chartPanel = new ChartPanel( chart, false );
+			this.chartPanel = new ChartPanel( chart, false );
 			chartPanel.setPreferredSize( new Dimension( chartWidth, 150 ) );
+			// draw the chart at the size it has: a ChartPanel otherwise draws it between 300x200 and 1024x768 and scales
+			// that image, which stretched the text of a wide window in x and squeezed it in y (Stephan, 2026-10-21)
+			chartPanel.setMinimumDrawWidth( 0 );
+			chartPanel.setMinimumDrawHeight( 0 );
+			chartPanel.setMaximumDrawWidth( Integer.MAX_VALUE );
+			chartPanel.setMaximumDrawHeight( Integer.MAX_VALUE );
 			chartPanel.setPopupMenu( null );
 			chartPanel.setMouseZoomable( false );
 			add( chartPanel, BorderLayout.CENTER );
@@ -708,9 +776,15 @@ public class InteractiveInterestPointFilter extends JFrame
 			slider.setValue( 0 );
 			slider.setUpperValue( sliderResolution );
 
+			// the knobs under the histogram: whenever the chart has been drawn (its count axis changes width with the counts), the slider follows its data area
+			chart.addProgressListener( e -> { if ( e.getType() == ChartProgressEvent.DRAWING_FINISHED ) SwingUtilities.invokeLater( this::alignSlider ); } );
+
 			this.minField = new JTextField( 7 );
 			this.maxField = new JTextField( 7 );
 			this.logBox = new JCheckBox( "log", log );
+			logBox.setToolTipText( glogC == 0 ? "Bins log10( " + axis.description + " )" :
+					"<html>Bins the generalized log of the " + axis.description + ": log10( (x + sqrt( x&sup2; + c&sup2; )) / 2 ) with c = " + InterestPointFilter.plain( round3( glogC ) ) + ", the smallest positive value,<br>" +
+					"which is log10( x ) for x &gt;&gt; c and linear around 0, so that the " + upperIndex( sorted, 0f ) + " points with " + axis.description + " &lt;= 0 (log10 alone could not show them) are shown at the left end</html>" );
 			this.count = new JLabel();
 			count.setFont( GUIHelper.smallStatusFont );
 
@@ -740,8 +814,6 @@ public class InteractiveInterestPointFilter extends JFrame
 				return;
 			}
 
-			logBox.setEnabled( sorted[ 0 ] > 0 );
-
 			slider.addChangeListener( e -> { if ( !updating ) fromSlider(); } );
 
 			final ActionListener fieldListener = e -> { if ( !updating ) fromFields(); };
@@ -759,6 +831,62 @@ public class InteractiveInterestPointFilter extends JFrame
 			logBox.addActionListener( e -> { log = defaultLog[ axis.ordinal() ] = logBox.isSelected(); rebin(); toWidgets(); } );
 		}
 
+		/**
+		 * Puts the ends of the slider (the positions of its minimum and maximum value, i.e. of lo and hi) under the pixels
+		 * where the histogram draws lo and hi, the ends of the blue marker when no bound is set (the axis shows 1% more on
+		 * either side, rebin), so that a knob sits under the value it bounds (Stephan, 2026-10-21): an empty border on the
+		 * slider makes up the difference, computed from where the slider currently puts its ends (trackEnds). Nothing
+		 * happens before both are laid out, and nothing when the border is right already.
+		 */
+		protected void alignSlider()
+		{
+			final Rectangle2D dataArea = chartPanel.getChartRenderingInfo().getPlotInfo().getDataArea();
+
+			if ( dataArea == null || dataArea.getWidth() <= 0 || slider.getWidth() <= 0 || !( slider.getUI() instanceof BasicSliderUI ) )
+				return;
+
+			final BasicSliderUI ui = (BasicSliderUI)slider.getUI();
+			final XYPlot plot = chart.getXYPlot();
+
+			// where lo and hi are drawn, in the coordinates of the slider
+			final Point left = SwingUtilities.convertPoint( chartPanel, (int)Math.round( plot.getDomainAxis().valueToJava2D( lo, dataArea, plot.getDomainAxisEdge() ) ), 0, slider );
+			final Point right = SwingUtilities.convertPoint( chartPanel, (int)Math.round( plot.getDomainAxis().valueToJava2D( hi, dataArea, plot.getDomainAxisEdge() ) ), 0, slider );
+
+			final Insets insets = slider.getInsets();
+			final int[] ends = trackEnds( ui );
+			final int newLeft = insets.left + left.x - ends[ 0 ];
+			final int newRight = insets.right + ends[ 1 ] - right.x;
+
+			if ( newLeft < 0 || newRight < 0 || ( newLeft == insets.left && newRight == insets.right ) )
+				return;
+
+			slider.setBorder( BorderFactory.createEmptyBorder( 0, newLeft, 0, newRight ) );
+
+			// the slider recomputes its geometry for new insets when it paints; paint it now so that the next call measures the new state
+			if ( slider.isShowing() )
+				slider.paintImmediately( 0, 0, slider.getWidth(), slider.getHeight() );
+		}
+
+		/**
+		 * @return the x (in the slider) of its minimum and of its maximum value, i.e. the ends of its track where the knobs
+		 * stop; measured through valueForXPosition, the public inverse of the mapping (xPositionForValue is protected): the
+		 * last x that still maps to the minimum and the first x that already maps to the maximum (exact while a pixel is
+		 * worth at least half a slider step, i.e. up to 2 x sliderResolution pixels of track)
+		 */
+		protected int[] trackEnds( final BasicSliderUI ui )
+		{
+			final int min = slider.getMinimum(), max = slider.getMaximum(), width = slider.getWidth();
+			int left = 0, right = width - 1;
+
+			while ( left < width - 1 && ui.valueForXPosition( left + 1 ) == min )
+				++left;
+
+			while ( right > 0 && ui.valueForXPosition( right - 1 ) == max )
+				--right;
+
+			return new int[] { left, right };
+		}
+
 		public double min() { return min; }
 		public double max() { return max; }
 
@@ -772,7 +900,13 @@ public class InteractiveInterestPointFilter extends JFrame
 			}
 		}
 
-		protected String axisLabel() { return ( log ? "log10 " : "" ) + axis.description; }
+		protected String axisLabel()
+		{
+			if ( !log )
+				return axis.description;
+
+			return glogC == 0 ? "log10 " + axis.description : "glog10 " + axis.description + " (c = " + InterestPointFilter.plain( round3( glogC ) ) + ")";
+		}
 
 		/**
 		 * Bins the values in the current space (linear or log), sets the chart up for it and counts (updateHistogram)
@@ -796,8 +930,8 @@ public class InteractiveInterestPointFilter extends JFrame
 			}
 			else if ( present )
 			{
-				lo = space( sorted[ 0 ], log );
-				hi = space( sorted[ sorted.length - 1 ], log );
+				lo = space( sorted[ 0 ], log, glogC );
+				hi = space( sorted[ sorted.length - 1 ], log, glogC );
 
 				if ( hi <= lo )
 					hi = lo + 1e-6;
@@ -808,7 +942,7 @@ public class InteractiveInterestPointFilter extends JFrame
 					centers[ b ] = lo + ( hi - lo ) * ( b + 0.5 ) / numBins;
 
 				for ( int i = 0; i < numPoints; ++i )
-					bin[ i ] = bin( value[ i ], lo, hi - lo, log, numBins );
+					bin[ i ] = bin( value[ i ], lo, hi - lo, log, glogC, numBins );
 			}
 			else
 			{
@@ -910,8 +1044,8 @@ public class InteractiveInterestPointFilter extends JFrame
 
 		protected void updateMarker()
 		{
-			final double start = Double.isNaN( min ) ? lo : Math.max( lo, Math.min( hi, space( min, log ) ) );
-			final double end = Double.isNaN( max ) ? hi : Math.max( lo, Math.min( hi, space( max, log ) ) );
+			final double start = Double.isNaN( min ) ? lo : Math.max( lo, Math.min( hi, space( min, log, glogC ) ) );
+			final double end = Double.isNaN( max ) ? hi : Math.max( lo, Math.min( hi, space( max, log, glogC ) ) );
 
 			marker.setStartValue( start );
 			marker.setEndValue( end );
@@ -924,8 +1058,8 @@ public class InteractiveInterestPointFilter extends JFrame
 		{
 			final int l = slider.getValue(), u = slider.getUpperValue();
 
-			min = l <= 0 ? Double.NaN : round3( value( lo + ( hi - lo ) * l / sliderResolution, log ) );
-			max = u >= sliderResolution ? Double.NaN : round3( value( lo + ( hi - lo ) * u / sliderResolution, log ) );
+			min = l <= 0 ? Double.NaN : round3( value( lo + ( hi - lo ) * l / sliderResolution, log, glogC ) );
+			max = u >= sliderResolution ? Double.NaN : round3( value( lo + ( hi - lo ) * u / sliderResolution, log, glogC ) );
 
 			if ( !Double.isNaN( min ) && min < 0 )
 				min = 0;
@@ -1015,10 +1149,10 @@ public class InteractiveInterestPointFilter extends JFrame
 
 		protected int position( final double value )
 		{
-			if ( log && value <= 0 )
-				return 0;
+			if ( log && glogC == 0 && value <= 0 )
+				return 0; // not in the log space of all-positive values, a glog has a position for it
 
-			final double p = ( space( value, log ) - lo ) / ( hi - lo ) * sliderResolution;
+			final double p = ( space( value, log, glogC ) - lo ) / ( hi - lo ) * sliderResolution;
 
 			return (int)Math.round( Math.max( 0, Math.min( sliderResolution, p ) ) );
 		}

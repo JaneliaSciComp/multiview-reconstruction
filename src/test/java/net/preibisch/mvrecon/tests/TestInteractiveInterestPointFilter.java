@@ -118,7 +118,7 @@ public class TestInteractiveInterestPointFilter
 	{
 		final float[] sigma = InteractiveInterestPointFilter.sortedValues( points(), Axis.SIGMA ); // 1 2 4 8
 
-		final double[][] linear = InteractiveInterestPointFilter.histogram( sigma, false, 7 );
+		final double[][] linear = InteractiveInterestPointFilter.histogram( sigma, false, 0, 7 );
 		assertEquals( 7, linear[ 0 ].length );
 		assertEquals( 4.0, Arrays.stream( linear[ 1 ] ).sum(), 0.0 );
 		assertEquals( 1.0, linear[ 1 ][ 0 ], 0.0 ); // 1
@@ -128,40 +128,81 @@ public class TestInteractiveInterestPointFilter
 		assertEquals( 1.5, linear[ 0 ][ 0 ], 1e-9 );
 
 		// in log space 1, 2, 4, 8 are equidistant: 3 bins, the maximum in the last, the others at the bin starts
-		final double[][] log = InteractiveInterestPointFilter.histogram( sigma, true, 3 );
+		final double[][] log = InteractiveInterestPointFilter.histogram( sigma, true, 0, 3 );
 		assertArrayEquals( new double[] { 1, 1, 2 }, log[ 1 ], 0.0 );
 		assertEquals( Math.log10( 1 ) + ( Math.log10( 8 ) - Math.log10( 1 ) ) / 6, log[ 0 ][ 0 ], 1e-9 );
 
-		final double[][] empty = InteractiveInterestPointFilter.histogram( new float[ 0 ], false, 5 );
+		final double[][] empty = InteractiveInterestPointFilter.histogram( new float[ 0 ], false, 0, 5 );
 		assertEquals( 0.0, Arrays.stream( empty[ 1 ] ).sum(), 0.0 );
 
 		// a single value does not divide by zero
-		final double[][] single = InteractiveInterestPointFilter.histogram( new float[] { 3f }, true, 5 );
+		final double[][] single = InteractiveInterestPointFilter.histogram( new float[] { 3f }, true, 0, 5 );
 		assertEquals( 1.0, Arrays.stream( single[ 1 ] ).sum(), 0.0 );
+	}
+
+	@Test
+	public void testGlog()
+	{
+		// all values > 0: a plain log10
+		assertEquals( 0.0, InteractiveInterestPointFilter.glogConstant( new float[ 0 ] ), 0.0 );
+		assertEquals( 0.0, InteractiveInterestPointFilter.glogConstant( new float[] { 1f, 2f } ), 0.0 );
+		assertEquals( Math.log10( 7 ), InteractiveInterestPointFilter.glog10( 7, 0 ), 0.0 );
+		assertEquals( 7, InteractiveInterestPointFilter.glog10Inverse( Math.log10( 7 ), 0 ), 1e-12 );
+
+		// values <= 0 (an intensity of 0 on a black voxel): c = the smallest positive value, the range if there is none
+		assertEquals( 16.0, InteractiveInterestPointFilter.glogConstant( new float[] { 0f, 0f, 16f, 17f, 100f } ), 0.0 );
+		assertEquals( 5.0, InteractiveInterestPointFilter.glogConstant( new float[] { -5f, -1f, 0f } ), 0.0 );
+
+		// glog10( 0 ) = log10( c / 2 ), log10( x ) far above c, strictly increasing, invertible everywhere
+		assertEquals( Math.log10( 8 ), InteractiveInterestPointFilter.glog10( 0, 16 ), 1e-12 );
+		assertEquals( 6, InteractiveInterestPointFilter.glog10( 1e6, 16 ), 1e-9 );
+		assertTrue( InteractiveInterestPointFilter.glog10( 16, 16 ) > Math.log10( 16 ) );
+
+		double last = Double.NEGATIVE_INFINITY;
+		for ( final double x : new double[] { -1000, -50, -1, 0, 1, 16, 17, 1000, 1e6 } )
+		{
+			final double s = InteractiveInterestPointFilter.glog10( x, 16 );
+			assertTrue( s > last, "glog10 is strictly increasing" );
+			last = s;
+			assertEquals( x, InteractiveInterestPointFilter.glog10Inverse( s, 16 ), 1e-6 * Math.max( 1, Math.abs( x ) ), "inverse of glog10 at " + x );
+		}
+
+		// the two zeros and the value at c share the first of 4 bins, 200 is in the third, the maximum in the last
+		final float[] values = new float[] { 0f, 0f, 20f, 200f, 2000f };
+		final double c = InteractiveInterestPointFilter.glogConstant( values );
+		assertEquals( 20.0, c, 0.0 );
+		final double[][] h = InteractiveInterestPointFilter.histogram( values, true, c, 4 );
+		assertArrayEquals( new double[] { 3, 0, 1, 1 }, h[ 1 ], 0.0 );
+		final double lo = InteractiveInterestPointFilter.glog10( 0, c ), hi = InteractiveInterestPointFilter.glog10( 2000, c );
+		assertEquals( 1.0, lo, 1e-12 ); // log10( 20 / 2 )
+		assertEquals( lo + ( hi - lo ) / 8, h[ 0 ][ 0 ], 1e-9 );
+		assertEquals( 0, InteractiveInterestPointFilter.bin( 0f, lo, hi - lo, true, c, 4 ) );
+		assertEquals( 2, InteractiveInterestPointFilter.bin( 200f, lo, hi - lo, true, c, 4 ) );
+		assertEquals( -1, InteractiveInterestPointFilter.bin( Float.NaN, lo, hi - lo, true, c, 4 ) );
 	}
 
 	@Test
 	public void testBin()
 	{
 		// 10 linear bins over [0, 10]: the maximum falls into the last bin, values outside are clamped, no value = -1
-		assertEquals( 1, InteractiveInterestPointFilter.bin( 1f, 0, 10, false, 10 ) );
-		assertEquals( 9, InteractiveInterestPointFilter.bin( 10f, 0, 10, false, 10 ) );
-		assertEquals( 0, InteractiveInterestPointFilter.bin( -3f, 0, 10, false, 10 ) );
-		assertEquals( 9, InteractiveInterestPointFilter.bin( 30f, 0, 10, false, 10 ) );
-		assertEquals( -1, InteractiveInterestPointFilter.bin( Float.NaN, 0, 10, false, 10 ) );
-		assertEquals( -1, InteractiveInterestPointFilter.bin( Float.POSITIVE_INFINITY, 0, 10, false, 10 ) );
+		assertEquals( 1, InteractiveInterestPointFilter.bin( 1f, 0, 10, false, 0, 10 ) );
+		assertEquals( 9, InteractiveInterestPointFilter.bin( 10f, 0, 10, false, 0, 10 ) );
+		assertEquals( 0, InteractiveInterestPointFilter.bin( -3f, 0, 10, false, 0, 10 ) );
+		assertEquals( 9, InteractiveInterestPointFilter.bin( 30f, 0, 10, false, 0, 10 ) );
+		assertEquals( -1, InteractiveInterestPointFilter.bin( Float.NaN, 0, 10, false, 0, 10 ) );
+		assertEquals( -1, InteractiveInterestPointFilter.bin( Float.POSITIVE_INFINITY, 0, 10, false, 0, 10 ) );
 
 		// 4 log bins over [1, 100]
-		assertEquals( 0, InteractiveInterestPointFilter.bin( 1f, 0, 2, true, 4 ) );
-		assertEquals( 2, InteractiveInterestPointFilter.bin( 10f, 0, 2, true, 4 ) );
-		assertEquals( 3, InteractiveInterestPointFilter.bin( 100f, 0, 2, true, 4 ) );
+		assertEquals( 0, InteractiveInterestPointFilter.bin( 1f, 0, 2, true, 0, 4 ) );
+		assertEquals( 2, InteractiveInterestPointFilter.bin( 10f, 0, 2, true, 0, 4 ) );
+		assertEquals( 3, InteractiveInterestPointFilter.bin( 100f, 0, 2, true, 0, 4 ) );
 
 		// the histogram of sorted values is the same binning
 		final float[] sigma = InteractiveInterestPointFilter.sortedValues( points(), Axis.SIGMA ); // 1 2 4 8
-		final double[][] h = InteractiveInterestPointFilter.histogram( sigma, false, 7 );
+		final double[][] h = InteractiveInterestPointFilter.histogram( sigma, false, 0, 7 );
 		final int[] bin = new int[ sigma.length ];
 		for ( int i = 0; i < sigma.length; ++i )
-			bin[ i ] = InteractiveInterestPointFilter.bin( sigma[ i ], 1, 7, false, 7 );
+			bin[ i ] = InteractiveInterestPointFilter.bin( sigma[ i ], 1, 7, false, 0, 7 );
 		final double[] counts = new double[ 7 ];
 		assertEquals( 4, InteractiveInterestPointFilter.histogram( bin, new boolean[ 0 ][], null, counts ) );
 		assertArrayEquals( h[ 1 ], counts, 0.0 );
@@ -209,7 +250,7 @@ public class TestInteractiveInterestPointFilter
 
 		final int[] bin = new int[ n ];
 		for ( int i = 0; i < n; ++i )
-			bin[ i ] = InteractiveInterestPointFilter.bin( sigma[ i ], 1, 7, false, 7 );
+			bin[ i ] = InteractiveInterestPointFilter.bin( sigma[ i ], 1, 7, false, 0, 7 );
 		assertArrayEquals( new int[] { 1, 0, 3, -1, 6 }, bin );
 
 		final boolean[] passR = new boolean[ n ], passI = new boolean[ n ], passS = new boolean[ n ];
@@ -322,6 +363,68 @@ public class TestInteractiveInterestPointFilter
 		finally
 		{
 			InteractiveInterestPointFilter.defaultLinked = oldLinked;
+			Filter_Detections.defaultBaseLabel = oldBase;
+			Filter_Detections.defaultResponse = oldR;
+			Filter_Detections.defaultIntensity = oldI;
+			Filter_Detections.defaultSigma = oldS;
+		}
+	}
+
+	/**
+	 * A label with intensities of 0 (detections on black voxels): the intensity histogram opens in glog10 space and shows them,
+	 * a lower bound cuts them, and the all-positive response stays a plain log10
+	 */
+	@Test
+	public void testWindowGlog() throws Exception
+	{
+		assumeFalse( GraphicsEnvironment.isHeadless() );
+
+		final SpimData2 spimData = SimulateUtil.setUp();
+		spimData.setBasePathURI( tempDir.toUri() );
+
+		final ArrayList< InterestPoint > points = new ArrayList<>();
+		final float[] intensities = new float[] { 0f, 0f, 16f, 20f, 50f, 100f, 400f, 2000f };
+		for ( int i = 0; i < intensities.length; ++i )
+			points.add( new InterestPoint( i, new double[] { i, 0, 0 }, 0.01f * ( i + 1 ), 2.0f, intensities[ i ] ) );
+
+		final List< ViewId > all = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		final HashMap< ViewId, List< InterestPoint > > map = new HashMap<>();
+		map.put( all.get( 0 ), points );
+		InterestPointTools.addInterestPoints( spimData, "beads", map, "test" );
+
+		final boolean[] oldLog = InteractiveInterestPointFilter.defaultLog.clone();
+		final String oldBase = Filter_Detections.defaultBaseLabel, oldR = Filter_Detections.defaultResponse, oldI = Filter_Detections.defaultIntensity, oldS = Filter_Detections.defaultSigma;
+		final InteractiveInterestPointFilter[] window = new InteractiveInterestPointFilter[ 1 ];
+
+		try
+		{
+			InteractiveInterestPointFilter.defaultLog[ Axis.INTENSITY.ordinal() ] = true;
+			InteractiveInterestPointFilter.defaultLog[ Axis.RESPONSE.ordinal() ] = true;
+			SwingUtilities.invokeAndWait( () -> window[ 0 ] = new InteractiveInterestPointFilter( spimData, "beads", all, null, null ) );
+			final InteractiveInterestPointFilter w = window[ 0 ];
+
+			assertTrue( w.isLog( Axis.INTENSITY ) );
+			assertEquals( "glog10 intensity (c = 16)", w.getAxisLabel( Axis.INTENSITY ) );
+			assertTrue( w.isLog( Axis.RESPONSE ) );
+			assertEquals( "log10 |response|", w.getAxisLabel( Axis.RESPONSE ) );
+
+			// all 8 points are binned, the two zeros in the first bin
+			final double[] counts = w.getHistogramCounts( Axis.INTENSITY );
+			assertEquals( 8.0, Arrays.stream( counts ).sum(), 0.0 );
+			assertEquals( 2.0, counts[ 0 ], 0.0 );
+			assertEquals( "8 of 8 in range", w.getCountText( Axis.INTENSITY ) );
+
+			// a lower bound of 1 cuts exactly the zeros
+			SwingUtilities.invokeAndWait( () -> w.setRange( Axis.INTENSITY, 1, Double.NaN ) );
+			assertEquals( "intensity=1..", w.getFilter().toString() );
+			assertEquals( "6 of 8 in range", w.getCountText( Axis.INTENSITY ) );
+			assertTrue( w.getSummaryText().startsWith( "6 of 8 points pass" ), w.getSummaryText() );
+
+			SwingUtilities.invokeAndWait( () -> w.dispose() );
+		}
+		finally
+		{
+			System.arraycopy( oldLog, 0, InteractiveInterestPointFilter.defaultLog, 0, oldLog.length );
 			Filter_Detections.defaultBaseLabel = oldBase;
 			Filter_Detections.defaultResponse = oldR;
 			Filter_Detections.defaultIntensity = oldI;
