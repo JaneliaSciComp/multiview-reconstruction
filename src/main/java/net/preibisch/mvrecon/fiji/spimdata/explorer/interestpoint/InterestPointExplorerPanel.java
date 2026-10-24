@@ -551,7 +551,7 @@ public class InterestPointExplorerPanel extends JPanel
 	
 				final String selectedLabel = InterestPointTableModel.label( labels, row );
 
-				// the filtered labels of this label (VirtualFilteredInterestPointsN5) cannot exist without it, they are removed, too
+				// the filtered labels of this label (VirtualFilteredInterestPoints) cannot exist without it, they are removed, too
 				final List< String > toRemove = new ArrayList<>();
 				toRemove.add( selectedLabel );
 				toRemove.addAll( InterestPointTools.dependentLabels( vip.getViewInterestPointLists( vd ), selectedLabel ) );

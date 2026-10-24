@@ -47,12 +47,12 @@ import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
  * Creates a filtered label from an existing label: a label without points of its own that filters the points of the
- * base label by |response|, intensity and/or sigma on the fly and has its own correspondences (VirtualFilteredInterestPointsN5),
+ * base label by |response|, intensity and/or sigma on the fly and has its own correspondences (VirtualFilteredInterestPoints),
  * or, on request, a plain copy of the points that pass the filter (for readers that do not know filtered labels, and the
  * only way to replace the base label itself; any other existing label is overwritten by either: checkNewLabel).
  * Several entries per range field give one label per combination. Reachable from "Filter/Manage Interest Points" of the
@@ -519,9 +519,9 @@ public class Filter_Detections implements PlugIn
 	 */
 	public static double thresholdOf( final InterestPoints ips )
 	{
-		if ( ips instanceof VirtualFilteredInterestPointsN5 )
+		if ( ips instanceof VirtualFilteredInterestPoints )
 		{
-			final double min = ( (VirtualFilteredInterestPointsN5)ips ).getFilter().min( Axis.RESPONSE );
+			final double min = ( (VirtualFilteredInterestPoints)ips ).getFilter().min( Axis.RESPONSE );
 
 			if ( !Double.isNaN( min ) )
 				return min;

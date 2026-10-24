@@ -52,7 +52,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestP
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
@@ -283,8 +283,28 @@ public class InterestPointTools
 	}
 
 	/**
+	 * Adds the entries of a label whose points other JVMs already saved as staging files of the dataset's interest point
+	 * store (the tasks of a BigStitcher-Spark detection): nothing is set or modified, the next XML save commits the staged
+	 * data and the lists load it on first use. An existing label of that name is replaced.
+	 *
+	 * @param data the data
+	 * @param label the label
+	 * @param viewIds the views that were processed (also those without points, their staging files hold empty lists)
+	 * @param parameters the parameters
+	 */
+	public static void addInterestPointEntries( final SpimData2 data, final String label, final Collection< ? extends ViewId > viewIds, final String parameters )
+	{
+		for ( final ViewId viewId : viewIds )
+		{
+			final InterestPoints list = InterestPoints.newInstance( data.getBasePathURI(), viewId, label );
+			list.setParameters( parameters == null ? "" : parameters );
+			data.getViewInterestPoints().getViewInterestPointLists( viewId ).addInterestPointList( label, list );
+		}
+	}
+
+	/**
 	 * Adds a filtered label to every view: a label without points of its own that filters the base label on the fly
-	 * whenever its points are requested (VirtualFilteredInterestPointsN5, the ids of the base label are kept) and has its own
+	 * whenever its points are requested (VirtualFilteredInterestPoints, the ids of the base label are kept) and has its own
 	 * correspondences. An existing label of that name is replaced. Nothing is saved.
 	 *
 	 * @param data the data
@@ -304,7 +324,7 @@ public class InterestPointTools
 			if ( !vipl.contains( baseLabel ) )
 				throw new IllegalArgumentException( "Cannot create the filtered label '" + label + "': its base label '" + baseLabel + "' does not exist for view " + Group.pvid( viewId ) + "." );
 
-			final VirtualFilteredInterestPointsN5 list = VirtualFilteredInterestPointsN5.create( data.getBasePathURI(), viewId, label, baseLabel, filter );
+			final VirtualFilteredInterestPoints list = VirtualFilteredInterestPoints.create( data.getBasePathURI(), viewId, label, baseLabel, filter );
 			list.setParameters( filter.describe( baseLabel ) );
 
 			vipl.addInterestPointList( label, list );
@@ -398,7 +418,7 @@ public class InterestPointTools
 
 			final InterestPoints ips = vipl == null ? null : vipl.getInterestPointList( label );
 
-			label = ips instanceof VirtualFilteredInterestPointsN5 ? ( (VirtualFilteredInterestPointsN5)ips ).getBaseLabel() : null;
+			label = ips instanceof VirtualFilteredInterestPoints ? ( (VirtualFilteredInterestPoints)ips ).getBaseLabel() : null;
 		}
 
 		return false;
@@ -459,7 +479,7 @@ public class InterestPointTools
 	{
 		for ( final Entry< String, InterestPoints > entry : vipl.getHashMap().entrySet() )
 		{
-			if ( entry.getValue() instanceof VirtualFilteredInterestPointsN5 && label.equals( ( (VirtualFilteredInterestPointsN5)entry.getValue() ).getBaseLabel() ) && !dependants.contains( entry.getKey() ) && !entry.getKey().equals( label ) )
+			if ( entry.getValue() instanceof VirtualFilteredInterestPoints && label.equals( ( (VirtualFilteredInterestPoints)entry.getValue() ).getBaseLabel() ) && !dependants.contains( entry.getKey() ) && !entry.getKey().equals( label ) )
 			{
 				dependants.add( entry.getKey() );
 				collectDependentLabels( vipl, entry.getKey(), dependants );

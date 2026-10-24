@@ -51,7 +51,7 @@ public class ViewInterestPointLists extends ViewId
 		lookup.put( label, pointList );
 
 		// a filtered label looks its base label up in this view
-		if ( pointList instanceof VirtualFilteredInterestPointsN5 )
-			( (VirtualFilteredInterestPointsN5)pointList ).setOwner( this );
+		if ( pointList instanceof VirtualFilteredInterestPoints )
+			( (VirtualFilteredInterestPoints)pointList ).setOwner( this );
 	}
 }

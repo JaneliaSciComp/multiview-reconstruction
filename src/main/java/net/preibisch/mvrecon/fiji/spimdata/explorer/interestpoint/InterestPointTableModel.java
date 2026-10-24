@@ -46,7 +46,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import util.BDVTools;
@@ -220,17 +220,17 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	}
 
 	/**
-	 * @return the label's list of the first of the views where it is a virtual label (VirtualFilteredInterestPointsN5: filters
+	 * @return the label's list of the first of the views where it is a virtual label (VirtualFilteredInterestPoints: filters
 	 * its base label on the fly, has no points of its own), null if it is a plain label everywhere
 	 */
-	protected static VirtualFilteredInterestPointsN5 virtualList( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )
+	protected static VirtualFilteredInterestPoints virtualList( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )
 	{
 		for ( final ViewId v : views )
 		{
 			final InterestPoints ips = vip.getViewInterestPointLists( v ).getInterestPointList( label );
 
-			if ( ips instanceof VirtualFilteredInterestPointsN5 )
-				return (VirtualFilteredInterestPointsN5)ips;
+			if ( ips instanceof VirtualFilteredInterestPoints )
+				return (VirtualFilteredInterestPoints)ips;
 		}
 
 		return null;
@@ -253,7 +253,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 			return null;
 
 		final String label = label( InterestPointTools.getAllInterestPointMap( viewInterestPoints, currentVDs ), row );
-		final VirtualFilteredInterestPointsN5 virtual = label == null ? null : virtualList( viewInterestPoints, currentVDs, label );
+		final VirtualFilteredInterestPoints virtual = label == null ? null : virtualList( viewInterestPoints, currentVDs, label );
 
 		return virtual == null ? null : "Virtual label, no points of its own: " + virtual.getFilter().describe( virtual.getBaseLabel() );
 	}

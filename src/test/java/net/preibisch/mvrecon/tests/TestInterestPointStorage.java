@@ -9,12 +9,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -25,10 +25,12 @@ package net.preibisch.mvrecon.tests;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -65,17 +67,22 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5.InterestPointData;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5ToZarr;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Key;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Points;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
 import util.URITools;
 
 /**
- * The storage of interest points: the attributes (response, sigma, intensity) next to id and loc, labels stored before
- * the attributes existed, and filtered labels (VirtualFilteredInterestPointsN5) that filter their base label on the fly
+ * The storage of interest points: the attributes (response, sigma, intensity) through the store, labels in the N5 layout
+ * (also those stored before the attributes existed) read through the same handles and converted, and filtered labels
+ * (VirtualFilteredInterestPoints) that filter their base label on the fly
  */
 public class TestInterestPointStorage
 {
@@ -122,16 +129,23 @@ public class TestInterestPointStorage
 		return URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( tempDir.toUri(), InterestPointsN5.baseN5 ) ) );
 	}
 
+	protected InterestPointsZarrStore store()
+	{
+		return InterestPointsZarrStore.get( tempDir.toUri() );
+	}
+
+	/** The store keeps positions as float32: equal within what a float keeps at 500 px. */
 	protected static void assertSameAttributes( final InterestPoint expected, final InterestPoint actual )
 	{
-		assertArrayEquals( expected.getL(), actual.getL(), 0.0 );
+		assertArrayEquals( expected.getL(), actual.getL(), 1e-3 );
 		assertEquals( expected.getResponse(), actual.getResponse(), 0.0f );
 		assertEquals( expected.getSigma(), actual.getSigma(), 0.0f );
 		assertEquals( expected.getIntensity(), actual.getIntensity(), 0.0f );
 	}
 
 	/**
-	 * Labels stored between 2026-10-02 and 2026-10-19 have a FLOAT64 'sigma' dataset, it is read like the FLOAT32 one
+	 * Labels stored in the N5 layout between 2026-10-02 and 2026-10-19 have a FLOAT64 'sigma' dataset, it is read like the
+	 * FLOAT32 one, before and after the conversion to the store
 	 */
 	@Test
 	public void testOldFloat64Sigma()
@@ -139,13 +153,8 @@ public class TestInterestPointStorage
 		final ViewId viewId = new ViewId( 0, 8 );
 		final String label = "sigma64";
 		final ArrayList< InterestPoint > points = points( 20, 8 );
-
-		final InterestPoints ips = InterestPoints.newInstance( tempDir.toUri(), viewId, label );
-		ips.setInterestPoints( points );
-		ips.setCorrespondingInterestPoints( new ArrayList<>() );
-		assertTrue( ips.saveInterestPoints( true ) );
-
-		final String dataset = InterestPointsN5.ipDataset( InterestPointsN5.createN5datasetPath( 0, 8, label ) );
+		final String path = InterestPointsN5.createN5datasetPath( 0, 8, label );
+		final String dataset = InterestPointsN5.ipDataset( path );
 
 		// replace the sigma dataset by a FLOAT64 one with other values, as the old code wrote it
 		final double[] sigmas64 = new double[ 20 ];
@@ -154,6 +163,9 @@ public class TestInterestPointStorage
 
 		try ( final N5Writer n5 = openN5Writer() )
 		{
+			assertTrue( InterestPointsN5.saveInterestPointsStatic( n5, path, points ) );
+			assertTrue( InterestPointsN5.saveCorrespondencesStatic( n5, path, new ArrayList<>() ) );
+
 			n5.remove( dataset + "/" + InterestPointsN5.sigmaDataset );
 			final net.imglib2.img.array.ArrayImg< net.imglib2.type.numeric.real.DoubleType, ? > img = net.imglib2.img.array.ArrayImgs.doubles( sigmas64, 1, 20 );
 			org.janelia.saalfeldlab.n5.imglib2.N5Utils.save( img, n5, dataset + "/" + InterestPointsN5.sigmaDataset, new int[] { 1, 20 }, new GzipCompression() );
@@ -161,12 +173,29 @@ public class TestInterestPointStorage
 			assertArrayEquals( new float[] { 1.5f, 1.75f, 2.0f }, Arrays.copyOf( InterestPointsN5.loadSigmas( n5, dataset ), 3 ), 0.0f );
 		}
 
-		final Map< Integer, InterestPoint > loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy();
+		// read through the handle (the N5 fallback)
+		Map< Integer, InterestPoint > loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy();
 
 		for ( int i = 0; i < 20; ++i )
 			assertEquals( (float)sigmas64[ i ], loaded.get( i ).getSigma(), 0.0f );
+
+		// and from the store after the conversion
+		assertEquals( 1, InterestPointsN5ToZarr.convert( tempDir.toUri() ) );
+		assertFalse( new File( tempDir.toFile(), InterestPointsN5.baseN5 + "/tpId_0_viewSetupId_8" ).exists() );
+		loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy();
+
+		for ( int i = 0; i < 20; ++i )
+		{
+			assertEquals( (float)sigmas64[ i ], loaded.get( i ).getSigma(), 0.0f );
+			assertEquals( points.get( i ).getResponse(), loaded.get( i ).getResponse(), 0.0f );
+			assertArrayEquals( points.get( i ).getL(), loaded.get( i ).getL(), 1e-3 );
+		}
 	}
 
+	/**
+	 * A list saved through its handle outside a batch is a staging file first and part of the arrays after the commit;
+	 * both read back with the attributes. The N5 writer of temporary lists writes the attributes as FLOAT32 1 x N datasets.
+	 */
 	@Test
 	public void testRoundTrip()
 	{
@@ -178,11 +207,33 @@ public class TestInterestPointStorage
 		ips.setInterestPoints( points );
 		ips.setCorrespondingInterestPoints( new ArrayList<>() );
 		assertTrue( ips.saveInterestPoints( true ) );
+		assertTrue( ips.saveCorrespondingInterestPoints( true ) );
+		assertTrue( new File( tempDir.toFile(), InterestPointsZarrStore.ZARR_CONTAINER + "/staging" ).list().length > 0 );
 
+		Map< Integer, InterestPoint > loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy();
+		assertEquals( 1000, loaded.size() );
+		for ( final InterestPoint p : points )
+			assertSameAttributes( p, loaded.get( p.getId() ) );
+
+		store().commit();
+		assertEquals( 0, new File( tempDir.toFile(), InterestPointsZarrStore.ZARR_CONTAINER + "/staging" ).list().length );
+		final Points stored = store().points( Key.of( viewId, label ) );
+		assertEquals( 1000, stored.size() );
+		assertEquals( 1000 * InterestPointsZarrStore.COLUMNS, stored.data().length );
+		assertFalse( stored.filtered() );
+
+		loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy();
+		assertEquals( 1000, loaded.size() );
+		for ( final InterestPoint p : points )
+			assertSameAttributes( p, loaded.get( p.getId() ) );
+
+		// the N5 layout of temporary lists
 		final String dataset = InterestPointsN5.ipDataset( InterestPointsN5.createN5datasetPath( 0, 1, label ) );
 
-		try ( final N5Reader n5 = openN5() )
+		try ( final N5Writer n5 = openN5Writer() )
 		{
+			assertTrue( InterestPointsN5.saveInterestPointsStatic( n5, InterestPointsN5.createN5datasetPath( 0, 1, label ), points ) );
+
 			final DatasetAttributes response = n5.getDatasetAttributes( dataset + "/" + InterestPointsN5.responseDataset );
 			final DatasetAttributes sigma = n5.getDatasetAttributes( dataset + "/" + InterestPointsN5.sigmaDataset );
 			final DatasetAttributes intensity = n5.getDatasetAttributes( dataset + "/" + InterestPointsN5.intensityDataset );
@@ -213,16 +264,13 @@ public class TestInterestPointStorage
 			}
 		}
 
-		final Map< Integer, InterestPoint > loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy();
-
-		assertEquals( 1000, loaded.size() );
-
-		for ( final InterestPoint p : points )
-			assertSameAttributes( p, loaded.get( p.getId() ) );
+		// the store has the label, so the N5 group is not consulted (and the conversion drops it)
+		assertEquals( 0, InterestPointsN5ToZarr.convert( tempDir.toUri() ) );
+		assertEquals( 1000, InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy().size() );
 	}
 
 	/**
-	 * Points without attributes are stored as NaN (the datasets always exist) and load as NaN
+	 * Points without attributes are stored as NaN and load as NaN, in the store and in the N5 layout
 	 */
 	@Test
 	public void testPlainListStoresUnknown()
@@ -235,11 +283,25 @@ public class TestInterestPointStorage
 		ips.setInterestPoints( points );
 		ips.setCorrespondingInterestPoints( new ArrayList<>() );
 		assertTrue( ips.saveInterestPoints( true ) );
+		store().commit();
 
-		final String dataset = InterestPointsN5.ipDataset( InterestPointsN5.createN5datasetPath( 0, 2, label ) );
+		final Map< Integer, InterestPoint > loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy();
 
-		try ( final N5Reader n5 = openN5() )
+		assertEquals( 500, loaded.size() );
+
+		for ( final InterestPoint p : points )
 		{
+			final InterestPoint l = loaded.get( p.getId() );
+			assertArrayEquals( p.getL(), l.getL(), 1e-3 );
+			assertTrue( Double.isNaN( l.getResponse() ) && Double.isNaN( l.getSigma() ) && Double.isNaN( l.getIntensity() ) );
+		}
+
+		final String dataset = InterestPointsN5.ipDataset( InterestPointsN5.createN5datasetPath( 0, 12, label ) );
+
+		try ( final N5Writer n5 = openN5Writer() )
+		{
+			assertTrue( InterestPointsN5.saveInterestPointsStatic( n5, InterestPointsN5.createN5datasetPath( 0, 12, label ), points ) );
+
 			assertTrue( n5.datasetExists( dataset + "/" + InterestPointsN5.responseDataset ) );
 			assertTrue( n5.datasetExists( dataset + "/" + InterestPointsN5.sigmaDataset ) );
 			assertTrue( n5.datasetExists( dataset + "/" + InterestPointsN5.intensityDataset ) );
@@ -253,22 +315,11 @@ public class TestInterestPointStorage
 			for ( final float v : InterestPointsN5.loadIntensities( n5, dataset ) )
 				assertTrue( Float.isNaN( v ) );
 		}
-
-		final Map< Integer, InterestPoint > loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy();
-
-		assertEquals( 500, loaded.size() );
-
-		for ( final InterestPoint p : points )
-		{
-			final InterestPoint l = loaded.get( p.getId() );
-			assertArrayEquals( p.getL(), l.getL(), 0.0 );
-			assertTrue( Double.isNaN( l.getResponse() ) && Double.isNaN( l.getSigma() ) && Double.isNaN( l.getIntensity() ) );
-		}
 	}
 
 	/**
-	 * A label stored before the attributes existed (only 'id' and 'loc') loads with NaN attributes, and a filter that needs
-	 * one refuses it
+	 * A label stored in the N5 layout before the attributes existed (only 'id' and 'loc') loads with NaN attributes, also
+	 * after the conversion, and a filter that needs one refuses it
 	 */
 	@Test
 	public void testOldStyleLabel()
@@ -299,19 +350,28 @@ public class TestInterestPointStorage
 			assertNull( InterestPointsN5.loadIntensities( n5, dataset ) );
 		}
 
-		final Map< Integer, InterestPoint > loaded = InterestPoints.newInstance( tempDir.toUri(), new ViewId( 0, 3 ), "old" ).getInterestPointsCopy();
-
-		assertEquals( 10, loaded.size() );
-
-		for ( int i = 0; i < 10; ++i )
+		for ( int round = 0; round < 2; ++round )
 		{
-			assertArrayEquals( locations[ i ], loaded.get( i ).getL(), 0.0 );
-			assertTrue( Double.isNaN( loaded.get( i ).getResponse() ) );
-			assertTrue( Double.isNaN( loaded.get( i ).getSigma() ) );
-			assertTrue( Double.isNaN( loaded.get( i ).getIntensity() ) );
-		}
+			final Map< Integer, InterestPoint > loaded = InterestPoints.newInstance( tempDir.toUri(), new ViewId( 0, 3 ), "old" ).getInterestPointsCopy();
 
-		assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.of( Axis.RESPONSE, 0.1, Double.NaN ).filter( loaded.values() ) );
+			assertEquals( 10, loaded.size() );
+
+			for ( int i = 0; i < 10; ++i )
+			{
+				assertArrayEquals( locations[ i ], loaded.get( i ).getL(), 0.0 );
+				assertTrue( Double.isNaN( loaded.get( i ).getResponse() ) );
+				assertTrue( Double.isNaN( loaded.get( i ).getSigma() ) );
+				assertTrue( Double.isNaN( loaded.get( i ).getIntensity() ) );
+			}
+
+			assertThrows( IllegalArgumentException.class, () -> InterestPointFilter.of( Axis.RESPONSE, 0.1, Double.NaN ).filter( loaded.values() ) );
+
+			// a label without a correspondences group has none
+			assertEquals( 0, InterestPoints.newInstance( tempDir.toUri(), new ViewId( 0, 3 ), "old" ).getCorrespondingInterestPointsCopy().size() );
+
+			if ( round == 0 )
+				assertEquals( 1, InterestPointsN5ToZarr.convert( tempDir.toUri() ) );
+		}
 	}
 
 	@Test
@@ -324,6 +384,9 @@ public class TestInterestPointStorage
 			assertThrows( IllegalArgumentException.class, () -> InterestPointsN5.saveInterestPointsStatic( n5, n5path, new int[ 3 ], new double[ 3 ][ 3 ], new float[ 2 ], null, null ) );
 			assertThrows( IllegalArgumentException.class, () -> InterestPointsN5.saveInterestPointsStatic( n5, n5path, new int[ 3 ], new double[ 3 ][ 3 ], null, null, new float[ 4 ] ) );
 		}
+
+		assertThrows( IllegalArgumentException.class, () -> new Points( new int[ 3 ], new float[ 2 * InterestPointsZarrStore.COLUMNS ] ) );
+		assertThrows( IllegalArgumentException.class, () -> new Points( new int[ 1 ], new float[ InterestPointsZarrStore.COLUMNS ], true ) );
 	}
 
 	@Test
@@ -333,10 +396,15 @@ public class TestInterestPointStorage
 		ips.setInterestPoints( new ArrayList<>() );
 		ips.setCorrespondingInterestPoints( new ArrayList<>() );
 		assertTrue( ips.saveInterestPoints( true ) );
+		assertTrue( ips.saveCorrespondingInterestPoints( true ) );
 
 		assertEquals( 0, InterestPoints.newInstance( tempDir.toUri(), new ViewId( 0, 5 ), "empty" ).getInterestPointsCopy().size() );
+		store().commit();
+		assertEquals( 0, InterestPoints.newInstance( tempDir.toUri(), new ViewId( 0, 5 ), "empty" ).getInterestPointsCopy().size() );
+		assertEquals( 0, InterestPoints.newInstance( tempDir.toUri(), new ViewId( 0, 5 ), "empty" ).getCorrespondingInterestPointsCopy().size() );
+		assertTrue( store().hasEntry( new Key( 0, 5, "empty" ) ) );
 
-		// empty arrays are written as empty datasets
+		// empty arrays are written as empty datasets in the N5 layout
 		final String n5path = InterestPointsN5.createN5datasetPath( 0, 6, "emptystatic" );
 
 		try ( final N5Writer n5 = openN5Writer() )
@@ -350,41 +418,54 @@ public class TestInterestPointStorage
 		assertEquals( 0, InterestPoints.newInstance( tempDir.toUri(), new ViewId( 0, 6 ), "emptystatic" ).getInterestPointsCopy().size() );
 	}
 
+	/**
+	 * The save of a Spark task (saveStaged): one staging file for many lists, readable at once, committed by the next save
+	 */
 	@Test
-	public void testInterestPointDataRoundTrip()
+	public void testSaveStaged()
 	{
 		final ViewId viewId = new ViewId( 1, 7 );
-		final String label = "dto";
+		final String label = "staged";
 		final ArrayList< InterestPoint > points = points( 100, 7 );
+		final ArrayList< CorrespondingInterestPoints > corr = new ArrayList<>();
+		corr.add( new CorrespondingInterestPoints( 3, new ViewId( 1, 8 ), label, 7, -1 ) );
+		corr.add( new CorrespondingInterestPoints( 9, new ViewId( 1, 8 ), label, 1, 2 ) );
+		corr.add( new CorrespondingInterestPoints( 9, new ViewId( 1, 9 ), "other", 4, 2 ) );
 
-		final InterestPointsN5 ips = (InterestPointsN5)InterestPoints.newInstance( tempDir.toUri(), viewId, label );
+		final InterestPoints ips = InterestPoints.newInstance( tempDir.toUri(), viewId, label );
 		ips.setInterestPoints( points );
-		ips.setCorrespondingInterestPoints( new ArrayList<>() );
+		ips.setCorrespondingInterestPoints( corr );
+		final InterestPoints other = InterestPoints.newInstance( tempDir.toUri(), new ViewId( 1, 8 ), label );
+		other.setInterestPoints( points( 10, 8 ) );
+		other.setCorrespondingInterestPoints( new ArrayList<>() );
 
-		final InterestPointData data = InterestPointData.from( viewId, label, ips );
+		InterestPointsZarr.saveStaged( Arrays.asList( ips, other ) );
+		assertFalse( ips.hasModifiedInterestPoints() || ips.hasModifiedCorrespondingInterestPoints() );
+		assertEquals( 1, new File( tempDir.toFile(), InterestPointsZarrStore.ZARR_CONTAINER + "/staging" ).list().length );
 
-		assertEquals( 100, data.responses.length );
-		assertEquals( 100, data.sigmas.length );
-		assertEquals( 100, data.intensities.length );
-
-		try ( final N5Writer n5 = openN5Writer() )
+		for ( int round = 0; round < 2; ++round )
 		{
-			assertTrue( InterestPointsN5.saveInterestPointDataStatic( n5, data ) );
+			final InterestPoints loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label );
+			final Map< Integer, InterestPoint > map = loaded.getInterestPointsCopy();
+			assertEquals( 100, map.size() );
+			for ( final InterestPoint p : points )
+				assertSameAttributes( p, map.get( p.getId() ) );
+			assertEquals( 3, loaded.getCorrespondingInterestPointsCopy().size() );
+			assertEquals( 2, InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getCorrespondingInterestPointsCopy( new ViewId( 1, 8 ), label ).size() );
+			assertEquals( 1, InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getCorrespondingInterestPointsCopy( new ViewId( 1, 9 ), "other" ).size() );
+			assertEquals( 2, InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getCorrespondingViews().size() );
+			assertEquals( 10, InterestPoints.newInstance( tempDir.toUri(), new ViewId( 1, 8 ), label ).getInterestPointsCopy().size() );
+
+			if ( round == 0 )
+				store().commit();
 		}
-
-		final Map< Integer, InterestPoint > loaded = InterestPoints.newInstance( tempDir.toUri(), viewId, label ).getInterestPointsCopy();
-
-		assertEquals( 100, loaded.size() );
-
-		for ( final InterestPoint p : points )
-			assertSameAttributes( p, loaded.get( p.getId() ) );
 	}
 
 	/**
-	 * The parallel save of the XML writer stores the attributes without any driver code
+	 * The parallel save of the XML writer stores the attributes without any driver code, into the store
 	 */
 	@Test
-	public void testPipelineSave() throws SpimDataException
+	public void testPipelineSave() throws Exception
 	{
 		final SpimData2 spimData = SimulateUtil.setUp();
 		spimData.setBasePathURI( tempDir.toUri() );
@@ -401,6 +482,11 @@ public class TestInterestPointStorage
 		final URI xmlURI = tempDir.resolve( "dataset.xml" ).toUri();
 		new XmlIoSpimData2().save( spimData, xmlURI );
 
+		assertTrue( new File( tempDir.toFile(), InterestPointsZarrStore.ZARR_CONTAINER ).isDirectory() );
+		assertFalse( new File( tempDir.toFile(), InterestPointsN5.baseN5 ).exists() );
+		final String[] staging = new File( tempDir.toFile(), InterestPointsZarrStore.ZARR_CONTAINER + "/staging" ).list();
+		assertTrue( staging == null || staging.length == 0 );
+
 		final SpimData2 loaded = new XmlIoSpimData2().load( xmlURI );
 
 		for ( final ViewId viewId : map.keySet() )
@@ -416,6 +502,22 @@ public class TestInterestPointStorage
 			for ( final InterestPoint p : map.get( viewId ) )
 				assertSameAttributes( p, points.get( p.getId() ) );
 		}
+
+		// lists created while the dataset still had another base path are saved where the dataset is saved (as the N5
+		// layout's shared writer did), not into a store at their old base path
+		final Path elsewhere = Files.createDirectories( tempDir.resolve( "elsewhere" ) );
+		final Path here = Files.createDirectories( tempDir.resolve( "here" ) );
+		final SpimData2 moved = SimulateUtil.setUp();
+		moved.setBasePathURI( elsewhere.toUri() );
+		InterestPointTools.addInterestPoints( moved, "ss", map, params );
+		moved.setBasePathURI( here.toUri() );
+		new XmlIoSpimData2().save( moved, here.resolve( "dataset.xml" ).toUri() );
+
+		assertFalse( new File( elsewhere.toFile(), InterestPointsZarrStore.ZARR_CONTAINER ).exists(), "nothing at the old base path" );
+		assertTrue( new File( here.toFile(), InterestPointsZarrStore.ZARR_CONTAINER ).isDirectory() );
+		final SpimData2 movedLoaded = new XmlIoSpimData2().load( here.resolve( "dataset.xml" ).toUri() );
+		for ( final ViewId viewId : map.keySet() )
+			assertEquals( map.get( viewId ).size(), movedLoaded.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "ss" ).getInterestPointsCopy().size() );
 	}
 
 	protected static TreeSet< Integer > detectionIds( final Collection< CorrespondingInterestPoints > correspondences )
@@ -442,7 +544,7 @@ public class TestInterestPointStorage
 	/**
 	 * A filtered label filters its base label on the fly (also before anything is saved, also after the base was detected
 	 * again), keeps the ids, has its own correspondences, survives the XML round trip (attributes 'base' and 'filter', a
-	 * marker in the N5 and no points of its own), can be chained, and refuses to exist without its base
+	 * marker entry in the store and no points of its own), can be chained, and refuses to exist without its base
 	 */
 	@Test
 	public void testFilteredLabel() throws Exception
@@ -475,9 +577,9 @@ public class TestInterestPointStorage
 			final InterestPoints filtered = vipl.getInterestPointList( "beads_r0.5" );
 			final InterestPoints chained = vipl.getInterestPointList( "beads_r0.5_s2-4" );
 
-			assertTrue( filtered instanceof VirtualFilteredInterestPointsN5 );
-			assertEquals( "beads", ( (VirtualFilteredInterestPointsN5)filtered ).getBaseLabel() );
-			assertEquals( byResponse, ( (VirtualFilteredInterestPointsN5)filtered ).getFilter() );
+			assertTrue( filtered instanceof VirtualFilteredInterestPoints );
+			assertEquals( "beads", ( (VirtualFilteredInterestPoints)filtered ).getBaseLabel() );
+			assertEquals( byResponse, ( (VirtualFilteredInterestPoints)filtered ).getFilter() );
 			assertEquals( byResponse.describe( "beads" ), filtered.getParameters() );
 
 			final TreeSet< Integer > expected = idsPassing( map.get( viewId ), byResponse );
@@ -495,13 +597,6 @@ public class TestInterestPointStorage
 
 			// read-only
 			assertThrows( UnsupportedOperationException.class, () -> filtered.setInterestPoints( new ArrayList<>() ) );
-
-			// the Spark DTO carries it as base label and filter, no points
-			final InterestPointData dto = InterestPointData.from( viewId, "beads_r0.5", (InterestPointsN5)filtered );
-			assertTrue( dto.isVirtual() && !dto.hasInterestPoints() );
-			assertEquals( "beads", dto.baseLabel );
-			assertEquals( byResponse.toString(), dto.filter );
-			assertFalse( InterestPointData.from( viewId, "beads", (InterestPointsN5)vipl.getInterestPointList( "beads" ) ).isVirtual() );
 
 			// its own correspondences (the base keeps none)
 			final ArrayList< CorrespondingInterestPoints > corr = new ArrayList<>();
@@ -531,21 +626,18 @@ public class TestInterestPointStorage
 
 		final ViewId first = views.get( 0 );
 		final String path = InterestPointsN5.createN5datasetPath( first.getTimePointId(), first.getViewSetupId(), "beads_r0.5" );
+		final Key key = Key.of( first, "beads_r0.5" );
 
-		try ( final N5Reader n5 = openN5() )
-		{
-			// the marker instead of the points, the correspondences as for any label
-			assertTrue( n5.exists( InterestPointsN5.ipDataset( path ) ) );
-			assertEquals( VirtualFilteredInterestPointsN5.filteredType, n5.getAttribute( InterestPointsN5.ipDataset( path ), "type", String.class ) );
-			assertEquals( "beads", n5.getAttribute( InterestPointsN5.ipDataset( path ), VirtualFilteredInterestPointsN5.baseAttribute, String.class ) );
-			assertEquals( "response=0.5..", n5.getAttribute( InterestPointsN5.ipDataset( path ), VirtualFilteredInterestPointsN5.filterAttribute, String.class ) );
-			assertFalse( n5.datasetExists( InterestPointsN5.ipDataset( path ) + "/loc" ) );
-			assertFalse( n5.datasetExists( InterestPointsN5.ipDataset( path ) + "/id" ) );
-			assertTrue( n5.exists( InterestPointsN5.corrDataset( path ) ) );
+		// the marker entry instead of points, the correspondences as for any label
+		assertEquals( Boolean.TRUE, store().isFiltered( key ) );
+		assertEquals( 0, store().points( key ).size() );
+		assertTrue( store().points( key ).filtered() );
+		assertNotNull( store().correspondences( key ) );
+		assertTrue( store().correspondences( key ).size() > 0 );
+		assertEquals( Boolean.FALSE, store().isFiltered( Key.of( first, "beads" ) ) );
 
-			// a plain label that does not know filtered labels fails to load it (no silent empty label)
-			assertThrows( RuntimeException.class, () -> new InterestPointsN5( tempDir.toUri(), path ).getInterestPointsCopy() );
-		}
+		// a plain label that does not know filtered labels fails to load it (no silent empty label)
+		assertThrows( RuntimeException.class, () -> new InterestPointsZarr( tempDir.toUri(), path ).getInterestPointsCopy() );
 
 		final SpimData2 loaded = new XmlIoSpimData2().load( xmlURI );
 
@@ -555,9 +647,9 @@ public class TestInterestPointStorage
 			final InterestPoints filtered = vipl.getInterestPointList( "beads_r0.5" );
 			final InterestPoints chained = vipl.getInterestPointList( "beads_r0.5_s2-4" );
 
-			assertTrue( filtered instanceof VirtualFilteredInterestPointsN5 );
-			assertEquals( "beads", ( (VirtualFilteredInterestPointsN5)filtered ).getBaseLabel() );
-			assertEquals( byResponse, ( (VirtualFilteredInterestPointsN5)filtered ).getFilter() );
+			assertTrue( filtered instanceof VirtualFilteredInterestPoints );
+			assertEquals( "beads", ( (VirtualFilteredInterestPoints)filtered ).getBaseLabel() );
+			assertEquals( byResponse, ( (VirtualFilteredInterestPoints)filtered ).getFilter() );
 			assertEquals( byResponse.describe( "beads" ), filtered.getParameters() );
 			assertEquals( idsPassing( map.get( viewId ), byResponse ), new TreeSet<>( filtered.getInterestPointsCopy().keySet() ) );
 			assertEquals( idsPassing( map.get( viewId ), both ), new TreeSet<>( chained.getInterestPointsCopy().keySet() ) );
@@ -598,22 +690,19 @@ public class TestInterestPointStorage
 		assertThrows( IllegalStateException.class, () -> vipl.getInterestPointList( "beads_r0.5_s2-4" ).getInterestPointsCopy() );
 
 		// detached from its view: an error, too
-		assertThrows( IllegalStateException.class, () -> new VirtualFilteredInterestPointsN5( tempDir.toUri(), path, "beads", byResponse ).getInterestPointsCopy() );
+		assertThrows( IllegalStateException.class, () -> new VirtualFilteredInterestPoints( tempDir.toUri(), path, "beads", byResponse ).getInterestPointsCopy() );
 
-		// a marker that disagrees with the XML: an error
-		try ( final N5Writer n5 = openN5Writer() )
-		{
-			n5.setAttribute( InterestPointsN5.ipDataset( path ), VirtualFilteredInterestPointsN5.filterAttribute, "response=0.9.." );
-		}
+		// a plain point list stored under the name of the filtered label: an error
+		final InterestPointsZarr plainUnderFilteredName = new InterestPointsZarr( tempDir.toUri(), path );
+		plainUnderFilteredName.setInterestPoints( points( 5, 1 ) );
+		assertTrue( plainUnderFilteredName.saveInterestPoints( true ) );
+		store().commit();
+		assertEquals( Boolean.FALSE, store().isFiltered( key ) );
 
 		final SpimData2 loaded2 = new XmlIoSpimData2().load( xmlURI );
 		assertThrows( RuntimeException.class, () -> loaded2.getViewInterestPoints().getViewInterestPointLists( first ).getInterestPointList( "beads_r0.5" ).getInterestPointsCopy() );
 	}
 
-	/**
-	 * The Spark save path (collectInterestPointData, saveInterestPointDataStatic) treats plain and filtered labels alike:
-	 * the datasets for one, the marker for the other, the correspondences for both
-	 */
 	/**
 	 * A filtered label with a count limit keeps the n brightest per view (the ids of the base), through the XML round trip, too
 	 */
@@ -663,8 +752,8 @@ public class TestInterestPointStorage
 		for ( final ViewId viewId : views )
 		{
 			final InterestPoints ips = loaded.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_rh50" );
-			assertTrue( ips instanceof VirtualFilteredInterestPointsN5 );
-			assertEquals( brightest, ( (VirtualFilteredInterestPointsN5)ips ).getFilter() );
+			assertTrue( ips instanceof VirtualFilteredInterestPoints );
+			assertEquals( brightest, ( (VirtualFilteredInterestPoints)ips ).getFilter() );
 			assertEquals( expected.get( viewId ), new TreeSet<>( ips.getInterestPointsCopy().keySet() ) );
 		}
 	}
@@ -724,7 +813,7 @@ public class TestInterestPointStorage
 		// a filtered label overwritten by another filtered label is redefined (the same base, the new filter)
 		final InterestPointFilter byResponse07 = InterestPointFilter.of( Axis.RESPONSE, 0.7, Double.NaN );
 		assertTrue( Filter_Detections.create( spimData, only0, "beads", "beads_r0.5", byResponse07, false ) );
-		assertEquals( byResponse07, ( (VirtualFilteredInterestPointsN5)spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" ) ).getFilter() );
+		assertEquals( byResponse07, ( (VirtualFilteredInterestPoints)spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" ) ).getFilter() );
 		assertEquals( idsPassing( map.get( v0 ), byResponse07 ), new TreeSet<>( spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" ).getInterestPointsCopy().keySet() ) );
 		assertTrue( Filter_Detections.create( spimData, only0, "beads", "beads_r0.5", byResponse, false ) ); // and back
 
@@ -734,7 +823,7 @@ public class TestInterestPointStorage
 		assertTrue( Filter_Detections.create( spimData, only0, "beads", "beads", byResponse, true ) );
 
 		final InterestPoints beads0 = spimData.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads" );
-		assertFalse( beads0 instanceof VirtualFilteredInterestPointsN5 );
+		assertFalse( beads0 instanceof VirtualFilteredInterestPoints );
 		assertEquals( expected, new TreeSet<>( beads0.getInterestPointsCopy().keySet() ) );
 		assertEquals( map.get( v1 ).size(), spimData.getViewInterestPoints().getViewInterestPointLists( v1 ).getInterestPointList( "beads" ).getInterestPointsCopy().size() );
 
@@ -753,7 +842,7 @@ public class TestInterestPointStorage
 		assertTrue( Filter_Detections.create( spimData, views, "beads", "beads_r0.5", bySigma, true ) );
 
 		for ( final ViewId viewId : views )
-			assertFalse( spimData.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_r0.5" ) instanceof VirtualFilteredInterestPointsN5 );
+			assertFalse( spimData.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_r0.5" ) instanceof VirtualFilteredInterestPoints );
 
 		final URI xmlURI = tempDir.resolve( "dataset.xml" ).toUri();
 		assertTrue( new XmlIoSpimData2().save( spimData, xmlURI ) );
@@ -763,23 +852,22 @@ public class TestInterestPointStorage
 		assertFalse( xml.contains( "base=\"beads\"" ) );
 		assertFalse( xml.contains( "filter=" ) );
 
-		final String path = InterestPointsN5.createN5datasetPath( v0.getTimePointId(), v0.getViewSetupId(), "beads_r0.5" );
-
-		try ( final N5Reader n5 = openN5() )
-		{
-			assertEquals( "list", n5.getAttribute( InterestPointsN5.ipDataset( path ), "type", String.class ) );
-			assertNull( n5.getAttribute( InterestPointsN5.ipDataset( path ), VirtualFilteredInterestPointsN5.filterAttribute, String.class ) );
-			assertTrue( n5.datasetExists( InterestPointsN5.ipDataset( path ) + "/loc" ) );
-		}
+		final Key key = Key.of( v0, "beads_r0.5" );
+		assertEquals( Boolean.FALSE, store().isFiltered( key ) );
+		assertTrue( store().points( key ).size() > 0 );
 
 		final SpimData2 loaded = new XmlIoSpimData2().load( xmlURI );
 		final InterestPoints reloaded = loaded.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( "beads_r0.5" );
-		assertFalse( reloaded instanceof VirtualFilteredInterestPointsN5 );
+		assertFalse( reloaded instanceof VirtualFilteredInterestPoints );
 		assertEquals( idsPassing( new ArrayList<>( beads0.getInterestPointsCopy().values() ), bySigma ), new TreeSet<>( reloaded.getInterestPointsCopy().keySet() ) );
 	}
 
+	/**
+	 * The save of a Spark task (saveStaged) treats plain and filtered labels alike: the points for one, the marker for the
+	 * other, the correspondences for both; what the XML loader then sees is the filtered base and the own correspondences
+	 */
 	@Test
-	public void testVirtualDTO()
+	public void testSaveStagedBothKinds()
 	{
 		final SpimData2 spimData = SimulateUtil.setUp();
 		spimData.setBasePathURI( tempDir.toUri() );
@@ -801,41 +889,34 @@ public class TestInterestPointStorage
 		corr.add( new CorrespondingInterestPoints( 9, second, "beads_s3-10", 1 ) );
 		spimData.getViewInterestPoints().getViewInterestPointLists( first ).getInterestPointList( "beads_s3-10" ).setCorrespondingInterestPoints( corr );
 
-		final List< InterestPointData > all = XmlIoSpimData2.collectInterestPointData( spimData, true );
+		final ArrayList< InterestPoints > all = new ArrayList<>();
+		for ( final ViewId viewId : views )
+			all.addAll( spimData.getViewInterestPoints().getViewInterestPointLists( viewId ).getHashMap().values() );
 		assertEquals( 2 * views.size(), all.size() );
 
-		try ( final N5Writer n5 = openN5Writer() )
-		{
-			for ( final InterestPointData data : all )
-				assertTrue( InterestPointsN5.saveInterestPointDataStatic( n5, data ) );
-		}
-
-		// the same through the URI overload for one of them
-		for ( final InterestPointData data : all )
-			if ( data.isVirtual() && data.setupId == second.getViewSetupId() )
-				assertTrue( InterestPointsN5.saveInterestPointDataStatic( tempDir.toUri(), data ) );
+		InterestPointsZarr.saveStaged( all );
 
 		final String path = InterestPointsN5.createN5datasetPath( first.getTimePointId(), first.getViewSetupId(), "beads_s3-10" );
 		final String basePath = InterestPointsN5.createN5datasetPath( first.getTimePointId(), first.getViewSetupId(), "beads" );
 
-		try ( final N5Reader n5 = openN5() )
+		for ( int round = 0; round < 2; ++round )
 		{
-			assertEquals( VirtualFilteredInterestPointsN5.filteredType, n5.getAttribute( InterestPointsN5.ipDataset( path ), "type", String.class ) );
-			assertEquals( "beads", n5.getAttribute( InterestPointsN5.ipDataset( path ), VirtualFilteredInterestPointsN5.baseAttribute, String.class ) );
-			assertEquals( bySigma.toString(), n5.getAttribute( InterestPointsN5.ipDataset( path ), VirtualFilteredInterestPointsN5.filterAttribute, String.class ) );
-			assertFalse( n5.datasetExists( InterestPointsN5.ipDataset( path ) + "/loc" ) );
-			assertTrue( n5.exists( InterestPointsN5.corrDataset( path ) ) );
-			assertTrue( n5.datasetExists( InterestPointsN5.ipDataset( basePath ) + "/loc" ) );
+			assertEquals( Boolean.TRUE, store().isFiltered( Key.of( first, "beads_s3-10" ) ) );
+			assertEquals( Boolean.FALSE, store().isFiltered( Key.of( first, "beads" ) ) );
+			assertEquals( 2, store().correspondences( Key.of( first, "beads_s3-10" ) ).size() );
+
+			// what the XML loader would see: the points of the filtered label are the filtered base, its correspondences are its own
+			final ViewInterestPointLists vipl = new ViewInterestPointLists( first.getTimePointId(), first.getViewSetupId() );
+			vipl.addInterestPointList( "beads", InterestPoints.instantiatefromXML( tempDir.toUri(), basePath, null, null ) );
+			vipl.addInterestPointList( "beads_s3-10", InterestPoints.instantiatefromXML( tempDir.toUri(), path, "beads", bySigma.toString() ) );
+
+			assertEquals( idsPassing( map.get( first ), bySigma ), new TreeSet<>( vipl.getInterestPointList( "beads_s3-10" ).getInterestPointsCopy().keySet() ) );
+			assertEquals( 2, vipl.getInterestPointList( "beads_s3-10" ).getCorrespondingInterestPointsCopy().size() );
+			assertEquals( 60, vipl.getInterestPointList( "beads" ).getInterestPointsCopy().size() );
+
+			if ( round == 0 )
+				store().commit();
 		}
-
-		// what the XML loader would see: the points of the filtered label are the filtered base, its correspondences are its own
-		final ViewInterestPointLists vipl = new ViewInterestPointLists( first.getTimePointId(), first.getViewSetupId() );
-		vipl.addInterestPointList( "beads", new InterestPointsN5( tempDir.toUri(), basePath ) );
-		vipl.addInterestPointList( "beads_s3-10", new VirtualFilteredInterestPointsN5( tempDir.toUri(), path, "beads", bySigma ) );
-
-		assertEquals( idsPassing( map.get( first ), bySigma ), new TreeSet<>( vipl.getInterestPointList( "beads_s3-10" ).getInterestPointsCopy().keySet() ) );
-		assertEquals( 2, vipl.getInterestPointList( "beads_s3-10" ).getCorrespondingInterestPointsCopy().size() );
-		assertEquals( 60, vipl.getInterestPointList( "beads" ).getInterestPointsCopy().size() );
 	}
 
 	/**
@@ -878,7 +959,7 @@ public class TestInterestPointStorage
 		plain.setCorrespondingInterestPoints( corr );
 		vipl.addInterestPointList( "beads", plain );
 
-		final VirtualFilteredInterestPointsN5 virtual = VirtualFilteredInterestPointsN5.create( base, from, "beads_r0.5", "beads", filter );
+		final VirtualFilteredInterestPoints virtual = VirtualFilteredInterestPoints.create( base, from, "beads_r0.5", "beads", filter );
 		virtual.setParameters( filter.describe( "beads" ) );
 		virtual.setCorrespondingInterestPoints( new ArrayList<>( Arrays.asList( corr.get( 0 ), corr.get( 2 ) ) ) );
 		vipl.addInterestPointList( "beads_r0.5", virtual );
@@ -893,10 +974,10 @@ public class TestInterestPointStorage
 		final InterestPoints plainSplit = split.getInterestPointList( "beads_split" );
 		final InterestPoints virtualSplit = split.getInterestPointList( "beads_r0.5_split" );
 
-		assertFalse( plainSplit instanceof VirtualFilteredInterestPointsN5 );
-		assertTrue( virtualSplit instanceof VirtualFilteredInterestPointsN5 );
-		assertEquals( "beads_split", ( (VirtualFilteredInterestPointsN5)virtualSplit ).getBaseLabel() );
-		assertEquals( filter, ( (VirtualFilteredInterestPointsN5)virtualSplit ).getFilter() );
+		assertFalse( plainSplit instanceof VirtualFilteredInterestPoints );
+		assertTrue( virtualSplit instanceof VirtualFilteredInterestPoints );
+		assertEquals( "beads_split", ( (VirtualFilteredInterestPoints)virtualSplit ).getBaseLabel() );
+		assertEquals( filter, ( (VirtualFilteredInterestPoints)virtualSplit ).getFilter() );
 		assertEquals( filter.describe( "beads_split" ), virtualSplit.getParameters() );
 		assertEquals( "DOG s=1.8", plainSplit.getParameters() );
 		assertEquals( 0, plainSplit.getCorrespondingInterestPointsCopy().size() );
@@ -922,8 +1003,8 @@ public class TestInterestPointStorage
 		for ( final InterestPoint ip : plainPoints.values() )
 		{
 			final InterestPoint original = points.get( ip.getId() );
-			assertEquals( original.getL()[ 0 ] - 10, ip.getL()[ 0 ], 0.0 );
-			assertEquals( original.getL()[ 1 ], ip.getL()[ 1 ], 0.0 );
+			assertEquals( original.getL()[ 0 ] - 10, ip.getL()[ 0 ], 1e-3 );
+			assertEquals( original.getL()[ 1 ], ip.getL()[ 1 ], 1e-3 );
 			assertEquals( original.getResponse(), ip.getResponse(), 0.0f );
 			assertEquals( original.getSigma(), ip.getSigma(), 0.0f );
 			assertEquals( original.getIntensity(), ip.getIntensity(), 0.0f );
@@ -1002,7 +1083,7 @@ public class TestInterestPointStorage
 		{
 			final InterestPoints copy = spimData.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "bright" );
 
-			assertFalse( copy instanceof VirtualFilteredInterestPointsN5 );
+			assertFalse( copy instanceof VirtualFilteredInterestPoints );
 			assertEquals( byIntensity.describe( "beads" ) + " (copied)", copy.getParameters() );
 
 			final Map< Integer, InterestPoint > points = copy.getInterestPointsCopy();
@@ -1045,9 +1126,9 @@ public class TestInterestPointStorage
 		{
 			final InterestPoints filtered = reduced.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "beads_r0.25-0.75" );
 
-			assertTrue( filtered instanceof VirtualFilteredInterestPointsN5 );
-			assertEquals( "beads", ( (VirtualFilteredInterestPointsN5)filtered ).getBaseLabel() );
-			assertEquals( byResponse, ( (VirtualFilteredInterestPointsN5)filtered ).getFilter() );
+			assertTrue( filtered instanceof VirtualFilteredInterestPoints );
+			assertEquals( "beads", ( (VirtualFilteredInterestPoints)filtered ).getBaseLabel() );
+			assertEquals( byResponse, ( (VirtualFilteredInterestPoints)filtered ).getFilter() );
 			assertEquals( byResponse.describe( "beads" ), filtered.getParameters() );
 			assertEquals( other.toUri(), filtered.getBasePath() );
 			assertEquals( idsPassing( map.get( viewId ), byResponse ), new TreeSet<>( filtered.getInterestPointsCopy().keySet() ) );
@@ -1057,6 +1138,8 @@ public class TestInterestPointStorage
 		// and it saves to the new place
 		final URI xmlURI = other.resolve( "dataset.xml" ).toUri();
 		assertTrue( new XmlIoSpimData2().save( reduced, xmlURI ) );
+		assertTrue( new File( other.toFile(), InterestPointsZarrStore.ZARR_CONTAINER ).isDirectory() );
+		assertFalse( new File( tempDir.toFile(), InterestPointsZarrStore.ZARR_CONTAINER ).exists() );
 
 		final SpimData2 loaded = new XmlIoSpimData2().load( xmlURI );
 
@@ -1099,8 +1182,11 @@ public class TestInterestPointStorage
 
 			assertThrows( RuntimeException.class, () -> InterestPointsN5.loadInterestPointsStatic( n5, n5path + "_missing" ) );
 
-			VirtualFilteredInterestPointsN5.saveMarkerStatic( n5, n5path + "_filtered", "beads", InterestPointFilter.fromString( "response=0.1.." ) );
+			InterestPointsN5.saveFilteredMarkerStatic( n5, n5path + "_filtered", "beads", InterestPointFilter.fromString( "response=0.1.." ) );
 			assertThrows( RuntimeException.class, () -> InterestPointsN5.loadInterestPointsStatic( n5, n5path + "_filtered" ) );
 		}
+
+		// the temporary groups are no entries of a label: the conversion ignores them
+		assertEquals( 0, InterestPointsN5ToZarr.convert( tempDir.toUri() ) );
 	}
 }

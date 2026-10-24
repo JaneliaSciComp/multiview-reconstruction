@@ -43,7 +43,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Li
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
- * Keeps a number of points per view of an existing label: a filtered label (VirtualFilteredInterestPointsN5, or a plain
+ * Keeps a number of points per view of an existing label: a filtered label (VirtualFilteredInterestPoints, or a plain
  * copy on request) that keeps the n highest, the n around the median or the n lowest points by intensity, |response| or
  * sigma of every view. This is the former "Limit amount of detections" of the detection dialog as a filter: no
  * re-detection, the base label stays, and the limit can be stacked on a range label (a filter of a filter). Reachable

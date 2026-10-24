@@ -139,8 +139,8 @@ public class SplittingTools
 	 * Called at the end of {@link #processSetupStatic} after all tiles in a setup are finalized.
 	 * Receives the setup's interest points map (ViewId → ViewInterestPointLists).
 	 *
-	 * Default local implementation: call ips.saveInterestPoints(false) + ips.saveCorrespondingInterestPoints(false).
-	 * Spark implementation: use InterestPointsN5.saveInterestPointDataStatic().
+	 * Local use: none (null), the XML save stores the result.
+	 * Spark implementation: collect the lists and call InterestPointsZarr.saveStaged() once per task (one staging file).
 	 */
 	@FunctionalInterface
 	public interface InterestPointSaver
@@ -153,8 +153,8 @@ public class SplittingTools
 	 * Called at the end of {@link #processCorrespondingInterestPointsStatic} after correspondences
 	 * for one view are remapped. Receives a single ViewInterestPointLists.
 	 *
-	 * Default local implementation: call ips.saveCorrespondingInterestPoints(false).
-	 * Spark implementation: use InterestPointsN5.saveCorrespondencesStatic().
+	 * Local use: none (null), the XML save stores the result.
+	 * Spark implementation: collect the lists and call InterestPointsZarr.saveStaged() once per task (one staging file).
 	 */
 	@FunctionalInterface
 	public interface CorrespondenceSaver

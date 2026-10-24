@@ -90,7 +90,7 @@ public class XmlIoViewInterestPoints extends XmlIoSingleton< ViewInterestPoints 
 			final String label = viewInterestPointsElement.getAttributeValue( VIEWINTERESTPOINTS_LABEL_ATTRIBUTE_NAME );
 			final String parameters = viewInterestPointsElement.getAttributeValue( VIEWINTERESTPOINTS_PARAMETERS_ATTRIBUTE_NAME );
 
-			// a filtered label (VirtualFilteredInterestPointsN5) records the label it filters and the filter, a plain label has neither
+			// a filtered label (VirtualFilteredInterestPoints) records the label it filters and the filter, a plain label has neither
 			final String baseLabel = viewInterestPointsElement.getAttributeValue( VIEWINTERESTPOINTS_BASE_ATTRIBUTE_NAME );
 			final String filter = viewInterestPointsElement.getAttributeValue( VIEWINTERESTPOINTS_FILTER_ATTRIBUTE_NAME );
 
@@ -124,19 +124,16 @@ public class XmlIoViewInterestPoints extends XmlIoSingleton< ViewInterestPoints 
 		elem.setAttribute( VIEWINTERESTPOINTS_PARAMETERS_ATTRIBUTE_NAME, interestPointList.getParameters() );
 
 		// a filtered label has no points of its own, the XML records what it filters
-		if ( interestPointList instanceof VirtualFilteredInterestPointsN5 )
+		if ( interestPointList instanceof VirtualFilteredInterestPoints )
 		{
-			elem.setAttribute( VIEWINTERESTPOINTS_BASE_ATTRIBUTE_NAME, ( (VirtualFilteredInterestPointsN5)interestPointList ).getBaseLabel() );
-			elem.setAttribute( VIEWINTERESTPOINTS_FILTER_ATTRIBUTE_NAME, ( (VirtualFilteredInterestPointsN5)interestPointList ).getFilter().toString() );
+			elem.setAttribute( VIEWINTERESTPOINTS_BASE_ATTRIBUTE_NAME, ( (VirtualFilteredInterestPoints)interestPointList ).getBaseLabel() );
+			elem.setAttribute( VIEWINTERESTPOINTS_FILTER_ATTRIBUTE_NAME, ( (VirtualFilteredInterestPoints)interestPointList ).getFilter().toString() );
 		}
 		// a hack so that windows does not put its backslashes in
 		//elem.setText( interestPointList.getFile().toString().replace( "\\", "/" ) );
 		elem.setText( interestPointList.getXMLRepresentation() );
 
-		// you can still save them ahead of time in parallel if necessary
-		// save interest points if modified!!
-		interestPointList.saveInterestPoints( false );
-		interestPointList.saveCorrespondingInterestPoints( false );
+		// the points and correspondences were saved and committed before (XmlIoSpimData2.saveInterestPointsInParallel)
 
 		return elem;
 	}

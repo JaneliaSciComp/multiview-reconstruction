@@ -26,20 +26,15 @@ import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.List;
-import java.util.Map.Entry;
 import java.util.concurrent.ForkJoinPool;
 
 import org.janelia.saalfeldlab.n5.N5FSWriter;
-import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.jdom2.Element;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.XmlIoAbstractSpimData;
 import mpicbg.spim.data.registration.XmlIoViewRegistrations;
 import mpicbg.spim.data.sequence.SequenceDescription;
-import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.XmlIoSequenceDescription;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
@@ -50,9 +45,8 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.XmlIoBoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlIoIntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5.InterestPointData;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlIoViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
@@ -329,20 +323,16 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 	}
 
 	/**
-	 * Save all interest points using a single shared N5Writer with parallel writes.
-	 * Opens the N5Writer once and reuses it across all views, avoiding per-view
-	 * open/close overhead while preserving parallel write performance.
-	 * Each view writes to an independent dataset path so concurrent writes are safe.
-	 * Modified flags are cleared on each InterestPoints instance after a successful save,
-	 * so subsequent XML serialization does not trigger a redundant second save.
+	 * Saves all modified interest points and correspondences into the dataset's {@link InterestPointsZarrStore}: the
+	 * lists stage in memory (in parallel), then one commit writes every (label, timepoint) that changed and deletes
+	 * what was deleted. The modified flags are cleared on each InterestPoints instance, so the XML serialization does
+	 * not save again. The batch is closed in any case, so a failed save does not leave later saves of this JVM in memory.
 	 *
 	 * @param spimData the SpimData2 object whose interest points should be saved
 	 */
 	public static void saveInterestPointsInParallel( final SpimData2 spimData )
 	{
 		final int numThreads = Threads.numThreads();
-		IOFunctions.println( "Saving interest points multi-threaded (" + numThreads + " threads) ... " );
-
 		final URI baseDir = spimData.getBasePathURI();
 
 		// collect first to avoid nested parallel streams
@@ -350,22 +340,31 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		spimData.getViewInterestPoints().getViewInterestPoints().values().forEach( vipl ->
 			allIPs.addAll( vipl.getHashMap().values() ) );
 
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
+
 		if ( allIPs.isEmpty() )
+		{
+			store.commit(); // deletes of the last lists are staged and still need a commit
 			return;
+		}
+
+		IOFunctions.println( "Saving interest points multi-threaded (" + numThreads + " threads) ... " );
 
 		final ForkJoinPool pool = new ForkJoinPool( numThreads );
-		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, InterestPointsN5.baseN5 ) ) ) )
+		store.beginBatch(); // the saves below stay in memory until the commit
+
+		try
 		{
 			pool.submit( () ->
 				allIPs.parallelStream().forEach( ipl ->
 				{
 					try
 					{
-						if ( ipl instanceof InterestPointsN5 )
+						// into the dataset's store, also for a list whose own base path is older than the dataset's location
+						if ( ipl instanceof InterestPointsZarr )
 						{
-							final InterestPointsN5 ipsN5 = (InterestPointsN5) ipl;
-							ipsN5.saveInterestPoints( false, n5Writer );
-							ipsN5.saveCorrespondingInterestPoints( false, n5Writer );
+							( (InterestPointsZarr) ipl ).saveInterestPoints( false, store );
+							( (InterestPointsZarr) ipl ).saveCorrespondingInterestPoints( false, store );
 						}
 						else
 						{
@@ -381,6 +380,8 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 					}
 				})
 			).get();
+
+			store.commit();
 		}
 		catch ( final Exception e )
 		{
@@ -389,44 +390,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		finally
 		{
 			pool.shutdown();
+			store.endBatch(); // a failed save must not leave this JVM in batch mode (what is staged is committed by the next save)
 		}
-	}
-
-	// ==================== Spark-Compatible Methods ====================
-
-	/**
-	 * Collect all modified interest points as serializable InterestPointData objects.
-	 * This method is useful for Spark-based parallel saving.
-	 *
-	 * @param spimData The SpimData2
-	 * @param modifiedOnly If true, only include interest points that have been modified
-	 * @return List of InterestPointData suitable for Spark RDD operations
-	 */
-	public static List< InterestPointData > collectInterestPointData( final SpimData2 spimData, final boolean modifiedOnly )
-	{
-		final List< InterestPointData > allData = new ArrayList<>();
-
-		for ( final Entry< ViewId, ViewInterestPointLists > entry : spimData.getViewInterestPoints().getViewInterestPoints().entrySet() )
-		{
-			final ViewId viewId = entry.getKey();
-			final ViewInterestPointLists vipl = entry.getValue();
-
-			for ( final Entry< String, InterestPoints > labelEntry : vipl.getHashMap().entrySet() )
-			{
-				final String label = labelEntry.getKey();
-				final InterestPoints ips = labelEntry.getValue();
-
-				// Only include if modified (or if modifiedOnly is false)
-				if ( !modifiedOnly || ips.hasModifiedInterestPoints() || ips.hasModifiedCorrespondingInterestPoints() )
-				{
-					if ( !( ips instanceof InterestPointsN5 ) )
-						throw new RuntimeException( "InterestPointData.from() requires InterestPointsN5, got: " + ips.getClass().getName() );
-
-					allData.add( InterestPointData.from( viewId, label, (InterestPointsN5) ips ) );
-				}
-			}
-		}
-
-		return allData;
 	}
 }

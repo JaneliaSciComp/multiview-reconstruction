@@ -23,11 +23,16 @@
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 
 /**
  * A list of interest points for a certain label, can save and load from textfile as specified in the XML
@@ -49,18 +54,25 @@ public abstract class InterestPoints
 		this.modifiedCorrespondingInterestPoints = false;
 	}
 
+	/**
+	 * @return an {@link InterestPointsZarr} for the XML text {@code tpId_X_viewSetupId_Y/label}, the only form in use
+	 *         (the points are in the dataset's interestpoints.zarr, or still in the N5 group of the same name)
+	 */
 	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo )
 	{
 		if ( fromXMLInfo.trim().toLowerCase().startsWith("interestpoints/") )
 			throw new RuntimeException( "text-file based interest points not supported anymore.");
-		else
-			return new InterestPointsN5( baseDir, fromXMLInfo );
+
+		if ( !InterestPointsZarr.supports( fromXMLInfo ) )
+			throw new RuntimeException( "interest point path not of the form tpId_X_viewSetupId_Y/label: " + fromXMLInfo );
+
+		return new InterestPointsZarr( baseDir, fromXMLInfo );
 	}
 
 	/**
 	 * @param baseLabel - the label a filtered label filters (XML attribute 'base'), null for a plain label
 	 * @param filter - the filter of a filtered label (XML attribute 'filter', InterestPointFilter.toString), null for a plain label
-	 * @return a plain label (InterestPointsN5) or a filtered one (VirtualFilteredInterestPointsN5)
+	 * @return a plain label (InterestPointsZarr) or a filtered one (VirtualFilteredInterestPoints)
 	 */
 	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo, final String baseLabel, final String filter )
 	{
@@ -70,17 +82,12 @@ public abstract class InterestPoints
 		if ( baseLabel == null || filter == null )
 			throw new RuntimeException( "A filtered label needs both the base label and the filter in the XML, got base='" + baseLabel + "', filter='" + filter + "' for '" + fromXMLInfo + "'." );
 
-		return new VirtualFilteredInterestPointsN5( baseDir, fromXMLInfo, baseLabel, InterestPointFilter.fromString( filter ) );
+		return new VirtualFilteredInterestPoints( baseDir, fromXMLInfo, baseLabel, InterestPointFilter.fromString( filter ) );
 	}
 
 	public static InterestPoints newInstance( final URI baseDir, final ViewId viewId, final String label )
 	{
-		final InterestPoints list;
-
-		final String n5dataset = InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label );
-		list = new InterestPointsN5( baseDir, n5dataset );
-
-		return list;
+		return new InterestPointsZarr( baseDir, viewId, label );
 	}
 
 	public boolean hasModifiedInterestPoints() { return modifiedInterestPoints; }
@@ -152,6 +159,35 @@ public abstract class InterestPoints
 	 * @return - the collection of corresponding interest points (copied), tries to load from disc if null
 	 */
 	public abstract Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy();
+
+	/**
+	 * @return the correspondences (copied) to one partner (view, label); a storage that has an index of the partners
+	 *         reads only those, this default filters the whole list
+	 */
+	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId partnerView, final String partnerLabel )
+	{
+		final ArrayList< CorrespondingInterestPoints > list = new ArrayList<>();
+
+		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
+			if ( c.getCorrespondingViewId().equals( partnerView ) && c.getCorrespodingLabel().equals( partnerLabel ) )
+				list.add( c );
+
+		return list;
+	}
+
+	/**
+	 * @return the (view, label)s this list has correspondences with; a storage that has an index of the partners
+	 *         answers without loading the list, this default derives them from the whole list
+	 */
+	public Set< Pair< ViewId, String > > getCorrespondingViews()
+	{
+		final HashSet< Pair< ViewId, String > > partners = new HashSet<>();
+
+		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
+			partners.add( new ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
+
+		return partners;
+	}
 
 	public void setInterestPoints( final Collection< InterestPoint > list )
 	{

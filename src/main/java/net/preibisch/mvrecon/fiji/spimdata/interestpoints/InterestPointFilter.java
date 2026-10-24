@@ -39,7 +39,7 @@ import net.preibisch.legacy.io.IOFunctions;
 /**
  * A filter on the attributes of interest points ({@link InterestPoint}): a range per attribute (|response|, intensity,
  * sigma), both bounds inclusive and each optional (NaN = unbounded). It defines a filtered label
- * ({@link VirtualFilteredInterestPointsN5}) and is stored in the XML as its canonical string, e.g.
+ * ({@link VirtualFilteredInterestPoints}) and is stored in the XML as its canonical string, e.g.
  * "response=0.004..;sigma=1.5..3" (the filtered axes in the order of {@link Axis}, an unbounded side is empty).
  *
  * One grammar for the dialogs and the label suffixes: an entry "a" keeps values &gt;= a, "a-b" keeps a &lt;= value &lt;= b

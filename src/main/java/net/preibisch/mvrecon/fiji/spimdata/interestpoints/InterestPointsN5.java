@@ -9,12 +9,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -22,44 +22,45 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
-import java.net.URI;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.position.FunctionRandomAccessible;
-import net.imglib2.type.numeric.integer.UnsignedLongType;
-import net.imglib2.type.numeric.real.DoubleType;
-import net.imglib2.Cursor;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
+import net.imglib2.type.numeric.integer.UnsignedLongType;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
-import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
-import util.URITools;
 
-public class InterestPointsN5 extends InterestPoints
+/**
+ * The N5 layout of interest points, one group per (view, label): {@code interestpoints.n5/tpId_X_viewSetupId_Y/label}
+ * with the datasets {@code interestpoints/{id, loc, response, sigma, intensity}} and the group {@code correspondences}.
+ * Since the Zarr store ({@link InterestPointsZarrStore}) holds the interest points of a dataset, this class has no
+ * instances; it keeps the readers that the conversion ({@link InterestPointsN5ToZarr}) and BigStitcher-Spark's temporary
+ * block lists use, and the writers that produce the layout (temporary block lists, test fixtures).
+ *
+ * @author Stephan Preibisch
+ */
+public final class InterestPointsN5
 {
 	public static int defaultBlockSize = 300_000;
 	public static final String baseN5 = "interestpoints.n5";
@@ -69,291 +70,20 @@ public class InterestPointsN5 extends InterestPoints
 	public static final String sigmaDataset = "sigma"; // FLOAT32, 1 x N (FLOAT64 in labels stored before 2026-10-19, read transparently)
 	public static final String intensityDataset = "intensity"; // FLOAT32, 1 x N
 
-	final String n5dataset;
+	// the marker group a filtered label has instead of the 'interestpoints' datasets: type 'filtered', its base label and filter
+	public static final String filteredType = "filtered";
+	public static final String baseAttribute = "base";
+	public static final String filterAttribute = "filter";
 
-	int[] ids = null;
-	double[][] locations = null;
-
-	// the attributes per point in the order of ids (NaN where unknown), null if the label was stored without them
-	float[] responses = null;
-	float[] sigmas = null;
-	float[] intensities = null;
-
-	ArrayList< CorrespondingInterestPoints > correspondingInterestPoints;
-
-	public InterestPointsN5( final URI basePath, final String n5dataset )
-	{
-		super(basePath);
-		this.n5dataset = n5dataset;
-	}
-
-	public String getN5dataset() { return n5dataset; }
-
-	@Override
-	public String getXMLRepresentation() { return getN5dataset(); }
+	private InterestPointsN5() {}
 
 	public static String createN5datasetPath( final int tpId, final int vsId, final String label )
 	{
 		return "tpId_" + tpId + "_viewSetupId_" + vsId + "/" + label;
 	}
 
-	/**
-	 * @return - a list of interest points (copied), tries to load from disc if null
-	 */
-	@Override
-	public synchronized Map< Integer, InterestPoint > getInterestPointsCopy()
-	{
-		if ( this.locations == null || this.ids == null )
-			loadInterestPoints();
-
-		if ( this.locations == null || this.ids == null )
-			throw new RuntimeException( "Could not load the interest points of '" + n5dataset + "' (missing, or of a type this reader does not know, see the log), stopping." );
-
-		if ( ids.length == 0 )
-			return new HashMap<>();
-
-		return IntStream.range( 0, ids.length ).parallel().mapToObj( i -> new InterestPoint(
-				ids[ i ],
-				locations[ i ].clone(),
-				responses == null ? Float.NaN : responses[ i ],
-				sigmas == null ? Float.NaN : sigmas[ i ],
-				intensities == null ? Float.NaN : intensities[ i ] ) ).collect( Collectors.toMap( InterestPoint::getId, ip -> ip ) );
-	}
-
-	/**
-	 * @return - the list of corresponding interest points (copied), tries to load from disc if null
-	 */
-	public synchronized Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy()
-	{
-
-		if ( this.correspondingInterestPoints == null )
-			loadCorrespondences();
-
-		final ArrayList< CorrespondingInterestPoints > list = new ArrayList< CorrespondingInterestPoints >();
-
-		for ( final CorrespondingInterestPoints p : this.correspondingInterestPoints )
-			list.add( new CorrespondingInterestPoints( p ) );
-
-		return list;
-	}
-
-	@Override
-	protected void setInterestPointsLocal( final Collection< InterestPoint > collection )
-	{
-		if ( collection == null || collection.size() == 0 )
-		{
-			this.ids = new int[0];
-			this.locations = new double[0][0];
-			this.responses = new float[0];
-			this.sigmas = new float[0];
-			this.intensities = new float[0];
-
-			return;
-		}
-
-		this.ids = new int[ collection.size() ];
-		this.locations = new double[ collection.size() ][];
-		this.responses = new float[ collection.size() ];
-		this.sigmas = new float[ collection.size() ];
-		this.intensities = new float[ collection.size() ];
-
-		final Iterator< InterestPoint > it = collection.iterator();
-
-		IntStream.range( 0, ids.length ).forEach( i -> {
-			final InterestPoint ip = it.next();
-			ids[ i ] = ip.getId();
-			locations[ i ] = ip.getL().clone();
-			responses[ i ] = ip.getResponse();
-			sigmas[ i ] = ip.getSigma();
-			intensities[ i ] = ip.getIntensity();
-		});
-	}
-
-	@Override
-	protected void setCorrespondingInterestPointsLocal( final Collection< CorrespondingInterestPoints > list )
-	{
-		if ( ArrayList.class.isInstance( list ))
-			this.correspondingInterestPoints = (ArrayList<CorrespondingInterestPoints>)list;
-		else
-			this.correspondingInterestPoints = new ArrayList<>( list );
-	}
-
-	@Override
-	public InterestPoints copyTo(
-			final URI basePath,
-			final ViewId viewId,
-			final String label,
-			final Function< String, String > labelMapping,
-			final Function< InterestPoint, InterestPoint > pointMapping,
-			final boolean copyCorrespondences )
-	{
-		final HashMap< Integer, Integer > idMapping = new HashMap<>();
-		final ArrayList< InterestPoint > points = mapPoints( getInterestPointsCopy().values(), pointMapping, idMapping );
-
-		final InterestPoints copy = InterestPoints.newInstance( basePath, viewId, label );
-		copy.setParameters( getParameters() );
-		copy.setInterestPoints( points );
-		copy.setCorrespondingInterestPoints( copyCorrespondences ? CorrespondenceTools.mapCorrespondences( getCorrespondingInterestPointsCopy(), idMapping, labelMapping ) : new ArrayList<>() );
-
-		return copy;
-	}
-
-	/**
-	 * Applies the point mapping of {@link #copyTo} to the points of a label: null drops a point
-	 *
-	 * @param points - the points of the original label
-	 * @param pointMapping - the point of the copy for a point of the original, null drops the point
-	 * @param idMapping - filled with original id to copied id for every point that survived (what CorrespondenceTools.mapCorrespondences needs)
-	 * @return the points of the copy
-	 */
-	protected static ArrayList< InterestPoint > mapPoints(
-			final Collection< InterestPoint > points,
-			final Function< InterestPoint, InterestPoint > pointMapping,
-			final Map< Integer, Integer > idMapping )
-	{
-		final ArrayList< InterestPoint > mapped = new ArrayList<>();
-
-		for ( final InterestPoint ip : points )
-		{
-			final InterestPoint m = pointMapping.apply( ip );
-
-			if ( m != null )
-			{
-				mapped.add( m );
-				idMapping.put( ip.getId(), m.getId() );
-			}
-		}
-
-		return mapped;
-	}
-
-	public String ipDataset() { return ipDataset( getN5dataset() ); }
-	public String corrDataset() { return corrDataset( getN5dataset() ); }
-
 	public static String ipDataset( final String n5dataset ) { return n5dataset + "/interestpoints"; }
 	public static String corrDataset( final String n5dataset  ) { return n5dataset + "/correspondences"; }
-
-	@Override
-	public boolean saveInterestPoints( final boolean forceWrite )
-	{
-		if ( !modifiedInterestPoints && !forceWrite )
-			return true;
-
-		if ( ids == null || locations == null )
-			return false;
-
-		final boolean success = saveInterestPointsStatic( basePath, n5dataset, ids, locations, responses, sigmas, intensities );
-
-		if ( success )
-			modifiedInterestPoints = false;
-
-		return success;
-	}
-
-	@Override
-	public boolean saveCorrespondingInterestPoints(boolean forceWrite)
-	{
-		if ( !modifiedCorrespondingInterestPoints && !forceWrite )
-			return true;
-
-		if ( correspondingInterestPoints == null )
-			return false;
-
-		final boolean success = saveCorrespondencesStatic( basePath, n5dataset, correspondingInterestPoints );
-
-		if ( success )
-			modifiedCorrespondingInterestPoints = false;
-
-		return success;
-	}
-
-	/**
-	 * Save interest points using an already-open N5Writer, clearing the modified flag on success.
-	 * Use when saving many views to avoid per-view open/close overhead.
-	 */
-	public boolean saveInterestPoints( final boolean forceWrite, final N5Writer n5Writer )
-	{
-		if ( !modifiedInterestPoints && !forceWrite )
-			return true;
-
-		if ( ids == null || locations == null )
-			return false;
-
-		final boolean success = saveInterestPointsStatic( n5Writer, n5dataset, ids, locations, responses, sigmas, intensities );
-
-		if ( success )
-			modifiedInterestPoints = false;
-
-		return success;
-	}
-
-	/**
-	 * Save correspondences using an already-open N5Writer, clearing the modified flag on success.
-	 * Use when saving many views to avoid per-view open/close overhead.
-	 */
-	public boolean saveCorrespondingInterestPoints( final boolean forceWrite, final N5Writer n5Writer )
-	{
-		if ( !modifiedCorrespondingInterestPoints && !forceWrite )
-			return true;
-
-		if ( correspondingInterestPoints == null )
-			return false;
-
-		final boolean success = saveCorrespondencesStatic( n5Writer, n5dataset, correspondingInterestPoints );
-
-		if ( success )
-			modifiedCorrespondingInterestPoints = false;
-
-		return success;
-	}
-
-	@Override
-	protected boolean loadInterestPoints()
-	{
-		try
-		{
-			final N5Reader n5 = URITools.instantiateN5Reader( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
-
-			final String dataset = ipDataset();
-
-			if (!n5.exists(dataset))
-			{
-				IOFunctions.println( "InterestPointsN5.loadInterestPoints(): dataset '" + URITools.appendName( basePath, baseN5 ) + "/" + dataset + "' does not exist, cannot load interestpoints." );
-				return false;
-			}
-
-			//final String version = n5.getAttribute(dataset, "pointcloud", String.class );
-			final String type = n5.getAttribute(dataset, "type", String.class );
-
-			if ( !type.equals("list") )
-			{
-				IOFunctions.println( "InterestPointsN5.loadInterestPoints(): unsupported point cloud type '" + type + "' of '" + dataset + "'" + ( VirtualFilteredInterestPointsN5.filteredType.equals( type ) ? " (a filtered label, the XML must declare its base label and filter)" : "" ) );
-				return false;
-			}
-
-			final PointArrays a = loadPointArrays( n5, dataset );
-			this.ids = a.ids;
-			this.locations = a.locations;
-			this.responses = a.responses;
-			this.sigmas = a.sigmas;
-			this.intensities = a.intensities;
-
-			n5.close();
-			modifiedInterestPoints = false;
-			return true;
-		} 
-		catch ( final Exception e )
-		{
-			this.ids = new int[0];
-			this.locations = new double[0][0];
-			this.responses = null;
-			this.sigmas = null;
-			this.intensities = null;
-			IOFunctions.println( "InterestPointsN5.loadInterestPoints(): " + e );
-			e.printStackTrace();
-			return false;
-		}
-	}
 
 	/** the arrays of a stored label (loadPointArrays): ids, locations [point][dimension] and the attributes (null where not stored) */
 	protected static class PointArrays
@@ -571,95 +301,6 @@ public class InterestPointsN5 extends InterestPoints
 		return values;
 	}
 
-	@Override
-	protected boolean loadCorrespondences()
-	{
-		try
-		{
-			final N5Reader n5 = URITools.instantiateN5Reader( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );;
-
-			final String dataset = corrDataset();
-
-			if (!n5.exists(dataset))
-			{
-				IOFunctions.println( "InterestPointsN5.loadCorrespondences(): dataset '" + basePath + ":/" + baseN5 + "/" + dataset + "' does not exist, cannot load interestpoints." );
-				return false;
-			}
-
-			// Version detection for backward compatibility
-			final String version = n5.getAttribute(dataset, "correspondences", String.class );
-
-			if ( version == null || version.startsWith("1.") )
-			{
-				//IOFunctions.println( "Loading correspondences v1.x format (3xN array)" );
-				return loadCorrespondencesV1( n5, dataset );
-			}
-			else if ( version.startsWith("2.") )
-			{
-				//IOFunctions.println( "Loading correspondences v2.x format (4xN array with consensusSetId)" );
-				return loadCorrespondencesV2( n5, dataset );
-			}
-			else
-			{
-				throw new RuntimeException("Version " + version + " not supported." );
-				//IOFunctions.println( "Unknown correspondences version: " + version + ", attempting v1.x loader" );
-				//return loadCorrespondencesV1( n5, dataset );
-			}
-		}
-		catch ( final Exception e )
-		{
-			this.correspondingInterestPoints = null;
-			modifiedCorrespondingInterestPoints = false;
-			IOFunctions.println( "InterestPointsN5.loadCorrespondences(): " + e );
-			e.printStackTrace();
-			return false;
-		}
-	}
-
-	/**
-	 * Load correspondences in v1.x format (3xN array: detectionId_A, detectionId_B, metadataId)
-	 * Sets consensusSetId to -1 for all correspondences (single-consensus mode)
-	 */
-	protected boolean loadCorrespondencesV1( final N5Reader n5, final String dataset )
-	{
-		try
-		{
-			this.correspondingInterestPoints = readCorrespondencesV1( n5, dataset );
-			modifiedCorrespondingInterestPoints = false;
-			return true;
-		}
-		catch ( final Exception e )
-		{
-			this.correspondingInterestPoints = null;
-			modifiedCorrespondingInterestPoints = false;
-			IOFunctions.println( "InterestPointsN5.loadCorrespondencesV1(): " + e );
-			e.printStackTrace();
-			return false;
-		}
-	}
-
-	/**
-	 * Load correspondences in v2.x format (4xN array: detectionId_A, detectionId_B, metadataId, consensusSetId)
-	 * Reads consensusSetId from 4th column, decoding 0xFFFFFFFFFFFFFFFF as -1
-	 */
-	protected boolean loadCorrespondencesV2( final N5Reader n5, final String dataset )
-	{
-		try
-		{
-			this.correspondingInterestPoints = readCorrespondencesV2( n5, dataset );
-			modifiedCorrespondingInterestPoints = false;
-			return true;
-		}
-		catch ( final Exception e )
-		{
-			this.correspondingInterestPoints = null;
-			modifiedCorrespondingInterestPoints = false;
-			IOFunctions.println( "InterestPointsN5.loadCorrespondencesV2(): " + e );
-			e.printStackTrace();
-			return false;
-		}
-	}
-
 	/**
 	 * Read the correspondences stored in any {@code .../correspondences} group of an N5 store, independent of a
 	 * SpimData2/InterestPoints instance (e.g. to read externally computed match candidates stored in the same layout).
@@ -800,208 +441,8 @@ public class InterestPointsN5 extends InterestPoints
 		return quickLookup;
 	}
 
-	@Override
-	public boolean deleteInterestPoints()
-	{
-		try
-		{
-			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
-
-			if (n5Writer.exists(ipDataset()))
-				n5Writer.remove(ipDataset());
-	
-			n5Writer.close();
-
-			return true;
-		}
-		catch ( Exception e )
-		{
-			IOFunctions.println( "InterestPointsN5.deleteInterestPoints(): " + e );
-			e.printStackTrace();
-
-			return false;
-		}
-	}
-
-	@Override
-	public boolean deleteCorrespondingInterestPoints()
-	{
-		try
-		{
-			final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( basePath, baseN5 ) ) );
-
-			if (n5Writer.exists(corrDataset()))
-				n5Writer.remove(corrDataset());
-
-			n5Writer.close();
-
-			return true;
-		}
-		catch ( Exception e )
-		{
-			IOFunctions.println( "InterestPointsN5.deleteCorrespondingInterestPoints(): " + e );
-			e.printStackTrace();
-
-			return false;
-		}
-	}
-
-	// ==================== Static Methods for Spark-Compatible Saving ====================
-
 	/**
-	 * Serializable data container for interest points and correspondences.
-	 * Enables Spark-compatible parallel saving by containing only primitive/serializable data.
-	 * Uses zero-copy references to internal arrays of InterestPointsN5.
-	 * A filtered label (VirtualFilteredInterestPointsN5) has no points of its own: it carries its base label and filter
-	 * instead of the arrays (isVirtual), saveInterestPointDataStatic writes its marker, so callers treat both kinds alike.
-	 */
-	public static class InterestPointData implements java.io.Serializable
-	{
-		private static final long serialVersionUID = 1L;
-
-		public final int timepointId;
-		public final int setupId;
-		public final String label;
-
-		// Interest points data (direct references to InterestPointsN5 internal arrays), null for a filtered label
-		public final int[] ids;
-		public final double[][] locations;
-
-		// the attributes per point (NaN where unknown), null if the label was stored without them (or for a filtered label)
-		public final float[] responses;
-		public final float[] sigmas;
-		public final float[] intensities;
-
-		// a filtered label only: the label it filters and the filter (InterestPointFilter.toString), null otherwise
-		public final String baseLabel;
-		public final String filter;
-
-		// Correspondences (direct reference to InterestPointsN5 internal list)
-		public final ArrayList< CorrespondingInterestPoints > correspondences;
-
-		public InterestPointData(
-				final int timepointId,
-				final int setupId,
-				final String label,
-				final int[] ids,
-				final double[][] locations,
-				final ArrayList< CorrespondingInterestPoints > correspondences )
-		{
-			this( timepointId, setupId, label, ids, locations, null, null, null, correspondences );
-		}
-
-		/**
-		 * A filtered label: no points of its own, the base label and the filter instead
-		 */
-		public InterestPointData(
-				final int timepointId,
-				final int setupId,
-				final String label,
-				final String baseLabel,
-				final String filter,
-				final ArrayList< CorrespondingInterestPoints > correspondences )
-		{
-			this( timepointId, setupId, label, null, null, null, null, null, baseLabel, filter, correspondences );
-		}
-
-		public InterestPointData(
-				final int timepointId,
-				final int setupId,
-				final String label,
-				final int[] ids,
-				final double[][] locations,
-				final float[] responses,
-				final float[] sigmas,
-				final ArrayList< CorrespondingInterestPoints > correspondences )
-		{
-			this( timepointId, setupId, label, ids, locations, responses, sigmas, null, correspondences );
-		}
-
-		public InterestPointData(
-				final int timepointId,
-				final int setupId,
-				final String label,
-				final int[] ids,
-				final double[][] locations,
-				final float[] responses,
-				final float[] sigmas,
-				final float[] intensities,
-				final ArrayList< CorrespondingInterestPoints > correspondences )
-		{
-			this( timepointId, setupId, label, ids, locations, responses, sigmas, intensities, null, null, correspondences );
-		}
-
-		protected InterestPointData(
-				final int timepointId,
-				final int setupId,
-				final String label,
-				final int[] ids,
-				final double[][] locations,
-				final float[] responses,
-				final float[] sigmas,
-				final float[] intensities,
-				final String baseLabel,
-				final String filter,
-				final ArrayList< CorrespondingInterestPoints > correspondences )
-		{
-			this.timepointId = timepointId;
-			this.setupId = setupId;
-			this.label = label;
-			this.ids = ids;
-			this.locations = locations;
-			this.responses = responses;
-			this.sigmas = sigmas;
-			this.intensities = intensities;
-			this.baseLabel = baseLabel;
-			this.filter = filter;
-			this.correspondences = correspondences;
-		}
-
-		/**
-		 * Extract data from an InterestPointsN5 object by direct reference (zero-copy).
-		 * Triggers lazy loading if data hasn't been loaded from disk yet.
-		 *
-		 * @param viewId The ViewId
-		 * @param label Interest point label
-		 * @param ips InterestPointsN5 object to reference data from
-		 * @return InterestPointData referencing the internal arrays directly
-		 */
-		public static InterestPointData from( final ViewId viewId, final String label, final InterestPointsN5 ips )
-		{
-			if ( ips.correspondingInterestPoints == null )
-				ips.getCorrespondingInterestPointsCopy();
-
-			// a filtered label has no points of its own, only its base label and filter
-			if ( ips instanceof VirtualFilteredInterestPointsN5 )
-			{
-				final VirtualFilteredInterestPointsN5 virtual = (VirtualFilteredInterestPointsN5)ips;
-
-				return new InterestPointData(
-						viewId.getTimePointId(), viewId.getViewSetupId(), label,
-						virtual.getBaseLabel(), virtual.getFilter().toString(), ips.correspondingInterestPoints );
-			}
-
-			// Trigger lazy loading if needed (results discarded, we reference internal fields directly)
-			if ( ips.ids == null || ips.locations == null )
-				ips.getInterestPointsCopy();
-
-			return new InterestPointData(
-					viewId.getTimePointId(), viewId.getViewSetupId(), label,
-					ips.ids, ips.locations, ips.responses, ips.sigmas, ips.intensities, ips.correspondingInterestPoints );
-		}
-
-		/** @return whether this is a filtered label (base label and filter instead of points) */
-		public boolean isVirtual() { return baseLabel != null; }
-
-		public boolean hasInterestPoints() { return ids != null && ids.length > 0; }
-		public boolean hasCorrespondences() { return correspondences != null && !correspondences.isEmpty(); }
-	}
-
-	/**
-	 * Core static method for saving interest points to N5 using an already-open N5Writer.
-	 * The caller is responsible for opening and closing the writer.
-	 * Use this overload when saving many views to avoid the per-view open/close overhead
-	 * (e.g. in BigStitcher-Spark interest point detection).
+	 * Writes the 'id' and 'loc' datasets of an interest point group (the attributes as NaN).
 	 *
 	 * @param n5Writer an already-open N5Writer for interestpoints.n5
 	 * @param n5path Relative path within interestpoints.n5 (e.g., "tpId_0_viewSetupId_1/beads")
@@ -1033,13 +474,13 @@ public class InterestPointsN5 extends InterestPoints
 	}
 
 	/**
-	 * Same as above, additionally storing the attributes of the points as 1 x N FLOAT32 datasets next to 'id' and 'loc': the
-	 * DoG response ('response'), the sigma ('sigma') and the image intensity ('intensity'). They are always written; an
-	 * array that is null is written as NaN (unknown).
+	 * Writes an interest point group of type 'list': 'id' (UINT64, 1 x N), 'loc' (FLOAT64, DIM x N) and the attributes of
+	 * the points as 1 x N FLOAT32 datasets: the DoG response ('response'), the sigma ('sigma') and the image intensity
+	 * ('intensity'). They are always written; an array that is null is written as NaN (unknown).
 	 *
-	 * @param responses response per point in the order of ids, or null
-	 * @param sigmas sigma per point in the order of ids, or null
-	 * @param intensities image intensity per point in the order of ids, or null
+	 * @param responsesIn response per point in the order of ids, or null
+	 * @param sigmasIn sigma per point in the order of ids, or null
+	 * @param intensitiesIn image intensity per point in the order of ids, or null
 	 */
 	public static boolean saveInterestPointsStatic(
 			final N5Writer n5Writer,
@@ -1050,7 +491,7 @@ public class InterestPointsN5 extends InterestPoints
 			final float[] sigmasIn,
 			final float[] intensitiesIn )
 	{
-		final String dataset = ipDataset( n5path );// new File( n5path, "interestpoints" ).getPath();
+		final String dataset = ipDataset( n5path );
 
 		final int numPoints = ids == null ? 0 : ids.length;
 
@@ -1168,106 +609,40 @@ public class InterestPointsN5 extends InterestPoints
 	}
 
 	/**
-	 * Core static method for saving interest points to N5.
-	 * Opens and closes its own N5Writer. For saving many views, prefer
-	 * {@link #saveInterestPointsStatic(N5Writer, String, int[], double[][])} with a
-	 * shared writer to avoid the per-view open/close overhead.
-	 *
-	 * @param baseDir Base URI for N5 storage (parent of interestpoints.n5)
-	 * @param n5path Relative path within interestpoints.n5 (e.g., "tpId_0_viewSetupId_1/beads")
-	 * @param ids Array of detection IDs
-	 * @param locations Array of coordinates (numPoints x numDimensions)
-	 * @return true if successful
+	 * Writes the marker group of a filtered label in place of the 'interestpoints' datasets: type 'filtered', the base label and the filter
 	 */
-	public static boolean saveInterestPointsStatic(
-			final URI baseDir,
-			final String n5path,
-			final int[] ids,
-			final double[][] locations )
+	public static boolean saveFilteredMarkerStatic( final N5Writer n5Writer, final String n5path, final String baseLabel, final InterestPointFilter filter )
 	{
-		return saveInterestPointsStatic( baseDir, n5path, ids, locations, null, null, null );
-	}
+		final String dataset = ipDataset( n5path );
 
-	/**
-	 * Same as below without the intensities (stored as NaN)
-	 */
-	public static boolean saveInterestPointsStatic(
-			final URI baseDir,
-			final String n5path,
-			final int[] ids,
-			final double[][] locations,
-			final float[] responses,
-			final float[] sigmas )
-	{
-		return saveInterestPointsStatic( baseDir, n5path, ids, locations, responses, sigmas, null );
-	}
-
-	/**
-	 * Same as above, additionally storing the attributes of the points (see the N5Writer overload)
-	 */
-	public static boolean saveInterestPointsStatic(
-			final URI baseDir,
-			final String n5path,
-			final int[] ids,
-			final double[][] locations,
-			final float[] responses,
-			final float[] sigmas,
-			final float[] intensities )
-	{
-		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) ) )
+		try
 		{
-			return saveInterestPointsStatic( n5Writer, n5path, ids, locations, responses, sigmas, intensities );
+			if ( n5Writer.exists( dataset ) )
+				n5Writer.remove( dataset );
+
+			n5Writer.createGroup( dataset );
+
+			n5Writer.setAttribute( dataset, "pointcloud", "1.0.0" );
+			n5Writer.setAttribute( dataset, "type", filteredType );
+			n5Writer.setAttribute( dataset, baseAttribute, baseLabel );
+			n5Writer.setAttribute( dataset, filterAttribute, filter.toString() );
+
+			IOFunctions.println( "Saved: " + dataset + " (filtered label of '" + baseLabel + "': " + filter + ")" );
+
+			return true;
 		}
-		catch ( Exception e )
+		catch ( final Exception e )
 		{
-			final String dataset = ipDataset( n5path );// new File( n5path, "interestpoints" ).getPath();
-			IOFunctions.println( "Couldn't write interestpoints to N5 '" + URITools.appendName( baseDir, baseN5 ) + "/" + dataset + "': " + e );
+			IOFunctions.println( "Couldn't write the marker of filtered label '" + dataset + "': " + e );
 			e.printStackTrace();
 			return false;
 		}
 	}
 
 	/**
-	 * Convenience overload that constructs n5path from timepoint/setup/label.
-	 * Suitable for Spark where ViewId is not available.
-	 */
-	public static boolean saveInterestPointsStatic(
-			final URI baseDir,
-			final int timepointId,
-			final int setupId,
-			final String label,
-			final int[] ids,
-			final double[][] locations )
-	{
-		return saveInterestPointsStatic( baseDir,
-				createN5datasetPath( timepointId, setupId, label ),
-				ids, locations );
-	}
-
-	/**
-	 * Convenience overload with the attributes of the points (response, sigma and intensity per point, null = NaN).
-	 */
-	public static boolean saveInterestPointsStatic(
-			final URI baseDir,
-			final int timepointId,
-			final int setupId,
-			final String label,
-			final int[] ids,
-			final double[][] locations,
-			final float[] responses,
-			final float[] sigmas,
-			final float[] intensities )
-	{
-		return saveInterestPointsStatic( baseDir,
-				createN5datasetPath( timepointId, setupId, label ),
-				ids, locations, responses, sigmas, intensities );
-	}
-
-	/**
-	 * Core static method for saving correspondences to N5 using an already-open N5Writer.
-	 * The caller is responsible for opening and closing the writer.
-	 * Use this overload when saving many views to avoid the per-view open/close overhead
-	 * (e.g. in BigStitcher-Spark interest point detection).
+	 * Writes the correspondences group of a label: attribute 'correspondences' = 2.0.0, the 'idMap' attribute
+	 * ({"tp,setup,label" -> id}) and the dataset 'data' (UINT64, 4 x N: detectionId_A, detectionId_B, idMap id, consensus
+	 * set id with -1 as 0xFFFFFFFFFFFFFFFF); an empty list writes only the empty idMap.
 	 *
 	 * @param n5Writer an already-open N5Writer for interestpoints.n5
 	 * @param n5path Relative path within interestpoints.n5 (e.g., "tpId_0_viewSetupId_1/beads")
@@ -1279,7 +654,7 @@ public class InterestPointsN5 extends InterestPoints
 			final String n5path,
 			final List< CorrespondingInterestPoints > list )
 	{
-		final String dataset = corrDataset( n5path );// new File( n5path, "correspondences" ).getPath();
+		final String dataset = corrDataset( n5path );
 
 		try
 		{
@@ -1371,101 +746,4 @@ public class InterestPointsN5 extends InterestPoints
 			return false;
 		}
 	}
-
-	/**
-	 * Core static method for saving correspondences to N5.
-	 * Works directly with List&lt;CorrespondingInterestPoints&gt; (the native internal format).
-	 * Opens and closes its own N5Writer. For saving many views, prefer
-	 * {@link #saveCorrespondencesStatic(N5Writer, String, List)} with a shared writer
-	 * to avoid the per-view open/close overhead.
-	 *
-	 * @param baseDir Base URI for N5 storage (parent of interestpoints.n5)
-	 * @param n5path Relative path within interestpoints.n5 (e.g., "tpId_0_viewSetupId_1/beads")
-	 * @param list List of corresponding interest points (can be empty, not null)
-	 * @return true if successful
-	 */
-	public static boolean saveCorrespondencesStatic(
-			final URI baseDir,
-			final String n5path,
-			final List< CorrespondingInterestPoints > list )
-	{
-		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) ) )
-		{
-			return saveCorrespondencesStatic( n5Writer, n5path, list );
-		}
-		catch ( Exception e )
-		{
-			final String dataset = corrDataset( n5path );//new File( n5path, "correspondences" ).getPath();
-			IOFunctions.println( "Couldn't write corresponding interestpoints to N5 '" + URITools.appendName( baseDir, baseN5 ) + "/" + dataset + "': " + e );
-			e.printStackTrace();
-			return false;
-		}
-	}
-
-	/**
-	 * Convenience overload that constructs n5path from timepoint/setup/label.
-	 * Suitable for Spark where ViewId is not available.
-	 */
-	public static boolean saveCorrespondencesStatic(
-			final URI baseDir,
-			final int timepointId,
-			final int setupId,
-			final String label,
-			final List< CorrespondingInterestPoints > list )
-	{
-		return saveCorrespondencesStatic( baseDir,
-				createN5datasetPath( timepointId, setupId, label ),
-				list );
-	}
-
-	/**
-	 * Static wrapper to save all data from an InterestPointData object using an already-open N5Writer.
-	 * The caller is responsible for opening and closing the writer.
-	 * Use this overload when saving many views to avoid the per-view open/close overhead
-	 * (e.g. in BigStitcher-Spark interest point detection).
-	 *
-	 * @param n5Writer an already-open N5Writer for interestpoints.n5
-	 * @param data InterestPointData containing all data
-	 * @return true if successful
-	 */
-	public static boolean saveInterestPointDataStatic( final N5Writer n5Writer, final InterestPointData data )
-	{
-		final String n5path = createN5datasetPath( data.timepointId, data.setupId, data.label );
-
-		// a filtered label has no points of its own, its marker is written instead
-		boolean success = data.isVirtual() ?
-				VirtualFilteredInterestPointsN5.saveMarkerStatic( n5Writer, n5path, data.baseLabel, InterestPointFilter.fromString( data.filter ) ) :
-				saveInterestPointsStatic( n5Writer, n5path, data.ids, data.locations, data.responses, data.sigmas, data.intensities );
-
-		if ( success && data.hasCorrespondences() )
-			success = saveCorrespondencesStatic( n5Writer, n5path, data.correspondences );
-
-		return success;
-	}
-
-	/**
-	 * Static wrapper to save all data from an InterestPointData object.
-	 * Suitable for Spark RDD.foreach() operations.
-	 * Opens and closes its own N5Writer. For saving many views, prefer
-	 * {@link #saveInterestPointDataStatic(N5Writer, InterestPointData)} with a shared writer
-	 * to avoid the per-view open/close overhead.
-	 *
-	 * @param baseDir Base URI for N5 storage (parent of interestpoints.n5)
-	 * @param data InterestPointData containing all data
-	 * @return true if successful
-	 */
-	public static boolean saveInterestPointDataStatic( final URI baseDir, final InterestPointData data )
-	{
-		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( baseDir, baseN5 ) ) ) )
-		{
-			return saveInterestPointDataStatic( n5Writer, data );
-		}
-		catch ( final Exception e )
-		{
-			IOFunctions.println( "Couldn't write interest points of '" + data.label + "' to N5 '" + URITools.appendName( baseDir, baseN5 ) + "': " + e );
-			e.printStackTrace();
-			return false;
-		}
-	}
-
 }

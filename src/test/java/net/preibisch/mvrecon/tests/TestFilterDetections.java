@@ -48,7 +48,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Ax
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Limit;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
@@ -171,15 +171,15 @@ public class TestFilterDetections
 			for ( final String label : new String[] { "beads_r0.2", "beads_r0.4", "beads_r0.8" } )
 			{
 				final InterestPoints ips = spimData.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
-				assertTrue( ips instanceof VirtualFilteredInterestPointsN5, label );
-				assertEquals( "beads", ( (VirtualFilteredInterestPointsN5)ips ).getBaseLabel() );
+				assertTrue( ips instanceof VirtualFilteredInterestPoints, label );
+				assertEquals( "beads", ( (VirtualFilteredInterestPoints)ips ).getBaseLabel() );
 
 				final int n = ips.getInterestPointsCopy().size();
 				assertTrue( n < last && n > 0, label + ": " + n );
 				last = n;
 
 				// the same points as the filter gives on the base
-				assertEquals( ( (VirtualFilteredInterestPointsN5)ips ).getFilter().filter( map.get( viewId ) ).size(), n );
+				assertEquals( ( (VirtualFilteredInterestPoints)ips ).getFilter().filter( map.get( viewId ) ).size(), n );
 			}
 		}
 

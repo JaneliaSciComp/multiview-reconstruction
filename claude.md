@@ -50,10 +50,48 @@ Multi-view reconstruction combines multiple images of the same specimen taken fr
 - `net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation` — pairwise setup, subsets
 - `net.preibisch.mvrecon.process.splitting` — oct-tree image splitting
 
-### Interest Point Storage
-- **N5 format** (`InterestPointsN5.java`): modern, scalable backend
-- Legacy text-file backend (`InterestPointsTextFileList.java`) was removed
-- Stored fields: ID, position (x, y, z), optionally correspondences to other views
+### Interest Point Storage (Zarr v3 store, 2026-10)
+
+All interest points of a dataset live in `interestpoints.zarr` next to the XML, one self-contained group per (label, timepoint):
+- `InterestPointsZarr extends InterestPoints`: one per (view, label), what the XML and all callers use (`InterestPoints.newInstance`,
+  `instantiatefromXML`; the XML text stays `tpId_X_viewSetupId_Y/label`). `VirtualFilteredInterestPoints` (a filtered label) extends it.
+- `InterestPointsZarrStore`: one per dataset dir (`InterestPointsZarrStore.get( baseDir )`): groups, staging, commit, chunk cache.
+- `InterestPointsN5` is static-only: the N5 layout (`interestpoints.n5/tpId_X_viewSetupId_Y/label`) that BigStitcher-Spark's
+  temporary block lists and test fixtures still use; `InterestPointsN5ToZarr` reads unconverted N5 entries (read-only fallback
+  of the handles) and converts a dataset (`java -cp <fat jar> ...interestpoints.InterestPointsN5ToZarr <dataset.xml>`).
+
+```
+interestpoints.zarr/zarr.json            root: interestpoints = "2.0.0"
+<label>/tp<T>/zarr.json                  group: label, timepoint, generation K          (label percent-encoded for the file system)
+<label>/tp<T>/gK/points   FLOAT32 [6, N]  x, y, z, response, sigma, intensity (NaN = unknown), all setups in setup order
+<label>/tp<T>/gK/id       INT32   [1, N]
+<label>/tp<T>/gK/corr     INT32   [3, M]  own detection, partner detection, consensus set; per setup, grouped by partner
+<label>/tp<T>/gK/entries  INT64   [6, E]  setup, kind (0 plain, 1 filtered), points offset, count, corr offset, count
+<label>/tp<T>/gK/partners INT64   [6, P]  setup, partner tp, setup, label id (attr partnerLabels), offset, count
+staging/<millis>_<nanos>_<rnd>.stage     one per Spark task, folded in by the next commit
+```
+Sharded arrays, raw + crc32c, 65,536 rows per inner chunk, 1,048,576 per shard (statics `defaultChunkRows/defaultShardRows`,
+a group keeps its grid). Zarr order reverses the dimensions (`[6, N]` appears as shape `[N, 6]`). Positions are float32 (local
+full-resolution pixels, exact to ~0.004 px at 32k px); `Point.l` stays double in memory.
+
+**Writing.** The XML save (`XmlIoSpimData2.saveInterestPointsInParallel`) opens a batch, the lists stage in memory, one `commit()`
+writes every (label, timepoint) that changed: new arrays `gK+1` (kept entries copied chunk by chunk, staged ones appended), the
+flip of the group's `generation` under a lock file after re-reading the generation (a commit always starts from the generation on
+disk, so a JVM that staged earlier merges onto others' commits; a commit that lands inside another's write window is refused, nothing
+overwritten, the changes stay staged), then `gK` is deleted. No append, no compaction: a commit costs the (label, timepoint), never the dataset. Each
+(view, label) owns its correspondence list (a symmetric match is stored twice), as in the N5 layout. Spark executors never
+commit: `InterestPointsZarr.saveStaged( lists )` / `stagePoints(...)` write one staging file per task, the driver's XML save
+folds them. Deletes (`deleteInterestPoints` = the whole entry) are staged until the next commit; a group without entries is removed.
+
+**Reading.** staged → staging file → the group's index (cached per JVM, its generation compared with the disk at most every
+`generationCheckMillis` = 2 s, so a group another JVM rewrote is picked up; a missing chunk triggers one reload). An XML entry
+with data in neither the store nor the N5 throws; a plain list stored under a filtered label's name, or the other way round,
+throws. Decoded chunks are cached per store, bounded by `chunkCacheBytes` (256 MB, `-Dmvr.interestpoints.cacheBytes=0` = off);
+it matters on Spark executors whose tasks re-create their lists, not in Fiji.
+
+Design and the staging format follow PR 108 (Lila, 2026-09); its global append-only arrays with compaction were replaced by
+per-(label, timepoint) groups (Stephan, 2026-10-23: fewer moving parts; whole-label changes dominate; a few test views go into
+a separate label). Test: `TestInterestPointsZarr`, `TestInterestPointStorage`.
 
 ## InterestPointExplorer GUI
 

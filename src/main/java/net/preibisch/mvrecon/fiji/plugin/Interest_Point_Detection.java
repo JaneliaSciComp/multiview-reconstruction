@@ -197,7 +197,7 @@ public class Interest_Point_Detection implements PlugIn
 		// if grouped, we need to get the min/max intensity for all groups
 		ipd.preprocess();
 
-		// the filters chosen in the dialog: filtered labels (VirtualFilteredInterestPointsN5) or plain copies of the detections, none by default
+		// the filters chosen in the dialog: filtered labels (VirtualFilteredInterestPoints) or plain copies of the detections, none by default
 		final List< FilterParameters > filters = ipd.getFilters();
 
 		// the labels that exist already are overwritten: the correspondences of other views that point to them and their
