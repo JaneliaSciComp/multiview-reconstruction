@@ -999,6 +999,29 @@ public class InterestPointsZarrStore
 		return stagingPoints.containsKey( key ) || stagingCorrs.containsKey( key ) || entry( key ) != null;
 	}
 
+	/**
+	 * The keys among the given ones the store neither holds (staged, in a staging file, or in the arrays) nor has scheduled
+	 * for removal: the entries that are still only in the N5 layout (or nowhere). One listing of the staging directory and
+	 * the cached indexes (their generation compared with the disk at most every {@link #generationCheckMillis}), where
+	 * {@link #hasEntry} would list the staging directory and read the group's generation again for every key it does not
+	 * find. For many keys at once (the explorer's "Resave as ZARR store", the conversion).
+	 */
+	public Set< Key > missingEntries( final Collection< Key > keys )
+	{
+		relistStagingFiles();
+
+		final TreeSet< Key > missing = new TreeSet<>();
+		synchronized ( lock )
+		{
+			for ( final Key key : keys )
+				if ( !removed.contains( key ) && !stagedPoints.containsKey( key ) && !stagedCorrs.containsKey( key ) && !stagingPoints.containsKey( key ) && !stagingCorrs.containsKey( key ) )
+					missing.add( key );
+		}
+
+		missing.removeIf( key -> entry( key ) != null );
+		return missing;
+	}
+
 	/** @return whether the store knows the entry and it is the marker of a filtered label (no points of its own); null if it does not know the entry */
 	public Boolean isFiltered( final Key key )
 	{

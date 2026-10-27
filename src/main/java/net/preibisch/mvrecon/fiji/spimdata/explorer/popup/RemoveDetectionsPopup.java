@@ -28,6 +28,8 @@ import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
 
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -36,6 +38,7 @@ import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.ImgLib2Temp.Pair;
 import net.preibisch.mvrecon.fiji.ImgLib2Temp.ValuePair;
 import net.preibisch.mvrecon.fiji.plugin.CreateFromCorresponding_Detections;
@@ -50,6 +53,9 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorerPa
 import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointExplorer;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5ToZarr;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
@@ -68,6 +74,9 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 
 	public static int defaultLabel = 0;
 	public static String defaultNewLabel = "Manually removed";
+
+	/** the labels of the selected views whose interest points are still in the old interestpoints.n5, filled when this menu opens (fillResaveZarr) */
+	final JMenu resaveZarr = new JMenu( "Resave as ZARR store" );
 
 	public RemoveDetectionsPopup()
 	{
@@ -194,6 +203,24 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		} );
 		this.add( filterInteractively );
 
+		// the labels of the selected views that still have interest points in the old interestpoints.n5 (one entry each,
+		// "ALL labels" if there are several), gray if there are none; filled when THIS menu opens, since a disabled submenu
+		// cannot open to fill itself
+		resaveZarr.setToolTipText( "<html>Moves the interest points of the selected views that are still stored in the old interestpoints.n5 into interestpoints.zarr.<br>" +
+				"The N5 is kept; the command line 'InterestPointsN5ToZarr dataset.xml' verifies and deletes it.</html>" );
+		this.addMenuListener( new MenuListener()
+		{
+			@Override
+			public void menuSelected( final MenuEvent e ) { fillResaveZarr(); }
+
+			@Override
+			public void menuDeselected( final MenuEvent e ) {}
+
+			@Override
+			public void menuCanceled( final MenuEvent e ) {}
+		} );
+		this.add( resaveZarr );
+
 		this.add( new Separator() );
 
 		createFromCorr.addActionListener( new CreateFromCorrespondencesListener() );
@@ -296,6 +323,120 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 					ThinOut_Detections.defaultLabel = i;
 
 					DistanceHistogram.plotHistogram( spimData, views, label, DistanceHistogram.getHistogramTitle( views ) );
+				}
+			} ).start();
+		}
+	}
+
+	/**
+	 * Fills "Resave as ZARR store" for the current selection: one item per label with old (N5) entries and their number
+	 * of views, "ALL labels" if there is more than one; the submenu is disabled (gray) when there are none
+	 */
+	protected void fillResaveZarr()
+	{
+		resaveZarr.removeAll();
+
+		if ( panel == null )
+		{
+			resaveZarr.setEnabled( false );
+			return;
+		}
+
+		final SpimData2 spimData = (SpimData2)panel.getSpimData();
+
+		final ArrayList< ViewId > views = new ArrayList<>();
+		views.addAll( ApplyTransformationPopup.getSelectedViews( panel ) );
+
+		// filter not present ViewIds
+		SpimData2.filterMissingViews( spimData, views );
+
+		final Map< String, Integer > labels;
+
+		try
+		{
+			labels = InterestPointsN5ToZarr.legacyLabels( spimData, views );
+		}
+		catch ( final RuntimeException ex )
+		{
+			IOFunctions.println( "Cannot look for old interest points: " + ex );
+			ex.printStackTrace();
+			resaveZarr.setEnabled( false );
+			return;
+		}
+
+		if ( labels.isEmpty() )
+		{
+			final JMenuItem item = new JMenuItem( "No old interest points (all in the ZARR store)" );
+			item.setForeground( Color.GRAY );
+			item.setEnabled( false );
+			resaveZarr.add( item );
+			resaveZarr.setEnabled( false );
+			return;
+		}
+
+		resaveZarr.setEnabled( true );
+
+		for ( final Map.Entry< String, Integer > label : labels.entrySet() )
+		{
+			final JMenuItem item = new JMenuItem( label.getKey() + " (" + label.getValue() + " view" + ( label.getValue() == 1 ? "" : "s" ) + ")" );
+			item.addActionListener( new ResaveZarrListener( label.getKey() ) );
+			resaveZarr.add( item );
+		}
+
+		if ( labels.size() > 1 )
+		{
+			resaveZarr.addSeparator();
+
+			final JMenuItem all = new JMenuItem( "ALL labels" );
+			all.addActionListener( new ResaveZarrListener( null ) );
+			resaveZarr.add( all );
+		}
+	}
+
+	/**
+	 * Moves the old (N5) interest points of one label (or of all labels, null) of the selected views into the ZARR store,
+	 * multi-threaded in a thread of its own; nothing to save afterwards (the XML text of a label is the same for both)
+	 */
+	public class ResaveZarrListener implements ActionListener
+	{
+		final String label;
+
+		public ResaveZarrListener( final String label ) { this.label = label; }
+
+		@Override
+		public void actionPerformed( final ActionEvent e )
+		{
+			if ( panel == null )
+			{
+				IOFunctions.println( "Panel not set for " + this.getClass().getSimpleName() );
+				return;
+			}
+
+			final SpimData2 spimData = (SpimData2)panel.getSpimData();
+
+			final ArrayList< ViewId > views = new ArrayList<>();
+			views.addAll( ApplyTransformationPopup.getSelectedViews( panel ) );
+
+			// filter not present ViewIds
+			SpimData2.filterMissingViews( spimData, views );
+
+			new Thread( () ->
+			{
+				try
+				{
+					final List< InterestPointsZarr > lists = InterestPointsN5ToZarr.legacyLists( spimData, views, label );
+
+					IOFunctions.println( "Resave as ZARR store: " + lists.size() + " old interest point entries of " + ( label == null ? "all labels" : "'" + label + "'" ) + " in " + views.size() + " selected view(s)" );
+
+					final int moved = InterestPointsN5ToZarr.moveIntoStore( lists, InterestPointsZarrStore.get( spimData.getBasePathURI() ), Threads.numThreads() );
+
+					if ( moved > 0 )
+						panel.updateContent(); // update interestpoint panel if available
+				}
+				catch ( final Exception ex )
+				{
+					IOFunctions.println( "Resave as ZARR store failed: " + ex );
+					ex.printStackTrace();
 				}
 			} ).start();
 		}

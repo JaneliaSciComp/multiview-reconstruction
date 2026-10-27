@@ -58,7 +58,11 @@ All interest points of a dataset live in `interestpoints.zarr` next to the XML, 
 - `InterestPointsZarrStore`: one per dataset dir (`InterestPointsZarrStore.get( baseDir )`): groups, staging, commit, chunk cache.
 - `InterestPointsN5` is static-only: the N5 layout (`interestpoints.n5/tpId_X_viewSetupId_Y/label`) that BigStitcher-Spark's
   temporary block lists and test fixtures still use; `InterestPointsN5ToZarr` reads unconverted N5 entries (read-only fallback
-  of the handles) and converts a dataset (`java -cp <fat jar> ...interestpoints.InterestPointsN5ToZarr <dataset.xml>`).
+  of the handles), moves the entries of selected views into the store (`legacyLabels` / `legacyLists` / `moveIntoStore`: the
+  ViewSetup Explorer's right-click menu Filter/Manage Interest Points > "Resave as ZARR store", multi-threaded, one (label,
+  timepoint) group per batch and commit, grayed out when the selected views have nothing old, "ALL labels" when several;
+  the N5 is kept) and converts a dataset (`java -cp <fat jar> ...interestpoints.InterestPointsN5ToZarr <dataset.xml>`, which
+  verifies and deletes the N5). The XML save moves nothing by itself (Stephan, 2026-10-26: an explicit action, not a side effect).
 
 ```
 interestpoints.zarr/zarr.json            root: interestpoints = "2.0.0"
@@ -82,6 +86,10 @@ overwritten, the changes stay staged), then `gK` is deleted. No append, no compa
 (view, label) owns its correspondence list (a symmetric match is stored twice), as in the N5 layout. Spark executors never
 commit: `InterestPointsZarr.saveStaged( lists )` / `stagePoints(...)` write one staging file per task, the driver's XML save
 folds them. Deletes (`deleteInterestPoints` = the whole entry) are staged until the next commit; a group without entries is removed.
+Entries still in `interestpoints.n5` stay there across saves (a save stages only modified lists; changed correspondences of such
+an entry pull its points along in the commit); "Resave as ZARR store" or the command-line conversion moves them unchanged, NaN
+attributes included. `InterestPointsZarrStore.missingEntries( keys )` is the batched "is it in the store" lookup: never call
+`hasEntry` per key over many keys, it relists the staging directory and re-reads the group's generation for every key it lacks.
 
 **Reading.** staged → staging file → the group's index (cached per JVM, its generation compared with the disk at most every
 `generationCheckMillis` = 2 s, so a group another JVM rewrote is picked up; a missing chunk triggers one reload). An XML entry
@@ -135,7 +143,7 @@ In filter mode (fade ≥ 1.0): background tints light red, only points within pl
 
 ### Key Files
 - `InterestPointOverlay.java` — `InterestPointSource` interface, `getColor()`, `drawOverlays()`, `drawCross()`, `drawDiagonalCross()`
-- `InterestPointTableModel.java` — implements `InterestPointSource`, holds slider state (`pointSizeScale`, `planeThickness`, `distanceFade`, `filterMode`); each setter calls `bdvPopup.updateBDV()`
+- `InterestPointTableModel.java` — implements `InterestPointSource`, holds slider state (`pointSizeScale`, `planeThickness`, `distanceFade`, `filterMode`); each setter calls `bdvPopup.updateBDV()`. Column "Attributes" (`LabelAttributes`, `computeAttributes`): which of DoG response / intensity / sigma the points of a label store (NaN = unknown); an old label (none, some, or views that differ) is drawn in dark red by `MyRenderer` with a tooltip
 - `InterestPointExplorerPanel.java` — slider + text-field UI
 - `src/main/resources/mvr/InterestPointHelp.html` — F1 help content
 

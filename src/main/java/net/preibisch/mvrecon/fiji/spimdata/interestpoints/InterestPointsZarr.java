@@ -45,8 +45,10 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStor
  * The interest points and correspondences of one (view, label), stored in the dataset's {@link InterestPointsZarrStore}.
  * The XML text is the same as in the N5 layout: {@code tpId_X_viewSetupId_Y/label}.
  *
- * An entry that was not converted yet is read from its N5 group through {@link InterestPointsN5ToZarr}; its next save
- * writes it to the store. An XML entry that has data in neither place is an error, not an empty list.
+ * An entry that was not converted yet is read from its N5 group through {@link InterestPointsN5ToZarr}; a change of it is
+ * saved into the store (the commit takes the points along with changed correspondences), and the explorer's "Resave as ZARR
+ * store" ({@link InterestPointsN5ToZarr#moveIntoStore}) or the command-line conversion moves it unchanged. An XML entry
+ * that has data in neither place is an error, not an empty list.
  *
  * @author Stephan Preibisch
  */

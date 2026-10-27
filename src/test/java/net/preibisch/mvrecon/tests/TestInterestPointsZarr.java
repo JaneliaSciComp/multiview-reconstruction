@@ -41,6 +41,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.TreeSet;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -637,6 +638,46 @@ public class TestInterestPointsZarr
 		assertEquals( filter.filter( points( 0, "beads" ) ).size(), filteredConverted.getInterestPointsCopy().size() );
 
 		assertEquals( 0, InterestPointsN5ToZarr.convert( baseURI ), "nothing left to convert" );
+	}
+
+	/** missingEntries: one lookup for many keys, for every place an entry can be (staged, staging file, arrays, scheduled for removal), also from a second store instance */
+	@Test
+	public void missingEntriesClassifies()
+	{
+		final File base = tmp.resolve( "missing" ).toFile();
+		base.mkdirs();
+		final URI baseURI = base.toURI();
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseURI );
+
+		final Key committed = new Key( 0, 0, "beads" ), staged = new Key( 0, 1, "beads" ), inFile = new Key( 0, 2, "beads" );
+		final Key removed = new Key( 0, 4, "beads" ), absent = new Key( 0, 5, "beads" ), otherGroup = new Key( 0, 0, "nothing" );
+		final List< Key > all = List.of( committed, staged, inFile, removed, absent, otherGroup );
+
+		// nothing yet, not even the container: everything is missing
+		assertEquals( new TreeSet<>( all ), store.missingEntries( all ) );
+
+		store.beginBatch();
+		store.savePoints( committed, InterestPointsZarr.toPoints( points( 0, "beads" ) ) );
+		store.saveCorrespondences( committed, new ArrayList<>() );
+		store.savePoints( removed, InterestPointsZarr.toPoints( points( 4, "beads" ) ) );
+		store.saveCorrespondences( removed, new ArrayList<>() );
+		store.commit();
+
+		store.beginBatch();
+		store.savePoints( staged, InterestPointsZarr.toPoints( points( 1, "beads" ) ) );
+		store.writeStagingFile( Map.of( inFile, InterestPointsZarr.toPoints( points( 2, "beads" ) ) ), Map.of() );
+		store.remove( removed );
+
+		// staged, in a staging file and in the arrays are known; a pending removal is not missing either (nothing is to be moved into it)
+		assertEquals( new TreeSet<>( List.of( absent, otherGroup ) ), store.missingEntries( all ) );
+		assertTrue( store.isBatchOpen(), "the lookup leaves the batch alone" );
+
+		store.commit();
+
+		// after the commit the removed entry is gone, the staged ones are in the arrays; a second instance (another JVM) agrees
+		assertEquals( new TreeSet<>( List.of( removed, absent, otherGroup ) ), store.missingEntries( all ) );
+		assertEquals( new TreeSet<>( List.of( removed, absent, otherGroup ) ), new InterestPointsZarrStore( baseURI ).missingEntries( all ) );
+		assertTrue( store.missingEntries( List.of() ).isEmpty() );
 	}
 
 	/** The staging format survives the 2 GB check for small lists and refuses to stage nothing. */

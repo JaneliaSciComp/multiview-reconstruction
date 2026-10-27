@@ -25,6 +25,7 @@ package net.preibisch.mvrecon.tests;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -38,7 +39,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -518,6 +521,219 @@ public class TestInterestPointStorage
 		final SpimData2 movedLoaded = new XmlIoSpimData2().load( here.resolve( "dataset.xml" ).toUri() );
 		for ( final ViewId viewId : map.keySet() )
 			assertEquals( map.get( viewId ).size(), movedLoaded.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "ss" ).getInterestPointsCopy().size() );
+	}
+
+	/**
+	 * "Resave as ZARR store" of the ViewSetup Explorer: the entries of the selected views that are still only in the N5 are
+	 * listed per label (InterestPointsN5ToZarr.legacyLabels/legacyLists) and moved into the store (moveIntoStore) for one
+	 * label or all at once, multi-threaded; the N5 is kept, the data is the same (the NaN attributes of an old label, a
+	 * filtered marker, the correspondences), a second run and the XML save rewrite nothing that did not change, and the
+	 * dataset reads without the N5 afterwards
+	 */
+	@Test
+	public void testResaveLegacyEntries() throws Exception
+	{
+		final SpimData2 spimData = SimulateUtil.setUp();
+		spimData.setBasePathURI( tempDir.toUri() );
+		final URI base = tempDir.toUri();
+
+		final ArrayList< ViewId > views = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		Collections.sort( views );
+		final int n = views.size();
+		final InterestPointFilter filter = InterestPointFilter.fromString( "sigma=2.." );
+		final String params = "DOG test";
+
+		// the N5 layout: 'beads' with attributes and correspondences to the next view, 'old' with id/loc only (as stored
+		// before the attributes existed) and no correspondences group, 'beads_s2' a filtered marker with correspondences
+		final HashMap< ViewId, List< InterestPoint > > beads = new HashMap<>();
+		final HashMap< ViewId, List< CorrespondingInterestPoints > > beadsCorrs = new HashMap<>();
+
+		try ( final N5Writer n5 = openN5Writer() )
+		{
+			for ( int i = 0; i < n; ++i )
+			{
+				final ViewId v = views.get( i ), next = views.get( ( i + 1 ) % n );
+				final List< InterestPoint > points = points( 40 + 10 * i, 100 + i );
+				final List< CorrespondingInterestPoints > corrs = new ArrayList<>();
+				for ( int c = 0; c < 5 + i; ++c )
+					corrs.add( new CorrespondingInterestPoints( c, next, "beads", c, c % 2 == 0 ? -1 : 0 ) );
+				beads.put( v, points );
+				beadsCorrs.put( v, corrs );
+
+				final String beadsPath = InterestPointsN5.createN5datasetPath( v.getTimePointId(), v.getViewSetupId(), "beads" );
+				assertTrue( InterestPointsN5.saveInterestPointsStatic( n5, beadsPath, points ) );
+				assertTrue( InterestPointsN5.saveCorrespondencesStatic( n5, beadsPath, corrs ) );
+
+				final int[] ids = new int[ 10 ];
+				final double[][] locations = new double[ 10 ][];
+				for ( int p = 0; p < 10; ++p )
+				{
+					ids[ p ] = p;
+					locations[ p ] = new double[] { p + i, 2 * p, 3 * p };
+				}
+				final String oldPath = InterestPointsN5.createN5datasetPath( v.getTimePointId(), v.getViewSetupId(), "old" );
+				assertTrue( InterestPointsN5.saveInterestPointsStatic( n5, oldPath, ids, locations ) );
+				final String oldDataset = InterestPointsN5.ipDataset( oldPath );
+				n5.remove( oldDataset + "/" + InterestPointsN5.responseDataset );
+				n5.remove( oldDataset + "/" + InterestPointsN5.sigmaDataset );
+				n5.remove( oldDataset + "/" + InterestPointsN5.intensityDataset );
+
+				final String markerPath = InterestPointsN5.createN5datasetPath( v.getTimePointId(), v.getViewSetupId(), "beads_s2" );
+				assertTrue( InterestPointsN5.saveFilteredMarkerStatic( n5, markerPath, "beads", filter ) );
+				assertTrue( InterestPointsN5.saveCorrespondencesStatic( n5, markerPath, List.of(
+						new CorrespondingInterestPoints( 0, next, "beads_s2", 0, -1 ),
+						new CorrespondingInterestPoints( 1, next, "beads_s2", 1, -1 ) ) ) );
+			}
+		}
+
+		// the XML lists them, nothing is loaded
+		for ( final ViewId v : views )
+		{
+			final ViewInterestPointLists vipl = spimData.getViewInterestPoints().getViewInterestPointLists( v );
+
+			for ( final String label : new String[] { "beads", "old" } )
+			{
+				final InterestPoints ips = InterestPoints.instantiatefromXML( base, InterestPointsN5.createN5datasetPath( v.getTimePointId(), v.getViewSetupId(), label ) );
+				ips.setParameters( params );
+				vipl.addInterestPointList( label, ips );
+			}
+
+			final InterestPoints marker = InterestPoints.instantiatefromXML( base, InterestPointsN5.createN5datasetPath( v.getTimePointId(), v.getViewSetupId(), "beads_s2" ), "beads", filter.toString() );
+			marker.setParameters( filter.describe( "beads" ) );
+			vipl.addInterestPointList( "beads_s2", marker );
+		}
+
+		// ---- 1. what the menu lists ----
+		assertFalse( store().exists() );
+		final LinkedHashMap< String, Integer > labels = InterestPointsN5ToZarr.legacyLabels( spimData, views );
+		assertEquals( List.of( "beads", "beads_s2", "old" ), new ArrayList<>( labels.keySet() ) );
+		for ( final int count : labels.values() )
+			assertEquals( n, count );
+		assertEquals( 3 * n, InterestPointsN5ToZarr.legacyLists( spimData, views, null ).size() );
+		assertEquals( n, InterestPointsN5ToZarr.legacyLists( spimData, views, "old" ).size() );
+		assertEquals( 1, InterestPointsN5ToZarr.legacyLabels( spimData, views.subList( 0, 1 ) ).get( "beads" ) );
+
+		// a dataset without an N5 container has nothing old
+		final SpimData2 fresh = SimulateUtil.setUp();
+		fresh.setBasePathURI( Files.createDirectories( tempDir.resolve( "fresh" ) ).toUri() );
+		assertTrue( InterestPointsN5ToZarr.legacyLabels( fresh, views ).isEmpty() );
+
+		// ---- 2. one label of two views ----
+		final List< ViewId > firstTwo = views.subList( 0, 2 );
+		assertEquals( 2, InterestPointsN5ToZarr.moveIntoStore( InterestPointsN5ToZarr.legacyLists( spimData, firstTwo, "beads" ), store(), 2 ) );
+		assertEquals( List.of( "beads_s2", "old" ), new ArrayList<>( InterestPointsN5ToZarr.legacyLabels( spimData, firstTwo ).keySet() ) );
+		assertEquals( n - 2, InterestPointsN5ToZarr.legacyLabels( spimData, views ).get( "beads" ) );
+
+		// ---- 3. all labels of all views, one list with unsaved correspondences among them ----
+		final ViewId last = views.get( n - 1 );
+		final List< CorrespondingInterestPoints > oldCorrs = List.of(
+				new CorrespondingInterestPoints( 1, views.get( 0 ), "old", 1, -1 ),
+				new CorrespondingInterestPoints( 2, views.get( 0 ), "old", 2, -1 ) );
+		spimData.getViewInterestPoints().getViewInterestPointLists( last ).getInterestPointList( "old" ).setCorrespondingInterestPoints( new ArrayList<>( oldCorrs ) );
+
+		assertEquals( 3 * n - 2, InterestPointsN5ToZarr.moveIntoStore( InterestPointsN5ToZarr.legacyLists( spimData, views, null ), store(), 3 ) );
+		assertTrue( InterestPointsN5ToZarr.legacyLabels( spimData, views ).isEmpty() );
+
+		// ---- 4. the store holds what the N5 held; the N5 is kept ----
+		for ( int i = 0; i < n; ++i )
+		{
+			final ViewId v = views.get( i );
+			final Key beadsKey = Key.of( v, "beads" ), oldKey = Key.of( v, "old" ), markerKey = Key.of( v, "beads_s2" );
+
+			final Map< Integer, InterestPoint > loadedBeads = InterestPointsZarr.toMap( store().points( beadsKey ) );
+			assertEquals( beads.get( v ).size(), loadedBeads.size() );
+			for ( final InterestPoint p : beads.get( v ) )
+				assertSameAttributes( p, loadedBeads.get( p.getId() ) );
+			assertEquals( beadsCorrs.get( v ).size(), store().correspondences( beadsKey ).size() );
+			assertEquals( detectionIds( beadsCorrs.get( v ) ), detectionIds( store().correspondences( beadsKey ) ) );
+
+			final Map< Integer, InterestPoint > loadedOld = InterestPointsZarr.toMap( store().points( oldKey ) );
+			assertEquals( 10, loadedOld.size() );
+			for ( int p = 0; p < 10; ++p )
+			{
+				assertArrayEquals( new double[] { p + i, 2 * p, 3 * p }, loadedOld.get( p ).getL(), 0.0 );
+				assertTrue( Float.isNaN( loadedOld.get( p ).getResponse() ) );
+				assertTrue( Float.isNaN( loadedOld.get( p ).getSigma() ) );
+				assertTrue( Float.isNaN( loadedOld.get( p ).getIntensity() ) );
+			}
+			// the move takes what is on disk; the unsaved correspondences of the last view are written by the XML save below
+			assertEquals( 0, store().correspondences( oldKey ).size() );
+
+			assertEquals( Boolean.TRUE, store().isFiltered( markerKey ) );
+			assertEquals( 2, store().correspondences( markerKey ).size() );
+
+			assertTrue( new File( tempDir.toFile(), InterestPointsN5.baseN5 + "/" + InterestPointsN5.createN5datasetPath( v.getTimePointId(), v.getViewSetupId(), "beads" ) ).isDirectory(), "the N5 is kept" );
+		}
+
+		final String[] staging = new File( tempDir.toFile(), InterestPointsZarrStore.ZARR_CONTAINER + "/staging" ).list();
+		assertTrue( staging == null || staging.length == 0 );
+
+		// nothing left to move, nothing rewritten
+		final File zarr = new File( tempDir.toFile(), InterestPointsZarrStore.ZARR_CONTAINER );
+		final HashMap< String, List< String > > generations = new HashMap<>();
+		for ( final String label : List.of( "beads", "beads_s2", "old" ) )
+			generations.put( label, generationDirs( zarr, label ) );
+		assertEquals( 0, InterestPointsN5ToZarr.moveIntoStore( InterestPointsN5ToZarr.legacyLists( spimData, views, null ), store(), 2 ) );
+		assertEquals( 0, InterestPointsN5ToZarr.moveIntoStore( new ArrayList<>( List.of( (InterestPointsZarr)spimData.getViewInterestPoints().getViewInterestPointLists( last ).getInterestPointList( "beads" ) ) ), store(), 2 ) );
+		for ( final String label : generations.keySet() )
+			assertEquals( generations.get( label ), generationDirs( zarr, label ) );
+
+		// ---- 5. the XML save writes only the change (the correspondences of the last view's 'old'), the dataset reads without the N5 ----
+		final URI xmlURI = tempDir.resolve( "dataset.xml" ).toUri();
+		new XmlIoSpimData2().save( spimData, xmlURI );
+		assertEquals( generations.get( "beads" ), generationDirs( zarr, "beads" ) );
+		assertEquals( generations.get( "beads_s2" ), generationDirs( zarr, "beads_s2" ) );
+		assertNotEquals( generations.get( "old" ), generationDirs( zarr, "old" ) );
+		assertEquals( 2, store().correspondences( Key.of( last, "old" ) ).size() );
+		assertEquals( 10, store().points( Key.of( last, "old" ) ).size() );
+
+		assertEquals( 0, InterestPointsN5ToZarr.convert( base ), "everything is in the store already, the conversion only drops the N5 view groups" );
+		for ( final ViewId v : views )
+			assertFalse( new File( tempDir.toFile(), InterestPointsN5.baseN5 + "/tpId_" + v.getTimePointId() + "_viewSetupId_" + v.getViewSetupId() ).exists() );
+		deleteRecursively( new File( tempDir.toFile(), InterestPointsN5.baseN5 ).toPath() );
+
+		final SpimData2 loaded = new XmlIoSpimData2().load( xmlURI );
+		for ( final ViewId v : views )
+		{
+			final ViewInterestPointLists vipl = loaded.getViewInterestPoints().getViewInterestPointLists( v );
+
+			final Map< Integer, InterestPoint > loadedBeads = vipl.getInterestPointList( "beads" ).getInterestPointsCopy();
+			assertEquals( beads.get( v ).size(), loadedBeads.size() );
+			for ( final InterestPoint p : beads.get( v ) )
+				assertSameAttributes( p, loadedBeads.get( p.getId() ) );
+
+			final Map< Integer, InterestPoint > loadedOld = vipl.getInterestPointList( "old" ).getInterestPointsCopy();
+			assertEquals( 10, loadedOld.size() );
+			assertTrue( Float.isNaN( loadedOld.get( 0 ).getSigma() ) );
+			assertEquals( params, vipl.getInterestPointList( "old" ).getParameters() );
+
+			assertTrue( vipl.getInterestPointList( "beads_s2" ) instanceof VirtualFilteredInterestPoints );
+			assertEquals( idsPassing( beads.get( v ), filter ), new TreeSet<>( vipl.getInterestPointList( "beads_s2" ).getInterestPointsCopy().keySet() ) );
+			assertEquals( 2, vipl.getInterestPointList( "beads_s2" ).getCorrespondingInterestPointsCopy().size() );
+		}
+		assertEquals( 2, loaded.getViewInterestPoints().getViewInterestPointLists( last ).getInterestPointList( "old" ).getCorrespondingInterestPointsCopy().size() );
+		assertTrue( InterestPointsN5ToZarr.legacyLabels( loaded, views ).isEmpty() );
+	}
+
+	/** @return the names of the generation directories (g0, g1, ...) of a (label, timepoint 0) group, sorted */
+	protected static List< String > generationDirs( final File zarr, final String label )
+	{
+		final String[] names = TestInterestPointsZarr.groupDir( zarr, label, 0 ).list( ( dir, name ) -> name.startsWith( "g" ) );
+		final List< String > list = new ArrayList<>( Arrays.asList( names == null ? new String[ 0 ] : names ) );
+		Collections.sort( list );
+		return list;
+	}
+
+	protected static void deleteRecursively( final Path root ) throws java.io.IOException
+	{
+		if ( !Files.exists( root ) )
+			return;
+
+		try ( final java.util.stream.Stream< Path > paths = Files.walk( root ) )
+		{
+			for ( final Path path : paths.sorted( Comparator.reverseOrder() ).toList() )
+				Files.delete( path );
+		}
 	}
 
 	protected static TreeSet< Integer > detectionIds( final Collection< CorrespondingInterestPoints > correspondences )
