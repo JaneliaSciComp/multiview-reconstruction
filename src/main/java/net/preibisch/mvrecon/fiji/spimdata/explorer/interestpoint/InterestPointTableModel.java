@@ -24,10 +24,12 @@ package net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import javax.swing.table.AbstractTableModel;
 
@@ -44,6 +46,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
@@ -54,7 +57,11 @@ import util.BDVTools;
 public class InterestPointTableModel extends AbstractTableModel implements InterestPointSource
 {
 	private static final long serialVersionUID = -1263388435427674269L;
-	
+
+	/** the column that shows which attributes the points of a label store (attributes( row )), where the renderer marks an old label */
+	public static final int ATTRIBUTES_COLUMN = 5;
+	public static final int PARAMETERS_COLUMN = 6;
+
 	ViewInterestPoints viewInterestPoints;
 	final ArrayList< String > columnNames;
 
@@ -77,6 +84,9 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	// the labels whose points could not be read (e.g. a filtered label of a base label that stores no response): logged once, the cell says so, the label can still be deleted
 	private final HashSet< String > failed = new HashSet<>();
 
+	// which attributes (DoG response, intensity, sigma) the points of a label store in the selected views, computed once per label and selection (it loads the points)
+	private final HashMap< String, LabelAttributes > attributes = new HashMap<>();
+
 	// the preview of the interactive filter (InteractiveInterestPointFilter): only the points that pass it are drawn
 	private volatile InterestPointFilter previewFilter = null;
 	private HashMap< ViewId, Collection< ? extends RealLocalizable > > previewPoints = null, previewSource = null;
@@ -91,6 +101,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		this.columnNames.add( "#Corresponding" );
 		this.columnNames.add( "#Correspondences" );
 		this.columnNames.add( "Present in Views" );
+		this.columnNames.add( "Attributes" );
 		this.columnNames.add( "Parameters" );
 
 		this.viewInterestPoints = viewInterestPoints;
@@ -102,7 +113,14 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 	}
 
-	protected void update( final ViewInterestPoints viewInterestPoints ) { this.viewInterestPoints = viewInterestPoints; }
+	protected void update( final ViewInterestPoints viewInterestPoints )
+	{
+		this.viewInterestPoints = viewInterestPoints;
+
+		// the labels may have changed (detected again, filtered labels created)
+		this.failed.clear();
+		this.attributes.clear();
+	}
 	protected ViewInterestPoints getViewInterestPoints() { return viewInterestPoints; }
 	protected List< BasicViewDescription< ? > > getCurrentViewDescriptions() { return currentVDs; } 
 	
@@ -110,6 +128,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	{
 		this.currentVDs = vds;
 		this.failed.clear();
+		this.attributes.clear();
 
 		// update everything
 		fireTableDataChanged();
@@ -132,7 +151,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	@Override
 	public boolean isCellEditable( final int row, final int column )
 	{
-		if ( column == 5 )
+		if ( column == PARAMETERS_COLUMN )
 			return true;
 		else
 			return false;
@@ -212,7 +231,9 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 				return numCorrespondences( viewInterestPoints, currentVDs, label );
 			else if ( column == 4 )
 				return findNumPresent( labels, currentVDs, label );
-			else if ( column == 5 )
+			else if ( column == ATTRIBUTES_COLUMN )
+				return attributes( label ).text;
+			else if ( column == PARAMETERS_COLUMN )
 				return getParameters( viewInterestPoints, currentVDs, label );
 			else
 				return -1;
@@ -256,6 +277,158 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		final VirtualFilteredInterestPoints virtual = label == null ? null : virtualList( viewInterestPoints, currentVDs, label );
 
 		return virtual == null ? null : "Virtual label, no points of its own: " + virtual.getFilter().describe( virtual.getBaseLabel() );
+	}
+
+	/**
+	 * Which of the attributes of its points (the DoG response, the intensity and the sigma, see {@link InterestPoint}; NaN =
+	 * unknown) a label stores in the selected views: all of them for a label detected since they are stored, none for an
+	 * old one, some for one stored in between, or differing between the views (a label detected again for some of them).
+	 * An old label registers like any other, but it cannot be filtered by an attribute it lacks (the filter dialogs and the
+	 * interactive filter refuse), so the table shows it.
+	 */
+	public static class LabelAttributes
+	{
+		/** the text of the cell, e.g. "response, intensity, sigma", "none (old label)", "intensity only" or "mixed" */
+		public final String text;
+
+		/** the tooltip of the cell: what is stored or missing and what to do about it, null when there is nothing to say */
+		public final String tooltip;
+
+		/** false if an attribute is missing in any of the views (the renderer marks the cell) */
+		public final boolean complete;
+
+		public LabelAttributes( final String text, final String tooltip, final boolean complete )
+		{
+			this.text = text;
+			this.tooltip = tooltip;
+			this.complete = complete;
+		}
+	}
+
+	/** nothing to show: the label has no points in the selected views, or they cannot be read (the detections column says so) */
+	public static final LabelAttributes noAttributes = new LabelAttributes( "", null, true );
+
+	/**
+	 * @return the attributes the label stores in the selected views (see {@link LabelAttributes}), computed once per label
+	 *         and selection since it loads the points; nothing if they cannot be read (the detections column reports that)
+	 */
+	protected LabelAttributes attributes( final String label )
+	{
+		LabelAttributes result = attributes.get( label );
+
+		if ( result == null )
+		{
+			try
+			{
+				result = computeAttributes( viewInterestPoints, currentVDs, label );
+			}
+			catch ( final RuntimeException e )
+			{
+				if ( failed.add( label ) )
+					IOFunctions.println( "Cannot read the interest points '" + label + "': " + e.getMessage() );
+
+				result = noAttributes;
+			}
+
+			attributes.put( label, result );
+		}
+
+		return result;
+	}
+
+	/**
+	 * @return the attributes the label of a row stores (for the renderer, which marks an old label and shows the tooltip), null if the row shows no label
+	 */
+	public LabelAttributes attributes( final int row )
+	{
+		if ( currentVDs == null || currentVDs.isEmpty() )
+			return null;
+
+		final String label = label( InterestPointTools.getAllInterestPointMap( viewInterestPoints, currentVDs ), row );
+
+		return label == null ? null : attributes( label );
+	}
+
+	/**
+	 * Loads the points of the label in every view that has it and counts, per attribute, the views with points whose
+	 * points all store it ({@link InterestPointFilter#missingAttributes}: one NaN and the view lacks it)
+	 */
+	public static LabelAttributes computeAttributes( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )
+	{
+		final EnumSet< Axis > all = EnumSet.allOf( Axis.class );
+		final int[] storing = new int[ Axis.values().length ]; // per attribute the number of views with points that store it
+		int numViews = 0; // the views with the label and at least one point
+
+		for ( final ViewId v : views )
+		{
+			if ( !vip.getViewInterestPointLists( v ).getHashMap().containsKey( label ) )
+				continue;
+
+			final Collection< InterestPoint > points = vip.getViewInterestPointLists( v ).getInterestPointList( label ).getInterestPointsCopy().values();
+
+			if ( points.isEmpty() )
+				continue;
+
+			++numViews;
+
+			final EnumSet< Axis > missing = InterestPointFilter.missingAttributes( points, all );
+
+			for ( final Axis axis : all )
+				if ( !missing.contains( axis ) )
+					++storing[ axis.ordinal() ];
+		}
+
+		if ( numViews == 0 )
+			return noAttributes;
+
+		final ArrayList< Axis > everywhere = new ArrayList<>(), nowhere = new ArrayList<>(), someViews = new ArrayList<>();
+
+		for ( final Axis axis : all )
+		{
+			if ( storing[ axis.ordinal() ] == numViews )
+				everywhere.add( axis );
+			else if ( storing[ axis.ordinal() ] == 0 )
+				nowhere.add( axis );
+			else
+				someViews.add( axis );
+		}
+
+		final String why = " (detected before the attributes were stored, or derived rather than detected, e.g. from correspondences).";
+		final String detectAgain = " It cannot be filtered by them; a new detection stores them.";
+
+		if ( !someViews.isEmpty() )
+		{
+			// e.g. "the response is stored in 2 of 4 views, the intensity in 4 of 4, the sigma in 2 of 4"
+			final StringBuilder counts = new StringBuilder();
+			int i = 0;
+
+			for ( final Axis axis : all )
+			{
+				counts.append( i == 0 ? "the " : ", the " ).append( axis.key ).append( i == 0 ? " is stored in " : " in " ).append( storing[ axis.ordinal() ] ).append( " of " ).append( numViews );
+
+				if ( i++ == 0 )
+					counts.append( " views" );
+			}
+
+			return new LabelAttributes( "mixed", "The views differ: " + counts + " (the label was detected again for some of the views, the others are old). It cannot be filtered by an attribute that any view lacks; a new detection of all views stores them everywhere.", false );
+		}
+		else if ( nowhere.isEmpty() )
+		{
+			return new LabelAttributes( names( everywhere ), "The points store the DoG response, the intensity and the sigma, the label can be filtered by them.", true );
+		}
+		else if ( everywhere.isEmpty() )
+		{
+			return new LabelAttributes( "none (old label)", "Old label: its points store no DoG response, intensity or sigma" + why + detectAgain, false );
+		}
+		else
+		{
+			return new LabelAttributes( names( everywhere ) + " only", "Old label: its points store no " + names( nowhere ) + why + detectAgain, false );
+		}
+	}
+
+	protected static String names( final Collection< Axis > axes )
+	{
+		return axes.stream().map( a -> a.key ).collect( Collectors.joining( ", " ) );
 	}
 
 	protected String getParameters( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )

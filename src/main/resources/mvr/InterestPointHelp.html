@@ -89,6 +89,7 @@ and which views contain them.
   <li><b>#Corresponding:</b> Number of points that have correspondences to other views</li>
   <li><b>#Correspondences:</b> Total number of point-to-point correspondences established</li>
   <li><b>Present in Views:</b> List of ViewSetup IDs and Timepoints where this detection exists</li>
+  <li><b>Attributes:</b> Which attributes the points store besides their position: the DoG response, the intensity and the sigma (what the filters and the interactive filter work on). A label detected with a current version reads "response, intensity, sigma". An <span style="color:#b40000;">old label</span> (detected before the attributes were stored) reads "none (old label)", or lists the stored ones ("intensity only"), in dark red; "mixed" means the views differ (the label was detected again for some of them). The tooltip of the cell says what is missing. Such a label registers as before, but it cannot be filtered by a missing attribute: detect it again to store them.</li>
   <li><b>Parameters:</b> Detection parameters used (if saved)</li>
 </ul>
 

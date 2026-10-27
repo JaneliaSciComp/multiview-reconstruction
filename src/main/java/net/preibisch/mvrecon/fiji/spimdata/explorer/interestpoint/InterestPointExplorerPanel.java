@@ -64,6 +64,7 @@ import net.preibisch.mvrecon.fiji.ImgLib2Temp.Pair;
 import net.preibisch.mvrecon.fiji.ImgLib2Temp.ValuePair;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorer;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointTableModel.LabelAttributes;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
@@ -413,7 +414,8 @@ public class InterestPointExplorerPanel extends JPanel
 		table.getColumnModel().getColumn( 2 ).setPreferredWidth( 20 );
 		table.getColumnModel().getColumn( 3 ).setPreferredWidth( 25 );
 		table.getColumnModel().getColumn( 4 ).setPreferredWidth( 30 );
-		table.getColumnModel().getColumn( 5 ).setPreferredWidth( 400 );
+		table.getColumnModel().getColumn( InterestPointTableModel.ATTRIBUTES_COLUMN ).setPreferredWidth( 95 );
+		table.getColumnModel().getColumn( InterestPointTableModel.PARAMETERS_COLUMN ).setPreferredWidth( 375 );
 
 		table.addMouseListener( new MouseListener()
 		{
@@ -496,11 +498,17 @@ public class InterestPointExplorerPanel extends JPanel
 	{
 		private static final long serialVersionUID = 1L;
 
+		/** the text of the attributes cell of an old label (its points lack DoG response, intensity or sigma) */
+		static final Color oldLabelColor = new Color( 180, 0, 0 );
+
 		Color backgroundColor = getBackground();
 
 		@Override
 		public Component getTableCellRendererComponent( JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column )
 		{
+			// DefaultTableCellRenderer.setForeground keeps the color for every unselected cell to come (unselectedForeground), so the mark of an old label (below) is forgotten before each cell
+			setForeground( null );
+
 			final Component c = super.getTableCellRendererComponent( table, value, isSelected, hasFocus, row, column );
 			final InterestPointTableModel model = (InterestPointTableModel) table.getModel();
 
@@ -508,6 +516,21 @@ public class InterestPointExplorerPanel extends JPanel
 			final String virtual = model.virtualTooltip( row );
 			c.setFont( c.getFont().deriveFont( virtual == null ? Font.PLAIN : Font.ITALIC ) );
 			setToolTipText( virtual );
+
+			// an old label (its points store none or only some of DoG response, intensity and sigma, or the views differ) is marked in its attributes cell: dark red text, the tooltip says what is missing
+			if ( table.convertColumnIndexToModel( column ) == InterestPointTableModel.ATTRIBUTES_COLUMN )
+			{
+				final LabelAttributes attributes = model.attributes( row );
+
+				if ( attributes != null )
+				{
+					if ( attributes.tooltip != null )
+						setToolTipText( "<html><body style='width: 380px'>" + attributes.tooltip + "</body></html>" );
+
+					if ( !attributes.complete && !isSelected )
+						c.setForeground( oldLabelColor );
+				}
+			}
 
 			final int state = model.getState( row, column );
 
