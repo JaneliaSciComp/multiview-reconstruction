@@ -37,7 +37,7 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
  * {@link DifferenceOfGaussianGUI#getParameters()} as {@code DOG s=.. t=.. min=.. max=.. downsampleX=.. downsampleY=..
  * downsampleZ=.. anisotropy=.. minIntensity=.. maxIntensity=..} and by {@link ScaleSpaceGUI#getParameters()} as
  * {@code DOG-SS s=.. steps=.. octaves=.. finestLevel=.. t=.. ...}), parsed back so that "Detect Interest Points" can
- * open with them preset ({@link #preset}): the ViewSetup Explorer's "Re-detect interest points (stored parameters)"
+ * open with them preset ({@link #preset}): the ViewSetup Explorer's "Re-detect interest points with attributes"
  * for labels whose points lack their attributes (response, sigma, intensity: detected before they were stored).
  *
  * Since 2026-10-27 the strings also carry what else decides the detections (DifferenceOfGUI.commonParameters):

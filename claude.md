@@ -64,7 +64,7 @@ All interest points of a dataset live in `interestpoints.zarr` next to the XML, 
   the N5 is kept) and converts a dataset (`java -cp <fat jar> ...interestpoints.InterestPointsN5ToZarr <dataset.xml>`, which
   verifies and deletes the N5). The XML save moves nothing by itself (Stephan, 2026-10-26: an explicit action, not a side effect).
   Old labels (points without response/sigma/intensity, NaN) are detected again via Filter/Manage Interest Points > "Re-detect
-  interest points (stored parameters)" (`fiji.plugin.interestpointdetection.StoredDetectionParameters.parse/preset`: the label's
+  interest points with attributes" (`fiji.plugin.interestpointdetection.StoredDetectionParameters.parse/preset`: the label's
   parameters string sets the static defaults of the detection dialog, label included, and the detection replaces the label).
   Since 2026-10-27 the strings also record `localization=`, `groupTiles=`, `groupIllums=`, `thresholdType=` (+ `noiseFactor=`),
   built in `DifferenceOfGUI.commonParameters()`; a stored grouping wins over the explorer's when a label is detected again. A

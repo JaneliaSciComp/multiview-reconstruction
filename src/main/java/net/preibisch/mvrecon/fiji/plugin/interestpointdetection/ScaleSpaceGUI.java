@@ -226,7 +226,7 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		final GenericDialog gd = new GenericDialog( "Advanced values" );
 
 		gd.addChoice( "Threshold_type", thresholdChoices, thresholdChoices[ defaultThresholdChoice ] );
-		gd.addNumericField( "Threshold (minimal |response| at any scale)", defaultThreshold, 5 );
+		gd.addNumericField( "Threshold (minimal |response| at any scale)", defaultThreshold, 5, 12, null ); // twice the default width
 		gd.addNumericField( "Noise_factor", defaultNoiseFactor, 2 );
 		gd.addNumericField( "Steps_per_octave", defaultSteps, 0 );
 		gd.addNumericField( "Octaves (-1 = as many as the image allows)", defaultOctaves, 0 );

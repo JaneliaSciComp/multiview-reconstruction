@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 
 import java.awt.Color;
+import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.ArrayList;
@@ -90,7 +91,7 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		final JMenuItem createLimited = new JMenuItem( "Filter interest points (keep fixed number) ..." );
 		final JMenu createRamp = new JMenu( "Filter interest points (threshold ramp)" );
 		final JMenu filterInteractively = new JMenu( "Filter interest points (interactively)" );
-		final JMenu redetect = new JMenu( "Re-detect interest points (stored parameters)" );
+		final JMenu redetect = new JMenu( "Re-detect interest points with attributes" );
 		final JMenuItem createFromCorr = new JMenuItem( "New interest points from correspondences ..." );
 		final JMenu showDistanceHist = new JMenu( "Show Distance Histogram" );
 		final JMenuItem showRelativeDistanceHist = new JMenuItem( "Show Relative Distance Histogram ... " );
@@ -208,42 +209,6 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		} );
 		this.add( filterInteractively );
 
-		// the labels of the selected views whose points lack response, sigma or intensity (detected before the attributes were
-		// stored): one entry each, which opens "Detect Interest Points" with the label and its stored parameters preset, so that
-		// the detection replaces the label with points that have them; filled when it opens (it loads the points)
-		redetect.setToolTipText( "<html>Lists the labels of the selected views whose points lack response, sigma or intensity (detected before they were stored)<br>" +
-				"and opens 'Detect Interest Points' with the label and its stored parameters preset; the detection replaces the label.</html>" );
-		redetect.addMenuListener( new MenuListener()
-		{
-			@Override
-			public void menuSelected( final MenuEvent e ) { fillRedetect( redetect ); }
-
-			@Override
-			public void menuDeselected( final MenuEvent e ) {}
-
-			@Override
-			public void menuCanceled( final MenuEvent e ) {}
-		} );
-		this.add( redetect );
-
-		// the labels of the selected views that still have interest points in the old interestpoints.n5 (one entry each,
-		// "ALL labels" if there are several), gray if there are none; filled when THIS menu opens, since a disabled submenu
-		// cannot open to fill itself
-		resaveZarr.setToolTipText( "<html>Moves the interest points of the selected views that are still stored in the old interestpoints.n5 into interestpoints.zarr.<br>" +
-				"The N5 is kept; the command line 'InterestPointsN5ToZarr dataset.xml' verifies and deletes it.</html>" );
-		this.addMenuListener( new MenuListener()
-		{
-			@Override
-			public void menuSelected( final MenuEvent e ) { fillResaveZarr(); }
-
-			@Override
-			public void menuDeselected( final MenuEvent e ) {}
-
-			@Override
-			public void menuCanceled( final MenuEvent e ) {}
-		} );
-		this.add( resaveZarr );
-
 		this.add( new Separator() );
 
 		createFromCorr.addActionListener( new CreateFromCorrespondencesListener() );
@@ -309,6 +274,45 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		this.add( interactivelyXY );
 		this.add( interactivelyXZ );
 		this.add( interactivelyYZ );
+
+		// the two entries for old labels come last, below a separator (Stephan, 2026-10-27)
+		this.add( new Separator() );
+
+		// the labels of the selected views whose points lack response, sigma or intensity (detected before the attributes were
+		// stored): one entry each, which opens "Detect Interest Points" with the label and its stored parameters preset, so that
+		// the detection replaces the label with points that have them; filled when it opens (it loads the points)
+		redetect.setToolTipText( "<html>Lists the labels of the selected views whose points lack response, sigma or intensity (detected before they were stored)<br>" +
+				"and opens 'Detect Interest Points' with the label and its stored parameters preset; the detection replaces the label.</html>" );
+		redetect.addMenuListener( new MenuListener()
+		{
+			@Override
+			public void menuSelected( final MenuEvent e ) { fillRedetect( redetect ); }
+
+			@Override
+			public void menuDeselected( final MenuEvent e ) {}
+
+			@Override
+			public void menuCanceled( final MenuEvent e ) {}
+		} );
+		this.add( redetect );
+
+		// the labels of the selected views that still have interest points in the old interestpoints.n5 (one entry each,
+		// "ALL labels" if there are several), gray if there are none; filled when THIS menu opens, since a disabled submenu
+		// cannot open to fill itself
+		resaveZarr.setToolTipText( "<html>Moves the interest points of the selected views that are still stored in the old interestpoints.n5 into interestpoints.zarr.<br>" +
+				"The N5 is kept; the command line 'InterestPointsN5ToZarr dataset.xml' verifies and deletes it.</html>" );
+		this.addMenuListener( new MenuListener()
+		{
+			@Override
+			public void menuSelected( final MenuEvent e ) { fillResaveZarr(); }
+
+			@Override
+			public void menuDeselected( final MenuEvent e ) {}
+
+			@Override
+			public void menuCanceled( final MenuEvent e ) {}
+		} );
+		this.add( resaveZarr );
 	}
 
 	@Override
@@ -352,7 +356,8 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 	}
 
 	/**
-	 * Fills "Re-detect interest points (stored parameters)" for the current selection: one item per plain label whose points
+	 * Fills "Re-detect interest points with attributes" for the current selection (a short note on what the entries do, in small
+	 * dark gray, below them): one item per plain label whose points
 	 * lack an attribute in any of the selected views (the points are loaded); a label without a detection string (e.g. one
 	 * made from correspondences) is listed gray, a filtered label is not listed (it has no points of its own and follows
 	 * its base label, which the detection re-creates it from)
@@ -437,6 +442,19 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 			item.setForeground( Color.GRAY );
 			item.setEnabled( false );
 			menu.add( item );
+		}
+		else
+		{
+			// what the entries do, below a separator in a small dark gray font (Stephan, 2026-10-27); HTML, since a disabled
+			// item would otherwise be drawn in the look and feel's disabled color
+			final JMenuItem note = new JMenuItem( "<html><span style='color:#505050'>This will re-detect interest points using likely the same parameters<br>" +
+					"to add missing attributes; this is approximate.<br>Correspondences will be deleted.</span></html>" );
+			final Font font = note.getFont();
+			if ( font != null )
+				note.setFont( font.deriveFont( Math.max( 9f, font.getSize2D() - 2f ) ) );
+			note.setEnabled( false );
+			menu.addSeparator();
+			menu.add( note );
 		}
 	}
 

@@ -75,7 +75,7 @@ public class DetectInterestPointsPopup extends JMenuItem implements ExplorerWind
 
 	/**
 	 * As {@link #detect(ExplorerWindow)}; with {@code groupingFromPanel} false the current defaults of the grouping stay as
-	 * they are: "Re-detect interest points (stored parameters)" (RemoveDetectionsPopup) presets them from the label's
+	 * they are: "Re-detect interest points with attributes" (RemoveDetectionsPopup) presets them from the label's
 	 * parameters string, which wins over the explorer's grouping
 	 */
 	public static void detect( final ExplorerWindow< ? > panel, final boolean groupingFromPanel )

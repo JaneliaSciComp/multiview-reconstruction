@@ -219,9 +219,9 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	{
 		final GenericDialog gd = new GenericDialog( "Advanced values" );
 
-		gd.addNumericField( "Sigma", defaultSigma, 5 );
+		gd.addNumericField( "Sigma", defaultSigma, 5, 12, null ); // twice the default width
 		gd.addChoice( "Threshold_type", thresholdChoices, thresholdChoices[ defaultThresholdChoice ] );
-		gd.addNumericField( "Threshold", defaultThreshold, 5 );
+		gd.addNumericField( "Threshold", defaultThreshold, 5, 12, null );
 		gd.addNumericField( "Noise_factor", defaultNoiseFactor, 2 );
 		gd.addCheckbox( "Find_minima", defaultFindMin );
 		gd.addCheckbox( "Find_maxima", defaultFindMax );

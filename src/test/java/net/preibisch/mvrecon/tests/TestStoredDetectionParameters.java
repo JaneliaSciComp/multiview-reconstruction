@@ -52,7 +52,7 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 
 /**
  * The parameters string of a label parsed back (StoredDetectionParameters.parse) and written into the defaults of the
- * detection dialog (preset), what "Re-detect interest points (stored parameters)" of the ViewSetup Explorer does
+ * detection dialog (preset), what "Re-detect interest points with attributes" of the ViewSetup Explorer does
  */
 public class TestStoredDetectionParameters
 {
