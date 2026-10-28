@@ -67,6 +67,13 @@ public class Interest_Point_Detection implements PlugIn
 	public static boolean defaultSetMinMax = false;
 	public static String defaultLabel = "beads";
 
+	/**
+	 * The label the next dialog suggests as it is, even if the views have it (StoredDetectionParameters.preset for a
+	 * re-detection, which replaces the label); used once. Otherwise the dialog suggests a label that none of the selected
+	 * views has yet (suggestLabel from defaultLabel).
+	 */
+	public static String presetLabel = null;
+
 	public static boolean defaultGroupTiles = true;
 	public static boolean defaultGroupIllums = true;
 	public static ExplorerWindow< ? > currentPanel;
@@ -101,6 +108,34 @@ public class Interest_Point_Detection implements PlugIn
 	 * @param viewIds
 	 * @return
 	 */
+	/**
+	 * @param label - the label to suggest
+	 * @param existing - the labels the views have
+	 * @return the label itself if none of the existing ones equals it, otherwise the first free one with a higher number
+	 *         at the end ("beads" -&gt; "beads2" -&gt; "beads3", "nuclei_1" -&gt; "nuclei_2")
+	 */
+	public static String suggestLabel( final String label, final Collection< String > existing )
+	{
+		if ( label == null || label.isEmpty() || !existing.contains( label ) )
+			return label;
+
+		int end = label.length();
+		while ( end > 0 && Character.isDigit( label.charAt( end - 1 ) ) )
+			--end;
+
+		// a trailing number is increased (at most 18 digits, more is a name); otherwise a number is appended
+		final boolean numbered = end < label.length() && label.length() - end <= 18;
+		final String base = numbered ? label.substring( 0, end ) : label;
+		long number = numbered ? Long.parseLong( label.substring( end ) ) : 1;
+
+		String candidate;
+		do
+			candidate = base + ( ++number );
+		while ( existing.contains( candidate ) );
+
+		return candidate;
+	}
+
 	public boolean detectInterestPoints(
 			final SpimData2 data,
 			final Collection< ? extends ViewId > viewCollection )
@@ -130,10 +165,14 @@ public class Interest_Point_Detection implements PlugIn
 		if ( defaultAlgorithm >= descriptions.length )
 			defaultAlgorithm = 0;
 		
+		// the suggested label: the preset one (a re-detection replaces it), otherwise one that none of the views has yet
+		final String suggestedLabel = presetLabel != null ? presetLabel : suggestLabel( defaultLabel, InterestPointTools.getAllInterestPointMap( data.getViewInterestPoints(), viewIds ).keySet() );
+		presetLabel = null;
+
 		final GenericDialog gd = new GenericDialog( "Detect Interest Points" );
 		
 		gd.addChoice( "Type_of_interest_point_detection", descriptions, descriptions[ defaultAlgorithm ] );
-		gd.addStringField( "Label_interest_points", defaultLabel );
+		gd.addStringField( "Label_interest_points", suggestedLabel );
 
 		gd.addCheckbox( "Set_minimal_and_maximal_intensity", defaultSetMinMax );
 

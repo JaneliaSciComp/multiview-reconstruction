@@ -67,7 +67,7 @@ public class TestStoredDetectionParameters
 	static final String EARLY_SS = "DOG-SS s=1.6 steps=3 octaves=2 finestLevel=false t=0.02 min=false max=true downsampleXY=2 downsampleXYIndex=2 downsampleZ=1 minIntensity=NaN maxIntensity=NaN";
 
 	// the statics preset writes, saved before and restored after each test (they are shared by all tests of the JVM)
-	String label;
+	String label, preset;
 	int algorithm, resolutionIndex, brightness, thresholdChoice, filterChoice, ssSteps, ssOctaves, ssSpecification, localization;
 	boolean setMinMax, manual, dogMin, dogMax, ssMin, ssMax, groupTiles, groupIllums, overlappingOnly;
 	long[] manualDownsampling;
@@ -78,6 +78,7 @@ public class TestStoredDetectionParameters
 	public void save()
 	{
 		label = Interest_Point_Detection.defaultLabel;
+		preset = Interest_Point_Detection.presetLabel;
 		algorithm = Interest_Point_Detection.defaultAlgorithm;
 		setMinMax = Interest_Point_Detection.defaultSetMinMax;
 		groupTiles = Interest_Point_Detection.defaultGroupTiles;
@@ -113,6 +114,7 @@ public class TestStoredDetectionParameters
 	public void restore()
 	{
 		Interest_Point_Detection.defaultLabel = label;
+		Interest_Point_Detection.presetLabel = preset;
 		Interest_Point_Detection.defaultAlgorithm = algorithm;
 		Interest_Point_Detection.defaultSetMinMax = setMinMax;
 		Interest_Point_Detection.defaultGroupTiles = groupTiles;
@@ -142,6 +144,21 @@ public class TestStoredDetectionParameters
 		ScaleSpaceGUI.defaultFindMax = ssMax;
 		ScaleSpaceGUI.lastDetectFinestLevel = finest;
 		ScaleSpaceGUI.defaultSpecification = ssSpecification;
+	}
+
+	/** the dialog suggests a label none of the views has: the remembered one, else a trailing number increased or appended */
+	@Test
+	public void testSuggestLabel()
+	{
+		final java.util.List< String > existing = Arrays.asList( "beads", "beads2", "nuclei_1", "x9" );
+
+		assertEquals( "cells", Interest_Point_Detection.suggestLabel( "cells", existing ) );
+		assertEquals( "beads3", Interest_Point_Detection.suggestLabel( "beads", existing ) );
+		assertEquals( "beads3", Interest_Point_Detection.suggestLabel( "beads2", existing ) );
+		assertEquals( "nuclei_2", Interest_Point_Detection.suggestLabel( "nuclei_1", existing ) );
+		assertEquals( "x10", Interest_Point_Detection.suggestLabel( "x9", existing ) );
+		assertEquals( "", Interest_Point_Detection.suggestLabel( "", existing ) );
+		assertEquals( "beads", Interest_Point_Detection.suggestLabel( "beads", Arrays.asList() ) );
 	}
 
 	@Test
@@ -257,6 +274,7 @@ public class TestStoredDetectionParameters
 		// scale space, full resolution, no intensity range
 		StoredDetectionParameters.parse( SS ).preset( data, views, "old" );
 		assertEquals( "old", Interest_Point_Detection.defaultLabel );
+		assertEquals( "old", Interest_Point_Detection.presetLabel, "suggested as it is although it exists" );
 		assertEquals( 1, Interest_Point_Detection.defaultAlgorithm );
 		assertFalse( Interest_Point_Detection.defaultSetMinMax );
 		assertEquals( fullResolution, DifferenceOfGUI.defaultResolutionIndex );

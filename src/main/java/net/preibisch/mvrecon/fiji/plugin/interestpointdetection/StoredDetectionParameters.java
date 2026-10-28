@@ -196,6 +196,7 @@ public record StoredDetectionParameters(
 	public void preset( final SpimData2 data, final List< ? extends ViewId > views, final String label )
 	{
 		Interest_Point_Detection.defaultLabel = label;
+		Interest_Point_Detection.presetLabel = label; // suggested as it is although it exists: the detection replaces it
 		Interest_Point_Detection.defaultAlgorithm = scaleSpace ? 1 : 0;
 
 		final boolean minMax = !Double.isNaN( minIntensity ) && !Double.isNaN( maxIntensity );
