@@ -242,6 +242,7 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		final int thresholdChoice = gd.getNextChoiceIndex();
 		this.threshold = gd.getNextNumber();
 		this.noiseFactor = gd.getNextNumber();
+		this.thresholdFromNoiseFloor = thresholdChoice == 1;
 		this.steps = (int)Math.round( gd.getNextNumber() );
 		this.octaves = (int)Math.round( gd.getNextNumber() );
 		this.detectFinestLevel = gd.getNextBoolean();
@@ -351,14 +352,13 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 	}
 
 	/**
-	 * @return the parameter string stored with a label
+	 * @return the parameter string stored with a label (StoredDetectionParameters reads it): the method and its values, then
+	 *         what both methods share (DifferenceOfGUI.commonParameters)
 	 */
 	@Override
 	public String getParameters()
 	{
-		return "DOG-SS s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + detectFinestLevel + " t=" + threshold + " min=" + findMin + " max=" + findMax +
-				" downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] + " anisotropy=" + anisotropyZ +
-				" minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
+		return "DOG-SS s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + detectFinestLevel + " t=" + threshold + " min=" + findMin + " max=" + findMax + commonParameters();
 	}
 
 	/**

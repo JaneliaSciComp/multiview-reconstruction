@@ -153,6 +153,52 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	/** the filters chosen for the detections of this run (one, or the labels of a ramp), filtered labels or plain copies that Interest_Point_Detection creates once the points exist; empty = none */
 	protected final ArrayList< FilterParameters > filters = new ArrayList<>();
 
+	/** whether the threshold of this run was estimated from the noise floor (the "Advanced ..." dialog), stored with the label as provenance (getParameters) */
+	protected boolean thresholdFromNoiseFloor = false;
+
+	/** the names of the subpixel localizations in the parameters string (localizationChoice: none, quadratic fit, Gaussian mask fit) */
+	public static final String[] localizationKeys = new String[] { "NONE", "QUADRATIC", "GAUSS_FIT" };
+
+	/** @return the name of a subpixel localization in the parameters string, see localizationKeys */
+	public static String localizationKey( final int localization )
+	{
+		return localization >= 0 && localization < localizationKeys.length ? localizationKeys[ localization ] : "NONE";
+	}
+
+	/** @return the index (localizationChoice) of a name in the parameters string, also a plain index; -1 if unknown */
+	public static int localizationIndex( final String key )
+	{
+		for ( int i = 0; i < localizationKeys.length; ++i )
+			if ( localizationKeys[ i ].equals( key ) )
+				return i;
+
+		try
+		{
+			final int index = Integer.parseInt( key );
+			return index >= 0 && index < localizationKeys.length ? index : -1;
+		}
+		catch ( final NumberFormatException e )
+		{
+			return -1;
+		}
+	}
+
+	/**
+	 * The part of the parameters string stored with a label (getParameters) that both methods share, after their own
+	 * values: the resolution and the anisotropy the detection ran with, the intensity range (NaN if none was set; the
+	 * entered one or the common one the detection computed), and what else decides the detections: the subpixel
+	 * localization, the grouping of tiles and illuminations, the threshold type (fixed, or estimated from the noise floor
+	 * with the noise factor; the estimated value itself is in t). StoredDetectionParameters reads it back to detect a
+	 * label again with the same settings.
+	 */
+	protected String commonParameters()
+	{
+		return " downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] + " anisotropy=" + anisotropyZ +
+				" minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity +
+				" localization=" + localizationKey( localization ) + " groupTiles=" + groupTiles + " groupIllums=" + groupIllums +
+				( thresholdFromNoiseFloor ? " thresholdType=noisefloor noiseFactor=" + noiseFactor : " thresholdType=fixed" );
+	}
+
 	public DifferenceOfGUI( final SpimData2 spimData, final List< ViewId > viewIdsToProcess )
 	{
 		super( spimData, viewIdsToProcess );

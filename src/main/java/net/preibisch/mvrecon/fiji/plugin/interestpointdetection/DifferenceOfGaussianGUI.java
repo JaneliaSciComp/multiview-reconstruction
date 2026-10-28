@@ -237,6 +237,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		this.noiseFactor = defaultNoiseFactor = gd.getNextNumber();
 		this.findMin = defaultFindMin = gd.getNextBoolean();
 		this.findMax = defaultFindMax = gd.getNextBoolean();
+		this.thresholdFromNoiseFloor = thresholdChoice == 1;
 
 		// the threshold from the noise floor of all views at this sigma: estimated now, logged and remembered as the default threshold
 		if ( thresholdChoice == 1 )
@@ -305,12 +306,14 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		return true;
 	}
 
+	/**
+	 * @return the parameter string stored with a label (StoredDetectionParameters reads it): the method and its values, then
+	 *         what both methods share (DifferenceOfGUI.commonParameters)
+	 */
 	@Override
 	public String getParameters()
 	{
-		return "DOG s=" + sigma + " t=" + threshold + " min=" + findMin + " max=" + findMax +
-				" downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] + " anisotropy=" + anisotropyZ +
-				" minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
+		return "DOG s=" + sigma + " t=" + threshold + " min=" + findMin + " max=" + findMax + commonParameters();
 	}
 
 	@Override
