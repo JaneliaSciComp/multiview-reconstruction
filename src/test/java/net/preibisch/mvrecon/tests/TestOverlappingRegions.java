@@ -115,7 +115,8 @@ public class TestOverlappingRegions
 		// the partner rule: another tile or angle of the same timepoint
 		assertEquals( List.of( V2 ), OverlappingRegions.otherVolumes( data, V0, all ) );
 		assertEquals( List.of( V2 ), OverlappingRegions.otherVolumes( data, V1, all ) );
-		assertEquals( List.of( V0, V1 ), OverlappingRegions.otherVolumes( data, V2, all ) );
+		assertEquals( List.of( V0 ), OverlappingRegions.otherVolumes( data, V2, all ), "one view per other volume, the one in the view's channel" );
+		assertEquals( List.of( V1 ), OverlappingRegions.otherVolumes( data, V2, List.of( V1 ) ), "else the first of that volume" );
 
 		// the bounding boxes: shifted by 64 px they overlap, by 364 px they do not
 		assertEquals( List.of( V2 ), OverlappingRegions.overlapping( data, V0, List.of( V2 ) ) );
@@ -144,9 +145,40 @@ public class TestOverlappingRegions
 		// the instance for the GUI: the partners of every view, the regions of a view without one are empty
 		final OverlappingRegions forGUI = OverlappingRegions.forOtherVolumes( data, all );
 		assertEquals( List.of( V2 ), forGUI.partners( V0 ) );
-		assertEquals( List.of( V0, V1 ), forGUI.partners( V2 ) );
+		assertEquals( List.of( V0 ), forGUI.partners( V2 ) );
 		assertEquals( 1, forGUI.intervals( V1, image, mipmap ).size() );
 		assertTrue( forGUI.intervals( new ViewId( 0, 7 ), image, mipmap ).isEmpty() );
+	}
+
+	/** the corner a diagonal neighbour covers lies inside the strip of a side neighbour and is dropped; the two strips of two side neighbours stay */
+	@Test
+	public void testContainedRegions()
+	{
+		// three volumes: view 1 shifted in x and y (a diagonal neighbour of view 0), view 2 shifted in x (a side neighbour)
+		final SpimData2 data = withAttributes( SimulateUtil.setUp(), new int[] { 0, 1, 2 }, new int[] { 0, 0, 0 }, new int[] { 0, 0, 0 } );
+		shift( data, V1, 64, 64 );
+		shift( data, V2, 64, 0 );
+
+		final Interval image = new FinalInterval( new long[] { 0, 0, 0 }, new long[] { 63, 63, 48 } );
+		final AffineTransform3D mipmap = new AffineTransform3D();
+		mipmap.set( 2, 0, 0 );
+		mipmap.set( 2, 1, 1 );
+
+		for ( final List< ViewId > partners : List.of( Arrays.asList( V1, V2 ), Arrays.asList( V2, V1 ) ) )
+		{
+			final List< Interval > regions = OverlappingRegions.intervals( data, V0, partners, image, mipmap );
+			assertEquals( 1, regions.size(), "the corner lies inside the strip" );
+			assertArrayEquals( new long[] { 32, 0, 0 }, regions.get( 0 ).minAsLongArray() );
+			assertArrayEquals( new long[] { 63, 63, 48 }, regions.get( 0 ).maxAsLongArray() );
+		}
+
+		// two side neighbours: both strips stay (they overlap in the corner only)
+		shift( data, V1, -64, 0 );
+		assertEquals( 2, OverlappingRegions.intervals( data, V0, Arrays.asList( V1, V2 ), image, mipmap ).size() );
+
+		final Interval a = new FinalInterval( new long[] { 0, 0, 0 }, new long[] { 9, 9, 9 } ), b = new FinalInterval( new long[] { 2, 2, 2 }, new long[] { 5, 5, 5 } );
+		assertEquals( List.of( a ), OverlappingRegions.dropContained( Arrays.asList( b, a ) ) );
+		assertEquals( List.of( a ), OverlappingRegions.dropContained( Arrays.asList( a, a, b ) ), "an identical region counts as inside the earlier one" );
 	}
 
 	static InterestPoint ip( final int id, final double x, final double y, final double z )

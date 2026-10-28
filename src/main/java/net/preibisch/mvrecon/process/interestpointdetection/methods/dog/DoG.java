@@ -129,8 +129,9 @@ public class DoG
 	/**
 	 * The detection of a view restricted to the regions that overlap other views (InterestPointParameters.regions): one
 	 * computeDoG call per region, expanded by one pixel and clipped to the image (findPeaks skips the outermost pixel of
-	 * its interval), with the intensity range of the whole view when none is set (computeDoG would otherwise normalize
-	 * every region on its own); the lists are mapped to full resolution and combined (OverlappingRegions.combine: the
+	 * its interval), in blocks no larger than the region (OverlappingRegions.cellSize), with the intensity range of the
+	 * whole view when none is set (computeDoG would otherwise normalize every region on its own); the lists are mapped
+	 * to full resolution and combined (OverlappingRegions.combine: the
 	 * regions of different partners overlap each other, the same pixels give the same detection). A view without a
 	 * region gets an empty list.
 	 *
@@ -184,7 +185,7 @@ public class DoG
 					dog.findMax,
 					minIntensity,
 					maxIntensity,
-					DoGImgLib2.blockSize,
+					OverlappingRegions.cellSize( expanded, DoGImgLib2.blockSize ), // no block larger than the region (a thin strip would cost whole blocks)
 					service,
 					dog.cuda,
 					dog.deviceCUDA,

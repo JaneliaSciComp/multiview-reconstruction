@@ -95,7 +95,8 @@ public class ScaleSpace
 	/**
 	 * The detection of a view restricted to the regions that overlap other views (InterestPointParameters.regions): one
 	 * computeDoGScaleSpace call per region (the image interval stays the whole image: the octaves and their domains are
-	 * the same as in a run on the whole view; the scale space finds the peaks on the region border itself), the lists
+	 * the same as in a run on the whole view; the scale space finds the peaks on the region border itself; the cells no
+	 * larger than the region, OverlappingRegions.cellSize), the lists
 	 * mapped to full resolution and combined (OverlappingRegions.combine: the regions of different partners overlap each
 	 * other), then the merge of near-identical peaks across the regions that a run on the whole image does within its
 	 * image (DoGScaleSpace.mergeDuplicates). The intensity range is the view's (p.scaleSpace, set by the caller). A view
@@ -125,7 +126,11 @@ public class ScaleSpace
 
 		for ( final Interval region : regions )
 		{
-			final List< InterestPoint > points = DoGScaleSpace.computeDoGScaleSpace( extended, image, region, null, p.scaleSpace, service );
+			// cells no larger than the region (a thin strip would cost whole cells along its thin dimension); the result does not depend on them
+			final ScaleSpaceParameters pRegion = new ScaleSpaceParameters( p.scaleSpace );
+			pRegion.cellSize = OverlappingRegions.cellSize( region, p.scaleSpace.cellSize );
+
+			final List< InterestPoint > points = DoGScaleSpace.computeDoGScaleSpace( extended, image, region, null, pRegion, service );
 
 			// maps positions and sigmas to full resolution
 			if ( !points.isEmpty() )

@@ -24,14 +24,20 @@ package net.preibisch.mvrecon.process.interestpointdetection;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.Angle;
+import mpicbg.spim.data.sequence.Channel;
+import mpicbg.spim.data.sequence.Illumination;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
@@ -57,14 +63,16 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  *
  * Geometry: a partner's full-resolution pixel box, mapped by the current registrations into the view and then into
  * the pixels of the opened (downsampled) image, intersected with that image ({@link #intersection}); one region per
- * partner, identical regions once ({@link #intervals}). Regions of different partners may overlap each other (the
- * corners of a tile grid), so the detections of the regions of a view are combined with {@link #combine}, which drops
- * a point closer than {@link #combineDistance} to one already collected (the same pixels give the same detection).
- * The partners of a view: the GUI takes the other selected views of the same timepoint that differ in tile or angle
- * ({@link #otherVolumes}; other channels and illuminations of the same volume overlap fully and would only turn the
- * regions into the whole view) whose bounding boxes intersect the view's ({@link #overlapping}); BigStitcher-Spark
- * takes all other selected views unless told otherwise. A view without a partner has no regions and gets no points.
- * No margin is added around a region.
+ * partner, identical regions once and a region that lies inside another dropped ({@link #intervals}: the corner a
+ * diagonal neighbour covers lies inside the strips of the side neighbours). Regions of different partners may still
+ * overlap each other (the corner shared by two strips), so the detections of the regions of a view are combined with
+ * {@link #combine}, which drops a point closer than {@link #combineDistance} to one already collected (the same pixels
+ * give the same detection). The partners of a view: the GUI takes the other selected volumes of the same timepoint,
+ * i.e. one view per other tile or angle ({@link #otherVolumes}: other channels and illuminations of the same volume
+ * see the same region, those of the view's own volume would only turn the regions into the whole view; the view in
+ * the same channel and illumination represents a volume if selected, else the first), whose bounding boxes intersect
+ * the view's ({@link #overlapping}); BigStitcher-Spark takes all other selected views unless told otherwise. A view
+ * without a partner has no regions and gets no points. No margin is added around a region.
  *
  * The detections themselves: {@code DoG.addInterestPoints} and {@code ScaleSpace.addInterestPoints} run one call per
  * region when {@code InterestPointParameters.regions} is set (the DoG with the region expanded by one pixel, since its
@@ -146,20 +154,23 @@ public class OverlappingRegions
 	}
 
 	/**
-	 * The partner rule of the GUI: the candidates of the same timepoint as the view whose tile or angle differs from the
-	 * view's (a missing attribute counts as equal), the view itself excluded. Other channels and illuminations of the
-	 * same tile and angle see the same volume.
+	 * The partner rule of the GUI: one view per other volume among the candidates, a volume being a tile and an angle of
+	 * the same timepoint as the view (a missing attribute counts as equal); the view's own volume is excluded (its other
+	 * channels and illuminations overlap it fully). The other channels and illuminations of another volume see the same
+	 * region, so one view represents it: the one in the view's channel and illumination if it is a candidate, else the
+	 * first candidate of that volume.
 	 *
 	 * @param data - the dataset
 	 * @param view - the view
 	 * @param candidates - e.g. the selected views
-	 * @return the other volumes among the candidates, in their order
+	 * @return the representatives of the other volumes, in the order of their first candidate
 	 */
 	public static List< ViewId > otherVolumes( final SpimData data, final ViewId view, final Collection< ? extends ViewId > candidates )
 	{
 		final ViewSetup vs = setup( data, view );
-		final Integer tile = tileId( vs ), angle = angleId( vs );
-		final List< ViewId > others = new ArrayList<>();
+		final Integer tile = tileId( vs ), angle = angleId( vs ), channel = channelId( vs ), illumination = illuminationId( vs );
+		final LinkedHashMap< List< Integer >, ViewId > representatives = new LinkedHashMap<>();
+		final Set< List< Integer > > ownChannel = new HashSet<>();
 
 		for ( final ViewId candidate : candidates )
 		{
@@ -167,14 +178,23 @@ public class OverlappingRegions
 				continue;
 
 			final ViewSetup cs = setup( data, candidate );
+			final List< Integer > volume = Arrays.asList( tileId( cs ), angleId( cs ) );
 
-			if ( Objects.equals( tileId( cs ), tile ) && Objects.equals( angleId( cs ), angle ) )
+			if ( Objects.equals( volume.get( 0 ), tile ) && Objects.equals( volume.get( 1 ), angle ) )
 				continue;
 
-			others.add( plain( candidate ) );
+			final boolean sameChannel = Objects.equals( channelId( cs ), channel ) && Objects.equals( illuminationId( cs ), illumination );
+
+			if ( !representatives.containsKey( volume ) || ( sameChannel && !ownChannel.contains( volume ) ) )
+			{
+				representatives.put( volume, plain( candidate ) );
+
+				if ( sameChannel )
+					ownChannel.add( volume );
+			}
 		}
 
-		return others;
+		return new ArrayList<>( representatives.values() );
 	}
 
 	/**
@@ -242,7 +262,8 @@ public class OverlappingRegions
 	 * @param partners - its partners
 	 * @param imageInterval - the interval of the opened (downsampled) image of the view
 	 * @param mipmapTransform - the transform of the opened image to the full-resolution pixels of the view
-	 * @return the regions ({@link #intersection}) of the partners that reach into the image, identical ones once, in the partners' order
+	 * @return the regions ({@link #intersection}) of the partners that reach into the image, identical ones once and
+	 *         those inside another dropped, in the partners' order
 	 */
 	public static List< Interval > intervals( final SpimData data, final ViewId view, final Collection< ? extends ViewId > partners, final Interval imageInterval, final AffineTransform3D mipmapTransform )
 	{
@@ -252,20 +273,35 @@ public class OverlappingRegions
 		{
 			final Interval region = intersection( data, view, partner, imageInterval, mipmapTransform );
 
-			if ( region == null )
-				continue;
-
-			boolean known = false;
-
-			for ( final Interval r : regions )
-				if ( Intervals.equals( r, region ) )
-					known = true;
-
-			if ( !known )
+			if ( region != null )
 				regions.add( region );
 		}
 
-		return regions;
+		return dropContained( regions );
+	}
+
+	/**
+	 * @param regions - the regions
+	 * @return the regions without those that lie inside another one (an identical one counts as inside the earlier one),
+	 *         in their order; a region inside another adds nothing but its own detection run
+	 */
+	public static List< Interval > dropContained( final List< Interval > regions )
+	{
+		final List< Interval > kept = new ArrayList<>();
+
+		for ( int i = 0; i < regions.size(); ++i )
+		{
+			boolean inside = false;
+
+			for ( int j = 0; j < regions.size() && !inside; ++j )
+				if ( i != j && Intervals.contains( regions.get( j ), regions.get( i ) ) && ( j < i || !Intervals.equals( regions.get( i ), regions.get( j ) ) ) )
+					inside = true;
+
+			if ( !inside )
+				kept.add( regions.get( i ) );
+		}
+
+		return kept;
 	}
 
 	/**
@@ -315,6 +351,25 @@ public class OverlappingRegions
 		return result;
 	}
 
+	/**
+	 * The cells (lazy blocks) to compute a region with: no cell larger than the region's extent in a dimension, rounded up
+	 * to a multiple of 16 (at least 16), otherwise the default. The detectors compute in cells of 96x96x64 pixels, and a
+	 * 26 px strip would cost a 64 px cell along its thin dimension; the result does not depend on the cells.
+	 *
+	 * @param region - the region
+	 * @param defaultCells - the default cell size (e.g. DoGImgLib2.blockSize, ScaleSpaceParameters.cellSize)
+	 * @return the cell size for the region
+	 */
+	public static int[] cellSize( final Interval region, final int[] defaultCells )
+	{
+		final int[] cells = defaultCells.clone();
+
+		for ( int d = 0; d < cells.length && d < region.numDimensions(); ++d )
+			cells[ d ] = (int)Math.min( cells[ d ], Math.max( 16, ( ( region.dimension( d ) + 15 ) / 16 ) * 16 ) );
+
+		return cells;
+	}
+
 	/** @return the number of points of all lists */
 	public static int size( final List< ? extends List< InterestPoint > > perRegion )
 	{
@@ -346,6 +401,18 @@ public class OverlappingRegions
 	{
 		final Angle angle = vs.getAngle();
 		return angle == null ? null : angle.getId();
+	}
+
+	static Integer channelId( final ViewSetup vs )
+	{
+		final Channel channel = vs.getChannel();
+		return channel == null ? null : channel.getId();
+	}
+
+	static Integer illuminationId( final ViewSetup vs )
+	{
+		final Illumination illumination = vs.getIllumination();
+		return illumination == null ? null : illumination.getId();
 	}
 
 	/** @return the full-resolution size of a view (the setup's, else loaded), null if unknown */

@@ -79,7 +79,9 @@ All interest points of a dataset live in `interestpoints.zarr` next to the XML, 
   `interestpoints.n5/spark_tmp_*` and the container is removed when it holds nothing else; its "(Spark)" strings carry the
   `commonParameters()` tail. Build it against `mvn install -DskipTests` of this repo (main + tests jar).
   "Only in regions overlapping other views" (2026-10-27, `process.interestpointdetection.OverlappingRegions`): a checkbox of the
-  detection dialog; partners = the other selected views of the same timepoint with another tile or angle whose boxes intersect;
+  detection dialog; partners = one view per other selected volume (tile, angle) of the same timepoint, the view's own channel
+  preferred, whose boxes intersect; regions inside another are dropped (a neighbour tile gives one strip, not one per channel);
+  the detection cells are no larger than the region (`OverlappingRegions.cellSize`, same result, a thin strip costs no whole cells);
   one detection call per region (DoG: region + 1 px, the view's intensity range once; scale space: whole image as imageInterval),
   the lists combined at 0.5 px (`combine`, new ids). `InterestPointParameters.regions` null = whole view, unchanged. Key
   `overlappingOnly=` in the strings, `overlappingOnly`/`onlyCompareOverlapTiles` in the history; BigStitcher-Spark calls the same statics.
