@@ -46,8 +46,9 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
  *
  * Older strings are read, too: the DoG of master ({@code downsampleXYIndex=<factor> downsampleZ=<factor>}, where 0 and
  * -1 meant "match the z resolution" and give no downsampling here) and the first scale-space strings ({@code downsampleXY=}),
- * both without an anisotropy, and BigStitcher-Spark's {@code DOG (Spark) ...} with {@code overlappingOnly=} (which only
- * Spark has). A string without {@code anisotropy=} gets the value its detection effectively used: the DoG of master and
+ * both without an anisotropy, and BigStitcher-Spark's {@code DOG (Spark) ...} with {@code overlappingOnly=} (since
+ * 2026-10-27 the GUI's strings carry it too: "Only in regions overlapping other views", OverlappingRegions). A string
+ * without {@code anisotropy=} gets the value its detection effectively used: the DoG of master and
  * Spark's DoG blur isotropically in pixels of the downsampled image, which is an anisotropy of downsampleXY / downsampleZ
  * at full resolution (1 if the factors are unknown); the early scale space used the ratio of the calibration. Whatever
  * else a string lacks keeps its current default. Not in any string: the filter choice (filtered labels have strings of
@@ -70,6 +71,7 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
  * @param groupIllums - whether the illuminations were grouped, null if absent
  * @param thresholdFromNoiseFloor - whether t was estimated from the noise floor, null if absent (fixed)
  * @param noiseFactor - the factor of that estimate, NaN if absent
+ * @param overlappingOnly - whether only the regions overlapping other views were detected in, null if absent
  *
  * @author Stephan Preibisch
  */
@@ -90,7 +92,8 @@ public record StoredDetectionParameters(
 		Boolean groupTiles,
 		Boolean groupIllums,
 		Boolean thresholdFromNoiseFloor,
-		double noiseFactor )
+		double noiseFactor,
+		Boolean overlappingOnly )
 {
 	/** the first token of the parameters string of the two detection methods */
 	public static final String DOG = "DOG", SCALE_SPACE = "DOG-SS";
@@ -153,7 +156,8 @@ public record StoredDetectionParameters(
 				values.containsKey( "groupTiles" ) ? Boolean.valueOf( values.get( "groupTiles" ) ) : null,
 				values.containsKey( "groupIllums" ) ? Boolean.valueOf( values.get( "groupIllums" ) ) : null,
 				values.containsKey( "thresholdType" ) ? Boolean.valueOf( "noisefloor".equals( values.get( "thresholdType" ) ) ) : null,
-				doubleValue( values, "noiseFactor" ) );
+				doubleValue( values, "noiseFactor" ),
+				values.containsKey( "overlappingOnly" ) ? Boolean.valueOf( values.get( "overlappingOnly" ) ) : null );
 	}
 
 	/** @return whether the string says how tiles and illuminations were grouped (then that wins over the explorer's grouping when the label is detected again) */
@@ -181,8 +185,8 @@ public record StoredDetectionParameters(
 	 * the detection), the resolution (the matching level of the first view, else a manual entry of the factors), the
 	 * anisotropy ({@link #effectiveAnisotropy}, with the first view's calibration, which the dialog compares before it
 	 * estimates a default of its own), the intensity range if one is stored, the subpixel localization, the grouping of
-	 * tiles and illuminations, the threshold type with its noise factor (fixed if the string has none), no filter, and the
-	 * method's "Advanced" specification with its sigma, threshold, minima/maxima and, for the scale space, steps, octaves
+	 * tiles and illuminations, whether only the regions overlapping other views are detected in (if the string says), the
+	 * threshold type with its noise factor (fixed if the string has none), no filter, and the method's "Advanced" specification with its sigma, threshold, minima/maxima and, for the scale space, steps, octaves
 	 * and finest level.
 	 *
 	 * @param data - the dataset
@@ -246,6 +250,9 @@ public record StoredDetectionParameters(
 		if ( !Double.isNaN( noiseFactor ) )
 			DifferenceOfGUI.defaultNoiseFactor = noiseFactor;
 		DifferenceOfGUI.defaultFilterChoice = DifferenceOfGUI.filterChoice.length - 1;
+
+		if ( overlappingOnly != null )
+			DifferenceOfGUI.defaultOverlappingOnly = overlappingOnly;
 
 		if ( scaleSpace )
 		{
@@ -314,6 +321,7 @@ public record StoredDetectionParameters(
 				" downsampling=" + ( downsampling == null ? "?" : Arrays.toString( downsampling ) ) + " anisotropy=" + anisotropy +
 				" intensities=" + minIntensity + ".." + maxIntensity +
 				" localization=" + ( localization < 0 ? "?" : DifferenceOfGUI.localizationKey( localization ) ) + " groupTiles=" + groupTiles + " groupIllums=" + groupIllums +
-				" thresholdType=" + ( thresholdFromNoiseFloor == null ? "?" : thresholdFromNoiseFloor ? "noisefloor (factor " + noiseFactor + ")" : "fixed" );
+				" thresholdType=" + ( thresholdFromNoiseFloor == null ? "?" : thresholdFromNoiseFloor ? "noisefloor (factor " + noiseFactor + ")" : "fixed" ) +
+				" overlappingOnly=" + ( overlappingOnly == null ? "?" : overlappingOnly );
 	}
 }

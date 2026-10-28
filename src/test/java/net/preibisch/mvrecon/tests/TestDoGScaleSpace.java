@@ -954,7 +954,8 @@ public class TestDoGScaleSpace
 			detectFinestLevel = true;
 		}};
 
-		assertEquals( "DOG-SS s=1.6 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=1.0 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
+		// the whole string, incl. the shared tail (DifferenceOfGUI.commonParameters)
+		assertEquals( "DOG-SS s=1.6 steps=4 octaves=-1 finestLevel=true t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=1.0 minIntensity=0.0 maxIntensity=1137.0 localization=QUADRATIC groupTiles=false groupIllums=false overlappingOnly=false thresholdType=fixed", gui.getParameters() );
 
 		final Map< String, String > d = gui.describeParameters();
 		assertEquals( "SCALE_SPACE", d.get( "detectionMethod" ) );

@@ -57,8 +57,8 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 public class TestStoredDetectionParameters
 {
 	// the strings as the GUIs write them since 2026-10-27 (DifferenceOfGUI.commonParameters)
-	static final String DOG = "DOG s=1.8 t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=3.5 minIntensity=0.0 maxIntensity=1137.0 localization=QUADRATIC groupTiles=true groupIllums=false thresholdType=noisefloor noiseFactor=3.0";
-	static final String SS = "DOG-SS s=1.6 steps=4 octaves=-1 finestLevel=true t=0.01 min=false max=true downsampleX=1 downsampleY=1 downsampleZ=1 anisotropy=1.0 minIntensity=NaN maxIntensity=NaN localization=NONE groupTiles=false groupIllums=true thresholdType=fixed";
+	static final String DOG = "DOG s=1.8 t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=3.5 minIntensity=0.0 maxIntensity=1137.0 localization=QUADRATIC groupTiles=true groupIllums=false overlappingOnly=true thresholdType=noisefloor noiseFactor=3.0";
+	static final String SS = "DOG-SS s=1.6 steps=4 octaves=-1 finestLevel=true t=0.01 min=false max=true downsampleX=1 downsampleY=1 downsampleZ=1 anisotropy=1.0 minIntensity=NaN maxIntensity=NaN localization=NONE groupTiles=false groupIllums=true overlappingOnly=false thresholdType=fixed";
 	// the strings before that (no localization, grouping, threshold type)
 	static final String DOG_2026_10 = "DOG s=1.8 t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=3.5 minIntensity=0.0 maxIntensity=1137.0";
 	static final String SPARK_DOG = "DOG (Spark) s=1.8 t=0.008 overlappingOnly=true min=false max=true downsampleXY=4 downsampleZ=2 minIntensity=0.0 maxIntensity=2048.0";
@@ -69,7 +69,7 @@ public class TestStoredDetectionParameters
 	// the statics preset writes, saved before and restored after each test (they are shared by all tests of the JVM)
 	String label;
 	int algorithm, resolutionIndex, brightness, thresholdChoice, filterChoice, ssSteps, ssOctaves, ssSpecification, localization;
-	boolean setMinMax, manual, dogMin, dogMax, ssMin, ssMax, groupTiles, groupIllums;
+	boolean setMinMax, manual, dogMin, dogMax, ssMin, ssMax, groupTiles, groupIllums, overlappingOnly;
 	long[] manualDownsampling;
 	double anisotropyZ, anisotropyCalibration, minIntensity, maxIntensity, dogSigma, dogThreshold, ssSigma, ssThreshold, noiseFactor;
 	Boolean finest;
@@ -83,6 +83,7 @@ public class TestStoredDetectionParameters
 		groupTiles = Interest_Point_Detection.defaultGroupTiles;
 		groupIllums = Interest_Point_Detection.defaultGroupIllums;
 		localization = DifferenceOfGUI.defaultLocalization;
+		overlappingOnly = DifferenceOfGUI.defaultOverlappingOnly;
 		noiseFactor = DifferenceOfGUI.defaultNoiseFactor;
 		resolutionIndex = DifferenceOfGUI.defaultResolutionIndex;
 		manual = DifferenceOfGUI.defaultManual;
@@ -117,6 +118,7 @@ public class TestStoredDetectionParameters
 		Interest_Point_Detection.defaultGroupTiles = groupTiles;
 		Interest_Point_Detection.defaultGroupIllums = groupIllums;
 		DifferenceOfGUI.defaultLocalization = localization;
+		DifferenceOfGUI.defaultOverlappingOnly = overlappingOnly;
 		DifferenceOfGUI.defaultNoiseFactor = noiseFactor;
 		DifferenceOfGUI.defaultResolutionIndex = resolutionIndex;
 		DifferenceOfGUI.defaultManual = manual;
@@ -159,6 +161,7 @@ public class TestStoredDetectionParameters
 		assertEquals( -1, dog.steps() );
 		assertEquals( Integer.MIN_VALUE, dog.octaves() );
 		assertNull( dog.finestLevel() );
+		assertEquals( Boolean.TRUE, dog.overlappingOnly() );
 		assertEquals( 1, dog.localization() );
 		assertEquals( Boolean.TRUE, dog.groupTiles() );
 		assertEquals( Boolean.FALSE, dog.groupIllums() );
@@ -172,6 +175,7 @@ public class TestStoredDetectionParameters
 		assertNull( older.groupTiles() );
 		assertFalse( older.hasGrouping() );
 		assertNull( older.thresholdFromNoiseFloor() );
+		assertNull( older.overlappingOnly() );
 		assertTrue( Double.isNaN( older.noiseFactor() ) );
 		assertEquals( 3.5, older.effectiveAnisotropy( 9.0 ), 0.0, "a stored anisotropy wins" );
 
@@ -181,6 +185,7 @@ public class TestStoredDetectionParameters
 		assertFalse( spark.scaleSpace() );
 		assertArrayEquals( new long[] { 4, 4, 2 }, spark.downsampling() );
 		assertEquals( 2.0, spark.effectiveAnisotropy( 9.0 ), 0.0 );
+		assertEquals( Boolean.TRUE, spark.overlappingOnly(), "Spark's key is read" );
 		assertEquals( 2.0, StoredDetectionParameters.parse( MASTER_DOG ).effectiveAnisotropy( 9.0 ), 0.0 );
 		assertEquals( 1.0, StoredDetectionParameters.parse( MASTER_DOG_MATCH_Z ).effectiveAnisotropy( 9.0 ), 0.0, "factors unknown" );
 		// the early scale space: the ratio of the calibration
@@ -271,6 +276,7 @@ public class TestStoredDetectionParameters
 		assertEquals( 0, DifferenceOfGUI.defaultLocalization );
 		assertFalse( Interest_Point_Detection.defaultGroupTiles );
 		assertTrue( Interest_Point_Detection.defaultGroupIllums );
+		assertFalse( DifferenceOfGUI.defaultOverlappingOnly );
 
 		// legacy DoG, a downsampling that is no level of the data (manual), an intensity range
 		final String manualDog = DOG.replace( "downsampleX=2 downsampleY=2 downsampleZ=1", "downsampleX=64 downsampleY=64 downsampleZ=64" );
@@ -295,6 +301,7 @@ public class TestStoredDetectionParameters
 		assertFalse( Interest_Point_Detection.defaultGroupIllums );
 		assertEquals( 1, DifferenceOfGUI.defaultThresholdChoice, "estimated from the noise floor" );
 		assertEquals( 3.0, DifferenceOfGUI.defaultNoiseFactor, 0.0 );
+		assertTrue( DifferenceOfGUI.defaultOverlappingOnly );
 
 		// an older string: the grouping and the localization stay as they are, the threshold type is fixed, the anisotropy is derived
 		DifferenceOfGUI.defaultLocalization = 2;
@@ -302,6 +309,7 @@ public class TestStoredDetectionParameters
 		Interest_Point_Detection.defaultGroupIllums = true;
 		StoredDetectionParameters.parse( MASTER_DOG ).preset( data, views, "master" );
 		assertEquals( 2, DifferenceOfGUI.defaultLocalization );
+		assertTrue( DifferenceOfGUI.defaultOverlappingOnly, "an older string leaves it as it is" );
 		assertTrue( Interest_Point_Detection.defaultGroupTiles && Interest_Point_Detection.defaultGroupIllums );
 		assertEquals( 0, DifferenceOfGUI.defaultThresholdChoice );
 		assertEquals( 2.0, DifferenceOfGUI.defaultAnisotropyZ, 0.0, "4 / 2: isotropic in pixels of the downsampled image" );

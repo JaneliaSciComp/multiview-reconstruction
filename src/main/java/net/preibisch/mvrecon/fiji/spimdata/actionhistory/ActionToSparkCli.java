@@ -264,6 +264,8 @@ public class ActionToSparkCli
 				new String[]{ "octaves", "--octaves" },
 				new String[]{ "noFinestLevel", "--no-finestLevel" },
 				new String[]{ "overlappingOnly", "--overlappingOnly" },
+				// the GUI's partner rule for the regions (other tiles or angles of the same timepoint), recorded with overlappingOnly
+				new String[]{ "onlyCompareOverlapTiles", "--onlyCompareOverlapTiles" },
 				new String[]{ "blockSize", "--blockSize" },
 				new String[]{ "medianFilter", "--medianFilter" },
 				new String[]{ "maxSpots", "--maxSpots" }

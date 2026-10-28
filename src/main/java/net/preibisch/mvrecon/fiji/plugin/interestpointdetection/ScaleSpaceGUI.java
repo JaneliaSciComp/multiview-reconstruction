@@ -123,6 +123,12 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		}
 		p.put( "downsampleZ", Long.toString( downsampling[ 2 ] ) );
 		p.put( "anisotropy", Double.toString( anisotropyZ ) );
+		// only in the regions overlapping other volumes (BigStitcher-Spark's --overlappingOnly with --onlyCompareOverlapTiles, the GUI's partner rule)
+		if ( overlappingOnly )
+		{
+			p.put( "overlappingOnly", "true" );
+			p.put( "onlyCompareOverlapTiles", "true" );
+		}
 		return p;
 	}
 
@@ -189,6 +195,9 @@ public class ScaleSpaceGUI extends DifferenceOfGUI
 		p.scaleSpace.steps = this.steps;
 		p.scaleSpace.octaves = this.octaves;
 		p.scaleSpace.detectFinestLevel = this.detectFinestLevel;
+
+		// the regions of the views that overlap other volumes, if the detection is restricted to them
+		p.regions = regions();
 
 		return p;
 	}

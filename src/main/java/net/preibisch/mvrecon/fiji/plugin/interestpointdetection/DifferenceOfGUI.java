@@ -69,6 +69,7 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DisplayFusedImagesPopup;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
+import net.preibisch.mvrecon.process.interestpointdetection.OverlappingRegions;
 import net.preibisch.mvrecon.process.export.DisplayImage;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
@@ -106,6 +107,9 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	public static double defaultMaxIntensity = 65535.0;
 	public static boolean defaultSameMinMax = false;
 
+	/** "Only in regions overlapping other views": detect only where other volumes (another tile or angle of the same timepoint, among the selected views) overlap by the current registrations (OverlappingRegions) */
+	public static boolean defaultOverlappingOnly = false;
+
 	protected double minIntensity, maxIntensity;
 
 	protected int localization;
@@ -125,6 +129,12 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	public static boolean useAverageMapBack = true;
 
 	boolean groupTiles, groupIllums, sameMinMax;
+
+	/** detect only in the regions of a view that overlap other volumes (OverlappingRegions.forOtherVolumes), see defaultOverlappingOnly */
+	protected boolean overlappingOnly = false;
+
+	/** the regions of this run once computed (regions()) */
+	private OverlappingRegions regions = null;
 	public static int defaultFuseFrom = 0;
 	public static int defaultFuseTo = 100;
 	protected int fuseFrom = 0, fuseTo = 100;
@@ -187,16 +197,31 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	 * The part of the parameters string stored with a label (getParameters) that both methods share, after their own
 	 * values: the resolution and the anisotropy the detection ran with, the intensity range (NaN if none was set; the
 	 * entered one or the common one the detection computed), and what else decides the detections: the subpixel
-	 * localization, the grouping of tiles and illuminations, the threshold type (fixed, or estimated from the noise floor
-	 * with the noise factor; the estimated value itself is in t). StoredDetectionParameters reads it back to detect a
-	 * label again with the same settings.
+	 * localization, the grouping of tiles and illuminations, whether only the regions overlapping other views were
+	 * detected in, the threshold type (fixed, or estimated from the noise floor with the noise factor; the estimated
+	 * value itself is in t). StoredDetectionParameters reads it back to detect a label again with the same settings.
 	 */
 	protected String commonParameters()
 	{
 		return " downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] + " anisotropy=" + anisotropyZ +
 				" minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity +
-				" localization=" + localizationKey( localization ) + " groupTiles=" + groupTiles + " groupIllums=" + groupIllums +
+				" localization=" + localizationKey( localization ) + " groupTiles=" + groupTiles + " groupIllums=" + groupIllums + " overlappingOnly=" + overlappingOnly +
 				( thresholdFromNoiseFloor ? " thresholdType=noisefloor noiseFactor=" + noiseFactor : " thresholdType=fixed" );
+	}
+
+	/**
+	 * @return the regions of the views that overlap other volumes (OverlappingRegions.forOtherVolumes over the views of
+	 *         this run, computed once) if the detection is restricted to them, null otherwise (the whole views)
+	 */
+	protected OverlappingRegions regions()
+	{
+		if ( !overlappingOnly )
+			return null;
+
+		if ( regions == null )
+			regions = OverlappingRegions.forOtherVolumes( spimData, viewIdsToProcess );
+
+		return regions;
 	}
 
 	public DifferenceOfGUI( final SpimData2 spimData, final List< ViewId > viewIdsToProcess )
@@ -279,6 +304,10 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			gd.addCheckbox( "Use_same_min & max intensity for all views", defaultSameMinMax );
 		}
 
+		// only where other volumes overlap, by the current registrations (OverlappingRegions)
+		gd.addCheckbox( "Only_in_regions_overlapping_other_views", defaultOverlappingOnly );
+		gd.addMessage( "(other tiles or angles of the same timepoint among the selected views; a view without one gets no points)", GUIHelper.smallStatusFont );
+
 		// a shortcut to the filter dialogs of the explorer for the label of this detection (the chosen dialog opens after this one)
 		gd.addChoice( "Filter_interest_points", filterChoice, filterChoice[ defaultFilterChoice ] );
 
@@ -308,6 +337,8 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			minIntensity = maxIntensity = Double.NaN;
 			sameMinMax = defaultSameMinMax = gd.getNextBoolean();
 		}
+
+		overlappingOnly = defaultOverlappingOnly = gd.getNextBoolean();
 
 		if ( !dispatchSpecification( brightness ) )
 			return false;

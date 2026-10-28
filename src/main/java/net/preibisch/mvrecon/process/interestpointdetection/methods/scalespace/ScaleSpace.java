@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace;
 
 import java.util.Date;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -31,6 +32,7 @@ import ij.IJ;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
+import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -41,6 +43,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
+import net.preibisch.mvrecon.process.interestpointdetection.OverlappingRegions;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -89,6 +92,69 @@ public class ScaleSpace
 	 * @param interestPoints - the map the detections are added to, one list per view
 	 * @param p - the parameters (views, loader, starting resolution, anisotropy, intensity range, limit, the scale space)
 	 */
+	/**
+	 * The detection of a view restricted to the regions that overlap other views (InterestPointParameters.regions): one
+	 * computeDoGScaleSpace call per region (the image interval stays the whole image: the octaves and their domains are
+	 * the same as in a run on the whole view; the scale space finds the peaks on the region border itself), the lists
+	 * mapped to full resolution and combined (OverlappingRegions.combine: the regions of different partners overlap each
+	 * other), then the merge of near-identical peaks across the regions that a run on the whole image does within its
+	 * image (DoGScaleSpace.mergeDuplicates). The intensity range is the view's (p.scaleSpace, set by the caller). A view
+	 * without a region gets an empty list.
+	 *
+	 * @param vd - the view
+	 * @param img - the opened (downsampled) image
+	 * @param mipmapTransform - its transform to full resolution
+	 * @param p - the parameters (regions set, scaleSpace.minIntensity/maxIntensity/anisotropy set for this view)
+	 * @param service - the executor
+	 * @return the detections of the view at full resolution, ids 0..n-1
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	static List< InterestPoint > detectInRegions( final ViewDescription vd, final RandomAccessibleInterval img, final AffineTransform3D mipmapTransform, final ScaleSpaceDetectionParameters p, final ExecutorService service )
+	{
+		final FinalInterval image = new FinalInterval( img );
+		final List< Interval > regions = p.regions.intervals( vd, image, mipmapTransform );
+
+		if ( regions.isEmpty() )
+		{
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): " + Group.pvid( vd ) + " has no region overlapping another view, no interest points" );
+			return new ArrayList<>();
+		}
+
+		final RandomAccessible extended = Views.extendMirrorSingle( img );
+		final List< List< InterestPoint > > perRegion = new ArrayList<>();
+
+		for ( final Interval region : regions )
+		{
+			final List< InterestPoint > points = DoGScaleSpace.computeDoGScaleSpace( extended, image, region, null, p.scaleSpace, service );
+
+			// maps positions and sigmas to full resolution
+			if ( !points.isEmpty() )
+				DownsampleTools.correctForDownsampling( points, mipmapTransform );
+
+			perRegion.add( points );
+		}
+
+		ArrayList< InterestPoint > combined = OverlappingRegions.combine( perRegion, OverlappingRegions.combineDistance );
+		final int duplicates = OverlappingRegions.size( perRegion ) - combined.size();
+		int merged = 0;
+
+		if ( combined.size() > 1 )
+		{
+			final double[] scale = new double[] { Math.abs( mipmapTransform.get( 0, 0 ) ), Math.abs( mipmapTransform.get( 1, 1 ) ), Math.abs( mipmapTransform.get( 2, 2 ) ) };
+			final int before = combined.size();
+			final ArrayList< InterestPoint > mergedPoints = DoGScaleSpace.mergeDuplicates( combined, scale, p.scaleSpace.sigmaMin, p.scaleSpace.combineDistance );
+			merged = before - mergedPoints.size();
+
+			combined = new ArrayList<>( mergedPoints.size() );
+			for ( int id = 0; id < mergedPoints.size(); ++id )
+				combined.add( mergedPoints.get( id ).derive( id, mergedPoints.get( id ).getL() ) );
+		}
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): " + Group.pvid( vd ) + ": " + combined.size() + " interest points in " + regions.size() + " region(s) overlapping other views (" + duplicates + " duplicate(s) where the regions overlap each other dropped, " + merged + " near-identical peak(s) merged across regions)" );
+
+		return combined;
+	}
+
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static void addInterestPoints( final HashMap< ViewId, List< InterestPoint > > interestPoints, final ScaleSpaceDetectionParameters p )
 	{
@@ -142,21 +208,28 @@ public class ScaleSpace
 
 				try
 				{
-					ips = DoGScaleSpace.computeDoGScaleSpace(
-						(RandomAccessible)Views.extendMirrorSingle( input.getA() ),
-						new FinalInterval( input.getA() ),
-						new FinalInterval( input.getA() ),
-						null, // mask
-						p.scaleSpace,
-						service );
+					if ( p.regions == null )
+					{
+						ips = DoGScaleSpace.computeDoGScaleSpace(
+							(RandomAccessible)Views.extendMirrorSingle( input.getA() ),
+							new FinalInterval( input.getA() ),
+							new FinalInterval( input.getA() ),
+							null, // mask
+							p.scaleSpace,
+							service );
+
+						// maps positions and sigmas to full resolution
+						DownsampleTools.correctForDownsampling( ips, input.getB() );
+					}
+					else
+					{
+						ips = detectInRegions( vd, input.getA(), input.getB(), p, service );
+					}
 				}
 				finally
 				{
 					service.shutdown();
 				}
-
-				// maps positions and sigmas to full resolution
-				DownsampleTools.correctForDownsampling( ips, input.getB() );
 
 				interestPoints.put( vd, ips );
 			}

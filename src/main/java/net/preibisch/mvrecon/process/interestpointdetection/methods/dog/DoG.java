@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.process.interestpointdetection.methods.dog;
 
 import java.util.Date;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -31,6 +32,7 @@ import ij.IJ;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
+import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -38,12 +40,16 @@ import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
+import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
+import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.interestpointdetection.OverlappingRegions;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class DoG
 {
@@ -121,6 +127,85 @@ public class DoG
 	}
 
 	/**
+	 * The detection of a view restricted to the regions that overlap other views (InterestPointParameters.regions): one
+	 * computeDoG call per region, expanded by one pixel and clipped to the image (findPeaks skips the outermost pixel of
+	 * its interval), with the intensity range of the whole view when none is set (computeDoG would otherwise normalize
+	 * every region on its own); the lists are mapped to full resolution and combined (OverlappingRegions.combine: the
+	 * regions of different partners overlap each other, the same pixels give the same detection). A view without a
+	 * region gets an empty list.
+	 *
+	 * @param vd - the view
+	 * @param img - the opened (downsampled) image
+	 * @param mipmapTransform - its transform to full resolution
+	 * @param anisotropy - the anisotropy of the opened image (DownsampleTools.anisotropy), null = isotropic in pixels
+	 * @param dog - the parameters (regions set)
+	 * @param service - the executor
+	 * @return the detections of the view at full resolution, ids 0..n-1
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	static List< InterestPoint > detectInRegions( final ViewDescription vd, final RandomAccessibleInterval img, final AffineTransform3D mipmapTransform, final double[] anisotropy, final DoGParameters dog, final ExecutorService service )
+	{
+		final FinalInterval image = new FinalInterval( img );
+		final List< Interval > regions = dog.regions.intervals( vd, image, mipmapTransform );
+
+		if ( regions.isEmpty() )
+		{
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): " + Group.pvid( vd ) + " has no region overlapping another view, no interest points" );
+			return new ArrayList<>();
+		}
+
+		double minIntensity = dog.minIntensity, maxIntensity = dog.maxIntensity;
+
+		if ( Double.isNaN( minIntensity ) || Double.isNaN( maxIntensity ) || Double.isInfinite( minIntensity ) || Double.isInfinite( maxIntensity ) || minIntensity == maxIntensity )
+		{
+			final float[] minmax = FusionTools.minMax( img, service );
+			minIntensity = minmax[ 0 ];
+			maxIntensity = minmax[ 1 ];
+
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): intensity range of the view = [" + minIntensity + ", " + maxIntensity + "] (computed once for all its regions, not set by the user)" );
+		}
+
+		final RandomAccessible extended = Views.extendMirrorSingle( img );
+		final List< List< InterestPoint > > perRegion = new ArrayList<>();
+
+		for ( final Interval region : regions )
+		{
+			final Interval expanded = Intervals.intersect( Intervals.expand( region, 1 ), image );
+
+			final List< InterestPoint > points = DoGImgLib2.computeDoG(
+					extended,
+					null, // mask
+					expanded,
+					dog.sigma,
+					anisotropy,
+					dog.threshold,
+					dog.localization,
+					dog.findMin,
+					dog.findMax,
+					minIntensity,
+					maxIntensity,
+					DoGImgLib2.blockSize,
+					service,
+					dog.cuda,
+					dog.deviceCUDA,
+					dog.accurateCUDA,
+					dog.percentGPUMem );
+
+			// maps the positions to full resolution
+			if ( !points.isEmpty() )
+				DownsampleTools.correctForDownsampling( points, mipmapTransform );
+
+			perRegion.add( points );
+		}
+
+		final ArrayList< InterestPoint > combined = OverlappingRegions.combine( perRegion, OverlappingRegions.combineDistance );
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): " + Group.pvid( vd ) + ": " + combined.size() + " interest points in " + regions.size() + " region(s) overlapping other views (" + ( OverlappingRegions.size( perRegion ) - combined.size() ) + " duplicate(s) where the regions overlap each other dropped)" );
+
+		return combined;
+	}
+
+	/**
 	 * Detects the interest points of every present view in dog.toProcess and adds them to the map: the view is opened
 	 * at the downsampling (DownsampleTools.openAndDownsample, not virtual), DoGImgLib2.computeDoG runs on the entire
 	 * view, the detections are mapped to full resolution with the mipmap transform. A failing
@@ -170,32 +255,39 @@ public class DoG
 
 				try
 				{
-					ips = DoGImgLib2.computeDoG(
-							(RandomAccessible)Views.extendMirrorSingle( input.getA() ),
-							null, // mask
-							new FinalInterval( input.getA() ),
-							dog.sigma,
-							anisotropy,
-							dog.threshold,
-							dog.localization,
-							dog.findMin,
-							dog.findMax,
-							dog.minIntensity,
-							dog.maxIntensity,
-							DoGImgLib2.blockSize,
-							service,
-							dog.cuda,
-							dog.deviceCUDA,
-							dog.accurateCUDA,
-							dog.percentGPUMem );
+					if ( dog.regions == null )
+					{
+						ips = DoGImgLib2.computeDoG(
+								(RandomAccessible)Views.extendMirrorSingle( input.getA() ),
+								null, // mask
+								new FinalInterval( input.getA() ),
+								dog.sigma,
+								anisotropy,
+								dog.threshold,
+								dog.localization,
+								dog.findMin,
+								dog.findMax,
+								dog.minIntensity,
+								dog.maxIntensity,
+								DoGImgLib2.blockSize,
+								service,
+								dog.cuda,
+								dog.deviceCUDA,
+								dog.accurateCUDA,
+								dog.percentGPUMem );
+
+						// maps the positions to full resolution
+						DownsampleTools.correctForDownsampling( ips, input.getB() );
+					}
+					else
+					{
+						ips = detectInRegions( vd, input.getA(), input.getB(), anisotropy, dog, service );
+					}
 				}
 				finally
 				{
 					service.shutdown();
 				}
-
-				// maps the positions to full resolution
-				DownsampleTools.correctForDownsampling( ips, input.getB() );
 
 				interestPoints.put( vd, ips );
 			} catch ( Exception e )

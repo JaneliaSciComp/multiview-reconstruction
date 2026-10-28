@@ -307,7 +307,8 @@ public class TestDoGAnisotropy
 			findMax = true;
 		}};
 
-		assertEquals( "DOG s=1.8 t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=1.5 minIntensity=0.0 maxIntensity=1137.0", gui.getParameters() );
+		// the whole string, incl. the shared tail (DifferenceOfGUI.commonParameters)
+		assertEquals( "DOG s=1.8 t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1 anisotropy=1.5 minIntensity=0.0 maxIntensity=1137.0 localization=QUADRATIC groupTiles=false groupIllums=false overlappingOnly=false thresholdType=fixed", gui.getParameters() );
 
 		final Map< String, String > d = gui.describeParameters();
 		assertEquals( "2", d.get( "downsampleXY" ) );

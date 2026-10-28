@@ -26,6 +26,7 @@ import java.util.Collection;
 
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
+import net.preibisch.mvrecon.process.interestpointdetection.OverlappingRegions;
 
 public class InterestPointParameters
 {
@@ -41,6 +42,9 @@ public class InterestPointParameters
 
 	public double showProgressMin = Double.NaN;
 	public double showProgressMax = Double.NaN;
+
+	/** the regions of the views to detect in (OverlappingRegions, "only in regions overlapping other views"); null = the whole view */
+	public OverlappingRegions regions = null;
 
 	public InterestPointParameters() {}
 

@@ -119,6 +119,13 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		// z voxel / xy voxel at full resolution, the Gaussians are isotropic in physical units; BigStitcher-Spark has no such
 		// option yet (its DoG is isotropic in pixels), ActionToSparkCli warns and renders the command without it
 		p.put( "anisotropy", Double.toString( anisotropyZ ) );
+		// only in the regions overlapping other volumes: BigStitcher-Spark's --overlappingOnly, with --onlyCompareOverlapTiles for
+		// the GUI's partner rule (other tiles or angles of the same timepoint)
+		if ( overlappingOnly )
+		{
+			p.put( "overlappingOnly", "true" );
+			p.put( "onlyCompareOverlapTiles", "true" );
+		}
 		// no "Limit amount of detections" any more (2026-10-20): a count limit is a filtered label (filter-interestpoints record, InterestPointFilter.Limit)
 		return p;
 	}
@@ -156,6 +163,9 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		dog.deviceCUDA = this.deviceCUDA;
 		dog.accurateCUDA = this.accurateCUDA;
 		dog.percentGPUMem = this.percentGPUMem;
+
+		// the regions of the views that overlap other volumes, if the detection is restricted to them
+		dog.regions = regions();
 
 		return dog;
 	}
