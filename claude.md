@@ -70,6 +70,12 @@ All interest points of a dataset live in `interestpoints.zarr` next to the XML, 
   built in `DifferenceOfGUI.commonParameters()`; a stored grouping wins over the explorer's when a label is detected again. A
   string without `anisotropy=` is preset with what its detection used (`effectiveAnisotropy`: downsampleXY / downsampleZ for the
   old and the Spark DoG, the calibration ratio for the early scale space), not the dialog's estimate.
+  BigStitcher-Spark's branch `scalespace-pr108` (commit 484b16a of 2026-10-24 plus 2026-10-27) runs on the store: detection
+  tasks `stagePoints`, split-images tasks `saveStaged`, the driver's XML save commits (`InterestPointTools.addInterestPointEntries`
+  registers a detected label, after `removeReferences` for an existing one), matching commits through
+  `saveInterestPointsInParallel`, clear-interestpoints deletes through the lists; its per-block scratch stays an N5 group
+  `interestpoints.n5/spark_tmp_*` and the container is removed when it holds nothing else; its "(Spark)" strings carry the
+  `commonParameters()` tail. Build it against `mvn install -DskipTests` of this repo (main + tests jar).
 
 ```
 interestpoints.zarr/zarr.json            root: interestpoints = "2.0.0"
@@ -280,9 +286,9 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
   distances (RGLDM default 3, GH default 10).
 - FRGLDM (`fastrgldm` package, `FRGLDMGUI`, `--method FAST_TRANSLATION` in BigStitcher-Spark) was removed on 2026-09-30
   together with its descriptor `TranslationInvariantLocalCoordinateSystemPointDescriptor`, whose `localize(double[])` had
-  filled only 6 of 9 components since 2017. RGLDM in AUTO mode is faster and exact. BigStitcher-Spark still references the
-  removed classes and must map `FAST_TRANSLATION` to RGLDM/AUTO (or drop it) before it bumps its multiview-reconstruction
-  dependency past 9.0.13.
+  filled only 6 of 9 components since 2017. RGLDM in AUTO mode is faster and exact. BigStitcher-Spark's `scalespace-pr108`
+  (mvr 10.0.0-SNAPSHOT) no longer references the removed classes; a BigStitcher-Spark branch that still offers `--method
+  FAST_TRANSLATION` must map it to RGLDM/AUTO (or drop it) before it bumps its multiview-reconstruction dependency past 9.0.13.
 
 ## BDV Performance — Use Batch APIs
 
