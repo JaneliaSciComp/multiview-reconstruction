@@ -60,36 +60,58 @@ public class DetectInterestPointsPopup extends JMenuItem implements ExplorerWind
 		@Override
 		public void actionPerformed( final ActionEvent e )
 		{
-			if ( panel == null )
-			{
-				IOFunctions.println( "Panel not set for " + this.getClass().getSimpleName() );
-				return;
-			}
+			detect( panel );
+		}
+	}
 
-			if ( !SpimData2.class.isInstance( panel.getSpimData() ) )
-			{
-				IOFunctions.println( "Only supported for SpimData2 objects: " + this.getClass().getSimpleName() );
-				return;
-			}
+	/**
+	 * Runs "Detect Interest Points ..." for the selected views of the explorer in a thread of its own: the dialog, the
+	 * detection, the refresh of the explorer; the grouping of tiles and illuminations is suggested as the explorer groups them
+	 */
+	public static void detect( final ExplorerWindow< ? > panel )
+	{
+		detect( panel, true );
+	}
 
-			new Thread( new Runnable()
+	/**
+	 * As {@link #detect(ExplorerWindow)}; with {@code groupingFromPanel} false the current defaults of the grouping stay as
+	 * they are: "Re-detect interest points (stored parameters)" (RemoveDetectionsPopup) presets them from the label's
+	 * parameters string, which wins over the explorer's grouping
+	 */
+	public static void detect( final ExplorerWindow< ? > panel, final boolean groupingFromPanel )
+	{
+		if ( panel == null )
+		{
+			IOFunctions.println( "Panel not set for " + DetectInterestPointsPopup.class.getSimpleName() );
+			return;
+		}
+
+		if ( !SpimData2.class.isInstance( panel.getSpimData() ) )
+		{
+			IOFunctions.println( "Only supported for SpimData2 objects: " + DetectInterestPointsPopup.class.getSimpleName() );
+			return;
+		}
+
+		new Thread( new Runnable()
+		{
+			@Override
+			public void run()
 			{
-				@Override
-				public void run()
+				final List< ViewId > viewIds = ApplyTransformationPopup.getSelectedViews( panel );
+
+				// by default the registration suggests what is selected in the dialog
+				if ( groupingFromPanel )
 				{
-					final List< ViewId > viewIds = ApplyTransformationPopup.getSelectedViews( panel );
-
-					// by default the registration suggests what is selected in the dialog
 					Interest_Point_Detection.defaultGroupTiles = panel.tilesGrouped();
 					Interest_Point_Detection.defaultGroupIllums = panel.illumsGrouped();
-					Interest_Point_Detection.currentPanel = panel;
-
-					if ( new Interest_Point_Detection().detectInterestPoints( (SpimData2)panel.getSpimData(), viewIds ) )
-						panel.updateContent(); // update interestpoint panel if available
-
-					Interest_Point_Detection.currentPanel = null;
 				}
-			}).start();
-		}
+				Interest_Point_Detection.currentPanel = panel;
+
+				if ( new Interest_Point_Detection().detectInterestPoints( (SpimData2)panel.getSpimData(), viewIds ) )
+					panel.updateContent(); // update interestpoint panel if available
+
+				Interest_Point_Detection.currentPanel = null;
+			}
+		}).start();
 	}
 }

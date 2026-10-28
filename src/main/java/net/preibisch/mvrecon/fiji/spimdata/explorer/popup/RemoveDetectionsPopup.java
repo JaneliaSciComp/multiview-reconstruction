@@ -30,6 +30,7 @@ import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -47,17 +48,20 @@ import net.preibisch.mvrecon.fiji.plugin.Limit_Detections;
 import net.preibisch.mvrecon.fiji.plugin.RelativeThinOut_Detections;
 import net.preibisch.mvrecon.fiji.plugin.Show_Relative_Histogram;
 import net.preibisch.mvrecon.fiji.plugin.ThinOut_Detections;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.StoredDetectionParameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointExplorer;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5ToZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointremoval.DistanceHistogram;
@@ -86,6 +90,7 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		final JMenuItem createLimited = new JMenuItem( "Filter interest points (keep fixed number) ..." );
 		final JMenu createRamp = new JMenu( "Filter interest points (threshold ramp)" );
 		final JMenu filterInteractively = new JMenu( "Filter interest points (interactively)" );
+		final JMenu redetect = new JMenu( "Re-detect interest points (stored parameters)" );
 		final JMenuItem createFromCorr = new JMenuItem( "New interest points from correspondences ..." );
 		final JMenu showDistanceHist = new JMenu( "Show Distance Histogram" );
 		final JMenuItem showRelativeDistanceHist = new JMenuItem( "Show Relative Distance Histogram ... " );
@@ -202,6 +207,24 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 			public void menuCanceled( final MenuEvent e ) {}
 		} );
 		this.add( filterInteractively );
+
+		// the labels of the selected views whose points lack response, sigma or intensity (detected before the attributes were
+		// stored): one entry each, which opens "Detect Interest Points" with the label and its stored parameters preset, so that
+		// the detection replaces the label with points that have them; filled when it opens (it loads the points)
+		redetect.setToolTipText( "<html>Lists the labels of the selected views whose points lack response, sigma or intensity (detected before they were stored)<br>" +
+				"and opens 'Detect Interest Points' with the label and its stored parameters preset; the detection replaces the label.</html>" );
+		redetect.addMenuListener( new MenuListener()
+		{
+			@Override
+			public void menuSelected( final MenuEvent e ) { fillRedetect( redetect ); }
+
+			@Override
+			public void menuDeselected( final MenuEvent e ) {}
+
+			@Override
+			public void menuCanceled( final MenuEvent e ) {}
+		} );
+		this.add( redetect );
 
 		// the labels of the selected views that still have interest points in the old interestpoints.n5 (one entry each,
 		// "ALL labels" if there are several), gray if there are none; filled when THIS menu opens, since a disabled submenu
@@ -325,6 +348,142 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 					DistanceHistogram.plotHistogram( spimData, views, label, DistanceHistogram.getHistogramTitle( views ) );
 				}
 			} ).start();
+		}
+	}
+
+	/**
+	 * Fills "Re-detect interest points (stored parameters)" for the current selection: one item per plain label whose points
+	 * lack an attribute in any of the selected views (the points are loaded); a label without a detection string (e.g. one
+	 * made from correspondences) is listed gray, a filtered label is not listed (it has no points of its own and follows
+	 * its base label, which the detection re-creates it from)
+	 */
+	protected void fillRedetect( final JMenu menu )
+	{
+		menu.removeAll();
+
+		if ( panel == null )
+			return;
+
+		final SpimData2 spimData = (SpimData2)panel.getSpimData();
+
+		final ArrayList< ViewId > views = new ArrayList<>();
+		views.addAll( ApplyTransformationPopup.getSelectedViews( panel ) );
+
+		// filter not present ViewIds
+		SpimData2.filterMissingViews( spimData, views );
+
+		final String[] labels = InterestPointTools.getAllInterestPointLabels( spimData, views );
+		int listed = 0;
+
+		for ( int i = 0; i < labels.length; ++i )
+		{
+			final String label = InterestPointTools.getSelectedLabel( labels, i );
+			final String warning = labels[ i ].substring( label.length() );
+			final List< ViewId > withLabel = InterestPointTools.viewsWithLabel( spimData, label, views );
+
+			if ( withLabel.isEmpty() )
+				continue;
+
+			final InterestPoints first = spimData.getViewInterestPoints().getViewInterestPointLists( withLabel.get( 0 ) ).getInterestPointList( label );
+
+			if ( first instanceof VirtualFilteredInterestPoints )
+				continue;
+
+			final EnumSet< Axis > missing;
+
+			try
+			{
+				missing = InterestPointTools.missingAttributes( spimData, withLabel, label, EnumSet.allOf( Axis.class ) );
+			}
+			catch ( final RuntimeException ex )
+			{
+				IOFunctions.println( "Cannot read the interest points '" + label + "': " + ex.getMessage() );
+				continue;
+			}
+
+			if ( missing.isEmpty() )
+				continue;
+
+			final String parameters = first.getParameters();
+			final String what = " (no " + missing.stream().map( a -> a.key ).collect( Collectors.joining( ", " ) ) + ")";
+			final JMenuItem item;
+
+			if ( StoredDetectionParameters.parse( parameters ) == null )
+			{
+				item = new JMenuItem( label + what + " - no stored detection parameters" + warning );
+				item.setForeground( Color.GRAY );
+				item.setEnabled( false );
+			}
+			else
+			{
+				for ( final ViewId v : withLabel )
+					if ( !parameters.equals( spimData.getViewInterestPoints().getViewInterestPointLists( v ).getInterestPointList( label ).getParameters() ) )
+					{
+						IOFunctions.println( "The parameters of '" + label + "' differ between the selected views, 'Re-detect' uses the ones of view " + Group.pvid( withLabel.get( 0 ) ) + ": " + parameters );
+						break;
+					}
+
+				item = new JMenuItem( label + what + warning );
+				item.addActionListener( new RedetectListener( label, parameters ) );
+			}
+
+			menu.add( item );
+			++listed;
+		}
+
+		if ( listed == 0 )
+		{
+			final JMenuItem item = new JMenuItem( "No labels without attributes" );
+			item.setForeground( Color.GRAY );
+			item.setEnabled( false );
+			menu.add( item );
+		}
+	}
+
+	/**
+	 * Opens "Detect Interest Points" for the selected views with the label and its stored parameters preset
+	 * (StoredDetectionParameters.preset); the dialog then runs as from "Detect Interest Points ..." and replaces the label
+	 */
+	public class RedetectListener implements ActionListener
+	{
+		final String label, parameters;
+
+		public RedetectListener( final String label, final String parameters )
+		{
+			this.label = label;
+			this.parameters = parameters;
+		}
+
+		@Override
+		public void actionPerformed( final ActionEvent e )
+		{
+			if ( panel == null )
+			{
+				IOFunctions.println( "Panel not set for " + this.getClass().getSimpleName() );
+				return;
+			}
+
+			final SpimData2 spimData = (SpimData2)panel.getSpimData();
+
+			final ArrayList< ViewId > views = new ArrayList<>();
+			views.addAll( ApplyTransformationPopup.getSelectedViews( panel ) );
+
+			// filter not present ViewIds
+			SpimData2.filterMissingViews( spimData, views );
+
+			final StoredDetectionParameters stored = StoredDetectionParameters.parse( parameters );
+
+			if ( stored == null )
+			{
+				IOFunctions.println( "'" + label + "' has no stored detection parameters: " + parameters );
+				return;
+			}
+
+			IOFunctions.println( "Re-detecting '" + label + "' with its stored parameters: " + parameters );
+			stored.preset( spimData, views, label );
+
+			// the stored grouping wins over the explorer's; a string without it (older labels) gets the explorer's as always
+			DetectInterestPointsPopup.detect( panel, !stored.hasGrouping() );
 		}
 	}
 
