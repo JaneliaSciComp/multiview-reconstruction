@@ -290,6 +290,18 @@ public class ActionToSparkCli
 		);
 		r.put( "filter-interestpoints", Collections.singletonList( filterRecipe ) );
 
+		// the embeddings of a label (Embed_Interest_Points): the model file and the array the rows go to; a filtered label is
+		// embedded through its base, which the command resolves itself
+		final Recipe embedRecipe = new Recipe(
+				"embed-interestpoints", true,
+				new FlagGroup[]{ SELECTABLE_VIEWS },
+				new String[]{ "label", "-l" },
+				new String[]{ "model", "--model" },
+				new String[]{ "arrayName", "--arrayName" },
+				new String[]{ "blockSize", "--blockSize" }
+		);
+		r.put( "embed-interestpoints", Collections.singletonList( embedRecipe ) );
+
 		// registration in the mvrecon GUI is two Spark stages: descriptor matching + global solve.
 		// Either can run without the other: LoadCorrespondencesGUI reuses existing correspondences
 		// and skips matching (emit "solver" only), and GlobalOptType.NO_OPTIMIZATION skips the solve

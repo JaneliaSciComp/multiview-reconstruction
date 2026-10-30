@@ -77,6 +77,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DeconvolutionPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DetectInterestPointsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DisplayFusedImagesPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DisplayRawImagesPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.EmbedInterestPointsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.EstimateAnisotropyPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ExplorerWindowSetable;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.FlatFieldCorrectionPopup;
@@ -722,6 +723,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		popups.add( new InterestPointsExplorerPopup() );
 		popups.add( new AnalyzeErrorPopup() );
 		popups.add( new RemoveDetectionsPopup() );
+		popups.add( new EmbedInterestPointsPopup() );
 		popups.add( new VisualizeDetectionsPopup() );
 		popups.add( new Separator() );
 

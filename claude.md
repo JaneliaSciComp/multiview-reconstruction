@@ -149,6 +149,38 @@ for a well pre-registered dataset, 300-500 for large translations); the action h
 none stale; reading 0.2 s, matching 6-8 s, RANSAC 190 s at 10,000 iterations on 60k candidates). Tests: `TestInterestPointArrays`,
 `TestEmbeddingsMatcher`, `TestEmbeddingsPairwise`; BigStitcher-Spark `TestEmbeddings`.
 
+**Computing the embeddings in Java (`process.interestpointembedding`, 2026-10-30).** What `pcmatch embed` does, in MVR: "Embed
+Interest Points (ONNX model) ..." of the ViewSetup Explorer / Plugins > BigStitcher > Interest Points > Tools (`Embed_Interest_Points`,
+`EmbedInterestPointsPopup`; action `embed-interestpoints`, rendered by `ActionToSparkCli` as the BigStitcher-Spark command of that name)
+writes the per-point array of a label with a model, and the matcher above reads it. The model is pcmatch's ONNX export
+(`pcmatch export-onnx`: `x.onnx` plus the sidecar `x.onnx.json` with the fingerprint, the `DescriptorConfig` and the tensor contract),
+behind a thin abstraction: `EmbeddingModel` (the `Contract` from the sidecar, `embed( patches, n )`, `load( Path )`) with one backend,
+`JavaOnnxEmbeddingModel` = `OnnxModel` (the file read as protobuf wire format, no protobuf-java) + `OnnxEvaluator` (an interpreter of
+the operator set such exports use: the standardisation as elementwise/reduce ops, 3-D Conv/Relu/MaxPool, Gemm, L2 normalisation,
+Shape/Reshape/Expand/Concat/Where/Cast..., float32, `SUPPORTED_OPS`; anything else, or an unsupported form such as grouped or
+strided convolutions, is refused in the constructor by name: such a model needs an ONNX Runtime backend behind the same interface,
+not yet written). Its convolution is im2col with one array per tap and a fresh accumulator, because the C2 JIT of JDK 21 vectorizes
+a stride-1 loop only when the loads and stores are provably aligned (an invariant offset between two arrays runs scalar, 4x slower,
+measured); ~500 points/s per thread for the 5 x 16^3 -> 64 model (PyTorch's CPU path 880). `PatchExtractor` samples the cubes
+exactly as pcmatch's `patches.extract_multiscale` (`SCALESPACE_TASK_onnx.md` section 3): `DetectionScale.of( label, parameters,
+voxelSize )` gives the detection sigma `s x downsampleXY` and the level the DoG ran at (`StoredDetectionParameters`, the legacy
+`downsampleXYIndex` 0/-1 via `DownsampleTools.downsampleFactor` of the XML's voxel size, pcmatch's `LEARNED` strings); a point's
+sigma is the label's, or `max( own, label's )` quantised to 2^(1/12) when every point of the view has one (scale space); per extent
+`k` the spacing `k sigma / patch` px, the pyramid level = the finest whose xy factor fits, never finer than the detection's level
+(`read_floor` "detection"); the grid is isotropic in physical units (voxel-size ratios), trilinear, NaN outside `[0, size - 1]`; the
+levels' half-voxel offsets are ignored as in pcmatch. `InterestPointEmbedding.embedView( data, view, label, model, blockSize,
+service )` embeds all points of the base label in blocks (one `Sampler` per thread), `prepareArray` creates the array or replaces
+one of another model/width whole (the matcher refuses mixed fingerprints anyway), `write` stores a setup's rows
+(`InterestPointArrays.createArray` / `writeSetup` / `remove`, zarr v3 sharded as pcmatch writes; a setup is replaced whole; the meta
+is pcmatch's: `model.{config, file, fingerprint, onnx}`, `writer`, `date`, `point_sigma`). Verified 2026-10-30 against pcmatch's
+fixtures: ds1 `beads` (256 points) and the embryo `ss-iso_r0.008` (255 points, per-point sigma 12.7..181 px, levels 3-5): identical
+NaN masks, levels and spacings, cubes within 1e-4 relative, vectors within 3e-5 of pcmatch's own and 2.5e-4 of its stored GPU rows
+(TF32), and the matcher gives the same 158 candidates / 116 inliers on Java's rows of ds1 as on pcmatch's (with pcmatch's voxel
+override 0.45 0.45 2.0; the XML's 1.1 1.1 3.512 is a wrong calibration and changes the rows, as pcmatch documents). Tests:
+`TestOnnxEvaluator` (a tiny encoder written by `TestOnnxModels` in the wire format, against a direct computation; the real model
+on the fixture when present), `TestInterestPointEmbedding` (scale, levels, cubes on a synthetic image, the chain on the simulated
+beads, replacement, filtered label, the plugin with a tiny ONNX model); BigStitcher-Spark `TestInterestPointEmbedding`.
+
 Design and the staging format follow PR 108 (Lila, 2026-09); its global append-only arrays with compaction were replaced by
 per-(label, timepoint) groups (Stephan, 2026-10-23: fewer moving parts; whole-label changes dominate; a few test views go into
 a separate label). Test: `TestInterestPointsZarr`, `TestInterestPointStorage`.
