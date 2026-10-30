@@ -150,8 +150,9 @@ none stale; reading 0.2 s, matching 6-8 s, RANSAC 190 s at 10,000 iterations on 
 `TestEmbeddingsMatcher`, `TestEmbeddingsPairwise`; BigStitcher-Spark `TestEmbeddings`.
 
 **Computing the embeddings in Java (`process.interestpointembedding`, 2026-10-30).** What `pcmatch embed` does, in MVR: "Embed
-Interest Points (ONNX model) ..." of the ViewSetup Explorer / Plugins > BigStitcher > Interest Points > Tools (`Embed_Interest_Points`,
-`EmbedInterestPointsPopup`; action `embed-interestpoints`, rendered by `ActionToSparkCli` as the BigStitcher-Spark command of that name)
+Interest Points (ONNX model) ..." of the ViewSetup Explorer (Processing, directly below "Detect Interest Points", Stephan's choice of
+2026-10-30) / Plugins > BigStitcher > Interest Points > Tools (`Embed_Interest_Points`, `EmbedInterestPointsPopup`; action
+`embed-interestpoints`, rendered by `ActionToSparkCli` as the BigStitcher-Spark command of that name)
 writes the per-point array of a label with a model, and the matcher above reads it. The model is pcmatch's ONNX export
 (`pcmatch export-onnx`: `x.onnx` plus the sidecar `x.onnx.json` with the fingerprint, the `DescriptorConfig` and the tensor contract),
 behind a thin abstraction: `EmbeddingModel` (the `Contract` from the sidecar, `embed( patches, n )`, `load( Path )`) with one backend,
@@ -169,7 +170,12 @@ sigma is the label's, or `max( own, label's )` quantised to 2^(1/12) when every 
 `k` the spacing `k sigma / patch` px, the pyramid level = the finest whose xy factor fits, never finer than the detection's level
 (`read_floor` "detection"); the grid is isotropic in physical units (voxel-size ratios), trilinear, NaN outside `[0, size - 1]`; the
 levels' half-voxel offsets are ignored as in pcmatch. `InterestPointEmbedding.embedView( data, view, label, model, blockSize,
-service )` embeds all points of the base label in blocks (one `Sampler` per thread), `prepareArray` creates the array or replaces
+service )` embeds all points of the base label in blocks (one `Sampler` per thread; `prepare` + `blocks` + `embed`);
+`embedViews( data, views, label, model, blockSize, service, viewsInFlight, consumer )` is the GUI's path: the blocks of `viewsInFlight`
+views (dialog "Views in parallel", default the number of threads) are in one pool at a time, so that single-block views (a few
+hundred points) keep all threads busy, a view's rows go to the consumer (the writer) on the calling thread as soon as its last block
+is done and the next view is admitted (an `ExecutorCompletionService` over the blocks; `viewsInFlight` bounds the memory, the points
+and opened images of that many views); a Spark task embeds its one view with `embedView`. `prepareArray` creates the array or replaces
 one of another model/width whole (the matcher refuses mixed fingerprints anyway), `write` stores a setup's rows
 (`InterestPointArrays.createArray` / `writeSetup` / `remove`, zarr v3 sharded as pcmatch writes; a setup is replaced whole; the meta
 is pcmatch's: `model.{config, file, fingerprint, onnx}`, `writer`, `date`, `point_sigma`). Verified 2026-10-30 against pcmatch's
@@ -179,7 +185,12 @@ NaN masks, levels and spacings, cubes within 1e-4 relative, vectors within 3e-5 
 override 0.45 0.45 2.0; the XML's 1.1 1.1 3.512 is a wrong calibration and changes the rows, as pcmatch documents). Tests:
 `TestOnnxEvaluator` (a tiny encoder written by `TestOnnxModels` in the wire format, against a direct computation; the real model
 on the fixture when present), `TestInterestPointEmbedding` (scale, levels, cubes on a synthetic image, the chain on the simulated
-beads, replacement, filtered label, the plugin with a tiny ONNX model); BigStitcher-Spark `TestInterestPointEmbedding`.
+beads, replacement, several views on one pool, filtered label, the plugin with a tiny ONNX model); BigStitcher-Spark
+`TestInterestPointEmbedding`. Models: several will exist (translation invariant, rotation invariant, static grid matching; Stephan
+2026-10-30); they are to be hosted on Hugging Face under the JaneliaSciComp organisation (decided 2026-10-30, one repo per model with
+the `.onnx`, its sidecar and a model card; Stephan sets up the organisation and the repos himself), and MVR is to get a small registry (name, description, invariance, URL,
+revision, sha256) with a download cache and a model choice in the dialog, `--model` in BigStitcher-Spark accepting a name, a path or a
+URL: not written yet, nothing is on the hub yet.
 
 Design and the staging format follow PR 108 (Lila, 2026-09); its global append-only arrays with compaction were replaced by
 per-(label, timepoint) groups (Stephan, 2026-10-23: fewer moving parts; whole-label changes dominate; a few test views go into

@@ -698,6 +698,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 
 		popups.add( new LabelPopUp( " Processing" ) );
 		popups.add( new DetectInterestPointsPopup() );
+		popups.add( new EmbedInterestPointsPopup() );
 		popups.add( new RegisterInterestPointsPopup() );
 		popups.add( new IntensityAdjustmentPopup() );
 		popups.add( new BoundingBoxPopup() );
@@ -723,7 +724,6 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		popups.add( new InterestPointsExplorerPopup() );
 		popups.add( new AnalyzeErrorPopup() );
 		popups.add( new RemoveDetectionsPopup() );
-		popups.add( new EmbedInterestPointsPopup() );
 		popups.add( new VisualizeDetectionsPopup() );
 		popups.add( new Separator() );
 

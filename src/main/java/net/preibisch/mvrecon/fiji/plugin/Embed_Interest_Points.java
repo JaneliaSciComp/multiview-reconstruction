@@ -54,9 +54,11 @@ import net.preibisch.mvrecon.process.interestpointembedding.InterestPointEmbeddi
 /**
  * Computes the embeddings of a label's interest points with a model (pcmatch's ONNX export, run by the Java evaluator)
  * and stores them as the per-point array of the label in {@code interestpoints.zarr}, what {@code pcmatch embed} does:
- * one unit vector per point of the (base) label, which "Embeddings" of "Register using Interest Points" matches on.
- * Reachable from the ViewSetup Explorer ("Embed interest points (ONNX model) ...") and as a plugin; BigStitcher-Spark's
- * {@code embed-interestpoints} does the same per view on the cluster ({@link InterestPointEmbedding}).
+ * one unit vector per point of the (base) label, which "Embeddings" of "Register using Interest Points" matches on. The blocks of
+ * all selected views run on one pool of {@link Threads#numThreads()} threads, {@code defaultViewsInFlight} views at a time
+ * ({@link InterestPointEmbedding#embedViews}). Reachable from the ViewSetup Explorer ("Embed Interest Points (ONNX model) ...",
+ * below "Detect Interest Points") and as a plugin; BigStitcher-Spark's {@code embed-interestpoints} does the same per view on the
+ * cluster ({@link InterestPointEmbedding}).
  *
  * @author Stephan Preibisch
  */
@@ -68,6 +70,8 @@ public class Embed_Interest_Points implements PlugIn
 	public static String defaultModel = "";
 	public static String defaultArrayName = InterestPointArrays.EMBEDDING;
 	public static int defaultBlockSize = InterestPointEmbedding.defaultBlockSize;
+	/** views whose blocks are in the pool at a time: as many as threads keeps them busy with single-block views; it bounds the memory (the points and opened images of that many views) */
+	public static int defaultViewsInFlight = Threads.numThreads();
 
 	/** the {@code meta.writer} of the arrays this plugin writes */
 	public static final String WRITER = "BigStitcher embed (Java ONNX evaluator)";
@@ -79,7 +83,7 @@ public class Embed_Interest_Points implements PlugIn
 	{
 		public String label, arrayName;
 		public Path model;
-		public int blockSize;
+		public int blockSize, viewsInFlight;
 	}
 
 	@Override
@@ -112,7 +116,7 @@ public class Embed_Interest_Points implements PlugIn
 		if ( p == null )
 			return false;
 
-		return embed( data, viewIds, p.label, p.model, p.arrayName, p.blockSize );
+		return embed( data, viewIds, p.label, p.model, p.arrayName, p.blockSize, p.viewsInFlight );
 	}
 
 	public static Parameters getParameters( final SpimData2 data, final List< ViewId > viewIds )
@@ -138,11 +142,13 @@ public class Embed_Interest_Points implements PlugIn
 		gd.addFileField( "Model (.onnx)", defaultModel, 60 );
 		gd.addStringField( "Array_name", defaultArrayName, 20 );
 		gd.addNumericField( "Points_per_block", defaultBlockSize, 0 );
+		gd.addNumericField( "Views_in_parallel", defaultViewsInFlight, 0 );
 		gd.addMessage(
 				"Computes one vector per interest point with the model (pcmatch's 'export-onnx' file; its '.onnx.json' sidecar must sit next to it)\n"
 				+ "and stores the vectors with the points (interestpoints.zarr, <label>/tp<T>/arrays/<array name>), as 'pcmatch embed' does;\n"
 				+ "'Embeddings' of 'Register using Interest Points' matches on them. A filtered label is embedded through its base label (all its points).\n"
-				+ "An array of another model under the same name is replaced.",
+				+ "An array of another model under the same name is replaced. The blocks of 'Views in parallel' views share the " + Threads.numThreads() + " threads;\n"
+				+ "the points and the opened images of that many views are in memory at once (lower it for image loaders that read whole stacks).",
 				GUIHelper.smallStatusFont );
 
 		gd.showDialog();
@@ -155,6 +161,7 @@ public class Embed_Interest_Points implements PlugIn
 		final String model = defaultModel = gd.getNextString().trim();
 		p.arrayName = defaultArrayName = gd.getNextString().trim();
 		p.blockSize = defaultBlockSize = (int) Math.round( gd.getNextNumber() );
+		p.viewsInFlight = defaultViewsInFlight = (int) Math.round( gd.getNextNumber() );
 
 		if ( model.isEmpty() || !Files.isRegularFile( Paths.get( model ) ) )
 		{
@@ -175,11 +182,25 @@ public class Embed_Interest_Points implements PlugIn
 			return null;
 		}
 
+		if ( p.viewsInFlight < 1 )
+		{
+			IOFunctions.println( "The number of views in parallel must be positive, got " + p.viewsInFlight + "." );
+			return null;
+		}
+
 		return p;
 	}
 
+	/** {@link #embed(SpimData2, List, String, Path, String, int, int)} with {@code defaultViewsInFlight} views in the pool at a time */
+	public static boolean embed( final SpimData2 data, final List< ViewId > viewIds, final String label, final Path modelFile, final String arrayName, final int blockSize )
+	{
+		return embed( data, viewIds, label, modelFile, arrayName, blockSize, defaultViewsInFlight );
+	}
+
 	/**
-	 * Embeds the points of a label in the views that have it and stores the rows, then records the action.
+	 * Embeds the points of a label in the views that have it and stores the rows, then records the action: the blocks of
+	 * {@code viewsInFlight} views at a time on a pool of {@link Threads#numThreads()} threads, every view written as soon as its
+	 * blocks are done ({@link InterestPointEmbedding#embedViews}).
 	 *
 	 * @param data the dataset
 	 * @param viewIds the views (those without the label are skipped)
@@ -187,9 +208,10 @@ public class Embed_Interest_Points implements PlugIn
 	 * @param modelFile the ONNX file (with its sidecar)
 	 * @param arrayName the array the rows go to
 	 * @param blockSize points per inference call
+	 * @param viewsInFlight views whose blocks are in the pool at a time (their points and opened images are in memory at once)
 	 * @return whether rows were written
 	 */
-	public static boolean embed( final SpimData2 data, final List< ViewId > viewIds, final String label, final Path modelFile, final String arrayName, final int blockSize )
+	public static boolean embed( final SpimData2 data, final List< ViewId > viewIds, final String label, final Path modelFile, final String arrayName, final int blockSize, final int viewsInFlight )
 	{
 		final EmbeddingModel model;
 		try
@@ -224,24 +246,19 @@ public class Embed_Interest_Points implements PlugIn
 		}
 
 		final ExecutorService service = Threads.createFixedExecutorService();
-		long points = 0;
 		final long t = System.currentTimeMillis();
+		final long points;
 		try
 		{
-			for ( final ViewId view : views )
-			{
-				final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( view );
-				final InterestPointEmbedding.Result result = InterestPointEmbedding.embedView( data, view, label, model, blockSize, service );
-				InterestPointEmbedding.write( lists.getInterestPointList( result.baseLabel() ).getBasePath(), arrayName, result );
-				points += result.size();
-			}
+			points = InterestPointEmbedding.embedViews( data, views, label, model, blockSize, service, viewsInFlight, result ->
+					InterestPointEmbedding.write( data.getViewInterestPoints().getViewInterestPointLists( result.view() ).getInterestPointList( result.baseLabel() ).getBasePath(), arrayName, result ) );
 		}
 		finally
 		{
 			service.shutdown();
 		}
 
-		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Embedded " + points + " points of " + views.size() + " view(s), label '" + label + "', as array '" + arrayName + "' in " + ( ( System.currentTimeMillis() - t ) / 1000 ) + " s." );
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Embedded " + points + " points of " + views.size() + " view(s), label '" + label + "', as array '" + arrayName + "' with " + Threads.numThreads() + " threads, " + viewsInFlight + " view(s) in parallel, in " + ( ( System.currentTimeMillis() - t ) / 1000 ) + " s." );
 
 		final LinkedHashMap< String, String > params = ActionHistoryRecorder.params();
 		ActionHistoryRecorder.put( params, "label", label );

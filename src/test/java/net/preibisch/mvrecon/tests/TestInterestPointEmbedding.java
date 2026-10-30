@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -33,7 +34,9 @@ import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.SortedMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -71,7 +74,8 @@ import net.preibisch.mvrecon.process.interestpointembedding.PatchExtractor.Pyram
  * The embedding of interest points in Java: the detection scale of a label's parameters string, the sampling of the
  * cubes (pcmatch's rules on a synthetic image), and the whole chain on the simulated beads: the points of a label embedded
  * block by block (sequentially and on a pool) and stored as the per-point array the matcher reads back by the count rule,
- * the replacement of an array of another model, a filtered label through its base, and the plugin with a tiny ONNX model.
+ * the replacement of an array of another model, several views on one pool, a filtered label through its base, and the plugin
+ * with a tiny ONNX model.
  */
 public class TestInterestPointEmbedding
 {
@@ -380,6 +384,60 @@ public class TestInterestPointEmbedding
 		assertTrue( InterestPointArrays.remove( baseDir, LABEL, 0, name ) );
 		assertFalse( InterestPointArrays.remove( baseDir, LABEL, 0, name ) );
 		assertTrue( InterestPointArrays.list( baseDir, LABEL, 0 ).isEmpty() );
+	}
+
+	@Test
+	public void poolsTheViews() throws Exception
+	{
+		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
+		final SpimData2 data = beads( xml );
+		final List< ViewId > views = viewsWith( data, LABEL );
+		assertEquals( 3, views.size() );
+		final Contract contract = contract( new double[] { 2, 4 }, 4, 3, "model-a", "detection" );
+		final MeanModel model = new MeanModel( contract );
+
+		// the reference: one view after the other
+		final Map< ViewId, Result > reference = new HashMap<>();
+		long points = 0;
+		for ( final ViewId v : views )
+		{
+			reference.put( v, InterestPointEmbedding.embedView( data, v, LABEL, model, 7, null ) );
+			points += reference.get( v ).size();
+		}
+
+		final ExecutorService pool = Executors.newFixedThreadPool( 3 );
+		try
+		{
+			// one, two, and more views in flight than there are views, and the pool-less path: the same rows, every view handed over once
+			for ( final int inFlight : new int[] { 1, 2, 5, 0 } )
+			{
+				final Map< ViewId, Result > results = new HashMap<>();
+				final long total = InterestPointEmbedding.embedViews( data, views, LABEL, model, 7, inFlight == 0 ? null : pool, Math.max( 1, inFlight ), r -> assertNull( results.put( r.view(), r ) ) );
+				assertEquals( points, total, "views in flight: " + inFlight );
+				assertEquals( reference.keySet(), results.keySet() );
+				for ( final ViewId v : views )
+				{
+					assertEquals( LABEL, results.get( v ).baseLabel() );
+					assertArrayEquals( reference.get( v ).ids(), results.get( v ).ids() );
+					assertArrayEquals( reference.get( v ).values(), results.get( v ).values() );
+				}
+			}
+
+			assertThrows( IllegalArgumentException.class, () -> InterestPointEmbedding.embedViews( data, views, LABEL, model, 7, pool, 0, r -> {} ) );
+
+			// a view that cannot be embedded fails the call while the others' blocks are in the pool; the pool stays usable
+			final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( views.get( 1 ) );
+			final String parameters = lists.getInterestPointList( LABEL ).getParameters();
+			lists.getInterestPointList( LABEL ).setParameters( "manual" );
+			final IllegalArgumentException e = assertThrows( IllegalArgumentException.class, () -> InterestPointEmbedding.embedViews( data, views, LABEL, model, 7, pool, 5, r -> {} ) );
+			assertTrue( e.getMessage().contains( "no DoG detection parameters" ), e.getMessage() );
+			lists.getInterestPointList( LABEL ).setParameters( parameters );
+			assertEquals( points, InterestPointEmbedding.embedViews( data, views, LABEL, model, 7, pool, 5, r -> {} ) );
+		}
+		finally
+		{
+			pool.shutdown();
+		}
 	}
 
 	@Test
