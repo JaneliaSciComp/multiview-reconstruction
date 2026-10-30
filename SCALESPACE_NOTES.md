@@ -376,3 +376,30 @@ pixel-isotropic Gaussians select a 20-24% smaller scale for the same blobs.
    have another number of rows than the base label has points; the point attributes shortened to "resp, int, sigma" so that it fits).
    Open: section 3a's ratio keyed to the RANSAC mode (opt-in, not asked for), deleting an array from the explorer, and the cost of
    BigStitcher's RANSAC on tens of thousands of candidates (190 s for the embryo pair at 10,000 iterations, multi-consensus many times that).
+   Cost of computing the embeddings on CPU or in Java (measured 2026-10-29 on the 64-core Threadripper PRO 7985WX + RTX 5090, pcmatch's
+   checkpoint `translation-stack_sigma5-30_mask_floor_ds1345678_p2000_s0_local_neg3r500.pt`): the stacked model is one `PatchEncoder`
+   with 5 input channels (one per extent 5, 8, 13, 20, 30 sigma), 3 x [Conv3d 3x3x3 + BatchNorm + ReLU + MaxPool] 5->16->32->64 on a
+   16^3 patch, Linear 512->64, L2-normalised; 104,448 parameters (2,208 / 13,920 / 55,488 / 32,832), 408 KiB float32, 433 KB on disk;
+   19.5 M multiply-adds (39 MFLOP) per point. Forward pass on random patches: CPU 1 thread 880 points/s, 8 threads 3,400, 64 threads
+   5,300 (6,300 at batch 4096; PyTorch conv3d scales badly past 8 threads), GPU 250,000 points/s. So ds1's six `beads` views (15k
+   points) 3 s on CPU, one embryo view (89k points) 15 s, the judge pair 30 s, the whole embryo (1,600 tiles x ~80k) about 6 h on CPU
+   vs 9 min on the GPU; single-threaded x7. The patches cost more than the network: 5 x 16^3 trilinear samples per point from the
+   pyramid level of each extent, standardised per patch, border-masked (about the network's cost in arithmetic), and the reads
+   dominate unless they are block-wise (pcmatch's NOTES: ~5 ms per Zarr read whatever its size, 925k reads = 86 min for the embryo
+   pair, 92 s with tile-based reading). A Java port is feasible (3 convolutions with BatchNorm folded in, one matrix, pcmatch's exact
+   sampling and standardisation; a plain multithreaded loop gives a few thousand points/s, i.e. 1-2 min per embryo view) and would
+   belong in the Spark detection job where the image blocks are in memory; it is only interchangeable with pcmatch's arrays once the
+   64 numbers per point agree up to rounding, which the `meta.model.fingerprint` check of the matcher enforces until then.
+   Plan for computing the embeddings in Java (2026-10-29, not started): (1) network: ONNX Runtime (`com.microsoft.onnxruntime:onnxruntime`,
+   natives bundled, GPU variant exists) on a one-time `torch.onnx.export` of the checkpoint (dummy input [N, 5, 16, 16, 16], every layer
+   a standard op, BatchNorm folded), the exported file carrying the model fingerprint; DJL/TorchScript is heavier (libtorch), a hand-written
+   port (3 convolutions, one matrix, L2 normalisation, ~150 lines, weights dumped to a plain float format) works without natives. The `.pt`
+   checkpoint itself is a PyTorch pickle and cannot be loaded from Java. (2) To re-implement in Java in every variant, since it is pcmatch
+   Python, not the model: per point and extent k in {5, 8, 13, 20, 30} the patch spacing k * sigma / 16 in full-resolution px (sigma =
+   the point's own, quantised to 1/12 octave; the label's DoG sigma if NaN); the pyramid level = the finest whose xy factor <= that
+   spacing but not finer than the detection's level; a 16^3 isotropic grid centred on the point, converted per axis with the voxel size,
+   trilinear, NaN outside the image; standardisation per patch and channel over the finite voxels (unbiased std clamped at 1e-6, NaN -> 0);
+   the five patches stacked as channels in that order, the network, L2 normalisation; a writer for id + 64 floats under the base label's
+   `embedding` array with pcmatch's meta. (3) Verification: the same 64 numbers up to float rounding for the 15k `beads` points of
+   `ds1_java_matching`, whose arrays pcmatch wrote. (4) Place: the Spark detection job, where the image blocks are in memory and the
+   coarser levels can be read block-wise next to them (no per-point reads).
