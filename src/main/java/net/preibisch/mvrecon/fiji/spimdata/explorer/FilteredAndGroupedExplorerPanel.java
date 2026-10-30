@@ -223,7 +223,10 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	@Override
 	public void updateContent()
 	{
-		// this.getTableModel().fireTableDataChanged();
+		// the derived columns (#Registrations, #InterestPoints, PSF) are computed on every paint, so a repaint shows the new
+		// values in every row and keeps the selection (fireTableDataChanged would clear it and re-trigger the selection listeners)
+		table.repaint();
+
 		for ( final SelectedViewDescriptionListener< AS > l : listeners )
 			l.updateContent( this.data );
 	}
