@@ -40,13 +40,8 @@ import java.util.Map;
 import org.janelia.saalfeldlab.n5.DataBlock;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
-import org.janelia.saalfeldlab.n5.FloatArrayDataBlock;
-import org.janelia.saalfeldlab.n5.IntArrayDataBlock;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.RawCompression;
-import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -128,74 +123,16 @@ public class TestInterestPointArrays
 	public static void writeArray( final URI baseURI, final String label, final int tp, final String name, final int setup,
 			final int[] ids, final float[] values, final int columns, final String fingerprint )
 	{
-		final URI container = new File( new File( baseURI ), InterestPointsZarrStore.ZARR_CONTAINER ).toURI();
+		// the production writer (InterestPointArrays.createArray / writeSetup) with small chunks and shards, so that the reads cross them
+		final JsonObject model = new JsonObject();
+		model.addProperty( "fingerprint", fingerprint );
+		model.addProperty( "file", "test.pt" );
+		final JsonObject meta = new JsonObject();
+		meta.add( "model", model );
+		meta.addProperty( "writer", "TestInterestPointArrays" );
 
-		try ( final N5Writer zarr = URITools.instantiateN5Writer( StorageFormat.ZARR, container ) )
-		{
-			final String path = InterestPointsZarrStore.Group.encodeLabel( label ) + "/tp" + tp + "/" + InterestPointArrays.ARRAYS + "/" + name;
-			zarr.createGroup( path );
-			zarr.setAttribute( path, "columns", columns );
-			zarr.setAttribute( path, "dtype", "float32" );
-
-			final JsonObject model = new JsonObject();
-			model.addProperty( "fingerprint", fingerprint );
-			model.addProperty( "file", "test.pt" );
-			final JsonObject meta = new JsonObject();
-			meta.add( "model", model );
-			meta.addProperty( "writer", "TestInterestPointArrays" );
-			zarr.setAttribute( path, "meta", meta );
-
-			final String setupPath = path + "/" + InterestPointArrays.SETUP_PREFIX + setup;
-			if ( zarr.exists( setupPath ) )
-				zarr.remove( setupPath ); // a setup's rows are replaced whole (pcmatch writes them under a temporary name and swaps)
-			zarr.createGroup( setupPath );
-			zarr.setAttribute( setupPath, "setup", setup );
-			zarr.setAttribute( setupPath, "rows", ids.length );
-
-			writeTable( zarr, setupPath + "/" + InterestPointArrays.ID, 1, ids.length, DataType.INT32, ids );
-			writeTable( zarr, setupPath + "/" + InterestPointArrays.VALUES, columns, values.length / columns, DataType.FLOAT32, values );
-		}
-	}
-
-	/** A sharded [columns, rows] table in the store's codecs with 4 rows per chunk and 3 chunks per shard. */
-	public static void writeTable( final N5Writer zarr, final String dataset, final int columns, final int rows, final DataType type, final Object data )
-	{
-		final int chunkRows = 4, shardRows = 12;
-		final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder( new long[] { columns, rows }, type )
-				.blockSize( new int[] { columns, shardRows } )
-				.chunkSize( new int[] { columns, chunkRows } )
-				.compression( new RawCompression() )
-				.dataCodecInfos( new Crc32cChecksumCodec() )
-				.shardIndexDataCodecInfos( new Crc32cChecksumCodec() )
-				.build();
-
-		zarr.createDataset( dataset, attributes );
-
-		final List< DataBlock< ? > > shard = new ArrayList<>();
-		for ( int start = 0; start < rows; start += chunkRows )
-		{
-			final int count = Math.min( chunkRows, rows - start );
-			final int[] size = { columns, count };
-			final long[] position = { 0, start / chunkRows };
-			if ( type == DataType.INT32 )
-			{
-				final int[] chunk = new int[ columns * count ];
-				System.arraycopy( data, start * columns, chunk, 0, chunk.length );
-				shard.add( new IntArrayDataBlock( size, position, chunk ) );
-			}
-			else
-			{
-				final float[] chunk = new float[ columns * count ];
-				System.arraycopy( data, start * columns, chunk, 0, chunk.length );
-				shard.add( new FloatArrayDataBlock( size, position, chunk ) );
-			}
-
-			if ( ( start / chunkRows + 1 ) % ( shardRows / chunkRows ) == 0 || start + count == rows )
-			{
-				zarr.writeChunks( dataset, attributes, shard.toArray( new DataBlock[ 0 ] ) );
-				shard.clear();
-			}
-		}
+		InterestPointArrays.createArray( baseURI, label, tp, name, columns, meta );
+		InterestPointArrays.writeSetup( baseURI, label, tp, name, setup, ids, values, columns, 4, 12 );
 	}
 
 	@Test
@@ -369,8 +306,15 @@ public class TestInterestPointArrays
 		final Rows rows = InterestPointArrays.read( baseURI, LABEL, 0, 0, NAME );
 		assertTrue( assertThrows( IllegalStateException.class, () -> InterestPointArrays.join( rows, points, n ) ).getMessage().contains( "twice" ) );
 
-		// tables of different lengths
-		writeArray( baseURI, LABEL, 0, "short", 0, ids, new float[ COLUMNS * ( n - 1 ) ], COLUMNS, FINGERPRINT );
+		// tables of different lengths (the writer refuses to produce them, so the values table is replaced by a shorter one)
+		assertThrows( IllegalArgumentException.class, () -> writeArray( baseURI, LABEL, 0, "short", 0, ids, new float[ COLUMNS * ( n - 1 ) ], COLUMNS, FINGERPRINT ) );
+		writeArray( baseURI, LABEL, 0, "short", 0, ids, new float[ COLUMNS * n ], COLUMNS, FINGERPRINT );
+		try ( final N5Writer zarr = URITools.instantiateN5Writer( StorageFormat.ZARR, new File( new File( baseURI ), InterestPointsZarrStore.ZARR_CONTAINER ).toURI() ) )
+		{
+			final String shortValues = InterestPointsZarrStore.Group.encodeLabel( LABEL ) + "/tp0/" + InterestPointArrays.ARRAYS + "/short/" + InterestPointArrays.SETUP_PREFIX + "0/" + InterestPointArrays.VALUES;
+			zarr.remove( shortValues );
+			InterestPointArrays.writeTable( zarr, shortValues, COLUMNS, n - 1, DataType.FLOAT32, new float[ COLUMNS * ( n - 1 ) ], 4, 12 );
+		}
 		assertThrows( IllegalStateException.class, () -> InterestPointArrays.read( baseURI, LABEL, 0, 0, "short" ) );
 
 		// a width that does not match the attribute

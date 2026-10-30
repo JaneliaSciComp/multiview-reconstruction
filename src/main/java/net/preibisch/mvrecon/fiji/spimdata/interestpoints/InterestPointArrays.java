@@ -37,8 +37,14 @@ import java.util.TreeSet;
 import org.janelia.saalfeldlab.n5.DataBlock;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.FloatArrayDataBlock;
+import org.janelia.saalfeldlab.n5.IntArrayDataBlock;
 import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.RawCompression;
+import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -48,9 +54,9 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStor
 import util.URITools;
 
 /**
- * Per-point arrays of the interest point store: rows that another writer keeps about the store's points (pcmatch's
- * {@code embed} writes the learned embedding of every point), keyed by point id and independent of the generations.
- * Java only reads them; a writer puts them next to the generations of a (label, timepoint):
+ * Per-point arrays of the interest point store: rows that a writer keeps about the store's points (pcmatch's {@code embed}
+ * and, since 2026-10-30, {@code process.interestpointembedding} write the learned embedding of every point), keyed by point
+ * id and independent of the generations. They sit next to the generations of a (label, timepoint):
  *
  * <pre>
  * &lt;enc label&gt;/tp&lt;T&gt;/arrays/&lt;name&gt;/zarr.json                attributes: columns D, dtype "float32", meta (the writer's JSON, verbatim)
@@ -66,7 +72,10 @@ import util.URITools;
  * tables a writer keeps in {@code setup<S>} are ignored (pcmatch wrote a float32 {@code loc} table until 2026-10-29).
  *
  * The arrays are not part of a generation: a commit of the (label, timepoint) leaves them where they are, removing the label
- * removes them with its timepoint group. Specification: {@code SCALESPACE_TASK_arrays.md} (pcmatch, 2026-10-28).
+ * removes them with its timepoint group. Specification: {@code SCALESPACE_TASK_arrays.md} (pcmatch, 2026-10-28). Writing
+ * ({@link #createArray}, {@link #writeSetup}, {@link #remove}): the array group with its attributes once, then a setup's
+ * tables whole (an existing setup is removed first; a {@code setup<S>} without a complete {@code values} is a write in
+ * progress to the readers); zarr v3, sharded, raw + crc32c, as pcmatch writes.
  *
  * @author Stephan Preibisch
  */
@@ -83,6 +92,13 @@ public class InterestPointArrays
 	static final String ATTR_COLUMNS = "columns";
 	static final String ATTR_DTYPE = "dtype";
 	static final String ATTR_META = "meta";
+	static final String ATTR_LAYOUT = "layout";
+
+	/** what the writer records as the array's layout */
+	public static final String LAYOUT = "per setup setup<S>/: id int32 [N, 1], values float32 [N, D]; rows are joined to the label's points by id; one row per point of the (base) label";
+
+	/** rows per inner chunk and per shard of a setup's tables as written by Java */
+	public static int defaultChunkRows = 65536, defaultShardRows = 1 << 18;
 
 	/** The attributes of an array: its width, type and the writer's meta (pcmatch records the model there: {@code model.fingerprint}, {@code model.file}, ...). */
 	public record Attributes( String label, int timepoint, String name, int columns, String dtype, JsonObject meta )
@@ -464,6 +480,151 @@ public class InterestPointArrays
 		final Map< Integer, InterestPoint > points = list.getInterestPointsCopy();
 		final int pointsOfBase = base.equals( label ) ? points.size() : lists.getInterestPointList( base ).getInterestPointsCopy().size();
 		return join( rows, points.values(), pointsOfBase );
+	}
+
+	// ------------------------------------------------------------------------------------------------
+	// writing
+	// ------------------------------------------------------------------------------------------------
+
+	/**
+	 * Creates the group of an array with its attributes (columns, dtype float32, meta, layout); the dataset's store must
+	 * exist (the label's points are in it). An existing group is left as it is (its attributes are not touched).
+	 *
+	 * @param baseDir the dataset directory
+	 * @param label the label the rows are written under (the base of a filtered label)
+	 * @param timepoint the timepoint
+	 * @param name the name of the array
+	 * @param columns the width of a row
+	 * @param meta the writer's meta ({@code model.fingerprint}, {@code model.file}, {@code writer}, {@code date}, ...)
+	 */
+	public static void createArray( final URI baseDir, final String label, final int timepoint, final String name, final int columns, final JsonObject meta )
+	{
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
+		if ( !store.exists() )
+			throw new IllegalStateException( "The dataset '" + baseDir + "' has no interest point store (" + InterestPointsZarrStore.ZARR_CONTAINER + "); the points of label '" + label + "' would have to be in it." );
+		if ( columns < 1 )
+			throw new IllegalArgumentException( "an array needs at least one column, got " + columns );
+
+		try ( final N5Writer zarr = URITools.instantiateN5Writer( StorageFormat.ZARR, store.getContainerURI() ) )
+		{
+			final String path = Attributes.path( label, timepoint, name );
+			if ( zarr.exists( path ) )
+				return;
+			zarr.createGroup( path );
+			zarr.setAttribute( path, ATTR_COLUMNS, columns );
+			zarr.setAttribute( path, ATTR_DTYPE, "float32" );
+			zarr.setAttribute( path, ATTR_META, meta == null ? new JsonObject() : meta );
+			zarr.setAttribute( path, ATTR_LAYOUT, LAYOUT );
+		}
+	}
+
+	/**
+	 * Writes one setup's rows of an array (the group must exist, {@link #createArray}), replacing the setup's tables.
+	 *
+	 * @param baseDir the dataset directory
+	 * @param label the label the rows are written under (the base of a filtered label)
+	 * @param timepoint the timepoint
+	 * @param name the name of the array
+	 * @param setup the setup
+	 * @param ids the ids of the points, one per row
+	 * @param values the rows, {@code columns} floats per row
+	 * @param columns the width of a row
+	 */
+	public static void writeSetup( final URI baseDir, final String label, final int timepoint, final String name, final int setup, final int[] ids, final float[] values, final int columns )
+	{
+		writeSetup( baseDir, label, timepoint, name, setup, ids, values, columns, defaultChunkRows, defaultShardRows );
+	}
+
+	/** {@link #writeSetup(URI, String, int, String, int, int[], float[], int)} with the rows per inner chunk and per shard given (tests) */
+	public static void writeSetup( final URI baseDir, final String label, final int timepoint, final String name, final int setup, final int[] ids, final float[] values, final int columns, final int chunkRows, final int shardRows )
+	{
+		if ( columns < 1 || values.length != (long) ids.length * columns )
+			throw new IllegalArgumentException( ids.length + " ids and " + values.length + " values do not make rows of " + columns + " columns" );
+		if ( chunkRows < 1 || shardRows < chunkRows || shardRows % chunkRows != 0 )
+			throw new IllegalArgumentException( "a shard of " + shardRows + " rows must hold whole chunks of " + chunkRows + " rows" );
+
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
+		final String path = Attributes.path( label, timepoint, name );
+
+		try ( final N5Writer zarr = URITools.instantiateN5Writer( StorageFormat.ZARR, store.getContainerURI() ) )
+		{
+			if ( !zarr.exists( path ) )
+				throw new IllegalStateException( "The array '" + path + "' does not exist in '" + store.getContainerURI() + "'; create it first (createArray)." );
+			final Integer existingColumns = zarr.getAttribute( path, ATTR_COLUMNS, Integer.class );
+			if ( existingColumns == null || existingColumns != columns )
+				throw new IllegalStateException( "The array '" + path + "' of '" + store.getContainerURI() + "' has " + existingColumns + " columns, the rows have " + columns + "." );
+
+			final String setupPath = path + "/" + SETUP_PREFIX + setup;
+			if ( zarr.exists( setupPath ) )
+				zarr.remove( setupPath ); // a setup's rows are replaced whole
+			zarr.createGroup( setupPath );
+			zarr.setAttribute( setupPath, "setup", setup );
+			zarr.setAttribute( setupPath, "rows", ids.length );
+
+			// id first: a setup without a complete values table reads as a write in progress
+			writeTable( zarr, setupPath + "/" + ID, 1, ids.length, DataType.INT32, ids, chunkRows, shardRows );
+			writeTable( zarr, setupPath + "/" + VALUES, columns, ids.length, DataType.FLOAT32, values, chunkRows, shardRows );
+		}
+	}
+
+	/** Writes a whole [columns, rows] table (rows of {@code columns} values, columns fastest): zarr v3, sharded, raw + crc32c, {@code shardRows / chunkRows} chunks per shard. */
+	public static void writeTable( final N5Writer zarr, final String dataset, final int columns, final int rows, final DataType type, final Object data, final int chunkRows, final int shardRows )
+	{
+		final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder( new long[] { columns, rows }, type )
+				.blockSize( new int[] { columns, shardRows } )
+				.chunkSize( new int[] { columns, chunkRows } )
+				.compression( new RawCompression() )
+				.dataCodecInfos( new Crc32cChecksumCodec() )
+				.shardIndexDataCodecInfos( new Crc32cChecksumCodec() )
+				.build();
+
+		zarr.createDataset( dataset, attributes );
+
+		final List< DataBlock< ? > > shard = new ArrayList<>();
+		for ( int start = 0; start < rows; start += chunkRows )
+		{
+			final int count = Math.min( chunkRows, rows - start );
+			final int[] size = { columns, count };
+			final long[] position = { 0, start / chunkRows };
+			if ( type == DataType.INT32 )
+			{
+				final int[] chunk = new int[ columns * count ];
+				System.arraycopy( data, start * columns, chunk, 0, chunk.length );
+				shard.add( new IntArrayDataBlock( size, position, chunk ) );
+			}
+			else
+			{
+				final float[] chunk = new float[ columns * count ];
+				System.arraycopy( data, start * columns, chunk, 0, chunk.length );
+				shard.add( new FloatArrayDataBlock( size, position, chunk ) );
+			}
+
+			if ( ( start / chunkRows + 1 ) % ( shardRows / chunkRows ) == 0 || start + count == rows )
+			{
+				zarr.writeChunks( dataset, attributes, shard.toArray( new DataBlock[ 0 ] ) );
+				shard.clear();
+			}
+		}
+	}
+
+	/**
+	 * Removes an array (all its setups) of a (label, timepoint).
+	 *
+	 * @return whether there was one
+	 */
+	public static boolean remove( final URI baseDir, final String label, final int timepoint, final String name )
+	{
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
+		if ( !store.exists() )
+			return false;
+
+		try ( final N5Writer zarr = URITools.instantiateN5Writer( StorageFormat.ZARR, store.getContainerURI() ) )
+		{
+			final String path = Attributes.path( label, timepoint, name );
+			if ( !zarr.exists( path ) )
+				return false;
+			return zarr.remove( path );
+		}
 	}
 
 	/** @return the row of an id in the sorted keys of {@link #join}, or -1 */
