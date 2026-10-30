@@ -134,14 +134,14 @@ public class TestEmbeddingsPairwise
 			System.arraycopy( vectors.get( r ), 0, values, COLUMNS * r, COLUMNS );
 		}
 		assertEquals( points.size(), stored.size() );
-		TestInterestPointArrays.writeArray( baseURI, LABEL, view.getTimePointId(), "descriptor", view.getViewSetupId(), ids, values, COLUMNS, fingerprint );
+		TestInterestPointArrays.writeArray( baseURI, LABEL, view.getTimePointId(), "embedding", view.getViewSetupId(), ids, values, COLUMNS, fingerprint );
 	}
 
 	static PairwiseResult< InterestPoint > match( final ViewInterestPointLists[] lists, final double radius )
 	{
 		// no trust filter: the planted pairs fit to float32 rounding, so 3 x the median residual would reject exact pairs
 		final RANSACParameters rp = new RANSACParameters( 0.5, 0.1, 12, 1000, false, 3, false );
-		final EmbeddingsParameters parameters = new EmbeddingsParameters( new TranslationModel3D(), radius, EmbeddingsMatcher.defaultRatio, EmbeddingsMatcher.defaultSmin, "descriptor" );
+		final EmbeddingsParameters parameters = new EmbeddingsParameters( new TranslationModel3D(), radius, EmbeddingsMatcher.defaultRatio, EmbeddingsMatcher.defaultSmin, "embedding" );
 		final EmbeddingsPairwise< InterestPoint > matcher = new EmbeddingsPairwise<>( rp, parameters, new ViewInterestPoints( List.of( lists ) ) );
 
 		// the lists as the registration hands them: here the stored points themselves (identity registration), the shift is the misregistration
@@ -162,6 +162,11 @@ public class TestEmbeddingsPairwise
 		for ( final PointMatchGeneric< InterestPoint > inlier : result.getInliers() )
 			assertEquals( 1000 + 3 * inlier.getPoint1().getId(), inlier.getPoint2().getId() );
 		assertTrue( result.getFullDesc().contains( "EMBEDDINGS: " + ( PAIRS + EXTRA ) + "/" + ( PAIRS + EXTRA ) + " points" ), result.getFullDesc() );
+
+		// no radius limit: the vectors alone tell the partners apart
+		final PairwiseResult< InterestPoint > unlimited = match( lists, Double.POSITIVE_INFINITY );
+		assertEquals( PAIRS, unlimited.getInliers().size(), unlimited.getFullDesc() );
+		assertTrue( unlimited.getFullDesc().contains( "no search radius limit" ), unlimited.getFullDesc() );
 
 		// a radius that does not reach the shifted partners: nothing to match
 		final PairwiseResult< InterestPoint > none = match( lists, 5 );
@@ -184,9 +189,9 @@ public class TestEmbeddingsPairwise
 	@Test
 	public void refusesBadParameters()
 	{
-		assertThrows( IllegalArgumentException.class, () -> new EmbeddingsParameters( new TranslationModel3D(), 0, 0.85, 0.3, "descriptor" ) );
-		assertThrows( IllegalArgumentException.class, () -> new EmbeddingsParameters( new TranslationModel3D(), 20, 1.5, 0.3, "descriptor" ) );
+		assertThrows( IllegalArgumentException.class, () -> new EmbeddingsParameters( new TranslationModel3D(), 0, 0.85, 0.3, "embedding" ) );
+		assertThrows( IllegalArgumentException.class, () -> new EmbeddingsParameters( new TranslationModel3D(), 20, 1.5, 0.3, "embedding" ) );
 		assertThrows( IllegalArgumentException.class, () -> new EmbeddingsParameters( new TranslationModel3D(), 20, 0.85, 0.3, "" ) );
-		assertThrows( IllegalArgumentException.class, () -> new EmbeddingsPairwise<>( new RANSACParameters(), new EmbeddingsParameters( new TranslationModel3D(), 20, 0.85, 0.3, "descriptor" ), null ) );
+		assertThrows( IllegalArgumentException.class, () -> new EmbeddingsPairwise<>( new RANSACParameters(), new EmbeddingsParameters( new TranslationModel3D(), 20, 0.85, 0.3, "embedding" ), null ) );
 	}
 }

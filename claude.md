@@ -122,7 +122,7 @@ it matters on Spark executors whose tasks re-create their lists, not in Fiji.
 **Per-point arrays and matching on them (embeddings, 2026-10-29).** A writer may keep rows about the store's points next to the
 generations, keyed by point id: `<label>/tp<T>/arrays/<name>/zarr.json` (`columns` D, `dtype` float32, the writer's `meta` with
 `model.fingerprint`) and `setup<S>/{id, values}` (int32 [N, 1], float32 [N, D]; pcmatch's `embed` writes one 64-D unit vector
-per point as `descriptor`; further tables in `setup<S>` are ignored, pcmatch wrote a `loc` table until 2026-10-29). Java only
+per point as `embedding` (named `descriptor` until 2026-10-29); further tables in `setup<S>` are ignored, pcmatch wrote a `loc` table until 2026-10-29). Java only
 reads them, `InterestPointArrays` (`attributes`, `read`, `join`, `vectors( lists, label, name )`): a filtered label reads its base
 label's rows; rows are joined by id, and the array must have exactly one row per point of the (base) label in the view (another
 number of rows, or a point without a row = the label was detected again and the ids name other points: the view fails with "run
@@ -138,8 +138,10 @@ vectors through the labels' handles (the count check needs the base label's poin
 the registered coordinates, `applyTransformation` derives a point whose `getL()` is global), checks that both views' arrays have one width and one `model.fingerprint`, drops
 points without a vector, skips the pair when fewer than max(model, RANSAC) min matches of either view have a partner within the
 radius, then RANSAC as BigStitcher-Spark's LOAD_CANDIDATES. GUI: `EmbeddingsGUI` ("Embeddings (stored per-point vectors, pcmatch)":
-model, search radius, ratio, array name, RANSAC; grouped views refused); Spark `match-interestpoints -m EMBEDDINGS --searchRadius R
-[--descriptorRatio 0.85] [--arrayName descriptor]` (the radius is required there: it is the registration's uncertainty, about 20 px
+model, "Limit search radius" + radius (default on, 500 px, as the geometric descriptor dialog; off = every point of the other view is a possible partner, `Double.POSITIVE_INFINITY`, no KD-tree), ratio, a choice of the stored embeddings the selected labels have (`PairwiseGUI.prepareQuery` runs before
+`addQuery` with the views and labels, `InterestPointArrays.names`; none = the dialog cannot be completed), RANSAC; grouped views
+refused); Spark `match-interestpoints -m EMBEDDINGS [--searchRadius R] [--descriptorRatio 0.85] [--arrayName x]` (no radius = no limit,
+as for PRECISE_TRANSLATION; `--arrayName` only when the labels have several arrays, the one array they have is used otherwise: it is the registration's uncertainty, about 20 px
 for a well pre-registered dataset, 300-500 for large translations); the action history maps `searchRadius`, `descriptorRatio` and
 `arrayName` (`ActionToSparkCli`). Verified 2026-10-29 against pcmatch's reference candidates on
 `~/Documents/pcmatch_data/ds1_java_matching` (1,825 at R = 20, 3,769 at R = 300, id for id over the 11 pairs) and the embryo pair of
@@ -193,7 +195,7 @@ In filter mode (fade ≥ 1.0): background tints light red, only points within pl
 
 ### Key Files
 - `InterestPointOverlay.java` — `InterestPointSource` interface, `getColor()`, `drawOverlays()`, `drawCross()`, `drawDiagonalCross()`
-- `InterestPointTableModel.java` — implements `InterestPointSource`, holds slider state (`pointSizeScale`, `planeThickness`, `distanceFade`, `filterMode`); each setter calls `bdvPopup.updateBDV()`. Column "Attributes" (`LabelAttributes`, `computeAttributes`): which of DoG response / intensity / sigma the points of a label store (NaN = unknown); an old label (none, some, or views that differ) is drawn in dark red by `MyRenderer` with a tooltip
+- `InterestPointTableModel.java` — implements `InterestPointSource`, holds slider state (`pointSizeScale`, `planeThickness`, `distanceFade`, `filterMode`); each setter calls `bdvPopup.updateBDV()`. Column "Attributes" (`LabelAttributes`, `computeAttributes`): which of DoG response / intensity / sigma the points of a label store (NaN = unknown), short in the cell ("resp, int, sigma", "none (old)", "int only", "mixed"), spelled out in the tooltip; after a "+" the embeddings of the label (its per-point arrays: `withArrays`, `InterestPointArrays.list`/`rows`; a filtered label shows its base's): "embedding 64-D" when every selected view has one row per point of the base label, "(1/4 views)" otherwise, the array's name only when it is not `InterestPointArrays.EMBEDDING` ("embedding 'descriptor' 64-D"). An old label (none, some, or views that differ) and an incomplete array are drawn in dark red by `MyRenderer` with a tooltip that says what is missing
 - `InterestPointExplorerPanel.java` — slider + text-field UI
 - `src/main/resources/mvr/InterestPointHelp.html` — F1 help content
 

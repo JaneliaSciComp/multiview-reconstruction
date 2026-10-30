@@ -44,7 +44,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 
 /**
  * A {@link MatcherPairwise} that matches two views on the embeddings stored with their interest points: the per-point
- * array (default {@code descriptor}) of the dataset's {@code interestpoints.zarr}, one float32 unit vector per point,
+ * array (default {@code embedding}) of the dataset's {@code interestpoints.zarr}, one float32 unit vector per point,
  * written by pcmatch's {@code embed} ({@link InterestPointArrays}). The candidates are computed by
  * {@link EmbeddingsMatcher} (a radius query in the registered frame, a cosine per candidate pair, a ratio test in
  * similarity space) and handed to RANSAC as BigStitcher-Spark's {@code LoadCandidatesPairwise} hands loaded candidates;
@@ -138,7 +138,7 @@ public class EmbeddingsPairwise< I extends InterestPoint > implements MatcherPai
 		final ArrayList< PointMatchGeneric< I > > candidates = found.candidates();
 
 		final String prefix = "EMBEDDINGS: " + listAIn.size() + "/" + listBIn.size() + " points, " + pointsA.size() + "/" + pointsB.size() + " with a " + columns + "-D embedding, "
-				+ found.withinRadiusA() + "/" + found.withinRadiusB() + " with a partner within " + radius + " px, " + candidates.size() + " candidates -> ";
+				+ found.withinRadiusA() + "/" + found.withinRadiusB() + ( Double.isInfinite( radius ) ? " with a partner (no search radius limit), " : " with a partner within " + radius + " px, " ) + candidates.size() + " candidates -> ";
 
 		result.setCandidates( candidates );
 

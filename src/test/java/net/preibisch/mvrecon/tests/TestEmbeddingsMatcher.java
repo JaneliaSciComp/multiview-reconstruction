@@ -65,7 +65,9 @@ public class TestEmbeddingsMatcher
 		return point;
 	}
 
-	Candidates< InterestPoint > match( final double ratio, final double smin )
+	Candidates< InterestPoint > match( final double ratio, final double smin ) { return match( RADIUS, ratio, smin ); }
+
+	Candidates< InterestPoint > match( final double radius, final double ratio, final double smin )
 	{
 		final float[] vA = new float[ 2 * pointsA.size() ];
 		for ( int i = 0; i < pointsA.size(); ++i )
@@ -78,7 +80,7 @@ public class TestEmbeddingsMatcher
 			vB[ 2 * j + 1 ] = (float) Math.sqrt( 1 - cosB.get( j ) * cosB.get( j ) );
 		}
 
-		return EmbeddingsMatcher.match( pointsA, vA, pointsB, vB, 2, RADIUS, ratio, smin );
+		return EmbeddingsMatcher.match( pointsA, vA, pointsB, vB, 2, radius, ratio, smin );
 	}
 
 	static Set< String > pairs( final Candidates< InterestPoint > candidates )
@@ -143,6 +145,21 @@ public class TestEmbeddingsMatcher
 		final float[] one = { 1, 0 }, two = { 1, 0, 1, 0 };
 		assertEquals( 2, EmbeddingsMatcher.match( pointsB.subList( 0, 2 ), two, pointsA.subList( 1, 2 ), one, 2, RADIUS, 1.0, SMIN ).candidates().size() );
 		assertEquals( 0, EmbeddingsMatcher.match( pointsB.subList( 1, 2 ), one, pointsA.subList( 0, 1 ), one, 2, RADIUS, 1.0, SMIN ).candidates().size() ); // 12 is outside the radius of 1
+	}
+
+	@Test
+	public void noRadiusLimit()
+	{
+		a( 1, 0, 0, 0 );
+		b( 11, 1000, 0, 0, 0.9f ); // far away, but without a limit every point of B is a possible partner
+		b( 12, -1000, 0, 0, 0.5f );
+		a( 2, 5000, 0, 0 );
+		b( 21, -5000, 0, 0, 0.2f ); // below smin
+
+		final Candidates< InterestPoint > candidates = match( Double.POSITIVE_INFINITY, RATIO, SMIN );
+		assertEquals( Set.of( "1-11", "2-11" ), pairs( candidates ) ); // 2 sees 11 too: 0.9 against 0.5 passes the ratio test
+		assertEquals( 2, candidates.withinRadiusA() );
+		assertEquals( 3, candidates.withinRadiusB() );
 	}
 
 	@Test

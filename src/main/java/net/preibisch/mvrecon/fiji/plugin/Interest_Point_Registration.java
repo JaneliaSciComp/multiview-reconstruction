@@ -858,6 +858,7 @@ public class Interest_Point_Registration implements PlugIn
 		gd.addMessage( "Algorithm parameters [" + brp.pwr.getDescription() + "]", new Font( Font.SANS_SERIF, Font.BOLD, 12 ) );
 		gd.addMessage( "" );
 
+		brp.pwr.prepareQuery( data, viewIds, brp.labelMap );
 		brp.pwr.addQuery( gd );
 
 		GlobalOptimizationParameters.addSimpleParametersToDialog( gd );

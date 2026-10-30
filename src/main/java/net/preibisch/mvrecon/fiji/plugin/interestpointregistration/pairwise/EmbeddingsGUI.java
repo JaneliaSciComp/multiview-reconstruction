@@ -23,8 +23,12 @@
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
 import java.awt.Font;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.SortedSet;
 
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewId;
@@ -33,6 +37,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.Transformatio
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.embeddings.EmbeddingsMatcher;
@@ -55,6 +60,9 @@ public class EmbeddingsGUI extends PairwiseGUI
 	protected TransformationModelGUI model = null;
 	protected EmbeddingsParameters parameters;
 	protected RANSACParameters ransacParams;
+
+	/** the stored embeddings (per-point arrays) the selected labels have, found by {@link #prepareQuery}; the dialog offers them as a choice */
+	protected String[] arrayNames = null;
 
 	final SpimData2 spimData;
 
@@ -84,18 +92,35 @@ public class EmbeddingsGUI extends PairwiseGUI
 	}
 
 	@Override
+	public void prepareQuery( final SpimData2 data, final List< ViewId > viewIds, final Map< ViewId, HashMap< String, Double > > labelMap )
+	{
+		final SortedSet< String > names = InterestPointArrays.names( data.getViewInterestPoints(), labelMap );
+		arrayNames = names.toArray( new String[ 0 ] );
+
+		if ( arrayNames.length == 0 )
+			IOFunctions.println( "The selected label(s) have no stored embeddings (no per-point array in interestpoints.zarr): run 'pcmatch embed' first." );
+	}
+
+	@Override
 	public void addQuery( final GenericDialog gd )
 	{
 		gd.addChoice( "Transformation model", TransformationModelGUI.modelChoice, TransformationModelGUI.modelChoice[ defaultModel ] );
 		gd.addCheckbox( "Regularize_model", defaultRegularize );
 
-		gd.addNumericField( "Search_radius (px, global coordinates)", EmbeddingsParameters.defaultSearchRadius, 1 );
+		gd.addCheckbox( "Limit_search_radius", EmbeddingsParameters.defaultLimitSearchRadius );
+		gd.addSlider( "Search_radius (px, global coordinates)", 10.0, 1000.0, EmbeddingsParameters.defaultSearchRadius );
 		gd.addSlider( "Ratio_test (similarity space)", 0.5, 1.0, EmbeddingsParameters.defaultRatio );
-		gd.addStringField( "Array_name", EmbeddingsParameters.defaultArrayName, 20 );
+
+		// the stored embeddings of the selected labels (prepareQuery): a choice even if it is one; none means the dialog cannot be completed
+		if ( arrayNames == null || arrayNames.length == 0 )
+			gd.addMessage( "The selected label(s) have no stored embeddings in interestpoints.zarr: run 'pcmatch embed' first (OK will not proceed).", GUIHelper.smallStatusFont );
+		else
+			gd.addChoice( "Embeddings", arrayNames, Arrays.asList( arrayNames ).contains( EmbeddingsParameters.defaultArrayName ) ? EmbeddingsParameters.defaultArrayName : arrayNames[ 0 ] );
 		gd.addMessage(
 				"Matches on the vectors 'pcmatch embed' stored with the points (interestpoints.zarr, <label>/tp<T>/arrays/<name>).\n"
 				+ "Partners are looked for within the search radius, which is the registration's uncertainty (about 20 px for a well\n"
-				+ "pre-registered dataset, 300-500 px for large translations); the best partner by cosine is a candidate if\n"
+				+ "pre-registered dataset, 300-500 px for large translations; without a limit every point of the other view is a\n"
+				+ "possible partner, which is slow on large views); the best partner by cosine is a candidate if\n"
 				+ "(1 - best) < ratio x (1 - second best), or alone within the radius; the smallest cosine is " + EmbeddingsMatcher.defaultSmin + ".",
 				GUIHelper.smallStatusFont );
 
@@ -117,11 +142,19 @@ public class EmbeddingsGUI extends PairwiseGUI
 				return false;
 		}
 
+		final boolean limitSearchRadius = EmbeddingsParameters.defaultLimitSearchRadius = gd.getNextBoolean();
 		final double searchRadius = EmbeddingsParameters.defaultSearchRadius = gd.getNextNumber();
 		final double ratio = EmbeddingsParameters.defaultRatio = gd.getNextNumber();
-		final String arrayName = EmbeddingsParameters.defaultArrayName = gd.getNextString().trim();
 
-		if ( !( searchRadius > 0 ) )
+		if ( arrayNames == null || arrayNames.length == 0 )
+		{
+			IOFunctions.println( "The selected label(s) have no stored embeddings: run 'pcmatch embed' first." );
+			return false;
+		}
+
+		final String arrayName = EmbeddingsParameters.defaultArrayName = arrayNames[ gd.getNextChoiceIndex() ];
+
+		if ( limitSearchRadius && !( searchRadius > 0 ) )
 		{
 			IOFunctions.println( "The search radius must be positive, got " + searchRadius + "." );
 			return false;
@@ -133,22 +166,16 @@ public class EmbeddingsGUI extends PairwiseGUI
 			return false;
 		}
 
-		if ( !arrayName.matches( "[A-Za-z0-9_.-]+" ) )
-		{
-			IOFunctions.println( "The array name must be a plain identifier ([A-Za-z0-9_.-]+), got '" + arrayName + "'." );
-			return false;
-		}
-
 		final RANSACParameters rp = parseRansacQuery( gd );
 		if ( rp == null )
 			return false;
 
-		this.parameters = new EmbeddingsParameters( model.getModel(), searchRadius, ratio, EmbeddingsMatcher.defaultSmin, arrayName );
+		this.parameters = new EmbeddingsParameters( model.getModel(), limitSearchRadius ? searchRadius : Double.POSITIVE_INFINITY, ratio, EmbeddingsMatcher.defaultSmin, arrayName );
 		this.ransacParams = rp;
 
 		IOFunctions.println( "Selected Paramters:" );
 		IOFunctions.println( "model: " + defaultModel );
-		IOFunctions.println( "searchRadius: " + searchRadius );
+		IOFunctions.println( "searchRadius: " + ( limitSearchRadius ? Double.toString( searchRadius ) : "no limit" ) );
 		IOFunctions.println( "ratio: " + ratio );
 		IOFunctions.println( "smin: " + EmbeddingsMatcher.defaultSmin );
 		IOFunctions.println( "arrayName: " + arrayName );
@@ -171,10 +198,10 @@ public class EmbeddingsGUI extends PairwiseGUI
 		final LinkedHashMap< String, String > p = new LinkedHashMap<>();
 		p.put( "matchingMethod", "EMBEDDINGS" );
 		putModelParams( p, model );
-		p.put( "searchRadius", Double.toString( parameters.getSearchRadius() ) );
+		if ( parameters.limitSearchRadius() )
+			p.put( "searchRadius", Double.toString( parameters.getSearchRadius() ) ); // absent = no limit, as for the geometric descriptors
 		p.put( "descriptorRatio", Double.toString( parameters.getRatio() ) );
-		if ( !parameters.getArrayName().equals( "descriptor" ) )
-			p.put( "arrayName", parameters.getArrayName() );
+		p.put( "arrayName", parameters.getArrayName() ); // always: the command line picks an array by itself only when a label has exactly one
 		putRansacParams( p, ransacParams );
 		return p;
 	}

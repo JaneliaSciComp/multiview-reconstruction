@@ -31,7 +31,7 @@ import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 
 /**
- * Matches two views on the embeddings stored with their interest points (the per-point array {@code descriptor} of the
+ * Matches two views on the embeddings stored with their interest points (the per-point array {@code embedding} of the
  * interest point store, one float32 unit vector per point, written by pcmatch's {@code embed}, read by
  * {@code InterestPointArrays}): a radius query in the registered frame, one cosine per candidate pair, a ratio test in
  * similarity space. The reference implementation is pcmatch's {@code matching.radius_sparse_match} (one scale),
@@ -70,7 +70,7 @@ public class EmbeddingsMatcher
 	 * @param pointsB the points of B that have a vector
 	 * @param vectorsB the vectors of {@code pointsB}
 	 * @param columns the dimension of the vectors
-	 * @param radius the search radius in the registered frame (the registration's uncertainty)
+	 * @param radius the search radius in the registered frame (the registration's uncertainty), {@link Double#POSITIVE_INFINITY} for no limit (every point of B is a possible partner of every point of A)
 	 * @param ratio the ratio test's threshold in similarity space, see {@link #defaultRatio}
 	 * @param smin the smallest cosine of a candidate, see {@link #defaultSmin}
 	 * @return the candidates, one per point of A at most
@@ -99,7 +99,8 @@ public class EmbeddingsMatcher
 		for ( int j = 0; j < pointsB.size(); ++j )
 			indicesB.add( j );
 
-		final RadiusNeighborSearchOnKDTree< Integer > search = new RadiusNeighborSearchOnKDTree<>( new KDTree<>( indicesB, pointsB ) );
+		final boolean unlimited = Double.isInfinite( radius ); // every point of B: no tree, all of B per point of A
+		final RadiusNeighborSearchOnKDTree< Integer > search = unlimited ? null : new RadiusNeighborSearchOnKDTree<>( new KDTree<>( indicesB, pointsB ) );
 		final boolean[] hitB = new boolean[ pointsB.size() ];
 		final double squaredRadius = radius * radius;
 		final double queryRadius = Math.nextUp( radius ); // the tree's search is strict at the radius, the reference is inclusive: ask for a hair more and test exactly below
@@ -108,17 +109,27 @@ public class EmbeddingsMatcher
 		for ( int a = 0; a < pointsA.size(); ++a )
 		{
 			final I pointA = pointsA.get( a );
-			search.search( pointA, queryRadius, false );
+			final int numNeighbors;
+
+			if ( unlimited )
+			{
+				numNeighbors = pointsB.size();
+			}
+			else
+			{
+				search.search( pointA, queryRadius, false );
+				numNeighbors = search.numNeighbors();
+			}
 
 			int count = 0, bestJ = -1;
 			double best = Double.NEGATIVE_INFINITY, second = Double.NEGATIVE_INFINITY;
 
-			for ( int i = 0; i < search.numNeighbors(); ++i )
+			for ( int i = 0; i < numNeighbors; ++i )
 			{
-				if ( search.getSquareDistance( i ) > squaredRadius ) // inclusive, as the reference's query_ball_point
+				if ( !unlimited && search.getSquareDistance( i ) > squaredRadius ) // inclusive, as the reference's query_ball_point
 					continue;
 
-				final int j = search.getSampler( i ).get();
+				final int j = unlimited ? i : search.getSampler( i ).get();
 				hitB[ j ] = true;
 				++count;
 

@@ -22,6 +22,8 @@
  */
 package net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.embeddings;
 
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
+
 import mpicbg.models.Model;
 
 /**
@@ -33,10 +35,15 @@ import mpicbg.models.Model;
  */
 public class EmbeddingsParameters
 {
-	/** the dialog's search radius; the command line has no default (the right value is the registration's uncertainty) */
-	public static double defaultSearchRadius = 20;
+	/** the dialog's "Limit search radius" and its radius (the registration's uncertainty in global px); the command line limits only when {@code --searchRadius} is given */
+	public static boolean defaultLimitSearchRadius = true;
+	public static double defaultSearchRadius = 500;
 	public static double defaultRatio = EmbeddingsMatcher.defaultRatio;
-	public static String defaultArrayName = "descriptor";
+	/** the name pcmatch's {@code embed} writes its embeddings under (its {@code --array-name}); the matcher reads this array unless told otherwise */
+	public static final String standardArrayName = InterestPointArrays.EMBEDDING;
+
+	/** the array name the dialog starts with (remembered between dialogs) */
+	public static String defaultArrayName = standardArrayName;
 
 	protected final Model< ? > model;
 	protected final double searchRadius, ratio, smin;
@@ -44,7 +51,8 @@ public class EmbeddingsParameters
 
 	/**
 	 * @param model the transformation model to fit
-	 * @param searchRadius the search radius for partners in global coordinates (px), the registration's uncertainty
+	 * @param searchRadius the search radius for partners in global coordinates (px), the registration's uncertainty;
+	 *            {@link Double#POSITIVE_INFINITY} for no limit (every point of the other view is a possible partner)
 	 * @param ratio the ratio test's threshold in similarity space ({@link EmbeddingsMatcher#defaultRatio})
 	 * @param smin the smallest cosine of a candidate ({@link EmbeddingsMatcher#defaultSmin})
 	 * @param arrayName the per-point array of the interest point store that holds the embeddings
@@ -72,10 +80,12 @@ public class EmbeddingsParameters
 	/** @return a copy of the model (matchers run in parallel, a model is stateful) */
 	public Model< ? > getModel() { return model.copy(); }
 	public double getSearchRadius() { return searchRadius; }
+	/** @return false if the search radius is unlimited ({@link Double#POSITIVE_INFINITY}) */
+	public boolean limitSearchRadius() { return !Double.isInfinite( searchRadius ); }
 	public double getRatio() { return ratio; }
 	public double getSmin() { return smin; }
 	public String getArrayName() { return arrayName; }
 
 	@Override
-	public String toString() { return "radius " + searchRadius + " px, ratio " + ratio + ", smin " + smin + ", array '" + arrayName + "'"; }
+	public String toString() { return ( limitSearchRadius() ? "radius " + searchRadius + " px" : "no search radius limit" ) + ", ratio " + ratio + ", smin " + smin + ", array '" + arrayName + "'"; }
 }

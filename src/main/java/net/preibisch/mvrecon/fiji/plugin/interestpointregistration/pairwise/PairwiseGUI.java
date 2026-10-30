@@ -22,6 +22,8 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import ij.gui.GenericDialog;
@@ -124,6 +126,16 @@ public abstract class PairwiseGUI implements DescribesParameters
 
 		return true;
 	}
+
+	/**
+	 * Called with the views and labels of the registration before {@link #addQuery}, so that a method can look at the data
+	 * when it builds its questions (e.g. which stored embeddings the labels have); nothing by default.
+	 *
+	 * @param data the dataset
+	 * @param viewIds the views to register (those that have the labels)
+	 * @param labelMap the labels (and weights) per view
+	 */
+	public void prepareQuery( final SpimData2 data, final List< ViewId > viewIds, final Map< ViewId, HashMap< String, Double > > labelMap ) {}
 
 	/*
 	 * adds the questions this registration wants to ask
