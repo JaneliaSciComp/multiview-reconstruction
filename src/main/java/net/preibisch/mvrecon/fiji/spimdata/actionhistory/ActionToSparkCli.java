@@ -313,6 +313,7 @@ public class ActionToSparkCli
 				new String[]{ "numNeighbors", "-n" },
 				new String[]{ "searchRadius", "-sr" },
 				new String[]{ "descriptorRatio", "--descriptorRatio" },
+				new String[]{ "minSimilarity", "--minSimilarity" },
 				new String[]{ "arrayName", "--arrayName" },
 				new String[]{ "overlapType", "-vr" },
 				new String[]{ "interestpointsForReg", "-ipfr" },

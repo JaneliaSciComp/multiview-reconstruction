@@ -110,6 +110,7 @@ public class EmbeddingsGUI extends PairwiseGUI
 		gd.addCheckbox( "Limit_search_radius", EmbeddingsParameters.defaultLimitSearchRadius );
 		gd.addSlider( "Search_radius (px, global coordinates)", 10.0, 1000.0, EmbeddingsParameters.defaultSearchRadius );
 		gd.addSlider( "Ratio_test (similarity space)", 0.5, 1.0, EmbeddingsParameters.defaultRatio );
+		gd.addSlider( "Minimal_cosine_similarity", -1.0, 1.0, EmbeddingsParameters.defaultSmin );
 
 		// the stored embeddings of the selected labels (prepareQuery): a choice even if it is one; none means the dialog cannot be completed
 		if ( arrayNames == null || arrayNames.length == 0 )
@@ -117,11 +118,9 @@ public class EmbeddingsGUI extends PairwiseGUI
 		else
 			gd.addChoice( "Embeddings", arrayNames, Arrays.asList( arrayNames ).contains( EmbeddingsParameters.defaultArrayName ) ? EmbeddingsParameters.defaultArrayName : arrayNames[ 0 ] );
 		gd.addMessage(
-				"Matches on the vectors 'pcmatch embed' stored with the points (interestpoints.zarr, <label>/tp<T>/arrays/<name>).\n"
-				+ "Partners are looked for within the search radius, which is the registration's uncertainty (about 20 px for a well\n"
-				+ "pre-registered dataset, 300-500 px for large translations; without a limit every point of the other view is a\n"
-				+ "possible partner, which is slow on large views); the best partner by cosine is a candidate if\n"
-				+ "(1 - best) < ratio x (1 - second best), or alone within the radius; the smallest cosine is " + EmbeddingsMatcher.defaultSmin + ".",
+				"Matches on the embeddings 'pcmatch embed' stored with the points (interestpoints.zarr, <label>/tp<T>/arrays/<name>):\n"
+				+ "for every point, the partner with the highest cosine similarity is a candidate if (1 - best) < ratio x (1 - second best),\n"
+				+ "or if it is the only one; a candidate needs at least the minimal cosine similarity. RANSAC then fits the model.",
 				GUIHelper.smallStatusFont );
 
 		gd.addMessage( "" );
@@ -145,6 +144,7 @@ public class EmbeddingsGUI extends PairwiseGUI
 		final boolean limitSearchRadius = EmbeddingsParameters.defaultLimitSearchRadius = gd.getNextBoolean();
 		final double searchRadius = EmbeddingsParameters.defaultSearchRadius = gd.getNextNumber();
 		final double ratio = EmbeddingsParameters.defaultRatio = gd.getNextNumber();
+		final double smin = EmbeddingsParameters.defaultSmin = gd.getNextNumber();
 
 		if ( arrayNames == null || arrayNames.length == 0 )
 		{
@@ -166,18 +166,24 @@ public class EmbeddingsGUI extends PairwiseGUI
 			return false;
 		}
 
+		if ( !( smin >= -1 && smin <= 1 ) )
+		{
+			IOFunctions.println( "The minimal cosine similarity must be in [-1, 1], got " + smin + "." );
+			return false;
+		}
+
 		final RANSACParameters rp = parseRansacQuery( gd );
 		if ( rp == null )
 			return false;
 
-		this.parameters = new EmbeddingsParameters( model.getModel(), limitSearchRadius ? searchRadius : Double.POSITIVE_INFINITY, ratio, EmbeddingsMatcher.defaultSmin, arrayName );
+		this.parameters = new EmbeddingsParameters( model.getModel(), limitSearchRadius ? searchRadius : Double.POSITIVE_INFINITY, ratio, smin, arrayName );
 		this.ransacParams = rp;
 
 		IOFunctions.println( "Selected Paramters:" );
 		IOFunctions.println( "model: " + defaultModel );
 		IOFunctions.println( "searchRadius: " + ( limitSearchRadius ? Double.toString( searchRadius ) : "no limit" ) );
 		IOFunctions.println( "ratio: " + ratio );
-		IOFunctions.println( "smin: " + EmbeddingsMatcher.defaultSmin );
+		IOFunctions.println( "minSimilarity: " + smin );
 		IOFunctions.println( "arrayName: " + arrayName );
 
 		return true;
@@ -201,6 +207,7 @@ public class EmbeddingsGUI extends PairwiseGUI
 		if ( parameters.limitSearchRadius() )
 			p.put( "searchRadius", Double.toString( parameters.getSearchRadius() ) ); // absent = no limit, as for the geometric descriptors
 		p.put( "descriptorRatio", Double.toString( parameters.getRatio() ) );
+		p.put( "minSimilarity", Double.toString( parameters.getSmin() ) );
 		p.put( "arrayName", parameters.getArrayName() ); // always: the command line picks an array by itself only when a label has exactly one
 		putRansacParams( p, ransacParams );
 		return p;

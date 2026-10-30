@@ -35,10 +35,12 @@ import mpicbg.models.Model;
  */
 public class EmbeddingsParameters
 {
-	/** the dialog's "Limit search radius" and its radius (the registration's uncertainty in global px); the command line limits only when {@code --searchRadius} is given */
-	public static boolean defaultLimitSearchRadius = true;
+	/** the dialog's "Limit search radius" (off by default: the embeddings alone tell the partners apart) and its radius in global px; the command line limits only when {@code --searchRadius} is given */
+	public static boolean defaultLimitSearchRadius = false;
 	public static double defaultSearchRadius = 500;
 	public static double defaultRatio = EmbeddingsMatcher.defaultRatio;
+	/** the dialog's minimal cosine similarity of a candidate (remembered between dialogs); {@link EmbeddingsMatcher#defaultSmin} at first */
+	public static double defaultSmin = EmbeddingsMatcher.defaultSmin;
 	/** the name pcmatch's {@code embed} writes its embeddings under (its {@code --array-name}); the matcher reads this array unless told otherwise */
 	public static final String standardArrayName = InterestPointArrays.EMBEDDING;
 

@@ -131,14 +131,14 @@ the count is the base label's, so pcmatch embeds all points of the base even whe
 vector. A fresh N5 reader per read (the writer swaps a setup's tables in place). A commit leaves `arrays/` alone, removing the label removes it with its timepoint
 group. The matcher on these rows is `pairwise.methods.embeddings.EmbeddingsMatcher` (KD-tree radius query in the registered frame,
 inclusive at the radius, so the tree is asked for `Math.nextUp( radius )` and the squared distance tested; one cosine per pair
-accumulated in double; a single neighbour is a candidate if cos > smin = 0.3; otherwise best/second: candidate if cos > smin and
+accumulated in double; a single neighbour is a candidate if cos > smin (the minimal cosine similarity, 0.3 by default; a dialog slider and `--minSimilarity` since 2026-10-29 late); otherwise best/second: candidate if cos > smin and
 (1 - best) < ratio x (1 - second), ratio 0.85; one candidate per point of A at most, direction matters) wrapped by
 `EmbeddingsPairwise( rp, EmbeddingsParameters( model, searchRadius, ratio, smin, arrayName ), viewInterestPoints )`: it reads the
 vectors through the labels' handles (the count check needs the base label's points; note that the lists a matcher gets carry
 the registered coordinates, `applyTransformation` derives a point whose `getL()` is global), checks that both views' arrays have one width and one `model.fingerprint`, drops
 points without a vector, skips the pair when fewer than max(model, RANSAC) min matches of either view have a partner within the
 radius, then RANSAC as BigStitcher-Spark's LOAD_CANDIDATES. GUI: `EmbeddingsGUI` ("Embeddings (stored per-point vectors, pcmatch)":
-model, "Limit search radius" + radius (default on, 500 px, as the geometric descriptor dialog; off = every point of the other view is a possible partner, `Double.POSITIVE_INFINITY`, no KD-tree), ratio, a choice of the stored embeddings the selected labels have (`PairwiseGUI.prepareQuery` runs before
+model, "Limit search radius" + radius (off by default, Stephan: it works great without; 500 px when on, as the geometric descriptor dialog; off = every point of the other view is a possible partner, `Double.POSITIVE_INFINITY`, no KD-tree), ratio, a choice of the stored embeddings the selected labels have (`PairwiseGUI.prepareQuery` runs before
 `addQuery` with the views and labels, `InterestPointArrays.names`; none = the dialog cannot be completed), RANSAC; grouped views
 refused); Spark `match-interestpoints -m EMBEDDINGS [--searchRadius R] [--descriptorRatio 0.85] [--arrayName x]` (no radius = no limit,
 as for PRECISE_TRANSLATION; `--arrayName` only when the labels have several arrays, the one array they have is used otherwise: it is the registration's uncertainty, about 20 px
