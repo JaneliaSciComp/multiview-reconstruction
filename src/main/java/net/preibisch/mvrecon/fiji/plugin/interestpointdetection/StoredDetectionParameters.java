@@ -285,7 +285,7 @@ public record StoredDetectionParameters(
 		}
 	}
 
-	static double doubleValue( final Map< String, String > values, final String key )
+	public static double doubleValue( final Map< String, String > values, final String key )
 	{
 		try
 		{
@@ -297,7 +297,7 @@ public record StoredDetectionParameters(
 		}
 	}
 
-	static long longValue( final Map< String, String > values, final String key, final long fallback )
+	public static long longValue( final Map< String, String > values, final String key, final long fallback )
 	{
 		try
 		{
