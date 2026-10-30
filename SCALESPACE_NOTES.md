@@ -403,3 +403,19 @@ pixel-isotropic Gaussians select a 20-24% smaller scale for the same blobs.
    `embedding` array with pcmatch's meta. (3) Verification: the same 64 numbers up to float rounding for the 15k `beads` points of
    `ds1_java_matching`, whose arrays pcmatch wrote. (4) Place: the Spark detection job, where the image blocks are in memory and the
    coarser levels can be read block-wise next to them (no per-point reads).
+   Why ONNX (Stephan, 2026-10-29): the architecture will change and several models may coexist; with ONNX a new network is a new file.
+   The contract that must not drift is the input: the exported file should carry pcmatch's `DescriptorConfig` (extents, units, patch
+   size, border mode, point sigma, read floor, output width) and the fingerprint as metadata, the Java sampling is written against that
+   config, not against today's numbers, and the per-patch standardisation goes into the exported graph so Java only samples raw patches;
+   arrays are named and fingerprinted per model already, so several models coexist in a store. pcmatch side: an `export-onnx` command.
+   ONNX Runtime footprint (checked 2026-10-29): `com.microsoft.onnxruntime:onnxruntime` 1.22.0 is a 139 MB jar (1.20.0: 93 MB) with the
+   natives for Linux x64/arm64, macOS x64/arm64 and Windows bundled (about 30 MB extracted per platform into java.io.tmpdir once per
+   JVM, path configurable), NO Maven dependencies (so no protobuf/guava/kryo clash with Spark, the usual pain of DJL/TensorFlow Java);
+   the GPU variant is 496 MB and needs CUDA + cuDNN on the nodes (not needed, CPU suffices at detection time); MIT licence. Spark: one
+   session per executor JVM, shared (thread-safe inference), intra-op threads = cores / tasks (default = all cores, oversubscribes);
+   memory is off-heap, about 260 KB per patch at the first layer (batch 512 = 130 MB) -> spark.executor.memoryOverhead; one JNI load
+   per JVM; the Linux build wants a recent glibc (this workstation 2.39, the cluster OS to be checked once). Fiji: the same jar works,
+   two plugins with different ONNX Runtime versions cannot coexist in one JVM (nothing in Fiji's core ships it today); 139 MB on the
+   update site for every user argues for keeping the embedding code in BigStitcher-Spark and making the dependency optional in MVR
+   (loaded only when a model is used) if the GUI is to embed too. Stephan (2026-10-29): the path is not decided yet, but computing the
+   embeddings has to be accessible in MVR, not only in BigStitcher-Spark.
