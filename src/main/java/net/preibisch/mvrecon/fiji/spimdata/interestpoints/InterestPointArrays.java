@@ -26,8 +26,13 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.SortedSet;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import org.janelia.saalfeldlab.n5.DataBlock;
 import org.janelia.saalfeldlab.n5.DataType;
@@ -38,12 +43,13 @@ import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Group;
 import util.URITools;
 
 /**
  * Per-point arrays of the interest point store: rows that another writer keeps about the store's points (pcmatch's
- * {@code embed} writes the learned descriptor of every point), keyed by point id and independent of the generations.
+ * {@code embed} writes the learned embedding of every point), keyed by point id and independent of the generations.
  * Java only reads them; a writer puts them next to the generations of a (label, timepoint):
  *
  * <pre>
@@ -67,6 +73,9 @@ import util.URITools;
 public class InterestPointArrays
 {
 	public static final String ARRAYS = "arrays";
+
+	/** the array pcmatch's {@code embed} writes its embeddings to (its {@code --array-name}; {@code descriptor} until 2026-10-29), the matcher's default */
+	public static final String EMBEDDING = "embedding";
 	public static final String SETUP_PREFIX = "setup";
 	public static final String ID = "id";
 	public static final String VALUES = "values";
@@ -174,13 +183,116 @@ public class InterestPointArrays
 	}
 
 	/**
+	 * @return the arrays of (label, timepoint) by name, ascending; empty if the dataset has no store or the group has no
+	 *         arrays; the label is the one the rows were written under (the base of a filtered label)
+	 * @throws IllegalStateException if an array lacks its attributes or is not float32
+	 */
+	public static List< Attributes > list( final URI baseDir, final String label, final int timepoint )
+	{
+		final List< Attributes > result = new ArrayList<>();
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
+		if ( !store.exists() )
+			return result;
+
+		try ( final N5Reader reader = URITools.instantiateN5Reader( StorageFormat.ZARR, store.getContainerURI() ) )
+		{
+			final String arrays = new Group( label, timepoint ).path() + "/" + ARRAYS;
+			if ( !reader.exists( arrays ) )
+				return result;
+
+			final String[] names = reader.list( arrays );
+			Arrays.sort( names );
+
+			for ( final String name : names )
+			{
+				final Attributes attributes = attributes( reader, store.getContainerURI(), label, timepoint, name );
+				if ( attributes != null )
+					result.add( attributes );
+			}
+		}
+
+		return result;
+	}
+
+	/**
+	 * @return the names of the arrays the labels of the given views have: the arrays of every (base label, timepoint) that
+	 *         the views and their labels name, in one sorted set; empty if there are none or the dataset has no store. A
+	 *         registration needs one of them (the matcher's array), the dialog offers them, the command line picks the
+	 *         only one when none is named.
+	 * @param vip the lists of the dataset
+	 * @param labelMap the labels per view, as a registration selects them
+	 */
+	public static SortedSet< String > names( final ViewInterestPoints vip, final Map< ViewId, ? extends Map< String, ? > > labelMap )
+	{
+		final TreeSet< String > names = new TreeSet<>();
+		final HashSet< String > listed = new HashSet<>(); // the (base path, base label, timepoint) groups listed already
+
+		for ( final Map.Entry< ViewId, ? extends Map< String, ? > > e : labelMap.entrySet() )
+		{
+			final ViewInterestPointLists lists = vip.getViewInterestPointLists( e.getKey() );
+
+			for ( final String label : e.getValue().keySet() )
+			{
+				final String base = baseLabel( lists, label );
+				final URI baseDir = lists.getInterestPointList( label ).getBasePath();
+
+				if ( listed.add( baseDir + "|" + base + "|" + lists.getTimePointId() ) )
+					for ( final Attributes array : list( baseDir, base, lists.getTimePointId() ) )
+						names.add( array.name() );
+			}
+		}
+
+		return names;
+	}
+
+	/**
+	 * @return the number of rows an array holds per setup (only the setups with a complete {@code values} table), by
+	 *         setup; empty if it has none
+	 */
+	public static SortedMap< Integer, Long > rows( final URI baseDir, final Attributes array )
+	{
+		final SortedMap< Integer, Long > rows = new TreeMap<>();
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
+		if ( !store.exists() )
+			return rows;
+
+		try ( final N5Reader reader = URITools.instantiateN5Reader( StorageFormat.ZARR, store.getContainerURI() ) )
+		{
+			if ( !reader.exists( array.path() ) )
+				return rows;
+
+			for ( final String child : reader.list( array.path() ) )
+			{
+				if ( !child.startsWith( SETUP_PREFIX ) )
+					continue;
+
+				final int setup;
+				try
+				{
+					setup = Integer.parseInt( child.substring( SETUP_PREFIX.length() ) );
+				}
+				catch ( final NumberFormatException e )
+				{
+					continue; // e.g. a setup the writer is still writing under a temporary name
+				}
+
+				final String path = array.path() + "/" + child;
+				if ( reader.datasetExists( path + "/" + VALUES ) )
+					rows.put( setup, reader.getDatasetAttributes( path + "/" + ID ).getDimensions()[ 1 ] );
+			}
+		}
+
+		return rows;
+	}
+
+	/**
 	 * Reads one setup's rows of an array as stored (section 3 of the specification joins them to the points, see {@link #join}).
 	 *
 	 * @param baseDir the dataset directory (the store is {@code interestpoints.zarr} in it)
 	 * @param label the label the rows were written under (the base of a filtered label, see {@link #baseLabel})
 	 * @param timepoint the timepoint of the view
 	 * @param setup the setup of the view
-	 * @param name the name of the array (pcmatch's default is {@code descriptor})
+	 * @param name the name of the array (pcmatch's default is {@code embedding})
 	 * @return the rows, or null if there is no such array or no rows for the setup (a {@code setup<S>} directory without
 	 *         a complete {@code values} is a write in progress and counts as none)
 	 * @throws IllegalStateException if the array is damaged (tables of different lengths, another type or chunking than specified)
@@ -269,7 +381,7 @@ public class InterestPointArrays
 
 		if ( rows.size() != pointsOfLabel )
 			throw new IllegalStateException( "The array '" + rows.attributes().name() + "' of " + where( rows ) + " has " + rows.size() + " rows, the label has " + pointsOfLabel
-					+ " points: the label was detected again since the rows were written (or the writer did not finish); run pcmatch embed again for label '" + rows.attributes().label() + "'." );
+					+ " points: the label was detected again since the rows were written, or only some of its points were embedded; run pcmatch embed again for label '" + rows.attributes().label() + "'." );
 
 		// row index by id: the upper 32 bits are the id, the lower the row, sorted
 		final long[] keys = new long[ rows.size() ];

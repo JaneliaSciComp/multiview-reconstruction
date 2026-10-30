@@ -28,27 +28,37 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointTableModel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointTableModel.LabelAttributes;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 
 /**
  * The "Attributes" column of the interest point explorer: which of DoG response, intensity and sigma the points of a
  * label store in the selected views (an old label stores none or some, a label detected again for some views differs
- * between them). The lists are in memory only (never saved), the base path is a placeholder.
+ * between them), and after a "+" the per-point arrays (embeddings) of the label with whether every selected view has one
+ * row per point. The lists of the attribute tests are in memory only (never saved), the base path is a placeholder; the
+ * array test writes a store.
  */
 public class TestInterestPointTableModel
 {
+	@TempDir
+	Path tmp;
+
 	static final URI base = URI.create( "file:///nonexistent/dataset/" );
 	static final ViewId v0 = new ViewId( 0, 0 ), v1 = new ViewId( 0, 1 );
 	static final List< ViewId > both = Arrays.asList( v0, v1 );
@@ -108,21 +118,21 @@ public class TestInterestPointTableModel
 		final ViewInterestPoints vip = dataset();
 
 		final LabelAttributes current = InterestPointTableModel.computeAttributes( vip, both, "new" );
-		assertEquals( "response, intensity, sigma", current.text );
+		assertEquals( "resp, int, sigma", current.text );
 		assertTrue( current.complete );
 
 		final LabelAttributes old = InterestPointTableModel.computeAttributes( vip, both, "old" );
-		assertEquals( "none (old label)", old.text );
+		assertEquals( "none (old)", old.text );
 		assertFalse( old.complete );
 		assertTrue( old.tooltip.startsWith( "Old label" ) );
 
 		final LabelAttributes intensity = InterestPointTableModel.computeAttributes( vip, both, "intensity" );
-		assertEquals( "intensity only", intensity.text );
+		assertEquals( "int only", intensity.text );
 		assertFalse( intensity.complete );
 		assertTrue( intensity.tooltip.contains( "store no response, sigma" ), intensity.tooltip );
 
 		final LabelAttributes noIntensity = InterestPointTableModel.computeAttributes( vip, both, "nointensity" );
-		assertEquals( "response, sigma only", noIntensity.text );
+		assertEquals( "resp, sigma only", noIntensity.text );
 		assertFalse( noIntensity.complete );
 
 		// no points: nothing to say
@@ -137,15 +147,75 @@ public class TestInterestPointTableModel
 		assertTrue( mixed.tooltip.contains( "the response is stored in 1 of 2 views, the intensity in 1 of 2, the sigma in 1 of 2" ), mixed.tooltip );
 
 		// the same label for one view only is uniform
-		assertEquals( "response, intensity, sigma", InterestPointTableModel.computeAttributes( vip, Arrays.asList( v0 ), "mixed" ).text );
-		assertEquals( "none (old label)", InterestPointTableModel.computeAttributes( vip, Arrays.asList( v1 ), "mixed" ).text );
+		assertEquals( "resp, int, sigma", InterestPointTableModel.computeAttributes( vip, Arrays.asList( v0 ), "mixed" ).text );
+		assertEquals( "none (old)", InterestPointTableModel.computeAttributes( vip, Arrays.asList( v1 ), "mixed" ).text );
 
 		// one point without the sigma: the view lacks it
 		final LabelAttributes onePoint = InterestPointTableModel.computeAttributes( vip, both, "onepoint" );
-		assertEquals( "response, intensity only", onePoint.text );
+		assertEquals( "resp, int only", onePoint.text );
 		assertFalse( onePoint.complete );
 
 		// views without the label are skipped
-		assertEquals( "response, intensity, sigma", InterestPointTableModel.computeAttributes( vip, both, "second" ).text );
+		assertEquals( "resp, int, sigma", InterestPointTableModel.computeAttributes( vip, both, "second" ).text );
+	}
+
+	@Test
+	public void testArrays()
+	{
+		final URI baseURI = tmp.toUri();
+		final String label = "beads";
+		TestInterestPointsZarr.saveAll( InterestPointsZarrStore.get( baseURI ), baseURI, 2, label );
+
+		final ViewInterestPointLists l0 = new ViewInterestPointLists( 0, 0 ), l1 = new ViewInterestPointLists( 0, 1 );
+		l0.addInterestPointList( label, TestInterestPointsZarr.list( baseURI, 0, label ) );
+		l1.addInterestPointList( label, TestInterestPointsZarr.list( baseURI, 1, label ) );
+		final ViewInterestPoints vip = new ViewInterestPoints( Arrays.asList( l0, l1 ) );
+		final List< InterestPoint > p0 = TestInterestPointsZarr.points( 0, label ), p1 = TestInterestPointsZarr.points( 1, label );
+		final int d = TestInterestPointArrays.COLUMNS;
+
+		// no array
+		LabelAttributes a = InterestPointTableModel.computeAttributes( vip, both, label );
+		assertEquals( "resp, int, sigma", a.text );
+		assertTrue( a.complete );
+
+		// rows for the first view only
+		TestInterestPointArrays.writeArray( baseURI, label, 0, "embedding", 0, TestInterestPointArrays.ids( p0 ), TestInterestPointArrays.values( p0, false ), d, "fp" );
+		a = InterestPointTableModel.computeAttributes( vip, both, label );
+		assertEquals( "resp, int, sigma + embedding " + d + "-D (1/2 views)", a.text );
+		assertFalse( a.complete );
+		assertTrue( a.tooltip.contains( "1 view has no rows" ), a.tooltip );
+		assertTrue( a.tooltip.contains( "run pcmatch embed again for label '" + label + "'" ), a.tooltip );
+		assertEquals( "resp, int, sigma + embedding " + d + "-D", InterestPointTableModel.computeAttributes( vip, Arrays.asList( v0 ), label ).text );
+
+		// the second view with rows for half of its points: detected again since
+		final List< InterestPoint > half = p1.subList( 0, p1.size() / 2 );
+		TestInterestPointArrays.writeArray( baseURI, label, 0, "embedding", 1, TestInterestPointArrays.ids( half ), TestInterestPointArrays.values( half, false ), d, "fp" );
+		a = InterestPointTableModel.computeAttributes( vip, both, label );
+		assertEquals( "resp, int, sigma + embedding " + d + "-D (1/2 views)", a.text );
+		assertFalse( a.complete );
+		assertTrue( a.tooltip.contains( "1 view has another number of rows than points (e.g. tpId=0 setupId=1: " + half.size() + " rows, " + p1.size() + " points)" ), a.tooltip );
+
+		// both views complete
+		TestInterestPointArrays.writeArray( baseURI, label, 0, "embedding", 1, TestInterestPointArrays.ids( p1 ), TestInterestPointArrays.values( p1, false ), d, "fp" );
+		a = InterestPointTableModel.computeAttributes( vip, both, label );
+		assertEquals( "resp, int, sigma + embedding " + d + "-D", a.text );
+		assertTrue( a.complete );
+		assertTrue( a.tooltip.contains( "'embedding' (" + d + " values per point, written by TestInterestPointArrays with the model test.pt)" ), a.tooltip );
+
+		// a second array, two arrays listed by name
+		TestInterestPointArrays.writeArray( baseURI, label, 0, "another", 0, TestInterestPointArrays.ids( p0 ), new float[ 2 * p0.size() ], 2, "fp" );
+		assertEquals( "resp, int, sigma + embedding 'another' 2-D (1/2 views), embedding " + d + "-D", InterestPointTableModel.computeAttributes( vip, both, label ).text );
+
+		// a filtered label shows its base label's arrays, compared with the base's points
+		final String filtered = label + "_r0.05";
+		final InterestPointFilter filter = InterestPointFilter.fromString( "response=0.05.." );
+		for ( final ViewInterestPointLists l : Arrays.asList( l0, l1 ) )
+			l.addInterestPointList( filtered, VirtualFilteredInterestPoints.create( baseURI, new ViewId( l.getTimePointId(), l.getViewSetupId() ), filtered, label, filter ) );
+		a = InterestPointTableModel.computeAttributes( vip, Arrays.asList( v1 ), filtered );
+		assertTrue( l1.getInterestPointList( filtered ).getInterestPointsCopy().size() < p1.size() );
+		assertEquals( "resp, int, sigma + embedding 'another' 2-D (0/1 views), embedding " + d + "-D", a.text ); // 'another' has no rows for this view
+		assertFalse( a.complete );
+		assertTrue( a.tooltip.contains( "'embedding' (" + d + " values per point, written by TestInterestPointArrays with the model test.pt) cover every point" ), a.tooltip );
+		assertTrue( a.tooltip.contains( "stored under the base label '" + label + "'" ), a.tooltip );
 	}
 }

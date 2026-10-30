@@ -414,8 +414,8 @@ public class InterestPointExplorerPanel extends JPanel
 		table.getColumnModel().getColumn( 2 ).setPreferredWidth( 20 );
 		table.getColumnModel().getColumn( 3 ).setPreferredWidth( 25 );
 		table.getColumnModel().getColumn( 4 ).setPreferredWidth( 30 );
-		table.getColumnModel().getColumn( InterestPointTableModel.ATTRIBUTES_COLUMN ).setPreferredWidth( 95 );
-		table.getColumnModel().getColumn( InterestPointTableModel.PARAMETERS_COLUMN ).setPreferredWidth( 375 );
+		table.getColumnModel().getColumn( InterestPointTableModel.ATTRIBUTES_COLUMN ).setPreferredWidth( 120 );
+		table.getColumnModel().getColumn( InterestPointTableModel.PARAMETERS_COLUMN ).setPreferredWidth( 350 );
 
 		table.addMouseListener( new MouseListener()
 		{
@@ -517,7 +517,7 @@ public class InterestPointExplorerPanel extends JPanel
 			c.setFont( c.getFont().deriveFont( virtual == null ? Font.PLAIN : Font.ITALIC ) );
 			setToolTipText( virtual );
 
-			// an old label (its points store none or only some of DoG response, intensity and sigma, or the views differ) is marked in its attributes cell: dark red text, the tooltip says what is missing
+			// an old label (its points store none or only some of DoG response, intensity and sigma, or the views differ) or an incomplete per-point array (embeddings) is marked in its attributes cell: dark red text, the tooltip says what is missing
 			if ( table.convertColumnIndexToModel( column ) == InterestPointTableModel.ATTRIBUTES_COLUMN )
 			{
 				final LabelAttributes attributes = model.attributes( row );

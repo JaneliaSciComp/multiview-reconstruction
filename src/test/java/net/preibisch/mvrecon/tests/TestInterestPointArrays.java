@@ -33,6 +33,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,6 +62,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import util.URITools;
 
@@ -76,7 +78,7 @@ public class TestInterestPointArrays
 	Path tmp;
 
 	static final String LABEL = "beads";
-	static final String NAME = "descriptor";
+	static final String NAME = InterestPointArrays.EMBEDDING;
 	static final int COLUMNS = 5;
 	static final String FINGERPRINT = "6844e0e3f80c";
 
@@ -122,7 +124,7 @@ public class TestInterestPointArrays
 		return values;
 	}
 
-	/** An array in the layout of pcmatch's {@code write_point_array} (public: BigStitcher-Spark's tests plant descriptors with it). */
+	/** An array in the layout of pcmatch's {@code write_point_array} (public: BigStitcher-Spark's tests plant embeddings with it). */
 	public static void writeArray( final URI baseURI, final String label, final int tp, final String name, final int setup,
 			final int[] ids, final float[] values, final int columns, final String fingerprint )
 	{
@@ -144,6 +146,8 @@ public class TestInterestPointArrays
 			zarr.setAttribute( path, "meta", meta );
 
 			final String setupPath = path + "/" + InterestPointArrays.SETUP_PREFIX + setup;
+			if ( zarr.exists( setupPath ) )
+				zarr.remove( setupPath ); // a setup's rows are replaced whole (pcmatch writes them under a temporary name and swaps)
 			zarr.createGroup( setupPath );
 			zarr.setAttribute( setupPath, "setup", setup );
 			zarr.setAttribute( setupPath, "rows", ids.length );
@@ -279,6 +283,31 @@ public class TestInterestPointArrays
 		assertTrue( e.getMessage().contains( "pcmatch embed" ), e.getMessage() );
 		assertTrue( e.getMessage().contains( "1 of " + points.size() ), e.getMessage() );
 		assertTrue( e.getMessage().contains( "[" + points.get( points.size() - 1 ).getId() + "]" ), e.getMessage() );
+	}
+
+	@Test
+	public void namesOfTheLabels()
+	{
+		final URI baseURI = store();
+		final ViewInterestPoints vip = new ViewInterestPoints( List.of( lists( baseURI, 0 ), lists( baseURI, 1 ) ) );
+		final Map< ViewId, HashMap< String, Double > > labelMap = new HashMap<>();
+		for ( int view = 0; view < 2; ++view )
+			labelMap.put( new ViewId( 0, view ), new HashMap<>( Map.of( LABEL, 1.0 ) ) );
+
+		assertTrue( InterestPointArrays.names( vip, labelMap ).isEmpty() );
+
+		writeArray( baseURI, 0, TestInterestPointsZarr.points( 0, LABEL ), false );
+		assertEquals( List.of( NAME ), new ArrayList<>( InterestPointArrays.names( vip, labelMap ) ) );
+
+		writeArray( baseURI, LABEL, 0, "another", 1, ids( TestInterestPointsZarr.points( 1, LABEL ) ), new float[ 2 * TestInterestPointsZarr.points( 1, LABEL ).size() ], 2, FINGERPRINT );
+		assertEquals( List.of( "another", NAME ), new ArrayList<>( InterestPointArrays.names( vip, labelMap ) ) );
+
+		// a filtered label has its base label's arrays
+		final String filtered = LABEL + "_r0.05";
+		for ( final ViewId v : labelMap.keySet() )
+			vip.getViewInterestPointLists( v ).addInterestPointList( filtered, VirtualFilteredInterestPoints.create( baseURI, v, filtered, LABEL, InterestPointFilter.fromString( "response=0.05.." ) ) );
+		labelMap.values().forEach( m -> { m.clear(); m.put( filtered, 1.0 ); } );
+		assertEquals( List.of( "another", NAME ), new ArrayList<>( InterestPointArrays.names( vip, labelMap ) ) );
 	}
 
 	@Test
