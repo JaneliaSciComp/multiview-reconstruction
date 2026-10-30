@@ -62,6 +62,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.Global
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.CenterOfMassGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.GeometricHashingGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.IterativeClosestPointGUI;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.EmbeddingsGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.LoadCorrespondencesGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.PairwiseGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.RGLDMGUI;
@@ -123,6 +124,7 @@ public class Interest_Point_Registration implements PlugIn
 		staticPairwiseAlgorithms.add( new CenterOfMassGUI() );
 		staticPairwiseAlgorithms.add( new IterativeClosestPointGUI() );
 		staticPairwiseAlgorithms.add( new LoadCorrespondencesGUI( null ) );
+		staticPairwiseAlgorithms.add( new EmbeddingsGUI( null ) );
 	}
 
 	// basic dialog

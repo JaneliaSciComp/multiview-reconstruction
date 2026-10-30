@@ -312,6 +312,8 @@ public class ActionToSparkCli
 				new String[]{ "significance", "-s" },
 				new String[]{ "numNeighbors", "-n" },
 				new String[]{ "searchRadius", "-sr" },
+				new String[]{ "descriptorRatio", "--descriptorRatio" },
+				new String[]{ "arrayName", "--arrayName" },
 				new String[]{ "overlapType", "-vr" },
 				new String[]{ "interestpointsForReg", "-ipfr" },
 				new String[]{ "matchAcrossLabels", "--matchAcrossLabels" },

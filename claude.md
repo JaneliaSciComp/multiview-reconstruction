@@ -119,6 +119,34 @@ with data in neither the store nor the N5 throws; a plain list stored under a fi
 throws. Decoded chunks are cached per store, bounded by `chunkCacheBytes` (256 MB, `-Dmvr.interestpoints.cacheBytes=0` = off);
 it matters on Spark executors whose tasks re-create their lists, not in Fiji.
 
+**Per-point arrays and matching on them (embeddings, 2026-10-29).** A writer may keep rows about the store's points next to the
+generations, keyed by point id: `<label>/tp<T>/arrays/<name>/zarr.json` (`columns` D, `dtype` float32, the writer's `meta` with
+`model.fingerprint`) and `setup<S>/{id, values}` (int32 [N, 1], float32 [N, D]; pcmatch's `embed` writes one 64-D unit vector
+per point as `descriptor`; further tables in `setup<S>` are ignored, pcmatch wrote a `loc` table until 2026-10-29). Java only
+reads them, `InterestPointArrays` (`attributes`, `read`, `join`, `vectors( lists, label, name )`): a filtered label reads its base
+label's rows; rows are joined by id, and the array must have exactly one row per point of the (base) label in the view (another
+number of rows, or a point without a row = the label was detected again and the ids name other points: the view fails with "run
+pcmatch embed again"; no positions are compared, Stephan's decision of 2026-10-29: a re-detection changes the number of points;
+the count is the base label's, so pcmatch embeds all points of the base even when asked for a filtered label); a NaN row = no
+vector. A fresh N5 reader per read (the writer swaps a setup's tables in place). A commit leaves `arrays/` alone, removing the label removes it with its timepoint
+group. The matcher on these rows is `pairwise.methods.embeddings.EmbeddingsMatcher` (KD-tree radius query in the registered frame,
+inclusive at the radius, so the tree is asked for `Math.nextUp( radius )` and the squared distance tested; one cosine per pair
+accumulated in double; a single neighbour is a candidate if cos > smin = 0.3; otherwise best/second: candidate if cos > smin and
+(1 - best) < ratio x (1 - second), ratio 0.85; one candidate per point of A at most, direction matters) wrapped by
+`EmbeddingsPairwise( rp, EmbeddingsParameters( model, searchRadius, ratio, smin, arrayName ), viewInterestPoints )`: it reads the
+vectors through the labels' handles (the count check needs the base label's points; note that the lists a matcher gets carry
+the registered coordinates, `applyTransformation` derives a point whose `getL()` is global), checks that both views' arrays have one width and one `model.fingerprint`, drops
+points without a vector, skips the pair when fewer than max(model, RANSAC) min matches of either view have a partner within the
+radius, then RANSAC as BigStitcher-Spark's LOAD_CANDIDATES. GUI: `EmbeddingsGUI` ("Embeddings (stored per-point vectors, pcmatch)":
+model, search radius, ratio, array name, RANSAC; grouped views refused); Spark `match-interestpoints -m EMBEDDINGS --searchRadius R
+[--descriptorRatio 0.85] [--arrayName descriptor]` (the radius is required there: it is the registration's uncertainty, about 20 px
+for a well pre-registered dataset, 300-500 for large translations); the action history maps `searchRadius`, `descriptorRatio` and
+`arrayName` (`ActionToSparkCli`). Verified 2026-10-29 against pcmatch's reference candidates on
+`~/Documents/pcmatch_data/ds1_java_matching` (1,825 at R = 20, 3,769 at R = 300, id for id over the 11 pairs) and the embryo pair of
+`embryo_detect` (filtered label `ss-iso_r0.008`, rows under the base `ss-iso`, points still in the N5: 60,341 candidates at R = 500,
+none stale; reading 0.2 s, matching 6-8 s, RANSAC 190 s at 10,000 iterations on 60k candidates). Tests: `TestInterestPointArrays`,
+`TestEmbeddingsMatcher`, `TestEmbeddingsPairwise`; BigStitcher-Spark `TestEmbeddings`.
+
 Design and the staging format follow PR 108 (Lila, 2026-09); its global append-only arrays with compaction were replaced by
 per-(label, timepoint) groups (Stephan, 2026-10-23: fewer moving parts; whole-label changes dominate; a few test views go into
 a separate label). Test: `TestInterestPointsZarr`, `TestInterestPointStorage`.
