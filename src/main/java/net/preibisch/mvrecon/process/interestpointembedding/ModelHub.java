@@ -64,8 +64,9 @@ import net.preibisch.legacy.io.IOFunctions;
  * ({@link HubModel#uri}), so a recorded run names the exact model; {@link #localModel} turns such a URI (or a path) into the
  * local file, without the hub when the pinned model is in the cache. The cache is {@code ~/.bigstitcher/models}, or the
  * system property {@value #CACHE_PROPERTY} (a shared directory on a cluster; a node without internet needs the file downloaded
- * once and passed as a path). Decided with Stephan 2026-10-30: the hub under his account (later the JaneliaSciComp
- * organisation), one repository per model whose name is the model's name, the revision pinned at download time.
+ * once and passed as a path). Decided with Stephan 2026-10-30/31: the hub under the JaneliaSciComp organisation (the first
+ * repository was under his account and moved there on 2026-10-31; the hub redirects the old name), one repository per model whose
+ * name is the model's name, the revision pinned at download time.
  *
  * @author Stephan Preibisch
  */
@@ -210,6 +211,8 @@ public class ModelHub
 	/**
 	 * The model a URI names, pinned: the repository's commit at the revision ("main" if none), the file (the repository's
 	 * only {@code .onnx} if none). A pinned URI whose model is in the cache is answered from the cache's record, without the hub.
+	 * A repository that was moved or renamed on the hub is answered through the hub's redirect, and the model carries the new name
+	 * (so it is cached and recorded under one name only).
 	 *
 	 * @param uri {@code hf://<namespace>/<name>[@<revision>][/<file>]}
 	 * @param cacheDir the cache (null = no cache lookup)
@@ -230,7 +233,11 @@ public class ModelHub
 
 		final String revision = spec.revision() == null ? "main" : spec.revision();
 		final JsonObject repo = getJson( hub + "/api/models/" + spec.repo() + "/revision/" + encode( revision ) + "?blobs=true", timeout ).getAsJsonObject();
-		final List< HubModel > models = modelsOf( repo, spec.repo() );
+		// the hub's name of the repository: a moved or renamed one is answered through a redirect, its models carry the new name
+		final String id = repo.has( "id" ) && repo.get( "id" ).isJsonPrimitive() ? repo.get( "id" ).getAsString() : spec.repo();
+		if ( !id.equals( spec.repo() ) )
+			IOFunctions.println( "The repository '" + spec.repo() + "' is '" + id + "' on " + hub + " now; the model is named after it." );
+		final List< HubModel > models = modelsOf( repo, id );
 
 		if ( spec.file() == null )
 		{
@@ -465,6 +472,11 @@ public class ModelHub
 		{
 			Thread.currentThread().interrupt();
 			throw new IOException( "interrupted while talking to " + request.uri(), e );
+		}
+		catch ( final IOException e )
+		{
+			// the JDK's client reports a refused connection without a message: name the host and the kind of failure
+			throw new IOException( "Cannot reach " + request.uri().getHost() + " (" + request.uri() + "): " + e.getClass().getSimpleName() + ( e.getMessage() == null ? "" : ", " + e.getMessage() ), e );
 		}
 	}
 

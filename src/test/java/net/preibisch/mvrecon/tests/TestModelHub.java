@@ -69,7 +69,7 @@ import net.preibisch.mvrecon.process.interestpointembedding.ModelHub.Spec;
  * The models on the hub and the cache: {@code hf://} URIs, the listing (tagged repositories with a sidecar only), the pinned
  * resolve, the verified download into the cache (a wrong hash is refused, a cached model costs no request, a pinned URI is
  * answered from the cache), the plugin with a hub model, all against a {@link FakeHub}; and, when the real hub is reachable,
- * Stephan's repository.
+ * the repository under JaneliaSciComp, whose old name under Stephan's account redirects.
  */
 public class TestModelHub
 {
@@ -214,15 +214,15 @@ public class TestModelHub
 		}
 	}
 
-	/** Stephan's repository on the real hub, when it is reachable: listed, downloaded, loadable, the fingerprint of pcmatch's stack64 export. */
+	/** The repository on the real hub, when it is reachable: listed under JaneliaSciComp, downloaded, loadable, the fingerprint of pcmatch's stack64 export; its old name under Stephan's account redirects. */
 	@Test
-	public void stephansRepository() throws Exception
+	public void repositoryOnTheHub() throws Exception
 	{
 		final Duration timeout = Duration.ofSeconds( 15 );
 		List< HubModel > models;
 		try
 		{
-			models = ModelHub.list( new String[] { "StephanPreibisch" }, timeout );
+			models = ModelHub.list( new String[] { "JaneliaSciComp" }, timeout );
 		}
 		catch ( final IOException e )
 		{
@@ -231,7 +231,7 @@ public class TestModelHub
 		}
 		HubModel stack64 = null;
 		for ( final HubModel m : models )
-			if ( m.repo().equals( "StephanPreibisch/bigstitcher-embedding-translation-stack64" ) )
+			if ( m.repo().equals( "JaneliaSciComp/bigstitcher-embedding-translation-stack64" ) )
 				stack64 = m;
 		assertNotNull( stack64, "the repository is listed: " + models );
 		assertNotNull( stack64.sha256() );
@@ -243,6 +243,9 @@ public class TestModelHub
 		assertEquals( 5, model.contract().channels() );
 		assertEquals( "6844e0e3f80c8eb2217a2021ab0c3215cddc49e11cd78269e47c47fc2ff0cb75", model.contract().fingerprint() );
 		assertEquals( stack64, ModelHub.resolve( stack64.uri(), tempDir.resolve( "cache" ), timeout ) );
+
+		// the repository was under Stephan's account until 2026-10-31: the hub redirects the old name, the model carries the new one
+		assertEquals( stack64, ModelHub.resolve( "hf://StephanPreibisch/bigstitcher-embedding-translation-stack64@" + stack64.revision() + "/" + stack64.file(), null, timeout ) );
 	}
 
 	/**
