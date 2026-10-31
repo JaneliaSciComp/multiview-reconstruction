@@ -52,6 +52,7 @@ import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.type.numeric.real.FloatType;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.plugin.Embed_Interest_Points;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.EmbeddingsGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionRecord;
@@ -275,6 +276,38 @@ public class TestInterestPointEmbedding
 			}
 			return out;
 		}
+	}
+
+	/** the registration's check before its dialog: every selected view needs one row per point, otherwise prepareQuery is false and no dialog is shown */
+	@Test
+	public void registrationNeedsEmbeddingsInEveryView() throws Exception
+	{
+		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
+		final SpimData2 data = beads( xml );
+		final List< ViewId > views = viewsWith( data, LABEL );
+		assertTrue( views.size() >= 2 );
+		final Path onnx = tempDir.resolve( "tiny.onnx" );
+		TestOnnxModels.write( onnx, new double[] { 3, 6 }, 4, 3, 5, 21 );
+
+		final Map< ViewId, HashMap< String, Double > > labelMap = new HashMap<>();
+		for ( final ViewId v : views )
+			labelMap.put( v, new HashMap<>( Map.of( LABEL, 1.0 ) ) );
+		final EmbeddingsGUI gui = new EmbeddingsGUI( data );
+
+		// no arrays at all: not the default algorithm, and no dialog
+		assertFalse( EmbeddingsGUI.hasEmbeddings( data, views ) );
+		assertFalse( gui.prepareQuery( data, views, labelMap ) );
+
+		// one view embedded: the default algorithm sees embeddings, registering all views stops, registering that view alone goes on
+		final List< ViewId > first = views.subList( 0, 1 );
+		assertTrue( Embed_Interest_Points.embed( data, first, LABEL, onnx, "embedding", 50 ) );
+		assertTrue( EmbeddingsGUI.hasEmbeddings( data, views ) );
+		assertFalse( gui.prepareQuery( data, views, labelMap ) );
+		assertTrue( gui.prepareQuery( data, first, labelMap ) );
+
+		// every view embedded
+		assertTrue( Embed_Interest_Points.embed( data, views, LABEL, onnx, "embedding", 50 ) );
+		assertTrue( gui.prepareQuery( data, views, labelMap ) );
 	}
 
 	/** the simulated beads with a DoG label whose parameters string the embedding can read, saved so that the store exists */

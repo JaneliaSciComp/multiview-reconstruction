@@ -128,7 +128,8 @@ public class Interest_Point_Registration implements PlugIn
 	}
 
 	// basic dialog
-	public static int defaultAlgorithm = 1;
+	/** the algorithm chosen last; -1 = none yet in this session: then "Embedding Cosine Similarity" if the selected views have stored embeddings, else RGLDM */
+	public static int defaultAlgorithm = -1;
 	public static int defaultRegistrationType = 0;
 	public static int defaultOverlapType = 1;
 	public static int defaultInterestpointOverlapType = 1;
@@ -858,7 +859,9 @@ public class Interest_Point_Registration implements PlugIn
 		gd.addMessage( "Algorithm parameters [" + brp.pwr.getDescription() + "]", new Font( Font.SANS_SERIF, Font.BOLD, 12 ) );
 		gd.addMessage( "" );
 
-		brp.pwr.prepareQuery( data, viewIds, brp.labelMap );
+		// a method that cannot run on this selection (e.g. views without stored embeddings) has said why: no dialog
+		if ( !brp.pwr.prepareQuery( data, viewIds, brp.labelMap ) )
+			return null;
 		brp.pwr.addQuery( gd );
 
 		GlobalOptimizationParameters.addSimpleParametersToDialog( gd );
@@ -949,6 +952,16 @@ public class Interest_Point_Registration implements PlugIn
 		
 		if ( defaultAlgorithm >= descriptions.length )
 			defaultAlgorithm = 0;
+
+		// nothing chosen yet in this session: the embeddings matcher if the selected views have stored embeddings, else RGLDM
+		if ( defaultAlgorithm < 0 )
+		{
+			defaultAlgorithm = 1;
+			if ( EmbeddingsGUI.hasEmbeddings( data, viewIds ) )
+				for ( int i = 0; i < staticPairwiseAlgorithms.size(); ++i )
+					if ( staticPairwiseAlgorithms.get( i ) instanceof EmbeddingsGUI )
+						defaultAlgorithm = i;
+		}
 
 		gd.addChoice( "Registration_algorithm", descriptions, descriptions[ defaultAlgorithm ] );
 

@@ -53,7 +53,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  * through an {@link EmbeddingModel} block by block, one row per point, written by {@link InterestPointArrays#write} under
  * the base label with pcmatch's meta ({@code model.fingerprint}, {@code model.config}, {@code model.file}, the writer and
  * date). The array then satisfies the matcher's rule of one row per point of the base label, for the filtered labels of
- * the base as well. The GUI ("Embed Interest Points") and BigStitcher-Spark ({@code embed-interestpoints}) share this code: the
+ * the base as well. The GUI ("Compute interest point embeddings (ONNX)") and BigStitcher-Spark ({@code embed-interestpoints}) share this code: the
  * GUI runs the blocks of several views on one pool ({@link #embedViews}), a Spark task embeds its one view ({@link #embedView}).
  *
  * @author Stephan Preibisch

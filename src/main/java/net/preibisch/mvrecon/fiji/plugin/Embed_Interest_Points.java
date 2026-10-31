@@ -33,7 +33,6 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
 import ij.gui.GenericDialog;
@@ -62,7 +61,7 @@ import net.preibisch.mvrecon.process.interestpointembedding.ModelHub.HubModel;
  * ({@link InterestPointEmbedding#embedViews}). The model is chosen from the models on the Hugging Face Hub ({@link ModelHub}: the
  * tagged repositories of the known namespaces, downloaded once into the cache and pinned to their commit, recorded as
  * {@code hf://<namespace>/<name>@<revision>/<file>}), from the cache, or as a local file. Reachable from the ViewSetup Explorer
- * ("Embed Interest Points (ONNX model) ...", below "Detect Interest Points") and as a plugin; BigStitcher-Spark's
+ * ("Compute interest point embeddings (ONNX) ...", below "Detect Interest Points") and as a plugin; BigStitcher-Spark's
  * {@code embed-interestpoints} does the same per view on the cluster ({@link InterestPointEmbedding}).
  *
  * @author Stephan Preibisch
@@ -148,16 +147,15 @@ public class Embed_Interest_Points implements PlugIn
 
 		// the models on the hub (at their current commits) and in the cache, then a local file
 		final List< HubModel > models = hubModels();
-		final Set< String > cached = new HashSet<>();
+		final int listed = models.size();
 		try
 		{
 			for ( final HubModel m : ModelHub.cached( ModelHub.defaultCacheDir() ) )
 			{
-				cached.add( m.uri() );
-				boolean listed = false;
+				boolean known = false;
 				for ( final HubModel l : models )
-					listed |= l.uri().equals( m.uri() );
-				if ( !listed )
+					known |= l.uri().equals( m.uri() );
+				if ( !known )
 					models.add( m );
 			}
 		}
@@ -165,18 +163,23 @@ public class Embed_Interest_Points implements PlugIn
 		{
 			IOFunctions.println( "Cannot list the model cache " + ModelHub.defaultCacheDir() + ": " + e.getMessage() );
 		}
+		// macros record the choice's text, so it carries nothing that changes with time (the commit, whether it is cached):
+		// "name (namespace)"; only an older cached revision next to the hub's current one is told apart by its commit
 		final String[] modelChoices = new String[ models.size() + 1 ];
 		int defaultChoice = models.size();
 		for ( int i = 0; i < models.size(); ++i )
 		{
 			final HubModel m = models.get( i );
-			modelChoices[ i ] = m.name() + " (" + m.namespace() + ", " + m.shortRevision() + ( cached.contains( m.uri() ) ? ", cached" : "" ) + ")";
+			boolean sameRepo = false;
+			for ( int j = 0; j < models.size(); ++j )
+				sameRepo |= j != i && models.get( j ).repo().equals( m.repo() );
+			modelChoices[ i ] = m.name() + " (" + m.namespace() + ( sameRepo && i >= listed ? ", " + m.shortRevision() : "" ) + ")";
 			if ( m.uri().equals( defaultModelChoice ) )
 				defaultChoice = i;
 		}
 		modelChoices[ models.size() ] = LOCAL_FILE;
 
-		final GenericDialog gd = new GenericDialog( "Embed interest points" );
+		final GenericDialog gd = new GenericDialog( "Compute interest point embeddings" );
 
 		gd.addChoice( "Interest_points", labels, labels[ defaultLabel ] );
 		gd.addChoice( "Model", modelChoices, modelChoices[ defaultChoice ] );

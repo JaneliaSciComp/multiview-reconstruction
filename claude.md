@@ -137,7 +137,7 @@ accumulated in double; a single neighbour is a candidate if cos > smin (the mini
 vectors through the labels' handles (the count check needs the base label's points; note that the lists a matcher gets carry
 the registered coordinates, `applyTransformation` derives a point whose `getL()` is global), checks that both views' arrays have one width and one `model.fingerprint`, drops
 points without a vector, skips the pair when fewer than max(model, RANSAC) min matches of either view have a partner within the
-radius, then RANSAC as BigStitcher-Spark's LOAD_CANDIDATES. GUI: `EmbeddingsGUI` ("Embeddings (stored per-point vectors, pcmatch)":
+radius, then RANSAC as BigStitcher-Spark's LOAD_CANDIDATES. GUI: `EmbeddingsGUI` ("Embedding Cosine Similarity", until 2026-10-31 "Embeddings (stored per-point vectors, pcmatch)"; since 2026-10-31 the registration dialog's default algorithm when the selected views have stored embeddings and none was chosen yet in the session, `Interest_Point_Registration.defaultAlgorithm` -1 = none yet, `EmbeddingsGUI.hasEmbeddings`; also since 2026-10-31 `PairwiseGUI.prepareQuery` returns a boolean and the registration stops before its parameter dialog when it is false: `EmbeddingsGUI.prepareQuery` offers only the arrays that hold one row per point of the (base) label in EVERY selected view, and if none does it lists the views with missing or stale rows in the log and returns false, Stephan: a dialog that cannot be completed is confusing:
 model, "Limit search radius" + radius (off by default, Stephan: it works great without; 500 px when on, as the geometric descriptor dialog; off = every point of the other view is a possible partner, `Double.POSITIVE_INFINITY`, no KD-tree), ratio, a choice of the stored embeddings the selected labels have (`PairwiseGUI.prepareQuery` runs before
 `addQuery` with the views and labels, `InterestPointArrays.names`; none = the dialog cannot be completed), RANSAC; grouped views
 refused); Spark `match-interestpoints -m EMBEDDINGS [--searchRadius R] [--descriptorRatio 0.85] [--arrayName x]` (no radius = no limit,
@@ -201,8 +201,9 @@ through a part file moved in atomically (safe for several processes on a shared 
 is a contract and writes `hub.json`; a model already there and verified costs no request; `localModel( spec, cacheDir, timeout )` turns
 a path or a URI into `Local( path, spec )` where spec is the pinned URI (or the absolute path), which the action history records as
 `model` and `ActionToSparkCli` passes to `--model`. The cache is `~/.bigstitcher/models` or the system property `bigstitcher.models`.
-GUI: the dialog's "Model" choice lists the hub's models (name, namespace, short commit, "cached") plus the cached ones and "Local file
-(path below)" with the file field; `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
+GUI: the dialog's "Model" choice lists the hub's models plus the cached ones and "Local file (path below)" with the file field; the
+choice text is "name (namespace)" and nothing else, since macros record it (Stephan 2026-10-31: no "cached", no commit; only an older
+cached revision next to the hub's current one carries its commit); `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
 viewsInFlight )` downloads on demand. BigStitcher-Spark: `--model hf://...` is pinned on the driver, every executor downloads once into
 `--modelCache` (default as above; nodes without internet get a path). Tests `TestModelHub` (a loopback `FakeHub` serving the three API
 answers and the redirecting downloads: URIs, listing by tag and sidecar, pinned resolve, cache hits without requests, a damaged cached

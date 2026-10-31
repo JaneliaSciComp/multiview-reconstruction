@@ -23,12 +23,16 @@
 package net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise;
 
 import java.awt.Font;
+import java.net.URI;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.SortedSet;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewId;
@@ -38,7 +42,11 @@ import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.Attributes;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwise;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.embeddings.EmbeddingsMatcher;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.embeddings.EmbeddingsPairwise;
@@ -75,7 +83,29 @@ public class EmbeddingsGUI extends PairwiseGUI
 	public EmbeddingsGUI newInstance( final SpimData2 spimData ) { return new EmbeddingsGUI( spimData ); }
 
 	@Override
-	public String getDescription() { return "Embeddings (stored per-point vectors, pcmatch)"; }
+	public String getDescription() { return "Embedding Cosine Similarity"; }
+
+	/**
+	 * @param data the dataset
+	 * @param viewIds the selected views
+	 * @return whether any label of the selected views has stored embeddings (a per-point array, {@link InterestPointArrays#names});
+	 *         then this is the registration dialog's algorithm until the user picks one ({@code Interest_Point_Registration.defaultAlgorithm})
+	 */
+	public static boolean hasEmbeddings( final SpimData2 data, final List< ViewId > viewIds )
+	{
+		final HashMap< ViewId, HashMap< String, Double > > labelMap = new HashMap<>();
+		for ( final ViewId viewId : viewIds )
+		{
+			final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+			if ( lists == null )
+				continue;
+			final HashMap< String, Double > labels = new HashMap<>();
+			for ( final String label : lists.getHashMap().keySet() )
+				labels.put( label, 1.0 );
+			labelMap.put( viewId, labels );
+		}
+		return !InterestPointArrays.names( data.getViewInterestPoints(), labelMap ).isEmpty();
+	}
 
 	@Override
 	public MatcherPairwise< InterestPoint > pairwiseMatchingInstance()
@@ -91,14 +121,78 @@ public class EmbeddingsGUI extends PairwiseGUI
 		throw new IllegalArgumentException( message );
 	}
 
+	/** a selected view with one of its labels: the (base label, timepoint) group its arrays live in and the number of points the rows must cover */
+	private record Need( ViewId viewId, String label, String group, URI baseDir, int points ) {}
+
+	/**
+	 * The matcher needs one row per point of the (base) label in every selected view ({@link InterestPointArrays#vectors}), so
+	 * only the arrays that are complete for all of them are offered. If none is, the registration stops here and the log names
+	 * the views whose rows are missing or stale (Stephan 2026-10-31: no dialog that cannot be completed).
+	 */
 	@Override
-	public void prepareQuery( final SpimData2 data, final List< ViewId > viewIds, final Map< ViewId, HashMap< String, Double > > labelMap )
+	public boolean prepareQuery( final SpimData2 data, final List< ViewId > viewIds, final Map< ViewId, HashMap< String, Double > > labelMap )
 	{
-		final SortedSet< String > names = InterestPointArrays.names( data.getViewInterestPoints(), labelMap );
-		arrayNames = names.toArray( new String[ 0 ] );
+		final ViewInterestPoints vip = data.getViewInterestPoints();
+
+		final ArrayList< Need > needs = new ArrayList<>();
+		final HashMap< String, List< Attributes > > listed = new HashMap<>(); // the arrays of every (base path, base label, timepoint) group
+		final TreeSet< String > names = new TreeSet<>(), labels = new TreeSet<>();
+
+		for ( final ViewId viewId : viewIds )
+		{
+			final HashMap< String, Double > viewLabels = labelMap.get( viewId );
+			final ViewInterestPointLists lists = vip.getViewInterestPointLists( viewId );
+			if ( viewLabels == null || lists == null )
+				continue;
+
+			for ( final String label : viewLabels.keySet() )
+			{
+				final String base = InterestPointArrays.baseLabel( lists, label );
+				final URI baseDir = lists.getInterestPointList( label ).getBasePath();
+				final String group = baseDir + "|" + base + "|" + lists.getTimePointId();
+				final List< Attributes > arrays = listed.computeIfAbsent( group, g -> InterestPointArrays.list( baseDir, base, lists.getTimePointId() ) );
+				for ( final Attributes array : arrays )
+					names.add( array.name() );
+				labels.add( label );
+				needs.add( new Need( viewId, label, group, baseDir, lists.getInterestPointList( base ).getInterestPointsCopy().size() ) );
+			}
+		}
+
+		// per array, the views it does not cover
+		final TreeMap< String, ArrayList< String > > gaps = new TreeMap<>();
+		final HashMap< String, SortedMap< Integer, Long > > rowsOf = new HashMap<>(); // the rows per setup of every (group, array)
+		for ( final String name : names )
+		{
+			final ArrayList< String > missing = gaps.computeIfAbsent( name, n -> new ArrayList<>() );
+			for ( final Need need : needs )
+			{
+				Attributes array = null;
+				for ( final Attributes a : listed.get( need.group() ) )
+					if ( a.name().equals( name ) )
+						array = a;
+				final Attributes found = array;
+				final Long rows = found == null ? null : rowsOf.computeIfAbsent( need.group() + "|" + name, k -> InterestPointArrays.rows( need.baseDir(), found ) ).get( need.viewId().getViewSetupId() );
+				if ( rows == null ? need.points() > 0 : rows != need.points() )
+					missing.add( Group.pvid( need.viewId() ) + " '" + need.label() + "': " + ( rows == null ? "no rows" : rows + " rows" ) + ", " + need.points() + " points" );
+			}
+		}
+
+		final ArrayList< String > complete = new ArrayList<>();
+		for ( final Map.Entry< String, ArrayList< String > > e : gaps.entrySet() )
+			if ( e.getValue().isEmpty() )
+				complete.add( e.getKey() );
+			else
+				IOFunctions.println( "The stored embeddings '" + e.getKey() + "' do not cover every selected view (one row per point of the base label is needed): " + String.join( "; ", e.getValue() ) );
+		arrayNames = complete.toArray( new String[ 0 ] );
 
 		if ( arrayNames.length == 0 )
-			IOFunctions.println( "The selected label(s) have no stored embeddings (no per-point array in interestpoints.zarr): run 'pcmatch embed' first." );
+		{
+			if ( names.isEmpty() )
+				IOFunctions.println( "The label(s) " + labels + " of the selected views have no stored embeddings (no per-point array in interestpoints.zarr)." );
+			IOFunctions.println( "Run 'Compute interest point embeddings (ONNX)' on the selected views first (it embeds all points of the label), or deselect the views without embeddings." );
+			return false;
+		}
+		return true;
 	}
 
 	@Override

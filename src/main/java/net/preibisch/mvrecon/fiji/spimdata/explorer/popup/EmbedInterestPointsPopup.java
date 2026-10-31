@@ -35,7 +35,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 
 /**
- * "Embed interest points (ONNX model) ..." of the ViewSetup Explorer: {@link Embed_Interest_Points} on the selected views,
+ * "Compute interest point embeddings (ONNX) ..." of the ViewSetup Explorer: {@link Embed_Interest_Points} on the selected views,
  * then the Interest Point Explorer's "Attributes" column shows the new array.
  *
  * @author Stephan Preibisch
@@ -48,7 +48,7 @@ public class EmbedInterestPointsPopup extends JMenuItem implements ExplorerWindo
 
 	public EmbedInterestPointsPopup()
 	{
-		super( "Embed Interest Points (ONNX model) ..." );
+		super( "Compute interest point embeddings (ONNX) ..." );
 
 		this.addActionListener( new MyActionListener() );
 	}

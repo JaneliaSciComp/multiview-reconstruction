@@ -134,8 +134,10 @@ public abstract class PairwiseGUI implements DescribesParameters
 	 * @param data the dataset
 	 * @param viewIds the views to register (those that have the labels)
 	 * @param labelMap the labels (and weights) per view
+	 * @return false if the method cannot run on this selection: it has said why ({@code IOFunctions.println}) and the
+	 *         registration stops without showing its dialog
 	 */
-	public void prepareQuery( final SpimData2 data, final List< ViewId > viewIds, final Map< ViewId, HashMap< String, Double > > labelMap ) {}
+	public boolean prepareQuery( final SpimData2 data, final List< ViewId > viewIds, final Map< ViewId, HashMap< String, Double > > labelMap ) { return true; }
 
 	/*
 	 * adds the questions this registration wants to ask
