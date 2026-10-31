@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.tests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -161,12 +162,15 @@ public class TestEmbeddingsPairwise
 		assertEquals( PAIRS, result.getInliers().size(), result.getFullDesc() );
 		for ( final PointMatchGeneric< InterestPoint > inlier : result.getInliers() )
 			assertEquals( 1000 + 3 * inlier.getPoint1().getId(), inlier.getPoint2().getId() );
-		assertTrue( result.getFullDesc().contains( "EMBEDDINGS: " + ( PAIRS + EXTRA ) + "/" + ( PAIRS + EXTRA ) + " points" ), result.getFullDesc() );
+		assertTrue( result.getFullDesc().contains( "EMBEDDINGS " + ( PAIRS + EXTRA ) + " <-> " + ( PAIRS + EXTRA ) + " points, " ), result.getFullDesc() );
+		assertTrue( result.getFullDesc().contains( " within 30.0 px: Remaining inliers after RANSAC" ), result.getFullDesc() );
 
 		// no radius limit: the vectors alone tell the partners apart
 		final PairwiseResult< InterestPoint > unlimited = match( lists, Double.POSITIVE_INFINITY );
 		assertEquals( PAIRS, unlimited.getInliers().size(), unlimited.getFullDesc() );
-		assertTrue( unlimited.getFullDesc().contains( "no search radius limit" ), unlimited.getFullDesc() );
+		// one short line per pair: every point has a vector and there is no radius, so only the counts and RANSAC's verdict remain
+		assertTrue( unlimited.getFullDesc().contains( "EMBEDDINGS " + ( PAIRS + EXTRA ) + " <-> " + ( PAIRS + EXTRA ) + " points: Remaining inliers after RANSAC" ), unlimited.getFullDesc() );
+		assertFalse( unlimited.getFullDesc().contains( " within " ), unlimited.getFullDesc() );
 
 		// a radius that does not reach the shifted partners: nothing to match
 		final PairwiseResult< InterestPoint > none = match( lists, 5 );

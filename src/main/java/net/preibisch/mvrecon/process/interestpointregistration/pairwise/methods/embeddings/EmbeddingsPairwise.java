@@ -112,7 +112,7 @@ public class EmbeddingsPairwise< I extends InterestPoint > implements MatcherPai
 		{
 			result.setCandidates( new ArrayList< PointMatchGeneric< I > >() );
 			result.setInliers( new ArrayList< PointMatchGeneric< I > >(), Double.NaN );
-			result.setResult( System.currentTimeMillis(), "EMBEDDINGS: not enough interest points (" + listAIn.size() + "/" + listBIn.size() + ", need >= " + minNumCandidates + ")." );
+			result.setResult( System.currentTimeMillis(), "EMBEDDINGS " + listAIn.size() + " <-> " + listBIn.size() + " points: not enough (need >= " + minNumCandidates + ")." );
 			return result;
 		}
 
@@ -137,8 +137,11 @@ public class EmbeddingsPairwise< I extends InterestPoint > implements MatcherPai
 		final Candidates< I > found = EmbeddingsMatcher.match( pointsA, valuesA, pointsB, valuesB, columns, radius, parameters.getRatio(), parameters.getSmin() );
 		final ArrayList< PointMatchGeneric< I > > candidates = found.candidates();
 
-		final String prefix = "EMBEDDINGS: " + listAIn.size() + "/" + listBIn.size() + " points, " + pointsA.size() + "/" + pointsB.size() + " with a " + columns + "-D embedding, "
-				+ found.withinRadiusA() + "/" + found.withinRadiusB() + ( Double.isInfinite( radius ) ? " with a partner (no search radius limit), " : " with a partner within " + radius + " px, " ) + candidates.size() + " candidates -> ";
+		// one short line per pair, as the geometric matchers: the counts only when they tell something (points without a vector,
+		// a radius limit); the radius, ratio and similarity threshold are logged once per run by the GUI and BigStitcher-Spark
+		final String prefix = "EMBEDDINGS " + listAIn.size() + " <-> " + listBIn.size() + " points"
+				+ ( pointsA.size() != listAIn.size() || pointsB.size() != listBIn.size() ? ", " + pointsA.size() + " <-> " + pointsB.size() + " with a vector" : "" )
+				+ ( Double.isInfinite( radius ) ? "" : ", " + found.withinRadiusA() + " <-> " + found.withinRadiusB() + " within " + radius + " px" ) + ": ";
 
 		result.setCandidates( candidates );
 
@@ -152,7 +155,7 @@ public class EmbeddingsPairwise< I extends InterestPoint > implements MatcherPai
 		if ( candidates.size() < minNumCandidates )
 		{
 			result.setInliers( new ArrayList< PointMatchGeneric< I > >(), Double.NaN );
-			result.setResult( System.currentTimeMillis(), prefix + "not enough candidates (need >= " + minNumCandidates + ")." );
+			result.setResult( System.currentTimeMillis(), prefix + candidates.size() + " candidates, not enough (need >= " + minNumCandidates + ")." );
 			return result;
 		}
 
