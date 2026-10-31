@@ -192,7 +192,7 @@ the `.onnx`, its `.onnx.json` sidecar and a model card tagged `bigstitcher` (the
 MIT, the stack64 export; uploaded under Stephan's account on 2026-10-30 and moved into the JaneliaSciComp organisation he created on
 2026-10-31; the hub redirects the old name, and `resolve` names a model as the hub does, so old URIs resolve to the new name). `ModelHub` needs nothing but
 the JDK's HTTP client: `list( namespaces, timeout )` asks `/api/models?author=<ns>&filter=bigstitcher` for each of `defaultNamespaces`
-(`StephanPreibisch`, `JaneliaSciComp`) and `/api/models/<repo>?blobs=true` per repository (its commit `sha`, the files with sizes and the
+(`JaneliaSciComp` only, since the move on 2026-10-31) and `/api/models/<repo>?blobs=true` per repository (its commit `sha`, the files with sizes and the
 sha256 of LFS files; gated repositories are skipped), one `HubModel( repo, revision, file, size, sha256, sidecarSize )` per `.onnx` with a
 sidecar; `resolve( uri, cacheDir, timeout )` pins `hf://<ns>/<name>[@<revision>][/<file>]` to a commit (revision "main" by default, the
 only `.onnx` if no file; a pinned URI whose model is cached is answered from the cache's `hub.json` without the hub); `download( model,

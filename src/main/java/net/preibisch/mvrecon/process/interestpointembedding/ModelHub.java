@@ -75,8 +75,8 @@ public class ModelHub
 	/** the hub (a test points it at a local server) */
 	public static String hub = "https://huggingface.co";
 
-	/** the users or organisations whose repositories are listed */
-	public static String[] defaultNamespaces = new String[] { "StephanPreibisch", "JaneliaSciComp" };
+	/** the users or organisations whose repositories are listed (Stephan's account was listed until 2026-10-31, when the model moved into the organisation) */
+	public static String[] defaultNamespaces = new String[] { "JaneliaSciComp" };
 
 	/** the tag a repository must carry to be listed */
 	public static final String TAG = "bigstitcher";
