@@ -278,7 +278,7 @@ public class TestInterestPointEmbedding
 	}
 
 	/** the simulated beads with a DoG label whose parameters string the embedding can read, saved so that the store exists */
-	SpimData2 beads( final File xml ) throws Exception
+	static SpimData2 beads( final File xml ) throws Exception
 	{
 		final SpimData2 data = SimulateUtil.setUp();
 		new XmlIoSpimData2().save( data, xml.toURI() );

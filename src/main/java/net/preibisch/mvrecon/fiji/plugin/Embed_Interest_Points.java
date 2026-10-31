@@ -33,6 +33,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
 import ij.gui.GenericDialog;
@@ -50,15 +51,19 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointembedding.EmbeddingModel;
 import net.preibisch.mvrecon.process.interestpointembedding.InterestPointEmbedding;
+import net.preibisch.mvrecon.process.interestpointembedding.ModelHub;
+import net.preibisch.mvrecon.process.interestpointembedding.ModelHub.HubModel;
 
 /**
  * Computes the embeddings of a label's interest points with a model (pcmatch's ONNX export, run by the Java evaluator)
  * and stores them as the per-point array of the label in {@code interestpoints.zarr}, what {@code pcmatch embed} does:
  * one unit vector per point of the (base) label, which "Embeddings" of "Register using Interest Points" matches on. The blocks of
  * all selected views run on one pool of {@link Threads#numThreads()} threads, {@code defaultViewsInFlight} views at a time
- * ({@link InterestPointEmbedding#embedViews}). Reachable from the ViewSetup Explorer ("Embed Interest Points (ONNX model) ...",
- * below "Detect Interest Points") and as a plugin; BigStitcher-Spark's {@code embed-interestpoints} does the same per view on the
- * cluster ({@link InterestPointEmbedding}).
+ * ({@link InterestPointEmbedding#embedViews}). The model is chosen from the models on the Hugging Face Hub ({@link ModelHub}: the
+ * tagged repositories of the known namespaces, downloaded once into the cache and pinned to their commit, recorded as
+ * {@code hf://<namespace>/<name>@<revision>/<file>}), from the cache, or as a local file. Reachable from the ViewSetup Explorer
+ * ("Embed Interest Points (ONNX model) ...", below "Detect Interest Points") and as a plugin; BigStitcher-Spark's
+ * {@code embed-interestpoints} does the same per view on the cluster ({@link InterestPointEmbedding}).
  *
  * @author Stephan Preibisch
  */
@@ -67,7 +72,11 @@ public class Embed_Interest_Points implements PlugIn
 	public static int defaultLabel = -1;
 	/** the label chosen last, by name; wins over defaultLabel if present */
 	public static String defaultBaseLabel = null;
+	/** the local file of the "Local file" choice */
 	public static String defaultModel = "";
+	/** the model chosen last: its {@code hf://} URI, or {@link #LOCAL_FILE} */
+	public static String defaultModelChoice = null;
+	public static final String LOCAL_FILE = "Local file (path below)";
 	public static String defaultArrayName = InterestPointArrays.EMBEDDING;
 	public static int defaultBlockSize = InterestPointEmbedding.defaultBlockSize;
 	/** views whose blocks are in the pool at a time: as many as threads keeps them busy with single-block views; it bounds the memory (the points and opened images of that many views) */
@@ -82,7 +91,8 @@ public class Embed_Interest_Points implements PlugIn
 	public static class Parameters
 	{
 		public String label, arrayName;
-		public Path model;
+		/** a path, or a hub model {@code hf://<namespace>/<name>[@<revision>][/<file>]} */
+		public String model;
 		public int blockSize, viewsInFlight;
 	}
 
@@ -136,15 +146,47 @@ public class Embed_Interest_Points implements PlugIn
 		if ( defaultLabel < 0 || defaultLabel >= labels.length )
 			defaultLabel = 0;
 
+		// the models on the hub (at their current commits) and in the cache, then a local file
+		final List< HubModel > models = hubModels();
+		final Set< String > cached = new HashSet<>();
+		try
+		{
+			for ( final HubModel m : ModelHub.cached( ModelHub.defaultCacheDir() ) )
+			{
+				cached.add( m.uri() );
+				boolean listed = false;
+				for ( final HubModel l : models )
+					listed |= l.uri().equals( m.uri() );
+				if ( !listed )
+					models.add( m );
+			}
+		}
+		catch ( final IOException e )
+		{
+			IOFunctions.println( "Cannot list the model cache " + ModelHub.defaultCacheDir() + ": " + e.getMessage() );
+		}
+		final String[] modelChoices = new String[ models.size() + 1 ];
+		int defaultChoice = models.size();
+		for ( int i = 0; i < models.size(); ++i )
+		{
+			final HubModel m = models.get( i );
+			modelChoices[ i ] = m.name() + " (" + m.namespace() + ", " + m.shortRevision() + ( cached.contains( m.uri() ) ? ", cached" : "" ) + ")";
+			if ( m.uri().equals( defaultModelChoice ) )
+				defaultChoice = i;
+		}
+		modelChoices[ models.size() ] = LOCAL_FILE;
+
 		final GenericDialog gd = new GenericDialog( "Embed interest points" );
 
 		gd.addChoice( "Interest_points", labels, labels[ defaultLabel ] );
-		gd.addFileField( "Model (.onnx)", defaultModel, 60 );
+		gd.addChoice( "Model", modelChoices, modelChoices[ defaultChoice ] );
+		gd.addFileField( "Local_model (.onnx)", defaultModel, 60 );
 		gd.addStringField( "Array_name", defaultArrayName, 20 );
 		gd.addNumericField( "Points_per_block", defaultBlockSize, 0 );
 		gd.addNumericField( "Views_in_parallel", defaultViewsInFlight, 0 );
 		gd.addMessage(
-				"Computes one vector per interest point with the model (pcmatch's 'export-onnx' file; its '.onnx.json' sidecar must sit next to it)\n"
+				"Computes one vector per interest point with the model (pcmatch's 'export-onnx' file with its '.onnx.json' sidecar next to it: a model\n"
+				+ "of the Hugging Face Hub, downloaded once into " + ModelHub.defaultCacheDir() + " and pinned to its commit, or a local file)\n"
 				+ "and stores the vectors with the points (interestpoints.zarr, <label>/tp<T>/arrays/<array name>), as 'pcmatch embed' does;\n"
 				+ "'Embeddings' of 'Register using Interest Points' matches on them. A filtered label is embedded through its base label (all its points).\n"
 				+ "An array of another model under the same name is replaced. The blocks of 'Views in parallel' views share the " + Threads.numThreads() + " threads;\n"
@@ -158,17 +200,26 @@ public class Embed_Interest_Points implements PlugIn
 
 		final Parameters p = new Parameters();
 		p.label = defaultBaseLabel = InterestPointTools.getSelectedLabel( labels, defaultLabel = gd.getNextChoiceIndex() );
+		final int modelChoice = gd.getNextChoiceIndex();
 		final String model = defaultModel = gd.getNextString().trim();
 		p.arrayName = defaultArrayName = gd.getNextString().trim();
 		p.blockSize = defaultBlockSize = (int) Math.round( gd.getNextNumber() );
 		p.viewsInFlight = defaultViewsInFlight = (int) Math.round( gd.getNextNumber() );
 
-		if ( model.isEmpty() || !Files.isRegularFile( Paths.get( model ) ) )
+		if ( modelChoice < models.size() )
 		{
-			IOFunctions.println( "The model '" + model + "' is no file." );
-			return null;
+			p.model = defaultModelChoice = models.get( modelChoice ).uri();
 		}
-		p.model = Paths.get( model );
+		else
+		{
+			defaultModelChoice = LOCAL_FILE;
+			if ( model.isEmpty() || !Files.isRegularFile( Paths.get( model ) ) )
+			{
+				IOFunctions.println( "The model '" + model + "' is no file." );
+				return null;
+			}
+			p.model = model;
+		}
 
 		if ( p.arrayName.isEmpty() || p.arrayName.contains( "/" ) )
 		{
@@ -191,10 +242,31 @@ public class Embed_Interest_Points implements PlugIn
 		return p;
 	}
 
-	/** {@link #embed(SpimData2, List, String, Path, String, int, int)} with {@code defaultViewsInFlight} views in the pool at a time */
+	/** @return the models on the hub ({@link ModelHub#defaultNamespaces}), empty with a note when the hub cannot be reached */
+	public static List< HubModel > hubModels()
+	{
+		final List< HubModel > models = new ArrayList<>();
+		try
+		{
+			models.addAll( ModelHub.list( ModelHub.defaultNamespaces, ModelHub.defaultTimeout ) );
+		}
+		catch ( final IOException e )
+		{
+			IOFunctions.println( "Cannot list the models on " + ModelHub.hub + " (" + e.getMessage() + "); the cached models and local files are available." );
+		}
+		return models;
+	}
+
+	/** {@link #embed(SpimData2, List, String, String, String, int, int)} with {@code defaultViewsInFlight} views in the pool at a time */
 	public static boolean embed( final SpimData2 data, final List< ViewId > viewIds, final String label, final Path modelFile, final String arrayName, final int blockSize )
 	{
-		return embed( data, viewIds, label, modelFile, arrayName, blockSize, defaultViewsInFlight );
+		return embed( data, viewIds, label, modelFile.toString(), arrayName, blockSize, defaultViewsInFlight );
+	}
+
+	/** {@link #embed(SpimData2, List, String, String, String, int, int)} with a local file */
+	public static boolean embed( final SpimData2 data, final List< ViewId > viewIds, final String label, final Path modelFile, final String arrayName, final int blockSize, final int viewsInFlight )
+	{
+		return embed( data, viewIds, label, modelFile.toString(), arrayName, blockSize, viewsInFlight );
 	}
 
 	/**
@@ -205,25 +277,28 @@ public class Embed_Interest_Points implements PlugIn
 	 * @param data the dataset
 	 * @param viewIds the views (those without the label are skipped)
 	 * @param label the label (a filtered label embeds and stores under its base)
-	 * @param modelFile the ONNX file (with its sidecar)
+	 * @param modelSpec the ONNX file (with its sidecar next to it), or a hub model {@code hf://<namespace>/<name>[@<revision>][/<file>]}
+	 *        (downloaded into {@link ModelHub#defaultCacheDir()} unless cached, pinned to its commit)
 	 * @param arrayName the array the rows go to
 	 * @param blockSize points per inference call
 	 * @param viewsInFlight views whose blocks are in the pool at a time (their points and opened images are in memory at once)
 	 * @return whether rows were written
 	 */
-	public static boolean embed( final SpimData2 data, final List< ViewId > viewIds, final String label, final Path modelFile, final String arrayName, final int blockSize, final int viewsInFlight )
+	public static boolean embed( final SpimData2 data, final List< ViewId > viewIds, final String label, final String modelSpec, final String arrayName, final int blockSize, final int viewsInFlight )
 	{
 		final EmbeddingModel model;
+		final ModelHub.Local local;
 		try
 		{
-			model = EmbeddingModel.load( modelFile );
+			local = ModelHub.localModel( modelSpec, ModelHub.defaultCacheDir(), ModelHub.defaultTimeout );
+			model = EmbeddingModel.load( local.path() );
 		}
 		catch ( final IOException e )
 		{
-			IOFunctions.println( "Cannot load the model: " + e.getMessage() );
+			IOFunctions.println( "Cannot load the model '" + modelSpec + "': " + e.getMessage() );
 			return false;
 		}
-		IOFunctions.println( "Model: " + model );
+		IOFunctions.println( "Model: " + local.spec() + " = " + model );
 
 		final List< ViewId > views = InterestPointTools.viewsWithLabel( data, label, viewIds );
 		if ( views.isEmpty() )
@@ -262,7 +337,7 @@ public class Embed_Interest_Points implements PlugIn
 
 		final LinkedHashMap< String, String > params = ActionHistoryRecorder.params();
 		ActionHistoryRecorder.put( params, "label", label );
-		ActionHistoryRecorder.put( params, "model", modelFile.toAbsolutePath().toString() );
+		ActionHistoryRecorder.put( params, "model", local.spec() );
 		ActionHistoryRecorder.put( params, "arrayName", arrayName );
 		ActionHistoryRecorder.put( params, "blockSize", blockSize );
 		ActionHistoryRecorder.put( params, "fingerprint", model.contract().fingerprint() );

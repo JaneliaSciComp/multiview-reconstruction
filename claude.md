@@ -186,11 +186,28 @@ override 0.45 0.45 2.0; the XML's 1.1 1.1 3.512 is a wrong calibration and chang
 `TestOnnxEvaluator` (a tiny encoder written by `TestOnnxModels` in the wire format, against a direct computation; the real model
 on the fixture when present), `TestInterestPointEmbedding` (scale, levels, cubes on a synthetic image, the chain on the simulated
 beads, replacement, several views on one pool, filtered label, the plugin with a tiny ONNX model); BigStitcher-Spark
-`TestInterestPointEmbedding`. Models: several will exist (translation invariant, rotation invariant, static grid matching; Stephan
-2026-10-30); they are to be hosted on Hugging Face under the JaneliaSciComp organisation (decided 2026-10-30, one repo per model with
-the `.onnx`, its sidecar and a model card; Stephan sets up the organisation and the repos himself), and MVR is to get a small registry (name, description, invariance, URL,
-revision, sha256) with a download cache and a model choice in the dialog, `--model` in BigStitcher-Spark accepting a name, a path or a
-URL: not written yet, nothing is on the hub yet.
+`TestInterestPointEmbedding`. **Models on the Hugging Face Hub (`ModelHub`, 2026-10-30).** Several models will exist (translation
+invariant, rotation invariant, static grid matching); Stephan hosts them on the hub himself, one public repository per model holding
+the `.onnx`, its `.onnx.json` sidecar and a model card tagged `bigstitcher` (the first: `StephanPreibisch/bigstitcher-embedding-translation-stack64`,
+MIT, the stack64 export; later under the JaneliaSciComp organisation, which does not exist on the hub yet). `ModelHub` needs nothing but
+the JDK's HTTP client: `list( namespaces, timeout )` asks `/api/models?author=<ns>&filter=bigstitcher` for each of `defaultNamespaces`
+(`StephanPreibisch`, `JaneliaSciComp`) and `/api/models/<repo>?blobs=true` per repository (its commit `sha`, the files with sizes and the
+sha256 of LFS files; gated repositories are skipped), one `HubModel( repo, revision, file, size, sha256, sidecarSize )` per `.onnx` with a
+sidecar; `resolve( uri, cacheDir, timeout )` pins `hf://<ns>/<name>[@<revision>][/<file>]` to a commit (revision "main" by default, the
+only `.onnx` if no file; a pinned URI whose model is cached is answered from the cache's `hub.json` without the hub); `download( model,
+cacheDir, timeout )` fetches `/<repo>/resolve/<revision>/<file>` (one redirect) and the sidecar into `<cache>/<ns>/<name>/<revision>/`
+through a part file moved in atomically (safe for several processes on a shared cache), verifies size and sha256, checks the sidecar
+is a contract and writes `hub.json`; a model already there and verified costs no request; `localModel( spec, cacheDir, timeout )` turns
+a path or a URI into `Local( path, spec )` where spec is the pinned URI (or the absolute path), which the action history records as
+`model` and `ActionToSparkCli` passes to `--model`. The cache is `~/.bigstitcher/models` or the system property `bigstitcher.models`.
+GUI: the dialog's "Model" choice lists the hub's models (name, namespace, short commit, "cached") plus the cached ones and "Local file
+(path below)" with the file field; `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
+viewsInFlight )` downloads on demand. BigStitcher-Spark: `--model hf://...` is pinned on the driver, every executor downloads once into
+`--modelCache` (default as above; nodes without internet get a path). Tests `TestModelHub` (a loopback `FakeHub` serving the three API
+answers and the redirecting downloads: URIs, listing by tag and sidecar, pinned resolve, cache hits without requests, a damaged cached
+file re-downloaded, wrong bytes refused by sha256, the plugin with a hub model; and Stephan's repository on the real hub when
+reachable), BigStitcher-Spark `TestInterestPointEmbedding` (an `hf://` run against the fake hub). Verified 2026-10-30 on ds1: the rows
+from the hub model are bit-identical to those from the local file.
 
 Design and the staging format follow PR 108 (Lila, 2026-09); its global append-only arrays with compaction were replaced by
 per-(label, timepoint) groups (Stephan, 2026-10-23: fewer moving parts; whole-label changes dominate; a few test views go into
