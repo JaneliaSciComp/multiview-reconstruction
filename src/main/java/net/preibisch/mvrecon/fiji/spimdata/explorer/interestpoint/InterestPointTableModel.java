@@ -538,7 +538,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 			if ( state.matching == numViews )
 			{
 				tooltip.append( tooltip.length() == 0 ? "" : " " ).append( "The embeddings in the per-point array '" ).append( array.name() ).append( "' (" ).append( array.columns() ).append( " values per point" ).append( written )
-						.append( ") cover every point of the label in the selected views; 'Embeddings' in Register using Interest Points matches on them." ).append( under );
+						.append( ") cover every point of the label in the selected views; 'Embedding Cosine Similarity' in Register using Interest Points matches on them." ).append( under );
 			}
 			else
 			{

@@ -201,9 +201,13 @@ through a part file moved in atomically (safe for several processes on a shared 
 is a contract and writes `hub.json`; a model already there and verified costs no request; `localModel( spec, cacheDir, timeout )` turns
 a path or a URI into `Local( path, spec )` where spec is the pinned URI (or the absolute path), which the action history records as
 `model` and `ActionToSparkCli` passes to `--model`. The cache is `~/.bigstitcher/models` or the system property `bigstitcher.models`.
-GUI: the dialog's "Model" choice lists the hub's models plus the cached ones and "Local file (path below)" with the file field; the
-choice text is "name (namespace)" and nothing else, since macros record it (Stephan 2026-10-31: no "cached", no commit; only an older
-cached revision next to the hub's current one carries its commit); `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
+GUI (Stephan 2026-10-31 late): the explorer's "Compute Interest Point Embeddings" is a submenu with "Translation invariant (Hugging
+Face) ..." (the hub's models tagged `translation-invariant`, `HubModel.tags` from the model card and kept in `hub.json`, plus such
+cached models the hub no longer lists; a "Model" choice whose text is "name (namespace)" and nothing else, since macros record it: no
+"cached", no commit, only an older cached revision next to the hub's current one carries its commit; a hyperlink to the organisation's
+page; default array name `translation-invariant`) and "Local model ..." (file field, default array `local-embedding`); each entry
+remembers its own array name (`Embed_Interest_Points.Source`), plugins.config has both under Interest Points > Tools (plugin arg
+"translation"/"local"); no model of the kind on the hub or in the cache = a log line, no dialog; `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
 viewsInFlight )` downloads on demand. BigStitcher-Spark: `--model hf://...` is pinned on the driver, every executor downloads once into
 `--modelCache` (default as above; nodes without internet get a path). Tests `TestModelHub` (a loopback `FakeHub` serving the three API
 answers and the redirecting downloads: URIs, listing by tag and sidecar, pinned resolve, cache hits without requests, a damaged cached

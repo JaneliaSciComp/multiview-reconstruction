@@ -39,6 +39,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -81,6 +82,9 @@ public class ModelHub
 	/** the tag a repository must carry to be listed */
 	public static final String TAG = "bigstitcher";
 
+	/** the tag of the translation-invariant models (pcmatch's model cards tag the kind of invariance), what "Translation invariant (Hugging Face)" lists */
+	public static final String TRANSLATION_INVARIANT = "translation-invariant";
+
 	/** the scheme of a hub model: {@code hf://<namespace>/<name>[@<revision>][/<file>]} */
 	public static final String SCHEME = "hf://";
 
@@ -109,9 +113,12 @@ public class ModelHub
 	 * @param sha256 sha256 of the file (hex), null if the hub does not store it (a file not in LFS)
 	 * @param sidecarSize bytes of the sidecar, -1 if unknown
 	 */
-	public record HubModel( String repo, String revision, String file, long size, String sha256, long sidecarSize )
+	public record HubModel( String repo, String revision, String file, long size, String sha256, long sidecarSize, List< String > tags )
 	{
 		public String namespace() { return repo.substring( 0, repo.indexOf( '/' ) ); }
+
+		/** @return whether the repository carries the tag (its model card's {@code tags}, e.g. {@value #TRANSLATION_INVARIANT}); kept in the cache's record */
+		public boolean hasTag( final String tag ) { return tags != null && tags.contains( tag ); }
 
 		/** @return the repository's name without the namespace: the model's name */
 		public String name() { return repo.substring( repo.indexOf( '/' ) + 1 ); }
@@ -286,6 +293,10 @@ public class ModelHub
 		if ( model.sha256() != null )
 			json.addProperty( "sha256", model.sha256() );
 		json.addProperty( "sidecarSize", model.sidecarSize() );
+		final JsonArray tags = new JsonArray();
+		for ( final String tag : model.tags() )
+			tags.add( tag );
+		json.add( "tags", tags );
 		json.addProperty( "hub", hub );
 		json.addProperty( "downloaded", LocalDateTime.now().format( DateTimeFormatter.ofPattern( "yyyy-MM-dd'T'HH:mm:ss" ) ) );
 		final Path tmp = record.resolveSibling( RECORD + ".part-" + UUID.randomUUID() );
@@ -347,7 +358,7 @@ public class ModelHub
 		{
 			final JsonObject json = JsonParser.parseString( Files.readString( record ) ).getAsJsonObject();
 			return new HubModel( json.get( "repo" ).getAsString(), json.get( "revision" ).getAsString(), json.get( "file" ).getAsString(),
-					json.has( "size" ) ? json.get( "size" ).getAsLong() : -1, json.has( "sha256" ) ? json.get( "sha256" ).getAsString() : null, json.has( "sidecarSize" ) ? json.get( "sidecarSize" ).getAsLong() : -1 );
+					json.has( "size" ) ? json.get( "size" ).getAsLong() : -1, json.has( "sha256" ) ? json.get( "sha256" ).getAsString() : null, json.has( "sidecarSize" ) ? json.get( "sidecarSize" ).getAsLong() : -1, tags( json ) );
 		}
 		catch ( final Exception e )
 		{
@@ -369,6 +380,7 @@ public class ModelHub
 			throw new IOException( "Unexpected answer of " + hub + " for the repository '" + id + "': " + abbreviate( repo ) );
 
 		final String sha = repo.get( "sha" ).getAsString();
+		final List< String > tags = tags( repo );
 		final JsonArray siblings = repo.getAsJsonArray( "siblings" );
 		for ( final JsonElement e : siblings )
 		{
@@ -380,19 +392,22 @@ public class ModelHub
 			if ( sidecar == null )
 				continue;
 			final String sha256 = sibling.has( "lfs" ) && sibling.get( "lfs" ).isJsonObject() && sibling.getAsJsonObject( "lfs" ).has( "sha256" ) ? sibling.getAsJsonObject( "lfs" ).get( "sha256" ).getAsString() : null;
-			models.add( new HubModel( id, sha, file, size( sibling ), sha256, size( sidecar ) ) );
+			models.add( new HubModel( id, sha, file, size( sibling ), sha256, size( sidecar ), tags ) );
 		}
 		return models;
 	}
 
-	static boolean hasTag( final JsonObject repo )
+	static boolean hasTag( final JsonObject repo ) { return tags( repo ).contains( TAG ); }
+
+	/** @return the {@code tags} of a repository's JSON (or of a cache record), empty if it has none */
+	static List< String > tags( final JsonObject json )
 	{
-		if ( !repo.has( "tags" ) || !repo.get( "tags" ).isJsonArray() )
-			return false;
-		for ( final JsonElement t : repo.getAsJsonArray( "tags" ) )
-			if ( t.isJsonPrimitive() && TAG.equals( t.getAsString() ) )
-				return true;
-		return false;
+		final ArrayList< String > tags = new ArrayList<>();
+		if ( json.has( "tags" ) && json.get( "tags" ).isJsonArray() )
+			for ( final JsonElement t : json.getAsJsonArray( "tags" ) )
+				if ( t.isJsonPrimitive() )
+					tags.add( t.getAsString() );
+		return Collections.unmodifiableList( tags );
 	}
 
 	static JsonObject sibling( final JsonArray siblings, final String file )

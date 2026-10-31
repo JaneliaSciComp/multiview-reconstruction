@@ -26,21 +26,24 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.ArrayList;
 
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.Embed_Interest_Points;
+import net.preibisch.mvrecon.fiji.plugin.Embed_Interest_Points.Source;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 
 /**
- * "Compute interest point embeddings (ONNX) ..." of the ViewSetup Explorer: {@link Embed_Interest_Points} on the selected views,
- * then the Interest Point Explorer's "Attributes" column shows the new array.
+ * "Compute Interest Point Embeddings" of the ViewSetup Explorer, one entry per {@link Source} ("Translation invariant (Hugging
+ * Face) ...", "Local model ..."): {@link Embed_Interest_Points} on the selected views, then the Interest Point Explorer's
+ * "Attributes" column shows the new array.
  *
  * @author Stephan Preibisch
  */
-public class EmbedInterestPointsPopup extends JMenuItem implements ExplorerWindowSetable
+public class EmbedInterestPointsPopup extends JMenu implements ExplorerWindowSetable
 {
 	private static final long serialVersionUID = 1L;
 
@@ -48,9 +51,14 @@ public class EmbedInterestPointsPopup extends JMenuItem implements ExplorerWindo
 
 	public EmbedInterestPointsPopup()
 	{
-		super( "Compute interest point embeddings (ONNX) ..." );
+		super( "Compute Interest Point Embeddings" );
 
-		this.addActionListener( new MyActionListener() );
+		for ( final Source source : Source.values() )
+		{
+			final JMenuItem item = new JMenuItem( source.title + " ..." );
+			item.addActionListener( new MyActionListener( source ) );
+			this.add( item );
+		}
 	}
 
 	@Override
@@ -62,6 +70,13 @@ public class EmbedInterestPointsPopup extends JMenuItem implements ExplorerWindo
 
 	public class MyActionListener implements ActionListener
 	{
+		final Source source;
+
+		public MyActionListener( final Source source )
+		{
+			this.source = source;
+		}
+
 		@Override
 		public void actionPerformed( final ActionEvent e )
 		{
@@ -81,7 +96,7 @@ public class EmbedInterestPointsPopup extends JMenuItem implements ExplorerWindo
 
 			new Thread( () ->
 			{
-				if ( Embed_Interest_Points.embed( spimData, views ) )
+				if ( Embed_Interest_Points.embed( spimData, views, source ) )
 					panel.updateContent(); // the Interest Point Explorer lists the array in "Attributes"
 			} ).start();
 		}

@@ -102,7 +102,7 @@ public class TestModelHub
 		for ( final String bad : new String[] { "hf://", "hf://a", "hf:///b", "hf://a/", "hf://a/b@", "hf://a/b@rev/", "a/b" } )
 			assertThrows( IllegalArgumentException.class, () -> ModelHub.parse( bad ), bad );
 
-		final HubModel m = new HubModel( "StephanPreibisch/stack64", "d90228e27803fe0675751f7adb7004d6d8ff0b97", "m.onnx", 10, null, 5 );
+		final HubModel m = new HubModel( "StephanPreibisch/stack64", "d90228e27803fe0675751f7adb7004d6d8ff0b97", "m.onnx", 10, null, 5, List.of( ModelHub.TAG ) );
 		assertEquals( "StephanPreibisch", m.namespace() );
 		assertEquals( "stack64", m.name() );
 		assertEquals( "d90228e", m.shortRevision() );
@@ -211,6 +211,20 @@ public class TestModelHub
 			// a hub model that does not exist: no exception, nothing written
 			assertTrue( !Embed_Interest_Points.embed( data, views, TestInterestPointEmbedding.LABEL, "hf://lab/nothing", "other", 50, 2 ) );
 			assertNull( InterestPointArrays.attributes( data.getBasePathURI(), TestInterestPointEmbedding.LABEL, 0, "other" ) );
+
+			// the dialog's listing of one kind of model: the fake model carries the tag (listed by the hub, kept in the cache's record)
+			namespaces = ModelHub.defaultNamespaces;
+			ModelHub.defaultNamespaces = new String[] { "lab" };
+			final Embed_Interest_Points.Available available = Embed_Interest_Points.availableModels( ModelHub.TRANSLATION_INVARIANT );
+			assertEquals( 1, available.models().size() );
+			assertEquals( 1, available.listed() );
+			assertEquals( "hf://lab/stack-tiny@0123456789abcdef0123456789abcdef01234567/tiny.onnx", available.models().get( 0 ).uri() );
+			assertTrue( Embed_Interest_Points.availableModels( "rotation-invariant" ).models().isEmpty() );
+			ModelHub.hub = "http://127.0.0.1:9"; // the hub unreachable: the cached model is still offered, by the tags of its record
+			final Embed_Interest_Points.Available offline = Embed_Interest_Points.availableModels( ModelHub.TRANSLATION_INVARIANT );
+			assertEquals( 1, offline.models().size() );
+			assertEquals( 0, offline.listed() );
+			assertEquals( available.models().get( 0 ), offline.models().get( 0 ) );
 		}
 	}
 
@@ -400,7 +414,10 @@ public class TestModelHub
 			final JsonArray tags = new JsonArray();
 			tags.add( "onnx" );
 			if ( r.tagged() )
+			{
 				tags.add( ModelHub.TAG );
+				tags.add( ModelHub.TRANSLATION_INVARIANT ); // every tagged fake model is a translation-invariant one
+			}
 			return tags;
 		}
 
