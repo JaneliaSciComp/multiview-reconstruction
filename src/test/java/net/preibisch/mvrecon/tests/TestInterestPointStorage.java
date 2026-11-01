@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.io.PrintWriter;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -72,6 +73,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Ax
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5ToZarr;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsTextFiles;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Key;
@@ -713,6 +715,274 @@ public class TestInterestPointStorage
 		}
 		assertEquals( 2, loaded.getViewInterestPoints().getViewInterestPointLists( last ).getInterestPointList( "old" ).getCorrespondingInterestPointsCopy().size() );
 		assertTrue( InterestPointsN5ToZarr.legacyLabels( loaded, views ).isEmpty() );
+	}
+
+	/**
+	 * Labels of the text-file layout before N5 (XML text 'interestpoints/<name>' with any name, files <name>.ip.txt and
+	 * <name>.corr.txt): read through the same handles (attributes NaN, a missing .corr.txt is an empty list), the XML keeps the
+	 * file names until an entry is in the store, a save writes only a changed label (points and correspondences together),
+	 * saveStaged carries both, "Resave as ZARR store" lists and moves them without an N5 container, the files are never
+	 * touched, and the 2-arg instantiatefromXML refuses the text form (it needs the view and label)
+	 */
+	@Test
+	public void testTextFileLabels() throws Exception
+	{
+		final SpimData2 spimData = SimulateUtil.setUp();
+		spimData.setBasePathURI( tempDir.toUri() );
+		final URI base = tempDir.toUri();
+
+		final ArrayList< ViewId > views = new ArrayList<>( spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		Collections.sort( views );
+		final int n = views.size();
+
+		// the old layout with arbitrary file names: 'things' with points and correspondences to the next view, 'empty' with a
+		// header-only .ip.txt and no .corr.txt (never matched)
+		final HashMap< ViewId, List< InterestPoint > > things = new HashMap<>();
+		final HashMap< ViewId, List< CorrespondingInterestPoints > > thingsCorrs = new HashMap<>();
+		final HashMap< ViewId, String > thingsFile = new HashMap<>(), emptyFile = new HashMap<>();
+		final File dir = new File( tempDir.toFile(), InterestPointsTextFiles.DIRECTORY );
+
+		for ( int i = 0; i < n; ++i )
+		{
+			final ViewId v = views.get( i ), next = views.get( ( i + 1 ) % n );
+			final List< InterestPoint > points = plainPoints( 30 + 10 * i, 200 + i );
+			final List< CorrespondingInterestPoints > corrs = new ArrayList<>();
+			for ( int c = 0; c < 4 + i; ++c )
+				corrs.add( new CorrespondingInterestPoints( c, next, "things", c + 1 ) );
+			things.put( v, points );
+			thingsCorrs.put( v, corrs );
+
+			final String name = InterestPointsTextFiles.DIRECTORY + "/new_tpId_" + v.getTimePointId() + "_viewSetupId_" + v.getViewSetupId() + ".things";
+			thingsFile.put( v, name );
+			writeTextFiles( tempDir, name, points, corrs );
+
+			final String emptyName = InterestPointsTextFiles.DIRECTORY + "/tpId_" + v.getTimePointId() + "_viewSetupId_" + v.getViewSetupId() + ".empty";
+			emptyFile.put( v, emptyName );
+			writeTextFiles( tempDir, emptyName, new ArrayList<>(), null );
+		}
+		final List< String > filesBefore = sortedFiles( dir );
+		assertEquals( 3 * n, filesBefore.size() );
+
+		final List< Key > allKeys = new ArrayList<>();
+		for ( final ViewId v : views )
+		{
+			allKeys.add( Key.of( v, "things" ) );
+			allKeys.add( Key.of( v, "empty" ) );
+		}
+
+		// the XML reader's form; the 2-arg form needs the view and label, a filtered text label does not exist
+		assertThrows( RuntimeException.class, () -> InterestPoints.instantiatefromXML( base, thingsFile.get( views.get( 0 ) ) ) );
+		assertThrows( RuntimeException.class, () -> InterestPoints.instantiatefromXML( base, thingsFile.get( views.get( 0 ) ), views.get( 0 ), "things", "base", "sigma=2.." ) );
+		assertTrue( InterestPointsTextFiles.isTextFilePath( " interestpoints\\tpId_0_viewSetupId_0.beads " ) );
+		assertEquals( "interestpoints/tpId_0_viewSetupId_0.beads", InterestPointsTextFiles.normalize( " interestpoints\\tpId_0_viewSetupId_0.beads " ) );
+		assertFalse( InterestPointsTextFiles.isTextFilePath( "tpId_0_viewSetupId_0/beads" ) );
+
+		for ( final ViewId v : views )
+		{
+			final ViewInterestPointLists vipl = spimData.getViewInterestPoints().getViewInterestPointLists( v );
+
+			final InterestPoints t = InterestPoints.instantiatefromXML( base, thingsFile.get( v ), v, "things", null, null );
+			t.setParameters( "DOG old" );
+			vipl.addInterestPointList( "things", t );
+			assertTrue( ( (InterestPointsZarr) t ).isTextBacked() );
+			assertEquals( thingsFile.get( v ), t.getXMLRepresentation() );
+			assertEquals( Key.of( v, "things" ), ( (InterestPointsZarr) t ).getKey() );
+
+			final InterestPoints e = InterestPoints.instantiatefromXML( base, emptyFile.get( v ), v, "empty", null, null );
+			e.setParameters( "" );
+			vipl.addInterestPointList( "empty", e );
+		}
+
+		// ---- 1. reading through the fallback (no store, no N5) ----
+		for ( int i = 0; i < n; ++i )
+		{
+			final ViewId v = views.get( i ), next = views.get( ( i + 1 ) % n );
+			final ViewInterestPointLists vipl = spimData.getViewInterestPoints().getViewInterestPointLists( v );
+			final InterestPoints t = vipl.getInterestPointList( "things" );
+
+			final Map< Integer, InterestPoint > loaded = t.getInterestPointsCopy();
+			assertEquals( things.get( v ).size(), loaded.size() );
+			for ( final InterestPoint p : things.get( v ) )
+			{
+				assertArrayEquals( p.getL(), loaded.get( p.getId() ).getL(), 1e-3 );
+				assertTrue( Float.isNaN( loaded.get( p.getId() ).getResponse() ) );
+				assertTrue( Float.isNaN( loaded.get( p.getId() ).getSigma() ) );
+				assertTrue( Float.isNaN( loaded.get( p.getId() ).getIntensity() ) );
+			}
+			assertEquals( detectionIds( thingsCorrs.get( v ) ), detectionIds( t.getCorrespondingInterestPointsCopy() ) );
+			assertEquals( thingsCorrs.get( v ).size(), t.getCorrespondingInterestPointsCopy( next, "things" ).size() );
+			assertEquals( 1, t.getCorrespondingViews().size() );
+
+			final InterestPoints e = vipl.getInterestPointList( "empty" );
+			assertEquals( 0, e.getInterestPointsCopy().size() );
+			assertEquals( 0, e.getCorrespondingInterestPointsCopy().size() );
+		}
+		assertEquals( 2 * n, store().missingEntries( allKeys ).size() );
+
+		// ---- 2. a save without changes writes nothing into the store, the XML keeps the file names, the files are untouched ----
+		final URI xmlURI = tempDir.resolve( "dataset.xml" ).toUri();
+		new XmlIoSpimData2().save( spimData, xmlURI );
+		assertEquals( 2 * n, store().missingEntries( allKeys ).size() );
+		final String xml1 = Files.readString( tempDir.resolve( "dataset.xml" ) );
+		assertEquals( 2 * n, countOf( xml1, ">" + InterestPointsTextFiles.DIRECTORY + "/" ) );
+		assertEquals( 0, countOf( xml1, ">tpId_" ) );
+		assertEquals( filesBefore, sortedFiles( dir ) );
+
+		SpimData2 reloaded = new XmlIoSpimData2().load( xmlURI );
+		for ( final ViewId v : views )
+		{
+			final ViewInterestPointLists vipl = reloaded.getViewInterestPoints().getViewInterestPointLists( v );
+			assertTrue( ( (InterestPointsZarr) vipl.getInterestPointList( "things" ) ).isTextBacked() );
+			assertEquals( things.get( v ).size(), vipl.getInterestPointList( "things" ).getInterestPointsCopy().size() );
+			assertEquals( "DOG old", vipl.getInterestPointList( "things" ).getParameters() );
+			assertEquals( thingsCorrs.get( v ).size(), vipl.getInterestPointList( "things" ).getCorrespondingInterestPointsCopy().size() );
+			assertEquals( 0, vipl.getInterestPointList( "empty" ).getInterestPointsCopy().size() );
+		}
+
+		// ---- 3. a change of one view's correspondences: that entry goes into the store with its points, its XML text is the store's ----
+		final ViewId first = views.get( 0 ), second = views.get( 1 );
+		final Key firstKey = Key.of( first, "things" );
+		final List< CorrespondingInterestPoints > changed = List.of(
+				new CorrespondingInterestPoints( 0, second, "things", 5 ),
+				new CorrespondingInterestPoints( 1, second, "things", 6 ),
+				new CorrespondingInterestPoints( 2, second, "things", 7 ) );
+		spimData.getViewInterestPoints().getViewInterestPointLists( first ).getInterestPointList( "things" ).setCorrespondingInterestPoints( new ArrayList<>( changed ) );
+		new XmlIoSpimData2().save( spimData, xmlURI );
+
+		assertEquals( things.get( first ).size(), store().points( firstKey ).size() );
+		assertEquals( 3, store().correspondences( firstKey ).size() );
+		final InterestPointsZarr firstThings = (InterestPointsZarr) spimData.getViewInterestPoints().getViewInterestPointLists( first ).getInterestPointList( "things" );
+		assertFalse( firstThings.isTextBacked() );
+		assertEquals( firstKey.path(), firstThings.getXMLRepresentation() );
+		final java.util.Set< Key > missing = store().missingEntries( allKeys );
+		assertEquals( 2 * n - 1, missing.size() );
+		assertFalse( missing.contains( firstKey ) );
+		final String xml2 = Files.readString( tempDir.resolve( "dataset.xml" ) );
+		assertEquals( 2 * n - 1, countOf( xml2, ">" + InterestPointsTextFiles.DIRECTORY + "/" ) );
+		assertEquals( 1, countOf( xml2, ">" + firstKey.path() + "<" ) );
+		assertEquals( filesBefore, sortedFiles( dir ) );
+
+		reloaded = new XmlIoSpimData2().load( xmlURI );
+		assertFalse( ( (InterestPointsZarr) reloaded.getViewInterestPoints().getViewInterestPointLists( first ).getInterestPointList( "things" ) ).isTextBacked() );
+		assertEquals( 3, reloaded.getViewInterestPoints().getViewInterestPointLists( first ).getInterestPointList( "things" ).getCorrespondingInterestPointsCopy().size() );
+		assertEquals( things.get( first ).size(), reloaded.getViewInterestPoints().getViewInterestPointLists( first ).getInterestPointList( "things" ).getInterestPointsCopy().size() );
+		assertTrue( ( (InterestPointsZarr) reloaded.getViewInterestPoints().getViewInterestPointLists( second ).getInterestPointList( "things" ) ).isTextBacked() );
+		assertEquals( thingsCorrs.get( second ).size(), reloaded.getViewInterestPoints().getViewInterestPointLists( second ).getInterestPointList( "things" ).getCorrespondingInterestPointsCopy().size() );
+
+		// ---- 4. "Resave as ZARR store" lists and moves text labels although there is no N5 container ----
+		assertFalse( new File( tempDir.toFile(), InterestPointsN5.baseN5 ).exists() );
+		final LinkedHashMap< String, Integer > labels = InterestPointsN5ToZarr.legacyLabels( spimData, views );
+		assertEquals( List.of( "empty", "things" ), new ArrayList<>( labels.keySet() ) );
+		assertEquals( n, labels.get( "empty" ) );
+		assertEquals( n - 1, labels.get( "things" ) );
+
+		assertEquals( n - 1, InterestPointsN5ToZarr.moveIntoStore( InterestPointsN5ToZarr.legacyLists( spimData, views, "things" ), store(), 2 ) );
+		assertEquals( List.of( "empty" ), new ArrayList<>( InterestPointsN5ToZarr.legacyLabels( spimData, views ).keySet() ) );
+		for ( int i = 1; i < n; ++i )
+		{
+			final ViewId v = views.get( i );
+			final Key key = Key.of( v, "things" );
+			final Map< Integer, InterestPoint > moved = InterestPointsZarr.toMap( store().points( key ) );
+			assertEquals( things.get( v ).size(), moved.size() );
+			for ( final InterestPoint p : things.get( v ) )
+				assertArrayEquals( p.getL(), moved.get( p.getId() ).getL(), 1e-3 );
+			assertEquals( detectionIds( thingsCorrs.get( v ) ), detectionIds( store().correspondences( key ) ) );
+			assertFalse( ( (InterestPointsZarr) spimData.getViewInterestPoints().getViewInterestPointLists( v ).getInterestPointList( "things" ) ).isTextBacked() );
+		}
+
+		// a second move finds nothing and rewrites nothing; the save writes the store's entries as the XML text, 'empty' stays text
+		final File zarr = new File( tempDir.toFile(), InterestPointsZarrStore.ZARR_CONTAINER );
+		final List< String > generations = generationDirs( zarr, "things" );
+		assertEquals( 0, InterestPointsN5ToZarr.moveIntoStore( InterestPointsN5ToZarr.legacyLists( spimData, views, "things" ), store(), 2 ) );
+		new XmlIoSpimData2().save( spimData, xmlURI );
+		assertEquals( generations, generationDirs( zarr, "things" ) );
+		final String xml3 = Files.readString( tempDir.resolve( "dataset.xml" ) );
+		assertEquals( n, countOf( xml3, ">" + InterestPointsTextFiles.DIRECTORY + "/" ) );
+		assertEquals( n, countOf( xml3, "/things<" ) );
+		assertEquals( filesBefore, sortedFiles( dir ) );
+
+		assertEquals( n, InterestPointsN5ToZarr.moveIntoStore( InterestPointsN5ToZarr.legacyLists( spimData, views, null ), store(), 2 ) );
+		assertTrue( InterestPointsN5ToZarr.legacyLabels( spimData, views ).isEmpty() );
+		assertEquals( 0, store().points( Key.of( first, "empty" ) ).size() );
+		assertEquals( 0, store().correspondences( Key.of( first, "empty" ) ).size() );
+		assertTrue( store().missingEntries( allKeys ).isEmpty() );
+
+		// ---- 5. saveStaged (a Spark task) carries the points of a text-backed list along with its changed correspondences ----
+		final ViewId last = views.get( n - 1 );
+		final String stagedName = InterestPointsTextFiles.DIRECTORY + "/staged_" + last.getViewSetupId() + ".things";
+		writeTextFiles( tempDir, stagedName, things.get( last ), null );
+		final InterestPointsZarr staged = (InterestPointsZarr) InterestPoints.instantiatefromXML( base, stagedName, last, "staged", null, null );
+		staged.setCorrespondingInterestPoints( new ArrayList<>( List.of( new CorrespondingInterestPoints( 3, first, "staged", 4 ) ) ) );
+		InterestPointsZarr.saveStaged( List.of( staged ) );
+		assertFalse( staged.isTextBacked() );
+		assertEquals( Key.of( last, "staged" ).path(), staged.getXMLRepresentation() );
+		store().commit();
+		assertEquals( things.get( last ).size(), store().points( Key.of( last, "staged" ) ).size() );
+		assertEquals( 1, store().correspondences( Key.of( last, "staged" ) ).size() );
+
+		// ---- 6. updateTextBacked (the XML save after a commit): a handle whose entry another JVM put into the store ----
+		final InterestPointsZarr other = (InterestPointsZarr) InterestPoints.instantiatefromXML( base, stagedName, last, "staged", null, null );
+		assertTrue( other.isTextBacked() );
+		InterestPointsZarr.updateTextBacked( List.of( other ), store() );
+		assertFalse( other.isTextBacked() );
+		assertEquals( Key.of( last, "staged" ).path(), other.getXMLRepresentation() );
+		assertEquals( things.get( last ).size(), other.getInterestPointsCopy().size() );
+
+		// ---- 7. the dataset reads without the text files ----
+		new XmlIoSpimData2().save( spimData, xmlURI );
+		assertEquals( 0, countOf( Files.readString( tempDir.resolve( "dataset.xml" ) ), ">" + InterestPointsTextFiles.DIRECTORY + "/" ) );
+		deleteRecursively( dir.toPath() );
+		reloaded = new XmlIoSpimData2().load( xmlURI );
+		for ( final ViewId v : views )
+		{
+			final ViewInterestPointLists vipl = reloaded.getViewInterestPoints().getViewInterestPointLists( v );
+			assertEquals( things.get( v ).size(), vipl.getInterestPointList( "things" ).getInterestPointsCopy().size() );
+			assertEquals( v.equals( first ) ? 3 : thingsCorrs.get( v ).size(), vipl.getInterestPointList( "things" ).getCorrespondingInterestPointsCopy().size() );
+			assertEquals( 0, vipl.getInterestPointList( "empty" ).getInterestPointsCopy().size() );
+		}
+	}
+
+	/** Writes a label in the text-file layout (as InterestPointsTextFileList did): {@code <name>.ip.txt}, and {@code <name>.corr.txt} unless the correspondences are null */
+	protected static void writeTextFiles( final Path base, final String name, final List< InterestPoint > points, final List< CorrespondingInterestPoints > correspondences ) throws java.io.IOException
+	{
+		final Path ip = base.resolve( name + InterestPointsTextFiles.IP_EXT );
+		Files.createDirectories( ip.getParent() );
+
+		try ( final PrintWriter out = new PrintWriter( Files.newBufferedWriter( ip ) ) )
+		{
+			out.println( "id\tx\ty\tz" );
+			for ( final InterestPoint p : points )
+				out.println( p.getId() + "\t" + p.getL()[ 0 ] + "\t" + p.getL()[ 1 ] + "\t" + p.getL()[ 2 ] );
+		}
+
+		if ( correspondences == null )
+			return;
+
+		try ( final PrintWriter out = new PrintWriter( Files.newBufferedWriter( base.resolve( name + InterestPointsTextFiles.CORR_EXT ) ) ) )
+		{
+			out.println( "id\tcorresponding_timepoint_id\tcorresponding_viewsetup_id\tcorresponding_label\tcorresponding_id" );
+			for ( final CorrespondingInterestPoints c : correspondences )
+				out.println( c.getDetectionId() + "\t" + c.getCorrespondingViewId().getTimePointId() + "\t" + c.getCorrespondingViewId().getViewSetupId() + "\t" + c.getCorrespodingLabel() + "\t" + c.getCorrespondingDetectionId() );
+		}
+	}
+
+	/** @return "name:size" of the files of a directory, sorted */
+	protected static List< String > sortedFiles( final File dir )
+	{
+		final ArrayList< String > files = new ArrayList<>();
+		for ( final File f : dir.listFiles() )
+			files.add( f.getName() + ":" + f.length() );
+		Collections.sort( files );
+		return files;
+	}
+
+	/** @return how often a part occurs in a text */
+	protected static int countOf( final String text, final String part )
+	{
+		int count = 0;
+		for ( int i = text.indexOf( part ); i >= 0; i = text.indexOf( part, i + part.length() ) )
+			++count;
+		return count;
 	}
 
 	/** @return the names of the generation directories (g0, g1, ...) of a (label, timepoint 0) group, sorted */

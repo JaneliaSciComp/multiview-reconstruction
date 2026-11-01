@@ -327,6 +327,8 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 	 * lists stage in memory (in parallel), then one commit writes every (label, timepoint) that changed and deletes
 	 * what was deleted. The modified flags are cleared on each InterestPoints instance, so the XML serialization does
 	 * not save again. The batch is closed in any case, so a failed save does not leave later saves of this JVM in memory.
+	 * A label still stored as text files (an old dataset) is written into the store only when it changed (points and
+	 * correspondences together); afterwards, and when another JVM moved it, its XML text is the store's entry.
 	 *
 	 * @param spimData the SpimData2 object whose interest points should be saved
 	 */
@@ -382,6 +384,9 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 			).get();
 
 			store.commit();
+
+			// text-backed lists whose entry is in the store by now (one batched lookup, nothing for a dataset without text files)
+			InterestPointsZarr.updateTextBacked( allIPs, store );
 		}
 		catch ( final Exception e )
 		{

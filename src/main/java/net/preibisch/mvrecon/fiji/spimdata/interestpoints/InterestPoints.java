@@ -35,7 +35,8 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 
 /**
- * A list of interest points for a certain label, can save and load from textfile as specified in the XML
+ * The interest points and correspondences of one (view, label), as the XML lists them: stored in the dataset's Zarr store
+ * ({@link InterestPointsZarr}); the older layouts (N5 groups, text files) are read until an entry is in the store.
  * 
  * @author Stephan Preibisch (stephan.preibisch@gmx.de)
  *
@@ -55,13 +56,15 @@ public abstract class InterestPoints
 	}
 
 	/**
-	 * @return an {@link InterestPointsZarr} for the XML text {@code tpId_X_viewSetupId_Y/label}, the only form in use
-	 *         (the points are in the dataset's interestpoints.zarr, or still in the N5 group of the same name)
+	 * @return an {@link InterestPointsZarr} for the XML text {@code tpId_X_viewSetupId_Y/label} (the points are in the
+	 *         dataset's interestpoints.zarr, or still in the N5 group of the same name); a text-file label
+	 *         ({@code interestpoints/...}, the layout before the N5 one) needs the view and label of its XML element, see
+	 *         {@link #instantiatefromXML(URI, String, ViewId, String, String, String)}
 	 */
 	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo )
 	{
-		if ( fromXMLInfo.trim().toLowerCase().startsWith("interestpoints/") )
-			throw new RuntimeException( "text-file based interest points not supported anymore.");
+		if ( InterestPointsTextFiles.isTextFilePath( fromXMLInfo ) )
+			throw new RuntimeException( "'" + fromXMLInfo + "' names text-file based interest points, which need the view and label of their XML element: use instantiatefromXML( baseDir, xmlText, viewId, label, baseLabel, filter )." );
 
 		if ( !InterestPointsZarr.supports( fromXMLInfo ) )
 			throw new RuntimeException( "interest point path not of the form tpId_X_viewSetupId_Y/label: " + fromXMLInfo );
@@ -83,6 +86,28 @@ public abstract class InterestPoints
 			throw new RuntimeException( "A filtered label needs both the base label and the filter in the XML, got base='" + baseLabel + "', filter='" + filter + "' for '" + fromXMLInfo + "'." );
 
 		return new VirtualFilteredInterestPoints( baseDir, fromXMLInfo, baseLabel, InterestPointFilter.fromString( filter ) );
+	}
+
+	/**
+	 * What the XML reader calls: a text-file label ({@code interestpoints/<name>}, see {@link InterestPointsTextFiles})
+	 * becomes an {@link InterestPointsZarr} of the given view and label that reads the text files until its entry is in
+	 * the store (the XML text stays the file name until then); any other text is handled as by
+	 * {@link #instantiatefromXML(URI, String, String, String)}.
+	 *
+	 * @param viewId - the view of the XML element (attributes timepoint, setup)
+	 * @param label - the label of the XML element
+	 */
+	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo, final ViewId viewId, final String label, final String baseLabel, final String filter )
+	{
+		if ( InterestPointsTextFiles.isTextFilePath( fromXMLInfo ) )
+		{
+			if ( baseLabel != null || filter != null )
+				throw new RuntimeException( "'" + fromXMLInfo + "' names text-file based interest points, which cannot be a filtered label (base='" + baseLabel + "', filter='" + filter + "')." );
+
+			return new InterestPointsZarr( baseDir, viewId, label, InterestPointsTextFiles.normalize( fromXMLInfo ) );
+		}
+
+		return instantiatefromXML( baseDir, fromXMLInfo, baseLabel, filter );
 	}
 
 	public static InterestPoints newInstance( final URI baseDir, final ViewId viewId, final String label )

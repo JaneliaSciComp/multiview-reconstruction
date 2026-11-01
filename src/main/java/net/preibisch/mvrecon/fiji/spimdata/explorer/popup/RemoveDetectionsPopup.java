@@ -80,7 +80,7 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 	public static int defaultLabel = 0;
 	public static String defaultNewLabel = "Manually removed";
 
-	/** the labels of the selected views whose interest points are still in the old interestpoints.n5, filled when this menu opens (fillResaveZarr) */
+	/** the labels of the selected views whose interest points are still in the old interestpoints.n5 or in text files, filled when this menu opens (fillResaveZarr) */
 	final JMenu resaveZarr = new JMenu( "Resave as ZARR store" );
 
 	public RemoveDetectionsPopup()
@@ -299,8 +299,8 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		// the labels of the selected views that still have interest points in the old interestpoints.n5 (one entry each,
 		// "ALL labels" if there are several), gray if there are none; filled when THIS menu opens, since a disabled submenu
 		// cannot open to fill itself
-		resaveZarr.setToolTipText( "<html>Moves the interest points of the selected views that are still stored in the old interestpoints.n5 into interestpoints.zarr.<br>" +
-				"The N5 is kept; the command line 'InterestPointsN5ToZarr dataset.xml' verifies and deletes it.</html>" );
+		resaveZarr.setToolTipText( "<html>Moves the interest points of the selected views that are still stored in the old interestpoints.n5 or in text files (interestpoints/*.ip.txt) into interestpoints.zarr.<br>" +
+				"The old data is kept; the command line 'InterestPointsN5ToZarr dataset.xml' verifies and deletes the N5.</html>" );
 		this.addMenuListener( new MenuListener()
 		{
 			@Override
@@ -506,7 +506,7 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 	}
 
 	/**
-	 * Fills "Resave as ZARR store" for the current selection: one item per label with old (N5) entries and their number
+	 * Fills "Resave as ZARR store" for the current selection: one item per label with old (N5 or text-file) entries and their number
 	 * of views, "ALL labels" if there is more than one; the submenu is disabled (gray) when there are none
 	 */
 	protected void fillResaveZarr()
@@ -571,8 +571,9 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 	}
 
 	/**
-	 * Moves the old (N5) interest points of one label (or of all labels, null) of the selected views into the ZARR store,
-	 * multi-threaded in a thread of its own; nothing to save afterwards (the XML text of a label is the same for both)
+	 * Moves the old (N5 or text-file) interest points of one label (or of all labels, null) of the selected views into the ZARR
+	 * store, multi-threaded in a thread of its own; nothing to save afterwards for an N5 entry (the XML text of a label is the
+	 * same for both), the next XML save writes the store's entry as the text of a moved text-file label
 	 */
 	public class ResaveZarrListener implements ActionListener
 	{

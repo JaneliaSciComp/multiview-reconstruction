@@ -47,15 +47,25 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStor
  *
  * An entry that was not converted yet is read from its N5 group through {@link InterestPointsN5ToZarr}; a change of it is
  * saved into the store (the commit takes the points along with changed correspondences), and the explorer's "Resave as ZARR
- * store" ({@link InterestPointsN5ToZarr#moveIntoStore}) or the command-line conversion moves it unchanged. An XML entry
- * that has data in neither place is an error, not an empty list.
+ * store" ({@link InterestPointsN5ToZarr#moveIntoStore}) or the command-line conversion moves it unchanged. A label of the
+ * text-file layout before the N5 one (XML text {@code interestpoints/<name>}, see {@link InterestPointsTextFiles}) is read
+ * from its files the same way; its XML text stays the file name until the entry is in the store, a change saves points and
+ * correspondences together (the store cannot find text files by key), "Resave as ZARR store" moves it, and its files are
+ * never deleted. An XML entry that has data in none of these places is an error, not an empty list.
  *
  * @author Stephan Preibisch
  */
 public class InterestPointsZarr extends InterestPoints
 {
-	final String path; // the XML text
+	final String path; // the XML text of a stored entry, tpId_X_viewSetupId_Y/label
 	final Key key;
+
+	/**
+	 * The XML text of a label still stored as text files ({@code interestpoints/<name>}, see {@link InterestPointsTextFiles}),
+	 * the pointer to its files; null once the entry is in the store (saved, staged or moved), the XML text is then {@link #path}.
+	 * Guarded by this.
+	 */
+	String textFile = null;
 
 	/** the points in the store's layout, null until loaded; replaced as a whole, never changed */
 	Points points = null;
@@ -77,6 +87,18 @@ public class InterestPointsZarr extends InterestPoints
 		this( basePath, Key.of( viewId, label ).path() );
 	}
 
+	/**
+	 * A label of the text-file layout: read from {@code <basePath>/<textFile>.ip.txt} and {@code .corr.txt} as long as
+	 * neither the store nor the N5 has its entry, the XML text stays {@code textFile} until the entry is in the store
+	 *
+	 * @param textFile the XML text of the label, {@code interestpoints/<name>} (normalized, see {@link InterestPointsTextFiles#normalize})
+	 */
+	public InterestPointsZarr( final URI basePath, final ViewId viewId, final String label, final String textFile )
+	{
+		this( basePath, viewId, label );
+		this.textFile = textFile;
+	}
+
 	/** @return true if the XML text has the form {@code tpId_X_viewSetupId_Y/label}, which the store can hold */
 	public static boolean supports( final String path ) { return Key.parse( path ) != null; }
 
@@ -84,8 +106,15 @@ public class InterestPointsZarr extends InterestPoints
 
 	public InterestPointsZarrStore store() { return InterestPointsZarrStore.get( basePath ); }
 
+	/** @return true while this label is stored as text files only (its XML text is their name) */
+	public synchronized boolean isTextBacked() { return textFile != null; }
+
+	/** @return the XML text of a text-backed label, {@code interestpoints/<name>}, the name of its files without extension; null otherwise */
+	public synchronized String getTextFile() { return textFile; }
+
+	/** @return {@code tpId_X_viewSetupId_Y/label}, or the file name of a label that is still text-backed */
 	@Override
-	public String getXMLRepresentation() { return path; }
+	public synchronized String getXMLRepresentation() { return textFile != null ? textFile : path; }
 
 	/**
 	 * @return the points (copies), loaded from the store or the N5 group if needed
@@ -95,12 +124,18 @@ public class InterestPointsZarr extends InterestPoints
 	public synchronized Map< Integer, InterestPoint > getInterestPointsCopy()
 	{
 		if ( points == null && !loadInterestPoints() )
-			throw new RuntimeException( "No interest points are stored for '" + path + "' in '" + basePath + "' (neither in " + InterestPointsZarrStore.ZARR_CONTAINER + " nor in " + InterestPointsN5.baseN5 + ") although the XML lists the label, stopping." );
+			throw new RuntimeException( "No interest points are stored for '" + path + "' in '" + basePath + "' " + storedNowhere() + " although the XML lists the label, stopping." );
 
 		if ( points.filtered() )
 			throw new RuntimeException( "'" + path + "' is stored as a filtered label, but the XML declares it as a plain one (no 'base' and 'filter' attributes), stopping." );
 
 		return toMap( points );
+	}
+
+	/** @return the places a load looked in, for an error message */
+	private String storedNowhere()
+	{
+		return "(neither in " + InterestPointsZarrStore.ZARR_CONTAINER + " nor in " + InterestPointsN5.baseN5 + ( textFile == null ? "" : " nor in '" + textFile + InterestPointsTextFiles.IP_EXT + "'" ) + ")";
 	}
 
 	/** The points of the store's layout as InterestPoints by id. */
@@ -155,7 +190,7 @@ public class InterestPointsZarr extends InterestPoints
 	public synchronized Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy()
 	{
 		if ( correspondingInterestPoints == null && !loadCorrespondences() )
-			throw new RuntimeException( "No correspondences are stored for '" + path + "' in '" + basePath + "' (neither in " + InterestPointsZarrStore.ZARR_CONTAINER + " nor in " + InterestPointsN5.baseN5 + ") although the XML lists the label, stopping." );
+			throw new RuntimeException( "No correspondences are stored for '" + path + "' in '" + basePath + "' " + storedNowhere() + " although the XML lists the label, stopping." );
 
 		final ArrayList< CorrespondingInterestPoints > copy = new ArrayList<>( correspondingInterestPoints.size() );
 		for ( final CorrespondingInterestPoints correspondence : correspondingInterestPoints )
@@ -273,6 +308,9 @@ public class InterestPointsZarr extends InterestPoints
 	 */
 	public synchronized boolean saveInterestPoints( final boolean forceWrite, final InterestPointsZarrStore store )
 	{
+		if ( textFile != null )
+			return saveTextBacked( forceWrite, store );
+
 		if ( !modifiedInterestPoints && !forceWrite )
 			return true;
 
@@ -295,6 +333,9 @@ public class InterestPointsZarr extends InterestPoints
 	/** Like {@link #saveInterestPoints(boolean, InterestPointsZarrStore)} for the correspondences. */
 	public synchronized boolean saveCorrespondingInterestPoints( final boolean forceWrite, final InterestPointsZarrStore store )
 	{
+		if ( textFile != null )
+			return saveTextBacked( forceWrite, store );
+
 		if ( !modifiedCorrespondingInterestPoints && !forceWrite )
 			return true;
 
@@ -308,6 +349,37 @@ public class InterestPointsZarr extends InterestPoints
 	}
 
 	/**
+	 * A text-backed list (its entry is only in the text files) saves points and correspondences together as soon as either
+	 * changed: the store's commit pulls the points of an unconverted label along with changed correspondences from the N5
+	 * by key, but text files have any name. What is not loaded yet is read from the text files. Afterwards the entry
+	 * lives in the store and the XML text is {@link #path}. Nothing happens while nothing changed.
+	 *
+	 * @return false if the text files are missing (nothing to save)
+	 */
+	private boolean saveTextBacked( final boolean forceWrite, final InterestPointsZarrStore store )
+	{
+		if ( !modifiedInterestPoints && !modifiedCorrespondingInterestPoints && !forceWrite )
+			return true;
+
+		if ( !loadTextBacked() )
+			return false;
+
+		store.savePoints( key, pointsToSave() );
+		store.saveCorrespondences( key, correspondingInterestPoints );
+		basePath = store.getBaseDir();
+		modifiedInterestPoints = false;
+		modifiedCorrespondingInterestPoints = false;
+		textFile = null;
+		return true;
+	}
+
+	/** Loads what a text-backed list has not loaded yet, so that points and correspondences can be saved together; false if the files are missing */
+	private boolean loadTextBacked()
+	{
+		return ( points != null || loadInterestPoints() ) && ( correspondingInterestPoints != null || loadCorrespondences() );
+	}
+
+	/**
 	 * Saves the modified points and correspondences of many lists into one staging file per store (one per Spark task
 	 * instead of one per list). Nothing is committed; the next XML save does that.
 	 */
@@ -317,6 +389,7 @@ public class InterestPointsZarr extends InterestPoints
 		final Map< InterestPointsZarrStore, Map< Key, List< CorrespondingInterestPoints > > > correspondencesByStore = new HashMap<>();
 		final List< InterestPointsZarr > savedPoints = new ArrayList<>();
 		final List< InterestPointsZarr > savedCorrespondences = new ArrayList<>();
+		final List< InterestPointsZarr > savedTextBacked = new ArrayList<>();
 
 		for ( final InterestPoints list : lists )
 		{
@@ -328,7 +401,19 @@ public class InterestPointsZarr extends InterestPoints
 
 			synchronized ( zarrList )
 			{
-				if ( zarrList.modifiedInterestPoints )
+				if ( zarrList.textFile != null && ( zarrList.modifiedInterestPoints || zarrList.modifiedCorrespondingInterestPoints ) )
+				{
+					// a text-backed list stages points and correspondences together (see saveTextBacked)
+					if ( !zarrList.loadTextBacked() )
+						throw new IllegalStateException( "cannot stage '" + zarrList.path + "': its text files '" + zarrList.textFile + "' are missing in '" + zarrList.basePath + "'" );
+
+					pointsByStore.computeIfAbsent( store, s -> new HashMap<>() ).put( zarrList.key, zarrList.pointsToSave() );
+					correspondencesByStore.computeIfAbsent( store, s -> new HashMap<>() ).put( zarrList.key, new ArrayList<>( zarrList.correspondingInterestPoints ) );
+					savedPoints.add( zarrList );
+					savedCorrespondences.add( zarrList );
+					savedTextBacked.add( zarrList );
+				}
+				else if ( zarrList.modifiedInterestPoints )
 				{
 					final Points toSave = zarrList.pointsToSave();
 					if ( toSave != null )
@@ -354,6 +439,36 @@ public class InterestPointsZarr extends InterestPoints
 			zarrList.modifiedInterestPoints = false;
 		for ( final InterestPointsZarr zarrList : savedCorrespondences )
 			zarrList.modifiedCorrespondingInterestPoints = false;
+		for ( final InterestPointsZarr zarrList : savedTextBacked )
+			synchronized ( zarrList ) { zarrList.textFile = null; }
+	}
+
+	/**
+	 * After a commit: the text-backed lists among the given ones whose entry the store has by now (saved by another JVM,
+	 * e.g. a Spark task's staging file folded in by this commit) are text-backed no more, so that the XML names the
+	 * store's entry and not the text files. One batched lookup ({@link InterestPointsZarrStore#missingEntries}), nothing
+	 * when no list is text-backed.
+	 */
+	public static void updateTextBacked( final Collection< ? extends InterestPoints > lists, final InterestPointsZarrStore store )
+	{
+		final HashMap< Key, InterestPointsZarr > textBacked = new HashMap<>();
+
+		for ( final InterestPoints list : lists )
+			if ( list instanceof InterestPointsZarr && ( (InterestPointsZarr) list ).isTextBacked() )
+				textBacked.put( ( (InterestPointsZarr) list ).key, (InterestPointsZarr) list );
+
+		if ( textBacked.isEmpty() )
+			return;
+
+		final Set< Key > missing = store.missingEntries( textBacked.keySet() );
+
+		for ( final Map.Entry< Key, InterestPointsZarr > entry : textBacked.entrySet() )
+			if ( !missing.contains( entry.getKey() ) )
+				synchronized ( entry.getValue() )
+				{
+					entry.getValue().textFile = null;
+					entry.getValue().basePath = store.getBaseDir();
+				}
 	}
 
 	/**
@@ -366,13 +481,15 @@ public class InterestPointsZarr extends InterestPoints
 		InterestPointsZarrStore.get( baseDir ).writeStagingFile( Map.of( key, toPoints( points ) ), Map.of( key, List.of() ) );
 	}
 
-	/** Loads from the store, else from the N5 group; false if neither has the entry. */
+	/** Loads from the store, else from the N5 group, else (a text-backed label) from the text files; false if none has the entry. */
 	@Override
 	protected boolean loadInterestPoints()
 	{
 		Points loaded = store().points( key );
 		if ( loaded == null )
 			loaded = InterestPointsN5ToZarr.get( basePath ).points( path );
+		if ( loaded == null && textFile != null )
+			loaded = InterestPointsTextFiles.points( basePath, textFile );
 
 		if ( loaded == null )
 			return false;
@@ -382,13 +499,15 @@ public class InterestPointsZarr extends InterestPoints
 		return true;
 	}
 
-	/** Loads from the store, else from the N5 group; false if neither has the entry. */
+	/** Loads from the store, else from the N5 group, else (a text-backed label) from the text files; false if none has the entry. */
 	@Override
 	protected boolean loadCorrespondences()
 	{
 		List< CorrespondingInterestPoints > loaded = store().correspondences( key );
 		if ( loaded == null )
 			loaded = InterestPointsN5ToZarr.get( basePath ).correspondences( path );
+		if ( loaded == null && textFile != null )
+			loaded = InterestPointsTextFiles.correspondences( basePath, textFile );
 
 		if ( loaded == null )
 			return false;
@@ -398,7 +517,7 @@ public class InterestPointsZarr extends InterestPoints
 		return true;
 	}
 
-	/** Removes the whole entry (points and correspondences) at the next commit, and its N5 group now. */
+	/** Removes the whole entry (points and correspondences) at the next commit, and its N5 group now; the text files of a text-backed label are left alone. */
 	@Override
 	public boolean deleteInterestPoints() { return delete(); }
 

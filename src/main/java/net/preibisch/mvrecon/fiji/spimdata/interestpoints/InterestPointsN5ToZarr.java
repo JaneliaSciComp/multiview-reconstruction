@@ -63,7 +63,10 @@ import util.URITools;
  * <pre>java -cp &lt;fat jar&gt; net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5ToZarr &lt;dataset.xml | dataset directory&gt;</pre>
  *
  * An entry stays readable where it is until it moves (InterestPointsZarr reads the store first, then the N5); the XML
- * text of a label is the same for both. Points stored without their attributes keep NaN for them in the store.
+ * text of a label is the same for both. Points stored without their attributes keep NaN for them in the store. Labels of
+ * the text-file layout before the N5 one ({@link InterestPointsTextFiles}, XML text {@code interestpoints/<name>}) are
+ * listed and moved by {@link #legacyLists} / {@link #moveIntoStore} the same way (their files are kept); {@link #convert}
+ * does not see them, the files have any name and only the XML knows them.
  *
  * @author Stephan Preibisch
  */
@@ -188,6 +191,33 @@ public class InterestPointsN5ToZarr
 		return new LegacyEntry( key, points, correspondences );
 	}
 
+	/**
+	 * @return the entry of a list as the store takes it: from the N5 by its key, else, for a text-backed list, from its text
+	 *         files ({@link InterestPointsTextFiles}, an empty correspondence list if it has no .corr.txt); null if it is in neither
+	 * @throws RuntimeException if the N5 group is of a type this reader does not know or inconsistent, or a text file cannot be parsed
+	 */
+	public LegacyEntry read( final InterestPointsZarr list )
+	{
+		final LegacyEntry fromN5 = read( list.getKey() );
+
+		if ( fromN5 != null )
+			return fromN5;
+
+		final String textFile = list.getTextFile();
+
+		if ( textFile == null )
+			return null;
+
+		final Points points = InterestPointsTextFiles.points( list.getBasePath(), textFile );
+
+		if ( points == null )
+			return null;
+
+		final List< CorrespondingInterestPoints > correspondences = InterestPointsTextFiles.correspondences( list.getBasePath(), textFile );
+
+		return new LegacyEntry( list.getKey(), points, correspondences == null ? new ArrayList<>() : correspondences );
+	}
+
 	/** Removes the N5 group of an entry, if there is one. */
 	public void remove( final String path )
 	{
@@ -223,9 +253,10 @@ public class InterestPointsN5ToZarr
 
 	/**
 	 * The lists of the views (of one label, or of every label if the label is null) whose entry is not in the dataset's
-	 * store, i.e. still only in the N5 layout: what "Resave as ZARR store" of the ViewSetup Explorer offers for the
-	 * selected views. Empty if the dataset has no N5 container. A key the store lacks counts without looking into the N5
-	 * (one stat per key would be too slow for a menu); {@link #moveIntoStore} reports an entry that has no data anywhere.
+	 * store, i.e. still only in the N5 layout or in text files: what "Resave as ZARR store" of the ViewSetup Explorer
+	 * offers for the selected views. Without an N5 container only text-backed lists can be old. A key the store lacks
+	 * counts without looking into the N5 or the files (one stat per key would be too slow for a menu);
+	 * {@link #moveIntoStore} reports an entry that has no data anywhere.
 	 *
 	 * @param data - the dataset
 	 * @param views - the views (missing ones are skipped)
@@ -236,9 +267,10 @@ public class InterestPointsN5ToZarr
 	{
 		final URI baseDir = data.getBasePathURI();
 
-		if ( baseDir == null || !get( baseDir ).exists() )
+		if ( baseDir == null )
 			return new ArrayList<>();
 
+		final boolean n5Exists = get( baseDir ).exists();
 		final TreeMap< Key, InterestPointsZarr > candidates = new TreeMap<>();
 
 		for ( final ViewId viewId : views )
@@ -250,7 +282,13 @@ public class InterestPointsN5ToZarr
 
 			for ( final Map.Entry< String, InterestPoints > entry : lists.getHashMap().entrySet() )
 				if ( ( label == null || label.equals( entry.getKey() ) ) && entry.getValue() instanceof InterestPointsZarr )
-					candidates.put( ( (InterestPointsZarr) entry.getValue() ).getKey(), (InterestPointsZarr) entry.getValue() );
+				{
+					final InterestPointsZarr list = (InterestPointsZarr) entry.getValue();
+
+					// an entry of the N5 layout can only be old if there is an N5 container; a text-backed list is old wherever its files are
+					if ( n5Exists || list.isTextBacked() )
+						candidates.put( list.getKey(), list );
+				}
 		}
 
 		final ArrayList< InterestPointsZarr > legacy = new ArrayList<>();
@@ -284,14 +322,15 @@ public class InterestPointsN5ToZarr
 	}
 
 	/**
-	 * Moves the entries of the given lists that are still only in the N5 layout into the store, (label, timepoint) by
-	 * (label, timepoint): per group one batch, the N5 entries read in parallel, one commit, so that no more than one
-	 * group is held in memory and every group is rewritten once. The N5 is kept: the store wins on every read,
-	 * {@link #convert} verifies and deletes it. A list whose entry has no data in the N5 either, or whose N5 group cannot
-	 * be read, is logged and skipped (reads keep falling back to the N5, the next run tries again). The lists themselves
-	 * are not touched apart from their base path, which becomes the store's; what they hold in memory (loaded or changed
-	 * and not saved yet) stays, and a change is written by the next XML save as always. "Resave as ZARR store" of the
-	 * ViewSetup Explorer calls this for the selected views.
+	 * Moves the entries of the given lists that are still only in the N5 layout or in text files into the store, (label,
+	 * timepoint) by (label, timepoint): per group one batch, the old entries read in parallel, one commit, so that no more
+	 * than one group is held in memory and every group is rewritten once. The N5 and the text files are kept: the store
+	 * wins on every read, {@link #convert} verifies and deletes the N5. A list whose entry has no data in the old places
+	 * either, or whose old data cannot be read, is logged and skipped (reads keep falling back, the next run tries again).
+	 * The lists themselves are not touched apart from their base path, which becomes the store's, and a text-backed list
+	 * is text-backed no more (the next XML save writes the store's entry as its text); what they hold in memory (loaded or
+	 * changed and not saved yet) stays, and a change is written by the next XML save as always. "Resave as ZARR store" of
+	 * the ViewSetup Explorer calls this for the selected views.
 	 *
 	 * Note: a staging file of another JVM (a Spark task) for one of the entries written between the lookup and the
 	 * commit loses to the moved N5 data, as every in-memory save does; the explorer does not run next to a Spark job.
@@ -324,7 +363,7 @@ public class InterestPointsN5ToZarr
 		{
 			for ( final Map.Entry< Group, List< InterestPointsZarr > > group : groups.entrySet() )
 			{
-				IOFunctions.println( "InterestPointsN5ToZarr: moving " + group.getValue().size() + " entries of '" + group.getKey().label() + "' tp " + group.getKey().tp() + " from " + InterestPointsN5.baseN5 + " into the store" );
+				IOFunctions.println( "InterestPointsN5ToZarr: moving " + group.getValue().size() + " entries of '" + group.getKey().label() + "' tp " + group.getKey().tp() + " from " + InterestPointsN5.baseN5 + " or text files into the store" );
 
 				store.beginBatch();
 
@@ -334,11 +373,11 @@ public class InterestPointsN5ToZarr
 
 					try
 					{
-						final LegacyEntry entry = get( list.getBasePath() ).read( key );
+						final LegacyEntry entry = get( list.getBasePath() ).read( list );
 
 						if ( entry == null )
 						{
-							IOFunctions.println( "InterestPointsN5ToZarr: WARNING '" + key.path() + "' has no data in " + InterestPointsN5.baseN5 + " either although the XML lists it, skipped" );
+							IOFunctions.println( "InterestPointsN5ToZarr: WARNING '" + key.path() + "' has no data in " + InterestPointsN5.baseN5 + ( list.isTextBacked() ? " or in '" + list.getTextFile() + InterestPointsTextFiles.IP_EXT + "'" : "" ) + " either although the XML lists it, skipped" );
 							skipped.incrementAndGet();
 							return;
 						}
@@ -346,14 +385,18 @@ public class InterestPointsN5ToZarr
 						store.savePoints( key, entry.points() );
 						store.saveCorrespondences( key, entry.correspondences() );
 
-						// the same field write as saveInterestPoints: the entry now lives in this store
-						synchronized ( list ) { list.basePath = store.getBaseDir(); }
+						// the same field writes as saveInterestPoints: the entry now lives in this store (and not in text files anymore)
+						synchronized ( list )
+						{
+							list.basePath = store.getBaseDir();
+							list.textFile = null;
+						}
 
 						moved.incrementAndGet();
 					}
 					catch ( final RuntimeException e )
 					{
-						IOFunctions.println( "InterestPointsN5ToZarr: WARNING cannot read '" + key.path() + "' from " + InterestPointsN5.baseN5 + ", skipped: " + e );
+						IOFunctions.println( "InterestPointsN5ToZarr: WARNING cannot read '" + key.path() + "' from " + InterestPointsN5.baseN5 + " or its text files, skipped: " + e );
 						skipped.incrementAndGet();
 					}
 				} ) ).get();
@@ -371,7 +414,7 @@ public class InterestPointsN5ToZarr
 			pool.shutdown();
 		}
 
-		IOFunctions.println( "InterestPointsN5ToZarr: moved " + moved.get() + " entries (" + groups.size() + " label/timepoint group" + ( groups.size() == 1 ? "" : "s" ) + ") from " + InterestPointsN5.baseN5 + " into " + InterestPointsZarrStore.ZARR_CONTAINER + " in " + ( System.currentTimeMillis() - startTime ) + " ms; the N5 is kept, 'InterestPointsN5ToZarr <dataset.xml>' verifies and deletes it" + ( skipped.get() == 0 ? "" : "; " + skipped.get() + " entries skipped (see the warnings above)" ) );
+		IOFunctions.println( "InterestPointsN5ToZarr: moved " + moved.get() + " entries (" + groups.size() + " label/timepoint group" + ( groups.size() == 1 ? "" : "s" ) + ") from " + InterestPointsN5.baseN5 + " or text files into " + InterestPointsZarrStore.ZARR_CONTAINER + " in " + ( System.currentTimeMillis() - startTime ) + " ms; the old data is kept, 'InterestPointsN5ToZarr <dataset.xml>' verifies and deletes the N5" + ( skipped.get() == 0 ? "" : "; " + skipped.get() + " entries skipped (see the warnings above)" ) );
 
 		return moved.get();
 	}
@@ -380,7 +423,8 @@ public class InterestPointsN5ToZarr
 	 * Moves every entry of the N5 container into the store, then deletes the N5 view groups. An entry the store already
 	 * has (saved or moved after the store was created) is left as it is in the store; running the conversion again on a
 	 * partially converted dataset is safe. Every converted entry is read back from the store and compared with the N5
-	 * before anything is deleted.
+	 * before anything is deleted. Text-file labels are not converted here (their files have any name, only the XML knows
+	 * them): the explorer's "Resave as ZARR store" moves them, or the XML save when they changed.
 	 *
 	 * @param baseDir the dataset directory
 	 * @return the number of converted entries

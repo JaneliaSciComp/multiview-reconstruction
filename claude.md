@@ -113,6 +113,20 @@ an entry pull its points along in the commit); "Resave as ZARR store" or the com
 attributes included. `InterestPointsZarrStore.missingEntries( keys )` is the batched "is it in the store" lookup: never call
 `hasEntry` per key over many keys, it relists the staging directory and re-reads the group's generation for every key it lacks.
 
+**Text-file labels (the layout before N5, re-added read-only 2026-10-31).** XML text `interestpoints/<name>` (any name, e.g.
+`interestpoints/new_tpId_0_viewSetupId_0.things`; view and label are the XML attributes), files `<name>.ip.txt` (`id x y z`,
+no attributes) and `<name>.corr.txt` (missing until matched = empty list). `InterestPointsTextFiles` reads them (static, via
+KeyValueAccess); `XmlIoViewInterestPoints` creates an `InterestPointsZarr( baseDir, viewId, label, textFile )` through
+`InterestPoints.instantiatefromXML( baseDir, text, viewId, label, base, filter )`, a "text-backed" handle: reads store → N5 →
+text files, `getXMLRepresentation()` is the file name while text-backed and `tpId_X_viewSetupId_Y/label` once the entry is
+in the store. Nothing is ever written as text and the files are never deleted. A text-backed list that changed saves points
+AND correspondences together (`saveTextBacked`, also in `saveStaged`: the commit can pull the points of an unconverted label
+only from the N5 by key, text files have any name); an unchanged one is not touched by a save (Stephan, 2026-10-31: the same
+explicit-migration policy as for N5). `XmlIoSpimData2.saveInterestPointsInParallel` ends with one batched
+`InterestPointsZarr.updateTextBacked` (entries another JVM moved). "Resave as ZARR store" lists and moves text labels too
+(`legacyLists` keeps text-backed candidates without an N5 container, `InterestPointsN5ToZarr.read( list )`); the command-line
+`convert` is N5-only. Test `TestInterestPointStorage.testTextFileLabels`.
+
 **Reading.** staged → staging file → the group's index (cached per JVM, its generation compared with the disk at most every
 `generationCheckMillis` = 2 s, so a group another JVM rewrote is picked up; a missing chunk triggers one reload). An XML entry
 with data in neither the store nor the N5 throws; a plain list stored under a filtered label's name, or the other way round,

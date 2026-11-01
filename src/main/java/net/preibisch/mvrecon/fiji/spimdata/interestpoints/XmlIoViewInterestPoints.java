@@ -106,8 +106,8 @@ public class XmlIoViewInterestPoints extends XmlIoSingleton< ViewInterestPoints 
 			}
 
 			// we do not load the interestpoints nor the correspondinginterestpoints, we just do that once it is requested
-			final InterestPoints list = InterestPoints.instantiatefromXML( basePath, interestPointFileName, baseLabel, filter );
-			//final InterestPoints list = new InterestPointList( basePath, new File( interestPointFileName ) );
+			// (a text-file label of an old dataset, 'interestpoints/<name>', is read from its files until it is in the store)
+			final InterestPoints list = InterestPoints.instantiatefromXML( basePath, interestPointFileName, viewId, label, baseLabel, filter );
 			list.setParameters( parameters );
 			collection.addInterestPointList( label, list );
 		}
