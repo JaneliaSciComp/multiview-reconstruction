@@ -501,7 +501,7 @@ public class InterestPointArrays
 	{
 		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
 		if ( !store.exists() )
-			throw new IllegalStateException( "The dataset '" + baseDir + "' has no interest point store (" + InterestPointsZarrStore.ZARR_CONTAINER + "); the points of label '" + label + "' would have to be in it." );
+			throw new IllegalStateException( "The dataset '" + baseDir + "' has no interest point store (" + InterestPointsZarrStore.ZARR_CONTAINER + "), the points of label '" + label + "' are not in it: save the dataset first (the ViewSetup Explorer's 'Compute Interest Point Embeddings' saves it before it runs), or, for points still in the N5 or text files of an old dataset, move them with Filter/Manage Interest Points > 'Resave as ZARR store'." );
 		if ( columns < 1 )
 			throw new IllegalArgumentException( "an array needs at least one column, got " + columns );
 

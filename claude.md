@@ -166,7 +166,10 @@ none stale; reading 0.2 s, matching 6-8 s, RANSAC 190 s at 10,000 iterations on 
 **Computing the embeddings in Java (`process.interestpointembedding`, 2026-10-30).** What `pcmatch embed` does, in MVR: "Embed
 Interest Points (ONNX model) ..." of the ViewSetup Explorer (Processing, directly below "Detect Interest Points", Stephan's choice of
 2026-10-30) / Plugins > BigStitcher > Interest Points > Tools (`Embed_Interest_Points`, `EmbedInterestPointsPopup`; action
-`embed-interestpoints`, rendered by `ActionToSparkCli` as the BigStitcher-Spark command of that name)
+`embed-interestpoints`, rendered by `ActionToSparkCli` as the BigStitcher-Spark command of that name; the explorer entries save
+the dataset first, `panel.saveXML()`, and the dialog says so, Stephan 2026-11-01: the arrays need the points in the store and fresh
+detections are only in memory until saved, `createArray` without a store says to save or to "Resave as ZARR store"; the plugin from
+the menu has just loaded the XML and saves it afterwards)
 writes the per-point array of a label with a model, and the matcher above reads it. The model is pcmatch's ONNX export
 (`pcmatch export-onnx`: `x.onnx` plus the sidecar `x.onnx.json` with the fingerprint, the `DescriptorConfig` and the tensor contract),
 behind a thin abstraction: `EmbeddingModel` (the `Contract` from the sidecar, `embed( patches, n )`, `load( Path )`) with one backend,

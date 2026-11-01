@@ -63,7 +63,9 @@ import net.preibisch.mvrecon.process.interestpointembedding.ModelHub.HubModel;
  * and {@code translation-invariant}, downloaded once into the cache and pinned to their commit, recorded as
  * {@code hf://<namespace>/<name>@<revision>/<file>}; the array is {@code translation-invariant} by default), "Local model" takes a
  * file (array {@code local-embedding} by default). Reachable from the ViewSetup Explorer ("Compute Interest Point Embeddings", below
- * "Detect Interest Points") and as plugins; BigStitcher-Spark's {@code embed-interestpoints} does the same per view on the cluster
+ * "Detect Interest Points"; its entries save the dataset first, EmbedInterestPointsPopup: the arrays live in the store next to the
+ * points and fresh detections are only in memory until saved) and as plugins; BigStitcher-Spark's {@code embed-interestpoints} does
+ * the same per view on the cluster
  * ({@link InterestPointEmbedding}).
  *
  * @author Stephan Preibisch
@@ -149,10 +151,27 @@ public class Embed_Interest_Points implements PlugIn
 		if ( p == null )
 			return false;
 
-		return embed( data, viewIds, p.label, p.model, p.arrayName, p.blockSize, p.viewsInFlight );
+		return embed( data, viewIds, p );
 	}
 
+	/** {@link #getParameters(SpimData2, List, Source, boolean)} without the note that the dataset is saved first (the plugin, which has just loaded the XML) */
 	public static Parameters getParameters( final SpimData2 data, final List< ViewId > viewIds, final Source source )
+	{
+		return getParameters( data, viewIds, source, false );
+	}
+
+	/**
+	 * The dialog: the label, the model of the source (the hub's models of its kind, or a file), the array name, the points per block
+	 * and the views in parallel.
+	 *
+	 * @param data the dataset
+	 * @param viewIds the views (present ones)
+	 * @param source the entry: the hub's models of one kind, or a local file
+	 * @param savesFirst whether the caller saves the dataset before the embedding (the ViewSetup Explorer: fresh detections are only
+	 *        in memory until saved, and the arrays live in the store next to the points), which the dialog then says
+	 * @return the parameters, or null if the dialog was cancelled or there is nothing to embed (logged)
+	 */
+	public static Parameters getParameters( final SpimData2 data, final List< ViewId > viewIds, final Source source, final boolean savesFirst )
 	{
 		final String[] labels = InterestPointTools.getAllInterestPointLabels( data, viewIds );
 
@@ -209,7 +228,8 @@ public class Embed_Interest_Points implements PlugIn
 		gd.addNumericField( "Points_per_block", defaultBlockSize, 0 );
 		gd.addNumericField( "Views_in_parallel", defaultViewsInFlight, 0 );
 		gd.addMessage(
-				( available != null
+				( savesFirst ? "The dataset is saved first (XML and interest points, as the 'Save' button does): the vectors are stored next to the saved points.\n" : "" )
+				+ ( available != null
 						? "Computes one vector per interest point with a translation-invariant model of the Hugging Face Hub (downloaded once into\n" + ModelHub.defaultCacheDir() + " and pinned to its commit)"
 						: "Computes one vector per interest point with a local model (pcmatch's 'export-onnx' file with its '.onnx.json' sidecar next to it)" )
 				+ " and stores the vectors with the points\n(interestpoints.zarr, <label>/tp<T>/arrays/<array name>); 'Embedding Cosine Similarity' of 'Register using Interest Points' matches on them.\n"
@@ -311,6 +331,12 @@ public class Embed_Interest_Points implements PlugIn
 			IOFunctions.println( "Cannot list the models on " + ModelHub.hub + " (" + e.getMessage() + "); the cached models are available." );
 		}
 		return models;
+	}
+
+	/** {@link #embed(SpimData2, List, String, String, String, int, int)} with the parameters of the dialog ({@link #getParameters(SpimData2, List, Source, boolean)}) */
+	public static boolean embed( final SpimData2 data, final List< ViewId > viewIds, final Parameters p )
+	{
+		return embed( data, viewIds, p.label, p.model, p.arrayName, p.blockSize, p.viewsInFlight );
 	}
 
 	/** {@link #embed(SpimData2, List, String, String, String, int, int)} with {@code defaultViewsInFlight} views in the pool at a time */

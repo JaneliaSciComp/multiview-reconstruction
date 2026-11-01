@@ -56,11 +56,13 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.Embe
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionRecord;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.EmbedInterestPointsPopup;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.Attributes;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.Vectors;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.process.interestpointembedding.DetectionScale;
@@ -310,8 +312,53 @@ public class TestInterestPointEmbedding
 		assertTrue( gui.prepareQuery( data, views, labelMap ) );
 	}
 
+	@Test
+	public void savesBeforeEmbedding() throws Exception
+	{
+		// the explorer's sequence without the GUI (EmbedInterestPointsPopup): detections that are not saved yet have no store to
+		// hold their arrays, so the dataset is saved first, then the embedding runs
+		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
+		final SpimData2 data = unsavedBeads( xml );
+		final List< ViewId > views = viewsWith( data, LABEL );
+		final Path onnx = tempDir.resolve( "tiny.onnx" );
+		TestOnnxModels.write( onnx, new double[] { 3, 6 }, 4, 3, 5, 21 );
+
+		assertFalse( InterestPointsZarrStore.get( data.getBasePathURI() ).exists() );
+		assertTrue( EmbedInterestPointsPopup.hasUnsavedInterestPoints( data, views ) );
+		final IllegalStateException e = assertThrows( IllegalStateException.class, () -> Embed_Interest_Points.embed( data, views, LABEL, onnx, "embedding", 50 ) );
+		assertTrue( e.getMessage().contains( "save the dataset first" ), e.getMessage() );
+
+		// what the explorer does before the embedding
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( EmbedInterestPointsPopup.hasUnsavedInterestPoints( data, views ) );
+		assertTrue( InterestPointsZarrStore.get( data.getBasePathURI() ).exists() );
+
+		final Embed_Interest_Points.Parameters p = new Embed_Interest_Points.Parameters();
+		p.label = LABEL;
+		p.model = onnx.toString();
+		p.arrayName = "embedding";
+		p.blockSize = 50;
+		p.viewsInFlight = 2;
+		assertTrue( Embed_Interest_Points.embed( data, views, p ) );
+
+		for ( final ViewId v : views )
+		{
+			final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( v );
+			final Vectors vectors = InterestPointArrays.vectors( lists, LABEL, "embedding" );
+			assertEquals( lists.getInterestPointList( LABEL ).getInterestPointsCopy().size(), vectors.size() + vectors.missing() );
+		}
+	}
+
 	/** the simulated beads with a DoG label whose parameters string the embedding can read, saved so that the store exists */
 	static SpimData2 beads( final File xml ) throws Exception
+	{
+		final SpimData2 data = unsavedBeads( xml );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		return data;
+	}
+
+	/** as {@link #beads(File)}, but the detections are not saved yet (the XML without points was, which creates no store) */
+	static SpimData2 unsavedBeads( final File xml ) throws Exception
 	{
 		final SpimData2 data = SimulateUtil.setUp();
 		new XmlIoSpimData2().save( data, xml.toURI() );
@@ -319,7 +366,6 @@ public class TestInterestPointEmbedding
 		for ( final ViewInterestPointLists lists : data.getViewInterestPoints().getViewInterestPoints().values() )
 			if ( lists.contains( LABEL ) )
 				lists.getInterestPointList( LABEL ).setParameters( "DOG s=" + TestInterestPointDetection.STANDARD_SIGMA + " t=" + TestInterestPointDetection.STANDARD_THRESHOLD + " min=false max=true downsampleX=" + TestInterestPointDetection.STANDARD_DOWNSAMPLE_XY + " downsampleY=" + TestInterestPointDetection.STANDARD_DOWNSAMPLE_XY + " downsampleZ=" + TestInterestPointDetection.STANDARD_DOWNSAMPLE_Z + " anisotropy=1.0" );
-		new XmlIoSpimData2().save( data, xml.toURI() );
 		return data;
 	}
 
