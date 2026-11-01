@@ -113,6 +113,9 @@ public class Data_Explorer implements PlugIn
 		// net.preibisch.legacy.io.IOFunctions.println( "PERF: [Data_Explorer] ViewSetupExplorer creation took " + (System.currentTimeMillis() - start) + " ms" );
 
 		explorer.getFrame().toFront();
+
+		// closing the explorer brings the XML chooser back (as BigStitcher does), in a thread of its own like a plugin run from the menu
+		explorer.setOnQuit( () -> new Thread( () -> new Data_Explorer().run( arg ), "Data_Explorer" ).start() );
 	}
 
 	/**

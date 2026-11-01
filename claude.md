@@ -648,6 +648,12 @@ When opening a Split dataset in Data Explorer:
 
 Detected via `isSplitDataset()` checking for `SplitViewerImgLoader` / `SplitMultiResolutionImgLoader`.
 
+## Data Explorer (plugin `Data_Explorer`)
+
+Closing the ViewSetup Explorer it opened brings the XML chooser back (`ViewSetupExplorer.setOnQuit`, run at the end of `quit()`
+in a new plugin thread; what BigStitcher's `StitchingExplorer.quit()` does; Stephan 2026-11-01). Explorers opened elsewhere
+(`Split_Views`) have no `onQuit` and do nothing on close.
+
 ## House Rules
 
 - **Never commit without explicit user consent.**
