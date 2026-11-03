@@ -474,8 +474,13 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 		final double[] pScreen = new double[ 3 ];
 		sourceTransform.apply( pSource, pGlobal );
 		viewerTransform.apply( pGlobal, pScreen );
-		final double scaleX = cX / pScreen[ 0 ];
-		final double scaleY = cY / pScreen[ 1 ];
+		// Without the rotation above, a source transform that mirrors an axis (det < 0, e.g. a flipped
+		// view with a registration on top) puts this corner at a negative screen coordinate. The scale
+		// must stay positive nevertheless: a negative one is a point reflection that makes the viewer
+		// transform improper, and BDV's align (shift+X/Y/Z) then extracts a non-unit quaternion from it
+		// and zooms out at every press.
+		final double scaleX = cX / Math.abs( pScreen[ 0 ] );
+		final double scaleY = cY / Math.abs( pScreen[ 1 ] );
 		final double scale;
 		if ( zoomedIn )
 			scale = Math.max( scaleX, scaleY );
