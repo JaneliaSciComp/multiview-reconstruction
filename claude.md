@@ -346,6 +346,16 @@ else // both present in different sets
 
 **Why it was hard to spot**: every other branch of the conditional correctly added the pair. The merge branch was the only one that didn't, and the bug only manifested when a pair connected previously-disconnected groups.
 
+### Lesson: Overlap Fast Path Ignored the Registration Type (2026-11-02)
+`Interest_Point_Registration.identifySubsets` has a fast path for `SimpleBoundingBoxOverlap` (commit f95db0765, 2026-02-23)
+that creates only the overlapping pairs (`SimpleBoundingBoxOverlap.generateOverlappingPairs`) instead of `definePairs()` +
+`removeNonOverlappingPairs()`. It skipped the range of the registration type (`AllToAllRange.getRangeComparator()`: same
+timepoint for "Register timepoints individually", the reference timepoint, all), so a time series registered per timepoint
+compared all timepoints with each other (Stephan's C. elegans embryo, 198 views: 19,503 pairs instead of 99). The generator
+now takes the range comparator and counts skipped (out of range or one group) and non-overlapping pairs separately; a setup
+that is not an `AllToAllRange` takes the sequential path. BigStitcher-Spark's `AbstractRegistration.identifySubsets` never
+had the fast path. Test `TestIdentifySubsets` compares both paths for all three registration types.
+
 ## Performance: Large Datasets (100K+ Views)
 
 The registration workflow was optimized for 100K+ views. Key bottlenecks were in `TransformationTools.java` and `Subset.java`.

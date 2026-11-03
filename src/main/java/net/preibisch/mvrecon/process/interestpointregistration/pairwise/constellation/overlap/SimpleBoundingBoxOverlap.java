@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -49,6 +50,7 @@ import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.range.RangeComparator;
 
 public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDetection< V >
 {
@@ -309,6 +311,7 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 	/**
 	 * Generate overlapping pairs directly without creating all n^2 pairs first.
 	 * This is MUCH faster for large datasets where most pairs don't overlap.
+	 * Every pair of views is a candidate; see the other overload for the pairing rule of a registration type.
 	 *
 	 * @param views - list of views to generate pairs from
 	 * @param groups - groups (views in same group are skipped)
@@ -317,6 +320,28 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 	public List<Pair<V, V>> generateOverlappingPairs(
 			final List<V> views,
 			final Collection<? extends Group<V>> groups)
+	{
+		return generateOverlappingPairs( views, groups, null, null, null );
+	}
+
+	/**
+	 * Generate the overlapping pairs a {@code PairwiseSetup} would define, directly without creating all n^2 pairs first:
+	 * the pairs within the range of the registration type (same timepoint, reference timepoint, all; what
+	 * {@code AllToAllRange.definePairs()} applies), not within one group, whose bounding boxes overlap.
+	 *
+	 * @param views - list of views to generate pairs from
+	 * @param groups - groups (views in same group are skipped)
+	 * @param rangeComparator - the pairing rule of the registration type, pairs it rejects are skipped (null = every pair is in range)
+	 * @param notPaired - if not null, incremented for every pair outside the range or within one group
+	 * @param nonOverlapping - if not null, incremented for every pair in range whose bounding boxes do not overlap
+	 * @return list of overlapping pairs within the range only
+	 */
+	public List<Pair<V, V>> generateOverlappingPairs(
+			final List<V> views,
+			final Collection<? extends Group<V>> groups,
+			final RangeComparator<? super V> rangeComparator,
+			final LongAdder notPaired,
+			final LongAdder nonOverlapping)
 	{
 		final int n = views.size();
 		if (n < 2) return new ArrayList<>();
@@ -356,6 +381,13 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 							.<Pair<V, V>>mapToObj(b -> {
 								final V viewIdB = views.get(b);
 
+								// the pairing rule of the registration type (same timepoint, reference timepoint, ...)
+								if (rangeComparator != null && !rangeComparator.inRange(viewIdA, viewIdB))
+								{
+									if (notPaired != null) notPaired.increment();
+									return null;
+								}
+
 								// Check if both in same group
 								if (!groupsA.isEmpty())
 								{
@@ -363,14 +395,20 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 									for (final Integer g : groupsA)
 									{
 										if (groupsB.contains(g))
+										{
+											if (notPaired != null) notPaired.increment();
 											return null;
+										}
 									}
 								}
 
 								// Check bounding box overlap
 								final BoundingBox bbB = boundingBoxes.get(viewIdB);
 								if (bbB == null || !overlaps(bbA, bbB))
+								{
+									if (nonOverlapping != null) nonOverlapping.increment();
 									return null;
+								}
 
 								return new ValuePair<>(viewIdA, viewIdB);
 							})

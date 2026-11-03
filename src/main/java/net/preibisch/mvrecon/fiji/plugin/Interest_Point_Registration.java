@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.concurrent.atomic.LongAdder;
 
 import ij.gui.GenericDialog;
 import ij.plugin.PlugIn;
@@ -100,6 +101,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatch
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.weak.MetaDataWeakLinkFactory;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwiseTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.AllToAllRange;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -107,6 +109,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.range.RangeComparator;
 
 /**
 *
@@ -799,25 +802,25 @@ public class Interest_Point_Registration implements PlugIn
 	@SuppressWarnings("unchecked")
 	public void identifySubsets( final PairwiseSetup< ViewId > setup, final OverlapDetection< ViewId > overlapDetection )
 	{
-		// Use combined optimized approach for SimpleBoundingBoxOverlap (avoids creating millions of pairs just to discard them)
-		if (overlapDetection instanceof SimpleBoundingBoxOverlap)
+		// Combined fast path for SimpleBoundingBoxOverlap: only the overlapping pairs are created, never the millions discarded
+		// on large datasets. definePairs() is not called, so the fast path has to apply the pairing rule of the registration type
+		// itself (same timepoint, reference timepoint, all: the range of an AllToAllRange); any other setup takes the sequential path.
+		if (overlapDetection instanceof SimpleBoundingBoxOverlap && setup instanceof AllToAllRange)
 		{
 			final SimpleBoundingBoxOverlap<ViewId> sbbo = (SimpleBoundingBoxOverlap<ViewId>) overlapDetection;
+			final RangeComparator< ViewId > range = ( (AllToAllRange< ViewId, ? extends RangeComparator< ViewId > >) setup ).getRangeComparator();
+			final LongAdder notPaired = new LongAdder(), nonOverlapping = new LongAdder();
 
-			// Generate only overlapping pairs directly (combines definePairs + removeNonOverlappingPairs)
+			// Generate only the overlapping pairs within the range directly (combines definePairs + removeNonOverlappingPairs)
 			final List<Pair<ViewId, ViewId>> overlappingPairs = sbbo.generateOverlappingPairs(
 					setup.getViews(),
-					(Collection<? extends Group<ViewId>>) (Collection<?>) setup.getGroups());
+					(Collection<? extends Group<ViewId>>) (Collection<?>) setup.getGroups(),
+					range, notPaired, nonOverlapping );
 
 			// Set the pairs directly in the setup
 			setup.setPairs(overlappingPairs);
 
-			// Calculate statistics: total possible pairs minus overlapping = non-overlapping (skipped)
-			final long n = setup.getViews().size();
-			final long totalPossiblePairs = n * (n - 1) / 2;
-			final long nonOverlapping = totalPossiblePairs - overlappingPairs.size();
-
-			IOFunctions.println( "Removed " + nonOverlapping + " pairs because they do not overlap (Strategy='SimpleBoundingBoxOverlap'), kept " + overlappingPairs.size() + " pairs." );
+			IOFunctions.println( "Defined " + overlappingPairs.size() + " pairs, skipped " + notPaired.sum() + " (outside the range of the registration type or within one group), removed " + nonOverlapping.sum() + " because they do not overlap (Strategy='SimpleBoundingBoxOverlap')." );
 		}
 		else
 		{
