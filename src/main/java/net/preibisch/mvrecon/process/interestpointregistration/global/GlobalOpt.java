@@ -45,6 +45,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
+import net.preibisch.mvrecon.process.interestpointregistration.AlignmentLog;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.ConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.PointMatchCreator;
@@ -108,14 +109,18 @@ public class GlobalOpt
 		{
 			if ( preAlign )
 			{
-				int unaligned = tc.preAlign().size();
-				if ( unaligned > 0 )
-					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): pre-aligned all tiles but " + unaligned );
-				else
-					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): prealigned all tiles" );
+				final int unaligned = tc.preAlign().size();
+				if ( !AlignmentLog.restricted ) // progress lines; the errors below are the summary
+				{
+					if ( unaligned > 0 )
+						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): pre-aligned all tiles but " + unaligned );
+					else
+						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): prealigned all tiles" );
+				}
 			}
 
-			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): starting solve ..." );
+			if ( !AlignmentLog.restricted )
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): starting solve ..." );
 
 			//tc.optimizeSilently(new ErrorStatistic( cs.getMaxPlateauWidth() + 1 ), cs.getMaxError(), cs.getMaxIterations(), cs.getMaxPlateauWidth() );
 			//tc.optimize( cs.getMaxError(), cs.getMaxIterations(), cs.getMaxPlateauWidth() );
@@ -128,7 +133,7 @@ public class GlobalOpt
 					1.0, // damp
 					tc, tc.getTiles(), tc.getFixedTiles(),
 					Threads.numThreads(),
-					true ); //verbose
+					!AlignmentLog.restricted ); // verbose = one line per iteration on stdout
 
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Global optimization of " + 
 				tc.getTiles().size() +  " view-tiles (Model=" + model.getClass().getSimpleName()  + "):" );
@@ -203,11 +208,14 @@ public class GlobalOpt
 			// if one of the views that maps to this tile is fixed, fix this tile if it is not already fixed
 			if ( fixedViews.contains( viewId ) && !tc.getFixedTiles().contains( tile ) )
 			{
-				final Group< ViewId > fixedGroup = Group.isContained( viewId, groups );
-				if ( fixedGroup != null )
-					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Fixing group-tile [" + fixedGroup + "]" );
-				else
-					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Fixing view-tile [" + Group.pvid( viewId ) + "]" );
+				if ( !AlignmentLog.restricted )
+				{
+					final Group< ViewId > fixedGroup = Group.isContained( viewId, groups );
+					if ( fixedGroup != null )
+						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Fixing group-tile [" + fixedGroup + "]" );
+					else
+						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Fixing view-tile [" + Group.pvid( viewId ) + "]" );
+				}
 				tc.fixTile( tile );
 			}
 
@@ -215,6 +223,9 @@ public class GlobalOpt
 			tiles.add( tile );
 		}	
 		
+		if ( AlignmentLog.restricted && tc.getFixedTiles().size() > 0 )
+			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Fixed " + tc.getFixedTiles().size() + " tile(s)" );
+
 		// now add connected tiles to the tileconfiguration
 		for ( final Tile< M > tile : tiles )
 			if ( tile.getConnectedTiles().size() > 0 || tc.getFixedTiles().contains( tile ) )

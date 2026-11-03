@@ -37,6 +37,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
+import net.preibisch.mvrecon.process.interestpointregistration.AlignmentLog;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.IterativeConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.linkremoval.LinkRemovalStrategy;
@@ -107,6 +108,7 @@ public class GlobalOptIterative
 
 		// now perform the global optimization
 		boolean finished = false;
+		int iterations = 0, removedLinks = 0;
 
 		while (!finished)
 		{
@@ -114,14 +116,18 @@ public class GlobalOptIterative
 			{
 				if ( preAlign )
 				{
-					int unaligned = tc.preAlign().size();
-					if ( unaligned > 0 )
-						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): pre-aligned all tiles but " + unaligned );
-					else
-						IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): prealigned all tiles" );
+					final int unaligned = tc.preAlign().size();
+					if ( !AlignmentLog.restricted ) // per-iteration lines; restricted prints the final state once below
+					{
+						if ( unaligned > 0 )
+							IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): pre-aligned all tiles but " + unaligned );
+						else
+							IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): prealigned all tiles" );
+					}
 				}
 
-				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): starting solve ..." );
+				if ( !AlignmentLog.restricted )
+					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): starting solve ..." );
 
 				//tc.optimizeSilently(new ErrorStatistic( ics.getMaxPlateauWidth() + 1 ), ics.getMaxError(), ics.getMaxIterations(), ics.getMaxPlateauWidth() );
 				TileUtil.optimizeConcurrently(
@@ -132,15 +138,17 @@ public class GlobalOptIterative
 						1.0, // damp
 						tc, tc.getTiles(), tc.getFixedTiles(),
 						Threads.numThreads(),
-						true ); //verbose
+						!AlignmentLog.restricted ); // verbose = one line per iteration on stdout
 
-				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Global optimization of " + tc.getTiles().size());
-				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Avg Error: " + tc.getError() + "px" );
-				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Min Error: " + tc.getMinError() + "px" );
-				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Max Error: " + tc.getMaxError() + "px" );
+				++iterations;
 
-				// give some time for the output
-				try { Thread.sleep( 50 ); } catch ( Exception e) {}
+				if ( !AlignmentLog.restricted )
+				{
+					printErrors( tc );
+
+					// give some time for the output
+					try { Thread.sleep( 50 ); } catch ( Exception e) {}
+				}
 			}
 			catch (Exception e)
 			{
@@ -161,9 +169,21 @@ public class GlobalOptIterative
 
 				if ( removed == null )
 					finished = true;
-				else if ( removedInconsistentPairs != null )
-					removedInconsistentPairs.add( removed );
+				else
+				{
+					++removedLinks;
+					if ( removedInconsistentPairs != null )
+						removedInconsistentPairs.add( removed );
+				}
 			}
+		}
+
+		if ( AlignmentLog.restricted )
+		{
+			// the per-iteration lines were suppressed, print the final state once
+			if ( removedLinks > 0 )
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Removed " + removedLinks + " inconsistent link(s) in " + iterations + " iteration(s)." );
+			printErrors( tc );
 		}
 
 		// TODO: We assume it is Affine3D here
@@ -171,5 +191,13 @@ public class GlobalOptIterative
 			TransformationTools.printAndSummarizeTransformations( views, map );
 
 		return map;
+	}
+
+	private static void printErrors( final TileConfiguration tc )
+	{
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Global optimization of " + tc.getTiles().size());
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Avg Error: " + tc.getError() + "px" );
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Min Error: " + tc.getMinError() + "px" );
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "):    Max Error: " + tc.getMaxError() + "px" );
 	}
 }

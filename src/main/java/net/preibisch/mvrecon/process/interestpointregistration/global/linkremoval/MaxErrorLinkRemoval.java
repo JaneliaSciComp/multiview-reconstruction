@@ -31,6 +31,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.RealSum;
 import net.imglib2.util.ValuePair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.process.interestpointregistration.AlignmentLog;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.QualityPointMatch;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -63,7 +64,8 @@ public class MaxErrorLinkRemoval implements LinkRemovalStrategy
 			}
 		}
 
-		IOFunctions.println( "max error = " + maxError + " in group " + MaxErrorLinkRemoval.findGroup( t1, map ) );
+		if ( !AlignmentLog.restricted )
+			IOFunctions.println( "max error = " + maxError + " in group " + MaxErrorLinkRemoval.findGroup( t1, map ) );
 
 		double worstInvScore = -Double.MAX_VALUE;
 		Tile<?> worstTile1 = null;
@@ -143,7 +145,8 @@ public class MaxErrorLinkRemoval implements LinkRemovalStrategy
 		final Group<ViewId> groupA = findGroup( worstTile1, map );
 		final Group<ViewId> groupB = findGroup( worstTile2, map );
 
-		IOFunctions.println( new Date( System.currentTimeMillis() ) +  ": Removed link from " + groupA + " to " + groupB + " (error="+ worstInvScore + ")");
+		if ( !AlignmentLog.restricted )
+			IOFunctions.println( new Date( System.currentTimeMillis() ) +  ": Removed link from " + groupA + " to " + groupB + " (error="+ worstInvScore + ")");
 
 		return new ValuePair< Group<ViewId>, Group<ViewId> >( groupA, groupB );
 	}

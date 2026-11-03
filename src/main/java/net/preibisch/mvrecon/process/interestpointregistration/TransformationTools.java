@@ -1108,6 +1108,7 @@ public class TransformationTools
 	 * {@link #printAndSummarizeTransformations} per call before output is suppressed.
 	 * Set to {@link Integer#MAX_VALUE} to print everything (legacy behavior).
 	 * The identity-vs-non-identity summary is always emitted regardless of this threshold.
+	 * With {@link AlignmentLog#restricted} only that summary is printed.
 	 *
 	 * The cap is per-call (per "Transformation Models:" block), so in TWO_ROUND global opt
 	 * round 1 and round 2 each get their own budget.
@@ -1132,7 +1133,8 @@ public class TransformationTools
 			final Iterable< ? extends ViewId > views,
 			final Map< ? extends ViewId, ? extends Tile > map )
 	{
-		net.preibisch.legacy.io.IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Transformation Models:" );
+		if ( !AlignmentLog.restricted )
+			net.preibisch.legacy.io.IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Transformation Models:" );
 
 		int printed = 0;
 		boolean noticeEmitted = false;
@@ -1150,7 +1152,11 @@ public class TransformationTools
 			else
 				totalNonIdentity++;
 
-			if ( printed < maxPerViewTransformLog )
+			if ( AlignmentLog.restricted )
+			{
+				// summary only
+			}
+			else if ( printed < maxPerViewTransformLog )
 			{
 				final String output = Group.pvid( viewId ) + ": " + printAffine3D( ( Affine3D< ? > ) model );
 				if ( model instanceof RigidModel3D )

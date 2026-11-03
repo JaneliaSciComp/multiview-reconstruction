@@ -37,6 +37,7 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.SimpleInfoBox;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
+import net.preibisch.mvrecon.process.interestpointregistration.AlignmentLog;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
@@ -120,7 +121,7 @@ public class Data_Explorer implements PlugIn
 
 	/**
 	 * Shows the "large dataset" advanced-options dialog (BDV startup, lazy BDV mode, action-history
-	 * toggle, alignment-log line caps) and applies the chosen values to the relevant statics.
+	 * toggle, alignment-log restriction and line caps) and applies the chosen values to the relevant statics.
 	 * Also called by BigStitcher's dataset-open flow, so the two stay in sync -- add new options
 	 * here only, not in a copy.
 	 *
@@ -135,6 +136,7 @@ public class Data_Explorer implements PlugIn
 		gd.addCheckbox( "Use_lazy_BDV_mode (adds & removes views when selected)", totalViews >= LARGE_DATASET_LAZY_RECOMMEND_THRESHOLD );
 		gd.addCheckbox( "Enable_action_history", ActionHistoryRecorder.enabled );
 		gd.addMessage( "Alignment log settings:", GUIHelper.mediumstatusfont );
+		gd.addCheckbox( "Restrict_alignment_log_outputs (summaries only, no per-view and per-pair lines)", AlignmentLog.restricted );
 		gd.addNumericField( "Max_per-pair_connection_log_lines", InterestPointMatchCreator.maxPerPairLog, 0 );
 		gd.addNumericField( "Max_per-pair_correspondence-load_log_lines", PairwiseResult.maxPerPairCorrLog, 0 );
 		gd.addNumericField( "Max_per-view_transformation_log_lines", TransformationTools.maxPerViewTransformLog, 0 );
@@ -145,6 +147,7 @@ public class Data_Explorer implements PlugIn
 		final boolean openBDV = gd.getNextBoolean();
 		BDVPopup.useLazyMode = gd.getNextBoolean();
 		ActionHistoryRecorder.enabled = gd.getNextBoolean();
+		AlignmentLog.restricted = gd.getNextBoolean();
 		InterestPointMatchCreator.maxPerPairLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
 		PairwiseResult.maxPerPairCorrLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );
 		TransformationTools.maxPerViewTransformLog = Math.max( 0, ( int ) Math.round( gd.getNextNumber() ) );

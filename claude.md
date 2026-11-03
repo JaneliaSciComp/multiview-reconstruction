@@ -378,6 +378,16 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
 ### Potential Next Optimization
 `LoadCorrespondencesPairwise.match()` calls `ipA.getCorrespondingInterestPointsCopy()`, which lazily opens an N5 reader, reads attrs, opens the dataset, and iterates correspondences — per pair. Even with `computePairs()` parallelized, each pair triggers I/O. A bulk parallel pre-load before `computePairs()` would amortize this.
 
+### Alignment Log (2026-11-02)
+`process.interestpointregistration.AlignmentLog.restricted` (the "Large dataset" dialog's "Restrict alignment log outputs",
+`Data_Explorer.showAdvancedOptionsDialog`, also shown by BigStitcher; off by default) = summaries only: no line per view,
+pair, group or solver iteration, whatever the three caps (`maxPerPairLog`, `maxPerPairCorrLog`, `maxPerViewTransformLog`)
+say; the caps bound the same lines when it is off. It also turns off mpicbg's `TileUtil.optimizeConcurrently` verbose flag
+(one stdout line per iteration). Gated sites: `Interest_Point_Registration` (removed views, remaining points, grouping, fixed
+and reference views), `InterestPointMatchCreator`, `PairwiseResult`, `TransformationTools.printAndSummarizeTransformations`,
+`GlobalOpt`/`GlobalOptIterative` (progress and per-iteration errors, printed once at the end), `GlobalOptTwoRound`,
+`MaxErrorLinkRemoval`. Test `TestAlignmentLog`. BigStitcher-Spark has no flag for it yet.
+
 ## RGLDM Descriptor Matching (2026-09)
 
 - `RGLDMMatcher` compared every descriptor pair through `SubsetMatcher`/`SquareDistance`, allocating 16 lists per pair.

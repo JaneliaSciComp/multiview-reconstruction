@@ -88,6 +88,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
+import net.preibisch.mvrecon.process.interestpointregistration.AlignmentLog;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOpt;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOptIterative;
@@ -207,8 +208,14 @@ public class Interest_Point_Registration implements PlugIn
 			return false;
 
 		removed = filterRemainingViewIdsAndLabels( viewIds, brp.labelMap, data.getViewInterestPoints().getViewInterestPoints() );
-		for ( int i = 0; i < removed.size(); ++i )
-			IOFunctions.println( "Removed view " + Group.pvid( removed.get( i ) ) + " as the label '" + brp.labelMap.get( removed.get( i ) ) + "' was not present." );
+		if ( AlignmentLog.restricted )
+		{
+			if ( removed.size() > 0 )
+				IOFunctions.println( "Removed " + removed.size() + " view(s) as their label was not present." );
+		}
+		else
+			for ( int i = 0; i < removed.size(); ++i )
+				IOFunctions.println( "Removed view " + Group.pvid( removed.get( i ) ) + " as the label '" + brp.labelMap.get( removed.get( i ) ) + "' was not present." );
 
 		// query advanced parameters including global optimization now
 		final AdvancedRegistrationParameters arp = advancedRegistrationParameters( brp, timepointToProcess, data, viewIds );
@@ -424,10 +431,21 @@ public class Interest_Point_Registration implements PlugIn
 
 			TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, registrations, viewDescriptions );
 
-			IOFunctions.println( "Remaining interest points for alignment: " );
-			for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
-				for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
-					IOFunctions.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
+			if ( AlignmentLog.restricted )
+			{
+				long remaining = 0;
+				for ( final HashMap< String, Collection< InterestPoint > > element : interestpoints.values() )
+					for ( final Collection< InterestPoint > points : element.values() )
+						remaining += points.size();
+				IOFunctions.println( "Remaining interest points for alignment: " + remaining + " in " + interestpoints.size() + " view(s)" );
+			}
+			else
+			{
+				IOFunctions.println( "Remaining interest points for alignment: " );
+				for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
+					for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
+						IOFunctions.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
+			}
 		}
 
 		// statistics?
@@ -572,13 +590,15 @@ public class Interest_Point_Registration implements PlugIn
 					if ( !groupedInterestpoints.containsKey( pair.getA() ) )
 					{
 						groupedInterestpoints.put( pair.getA(), ipGrouping.group( pair.getA() ) );
-						IOFunctions.println( "Grouping interestpoints for " + pair.getA() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
+						if ( !AlignmentLog.restricted )
+							IOFunctions.println( "Grouping interestpoints for " + pair.getA() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
 					}
 
 					if ( !groupedInterestpoints.containsKey( pair.getB() ) )
 					{
 						groupedInterestpoints.put( pair.getB(), ipGrouping.group( pair.getB() ) );
-						IOFunctions.println( "Grouping interestpoints for " + pair.getB() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
+						if ( !AlignmentLog.restricted )
+							IOFunctions.println( "Grouping interestpoints for " + pair.getB() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
 					}
 				}
 
@@ -1381,9 +1401,14 @@ public class Interest_Point_Registration implements PlugIn
 			// no fixed views or reference timepoint
 		}
 
-		IOFunctions.println( "Following views are fixed:" );
-		for ( final ViewId id : fmbp.fixedViews )
-			IOFunctions.println( "ViewSetupId:" + id.getViewSetupId() + " TimePoint:" + id.getTimePointId() );
+		if ( AlignmentLog.restricted )
+			IOFunctions.println( "Following views are fixed: " + fmbp.fixedViews.size() + " view(s)" );
+		else
+		{
+			IOFunctions.println( "Following views are fixed:" );
+			for ( final ViewId id : fmbp.fixedViews )
+				IOFunctions.println( "ViewSetupId:" + id.getViewSetupId() + " TimePoint:" + id.getTimePointId() );
+		}
 
 		//
 		// now the reference view(s)
@@ -1487,7 +1512,9 @@ public class Interest_Point_Registration implements PlugIn
 			// no reference view
 		}
 
-		IOFunctions.println( "Following views are references (for mapping back if there are no fixed views):" );
+		if ( !AlignmentLog.restricted )
+			IOFunctions.println( "Following views are references (for mapping back if there are no fixed views):" );
+		int references = 0;
 		for ( final Subset< ViewId > subset : subsets )
 		{
 			if ( fmbp.mapBackViews != null )
@@ -1498,10 +1525,16 @@ public class Interest_Point_Registration implements PlugIn
 				{
 					final ViewId id = fmbp.mapBackViews.get( subset ).getA();
 					if ( id != null )
-						IOFunctions.println( "ViewSetupId: " + id.getViewSetupId() + " TimePoint:" + id.getTimePointId() );
+					{
+						++references;
+						if ( !AlignmentLog.restricted )
+							IOFunctions.println( "ViewSetupId: " + id.getViewSetupId() + " TimePoint:" + id.getTimePointId() );
+					}
 				}
 			}
 		}
+		if ( AlignmentLog.restricted )
+			IOFunctions.println( "Following views are references (for mapping back if there are no fixed views): " + references + " view(s)" );
 
 		return fmbp;
 	}

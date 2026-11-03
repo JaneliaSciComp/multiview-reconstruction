@@ -39,6 +39,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.RealSum;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
+import net.preibisch.mvrecon.process.interestpointregistration.AlignmentLog;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.PointMatchCreator;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -50,7 +51,8 @@ public class InterestPointMatchCreator implements PointMatchCreator
 	 * {@link #assignPointMatches} before the per-pair output is suppressed.
 	 * Set to {@link Integer#MAX_VALUE} to print everything (legacy behavior).
 	 * The end-of-run summary (per-(labelA,labelB) pair-count + min/avg/max
-	 * correspondences) is always emitted regardless of this threshold.
+	 * correspondences) is always emitted regardless of this threshold. With
+	 * {@link AlignmentLog#restricted} only that summary is printed.
 	 */
 	public static int maxPerPairLog = 100;
 
@@ -144,8 +146,12 @@ public class InterestPointMatchCreator implements PointMatchCreator
 				totalConnected++;
 				totalCorrespondences += n;
 
-				// per-pair line, gated by maxPerPairLog
-				if ( printed < maxPerPairLog )
+				// per-pair line, gated by maxPerPairLog (none when the alignment log is restricted)
+				if ( AlignmentLog.restricted )
+				{
+					// summaries only
+				}
+				else if ( printed < maxPerPairLog )
 				{
 					IOFunctions.println(
 							"Connecting " + Group.pvid( pair.getA().getA() ) + " (" + pair.getB().getLabelA() + ") <-> " +
