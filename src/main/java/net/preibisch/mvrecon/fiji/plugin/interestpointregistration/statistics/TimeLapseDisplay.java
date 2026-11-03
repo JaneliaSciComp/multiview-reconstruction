@@ -78,60 +78,18 @@ public class TimeLapseDisplay
 			final List< SelectTimepointEntry > extraMenuItems )
 	{
 		Collections.sort( rsData );
-		final HashMap< Integer, RegistrationStatistics > map = new HashMap< Integer, RegistrationStatistics >();
-
-		for ( final RegistrationStatistics rs : rsData )
-			map.put( rs.getTimePoint(), rs );
 
 		final Color errorColorMin = new Color( 240, 50, 50 );
 		final Color errorColorAvg = new Color( 255, 0, 0 );
 		final Color errorColorMax = errorColorMin;
-		
+
 		final Color ratioColorMin = new Color( 50, 50, 240 );
 		final Color ratioColorAvg = new Color( 0, 0, 255 );
 		final Color ratioColorMax = ratioColorMin;
 
-		final XYSeries seriesMinError = new XYSeries( "minError" );
-		final XYSeries seriesAvgError = new XYSeries( "avgError" );
-		final XYSeries seriesMaxError = new XYSeries( "maxError" );
-
-		final XYSeries seriesMinRatio = new XYSeries( "minRatio" );
-		final XYSeries seriesAvgRatio = new XYSeries( "avgRatio" );
-		final XYSeries seriesMaxRatio = new XYSeries( "maxRatio" );
-
-		for ( int tp = rsData.get( 0 ).getTimePoint(); tp <= rsData.get( rsData.size() - 1 ).getTimePoint(); ++tp )
-		{
-			final RegistrationStatistics rs = map.get( tp );
-
-			if ( rs == null )
-			{
-				seriesMinError.add( tp, null );
-				seriesAvgError.add( tp, null );
-				seriesMaxError.add( tp, null );
-				seriesMinRatio.add( tp, null );
-				seriesAvgRatio.add( tp, null );
-				seriesMaxRatio.add( tp, null );
-			}
-			else
-			{
-				seriesMinError.add( tp, rs.minError );
-				seriesAvgError.add( tp, rs.avgError );
-				seriesMaxError.add( tp, rs.maxError );
-				seriesMinRatio.add( tp, rs.minRatio*100 );
-				seriesAvgRatio.add( tp, rs.avgRatio*100 );
-				seriesMaxRatio.add( tp, rs.maxRatio*100 );
-			}
-		}
-
-		final XYSeriesCollection dataset1 = new XYSeriesCollection();
-		dataset1.addSeries( seriesMinError );
-		dataset1.addSeries( seriesAvgError );
-		dataset1.addSeries( seriesMaxError );
-
-		final XYSeriesCollection dataset2 = new XYSeriesCollection();
-		dataset2.addSeries( seriesMinRatio );
-		dataset2.addSeries( seriesAvgRatio );
-		dataset2.addSeries( seriesMaxRatio );
+		final XYSeriesCollection[] datasets = createDatasets( rsData );
+		final XYSeriesCollection dataset1 = datasets[ 0 ];
+		final XYSeriesCollection dataset2 = datasets[ 1 ];
 
 		JFreeChart chart = ChartFactory.createXYLineChart(
 			"Registration Quality",	// Title
@@ -184,13 +142,67 @@ public class TimeLapseDisplay
 	}
 	
 	/**
-	 * Select a timepoint with minimal maxError and maximal minRatio
-	 * 
-	 * @param data - the timepoint data
-	 * @return - the index for the {@link ArrayList}
+	 * The two datasets of the chart: the errors (min, avg, max) and the correspondence ratios in percent (min, avg, max),
+	 * one value per timepoint from the first to the last. A timepoint without statistics or without a valid pair (its
+	 * values are NaN) is a gap (null): JFreeChart's axis needs finite values ("Must be finite").
+	 *
+	 * @param rsData - the statistics, any order
+	 * @return { errors, ratios }
 	 */
-	public static int getOptimalTimePoint( final ArrayList< RegistrationStatistics > data )
+	public static XYSeriesCollection[] createDatasets( final List< RegistrationStatistics > rsData )
 	{
+		final HashMap< Integer, RegistrationStatistics > map = new HashMap<>();
+		int first = Integer.MAX_VALUE, last = Integer.MIN_VALUE;
+		for ( final RegistrationStatistics rs : rsData )
+		{
+			map.put( rs.getTimePoint(), rs );
+			first = Math.min( first, rs.getTimePoint() );
+			last = Math.max( last, rs.getTimePoint() );
+		}
+
+		final XYSeries[] errors = { new XYSeries( "minError" ), new XYSeries( "avgError" ), new XYSeries( "maxError" ) };
+		final XYSeries[] ratios = { new XYSeries( "minRatio" ), new XYSeries( "avgRatio" ), new XYSeries( "maxRatio" ) };
+
+		for ( int tp = first; tp <= last; ++tp )
+		{
+			final RegistrationStatistics rs = map.get( tp );
+			final boolean valid = rs != null && rs.hasValidPairs();
+			final double[] e = valid ? new double[] { rs.getMinError(), rs.getAvgError(), rs.getMaxError() } : null;
+			final double[] r = valid ? new double[] { rs.getMinRatio() * 100, rs.getAvgRatio() * 100, rs.getMaxRatio() * 100 } : null;
+			for ( int i = 0; i < 3; ++i )
+			{
+				errors[ i ].add( tp, e != null && Double.isFinite( e[ i ] ) ? Double.valueOf( e[ i ] ) : null );
+				ratios[ i ].add( tp, r != null && Double.isFinite( r[ i ] ) ? Double.valueOf( r[ i ] ) : null );
+			}
+		}
+
+		final XYSeriesCollection dataset1 = new XYSeriesCollection();
+		final XYSeriesCollection dataset2 = new XYSeriesCollection();
+		for ( int i = 0; i < 3; ++i )
+		{
+			dataset1.addSeries( errors[ i ] );
+			dataset2.addSeries( ratios[ i ] );
+		}
+		return new XYSeriesCollection[] { dataset1, dataset2 };
+	}
+
+	/**
+	 * Select a timepoint with minimal maxError and maximal minRatio among the timepoints with at least one valid pair
+	 * (the others have no errors and ratios, NaN)
+	 * 
+	 * @param allData - the timepoint data
+	 * @return - the id of the timepoint, the first timepoint if none has a valid pair, -1 if there is none
+	 */
+	public static int getOptimalTimePoint( final ArrayList< RegistrationStatistics > allData )
+	{
+		final ArrayList< RegistrationStatistics > data = new ArrayList<>();
+		for ( final RegistrationStatistics rs : allData )
+			if ( rs.hasValidPairs() )
+				data.add( rs );
+
+		if ( data.isEmpty() )
+			return allData.isEmpty() ? -1 : allData.get( 0 ).getTimePoint();
+
 		// first sort the values together with links to the indices
 		final double[] maxErrors = new double[ data.size() ];
 		final double[] minRatioInv = new double[ data.size() ];

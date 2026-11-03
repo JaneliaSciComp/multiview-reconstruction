@@ -26,6 +26,7 @@ import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -1141,7 +1142,12 @@ public class TransformationTools
 		long totalIdentity = 0;
 		long totalNonIdentity = 0;
 
-		for ( final ViewId viewId : views )
+		// by timepoint, then setup (ViewId's order), whatever order the caller's collection has
+		final ArrayList< ViewId > sorted = new ArrayList<>();
+		views.forEach( sorted::add );
+		Collections.sort( sorted );
+
+		for ( final ViewId viewId : sorted )
 		{
 			final Tile< ? > tile = map.get( viewId );
 			final Object model = tile.getModel();

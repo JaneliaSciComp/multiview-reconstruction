@@ -128,6 +128,33 @@ public class TestAlignmentLog
 		}
 	}
 
+	/** the final models are listed by timepoint and setup, whatever the order of the views handed in */
+	@Test
+	public void modelsPrintedSorted()
+	{
+		final boolean ijLog = IOFunctions.printIJLog;
+		final boolean restricted = AlignmentLog.restricted;
+		try
+		{
+			IOFunctions.printIJLog = false;
+			AlignmentLog.restricted = false;
+			final List< ViewId > views = Arrays.asList( new ViewId( 1, 1 ), new ViewId( 0, 1 ), new ViewId( 1, 0 ), new ViewId( 0, 0 ) );
+			final HashMap< ViewId, Tile< AffineModel3D > > map = new HashMap<>();
+			for ( final ViewId view : views )
+				map.put( view, new Tile<>( new AffineModel3D() ) );
+			final List< String > models = capture( () -> TransformationTools.printAndSummarizeTransformations( views, map ) )
+					.stream().filter( l -> l.startsWith( "tpId=" ) ).collect( Collectors.toList() );
+			assertEquals( 4, models.size(), String.join( "\n", models ) );
+			for ( int i = 0; i < 4; ++i )
+				assertTrue( models.get( i ).startsWith( "tpId=" + ( i / 2 ) + " setupId=" + ( i % 2 ) + ":" ), models.get( i ) );
+		}
+		finally
+		{
+			IOFunctions.printIJLog = ijLog;
+			AlignmentLog.restricted = restricted;
+		}
+	}
+
 	/** three views (one translated), then two pairwise results as the matching reports them */
 	static void emit()
 	{
