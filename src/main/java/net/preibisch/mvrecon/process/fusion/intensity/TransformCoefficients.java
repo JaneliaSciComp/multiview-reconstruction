@@ -143,7 +143,7 @@ class TransformCoefficients {
 			}
 		}
 		if (pad_right > 0) {
-			Arrays.fill(dest, len - pad_right, len, (float) coeff[w - 1]);
+			Arrays.fill(dest, len - pad_right, len, (float) coeff[o + w - 1]);
 		}
 	}
 
