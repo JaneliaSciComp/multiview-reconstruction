@@ -552,8 +552,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	}
 
 	/**
-	 * Key 'i' toggles the intensity-correction preview set up with Intensity Adjustment &gt; Preview Intensity
-	 * Correction Coefficients. Independent of 'c' (colors) and 'v' (ViewSetup ids).
+	 * Key 'i' toggles the preview of the dataset's intensity correction (Intensity Adjustment &gt; Compute or Import)
+	 * in BigDataViewer. Independent of 'c' (colors) and 'v' (ViewSetup ids).
 	 */
 	protected void addIntensityPreviewShortcut()
 	{
@@ -566,18 +566,26 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 					return;
 
 				final IntensityPreview preview = IntensityPreview.get( data );
-				if ( preview == null || !preview.isConfigured() )
+				if ( preview != null && preview.isEnabled() )
 				{
-					final String message = "Intensity correction preview is not set up: right-click > Intensity Adjustment > "
-							+ "Preview Intensity Correction Coefficients ... first.";
-					IOFunctions.println( message );
-					final BasicBDVPopup p = runningBdvPopup();
-					if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
-						p.getBDV().getViewer().showMessage( "Intensity preview not set up (see log)" );
+					preview.disable();
+					IntensityAdjustmentPopup.showPreviewState( FilteredAndGroupedExplorerPanel.this, false );
 					return;
 				}
 
-				IntensityAdjustmentPopup.showPreviewState( FilteredAndGroupedExplorerPanel.this, preview.toggle() );
+				// may read the coefficients from disk and finds the closest views: not on the event thread
+				new Thread( () -> {
+					if ( data.getIntensityAdjustments().isEmpty() )
+					{
+						IOFunctions.println( "No intensity correction to preview: right-click > Intensity Adjustment > Compute ... "
+								+ "(or Import coefficients ...) first." );
+						final BasicBDVPopup p = runningBdvPopup();
+						if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
+							p.getBDV().getViewer().showMessage( "No intensity correction (see log)" );
+						return;
+					}
+					IntensityAdjustmentPopup.applyPreview( FilteredAndGroupedExplorerPanel.this, data );
+				} ).start();
 			}
 		} );
 	}

@@ -38,6 +38,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.Intensity_Adjustment;
 import net.preibisch.mvrecon.fiji.plugin.RemoveIntensity_Adjustment;
+import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
@@ -49,18 +50,14 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import util.URITools;
 
 /**
- * Intensity correction of the selected views: compute coefficients, list, remove, or import them from
- * BigStitcher-Spark (they are saved with the XML); preview a coefficients container in BigDataViewer.
+ * Intensity correction of the selected views: compute coefficients (then shown in BigDataViewer right away,
+ * key 'i' toggles), list, remove, or import them from BigStitcher-Spark. They are saved with the XML.
  */
 public class IntensityAdjustmentPopup extends JMenu implements ExplorerWindowSetable
 {
 	private static final long serialVersionUID = 1L;
 
 	public static String defaultImportPath = "";
-
-	// remembered between invocations of the preview dialog
-	public static String defaultCoefficientsPath = "";
-	public static boolean defaultOnlyAboveThreshold = false;
 
 	ExplorerWindow< ? > panel;
 
@@ -73,7 +70,6 @@ public class IntensityAdjustmentPopup extends JMenu implements ExplorerWindowSet
 		add( item( "Remove", this::remove ) );
 		addSeparator();
 		add( item( "Import coefficients (BigStitcher-Spark) ...", this::importCoefficients ) );
-		add( item( "Preview Intensity Correction Coefficients ...", ( data, selected ) -> previewCoefficients( panel, data ) ) );
 	}
 
 	@Override
@@ -107,7 +103,10 @@ public class IntensityAdjustmentPopup extends JMenu implements ExplorerWindowSet
 	private void compute( final SpimData2 data, final List< ViewId > selected )
 	{
 		if ( new Intensity_Adjustment().intensityAdjustment( data, selected ) )
+		{
 			panel.updateContent();
+			applyPreview( panel, data );
+		}
 	}
 
 	private void list( final SpimData2 data, final List< ViewId > selected )
@@ -129,6 +128,7 @@ public class IntensityAdjustmentPopup extends JMenu implements ExplorerWindowSet
 	{
 		new RemoveIntensity_Adjustment().removeAdjustment( data, selected );
 		panel.updateContent();
+		applyPreview( panel, data );
 	}
 
 	/** reads coefficients written by BigStitcher-Spark's solve-intensities into the dataset */
@@ -162,55 +162,18 @@ public class IntensityAdjustmentPopup extends JMenu implements ExplorerWindowSet
 		data.getIntensityAdjustments().putAll( coefficients );
 		IOFunctions.println( "Imported intensity correction coefficients for " + coefficients.size() + " views." );
 		panel.updateContent();
+		applyPreview( panel, data );
 	}
 
-	/**
-	 * Asks for an intensity-correction coefficients container (as written by BigStitcher-Spark's
-	 * {@code solve-intensities}) and shows the correction in the explorer's BigDataViewer, every voxel from the
-	 * closest view as fused with {@code CLOSEST_PIXEL_WINS}. Key 'i' in the explorer toggles it.
-	 */
-	public static void previewCoefficients( final ExplorerWindow< ? > panel, final SpimData2 sd )
+	/** shows the dataset's coefficients in BigDataViewer (as fusion's default threshold setting would apply them) */
+	public static void applyPreview( final ExplorerWindow< ? > panel, final SpimData2 data )
 	{
-		final GenericDialogPlus gd = new GenericDialogPlus( "Preview Intensity Correction Coefficients" );
-		gd.addDirectoryOrFileField( "Coefficients_container", defaultCoefficientsPath, 50 );
-		gd.addCheckbox( "Correct_only_above_stored_threshold (as fusion with --intensityMaskBelowThreshold)", defaultOnlyAboveThreshold );
-		gd.addMessage( "Coefficients from solve-intensities on this dataset (not a split version of it); format guessed from the ending.\n"
-				+ "Views without coefficients stay uncorrected. Press 'i' in the explorer to toggle the preview." );
-
-		gd.showDialog();
-		if ( gd.wasCanceled() )
-			return;
-
-		final String path = defaultCoefficientsPath = gd.getNextString().trim();
-		final boolean onlyAboveThreshold = defaultOnlyAboveThreshold = gd.getNextBoolean();
-
-		final StorageFormat format = IntensityCorrectionViewer.guessFormat( path );
-		if ( format == null )
-		{
-			IOFunctions.println( "Intensity preview: cannot guess the storage format of '" + path + "' (expected .n5, .zarr, .h5 or .hdf5)." );
-			return;
-		}
-
-		final int numSetups;
-		try
-		{
-			IOFunctions.println( "Intensity preview: loading coefficients from " + path + " (" + format + ") ..." );
-			numSetups = IntensityPreview.configure( sd, URITools.instantiateN5Reader( format, URITools.toURI( path ) ), "", "intensity", onlyAboveThreshold );
-		}
-		catch ( final Exception e )
-		{
-			IOFunctions.println( "Intensity preview: could not load coefficients from '" + path + "': " + e );
-			e.printStackTrace();
-			return;
-		}
-
-		IOFunctions.println( "Intensity preview: coefficients for " + numSetups + " of " + sd.getSequenceDescription().getViewSetupsOrdered().size()
-				+ " setups" + ( onlyAboveThreshold ? ", correcting only above each view's stored threshold" : "" )
-				+ ". Every voxel is shown from the closest view (CLOSEST_PIXEL_WINS). Press 'i' to toggle." );
-		if ( numSetups == 0 )
-			IOFunctions.println( "Intensity preview: WARNING, no coefficients found (expected setup<s>/timepoint<t>/intensity datasets in " + path + ")." );
-
-		showPreviewState( panel, true );
+		final boolean on = IntensityPreview.refresh( data, FusionGUI.defaultIntensityOnlyAboveThreshold );
+		if ( on )
+			IOFunctions.println( "Intensity correction preview: every voxel from the closest view (CLOSEST_PIXEL_WINS)"
+					+ ( FusionGUI.defaultIntensityOnlyAboveThreshold ? ", corrected only above each view's threshold" : "" )
+					+ ". Press 'i' in the explorer to toggle." );
+		showPreviewState( panel, on );
 	}
 
 	/** Repaints the explorer's BigDataViewer, if open, and says whether the intensity preview is on. */
