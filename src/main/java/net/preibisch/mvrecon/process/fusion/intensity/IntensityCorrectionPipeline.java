@@ -64,7 +64,8 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  */
 public class IntensityCorrectionPipeline
 {
-	public enum Method { RANSAC, HISTOGRAM }
+	/** MEDIAN: the ratio of the medians of the voxels both views see (a pure gain, spotlight's "intersection"; for a SCALE solve or the gain field) */
+	public enum Method { RANSAC, HISTOGRAM, MEDIAN }
 
 	public enum TransformationModel { AFFINE, TRANSLATION, SCALE, IDENTITY }
 
@@ -90,6 +91,12 @@ public class IntensityCorrectionPipeline
 		/** minimum number of overlapping foreground pixels to match two coefficient regions */
 		public int minNumCandidates = 1000;
 
+		/**
+		 * fraction of intensity lost each time a voxel was imaged before: a voxel covered by n earlier views (same
+		 * timepoint, earlier = lower setup id) is matched as v / (1 - bleachFactor)^n; 0 = no bleaching
+		 */
+		public double bleachFactor = 0;
+
 		public TransformationModel model = TransformationModel.AFFINE;
 		public RegularizationModel regularization1 = RegularizationModel.TRANSLATION;
 		public double lambda1 = 0.01;
@@ -112,6 +119,13 @@ public class IntensityCorrectionPipeline
 		public double minSignal = 0;
 		/** LI / OTSU only: weight of each pair's background levels as an extra match, 0 = off */
 		public double backgroundWeight = 0;
+		/**
+		 * solve per-view gains plus one log-linear ramp fixed in every view's frame ({@link GainField}) instead of the
+		 * coefficient model; best with {@link Method#MEDIAN} matches
+		 */
+		public boolean gainField = false;
+		/** ridge on the log gains of the gain-field solve (0.001 .. 0.1) */
+		public double gainFieldLambda = 0.001;
 
 		/** sets {@link #threshold} and {@link #minIntensity} from a number, "LI" or "OTSU" */
 		public Parameters threshold( final String minThreshold )
@@ -154,6 +168,12 @@ public class IntensityCorrectionPipeline
 				throw new IllegalArgumentException( "number of histogram bins must be >= 2 (a single sample only ever matches each distribution's minimum), but was " + numBins );
 			if ( !( renderScale > 0 && renderScale <= 1 ) )
 				throw new IllegalArgumentException( "render scale must be in (0, 1], but was " + renderScale );
+			if ( !( bleachFactor >= 0 && bleachFactor < 1 ) )
+				throw new IllegalArgumentException( "bleach factor must be in [0, 1), but was " + bleachFactor );
+			if ( gainField && backgroundWeight > 0 )
+				throw new IllegalArgumentException( "the gain field solves pure gains; background matches (background weight) do not apply" );
+			if ( !( gainFieldLambda >= 0 ) )
+				throw new IllegalArgumentException( "gain field lambda must be >= 0, but was " + gainFieldLambda );
 		}
 
 		/** the matching parameters; also recorded with BigStitcher-Spark's matches ("matching-done.txt") */
@@ -162,7 +182,15 @@ public class IntensityCorrectionPipeline
 		{
 			return "method=" + method + " numCoefficients=" + Arrays.toString( numCoefficients ) + " renderScale=" + renderScale
 					+ " minThreshold=" + ( threshold == Threshold.FIXED ? minIntensity : threshold ) + " maxThreshold=" + maxIntensity
-					+ " model=" + model + "+" + regularization1 + "(" + lambda1 + ")+" + regularization2 + "(" + lambda2 + ")";
+					+ " model=" + model + "+" + regularization1 + "(" + lambda1 + ")+" + regularization2 + "(" + lambda2 + ")"
+					+ " bleachFactor=" + bleachFactor;
+		}
+
+		/** @return the bleach factor recorded by {@link #toString()}, 0 if there is none */
+		public static double bleachFactor( final String recorded )
+		{
+			final java.util.regex.Matcher m = java.util.regex.Pattern.compile( "bleachFactor=([-+0-9.eE]+)" ).matcher( recorded );
+			return m.find() ? Double.parseDouble( m.group( 1 ) ) : 0;
 		}
 
 		private static Model< ? > createModel( final String name )
@@ -203,6 +231,22 @@ public class IntensityCorrectionPipeline
 	}
 
 	/**
+	 * Per view, the earlier views (same timepoint, lower setup id = acquired before) that overlap it, for unbleaching;
+	 * empty if there is no bleaching. Bleaching across timepoints is not modelled.
+	 */
+	public static Map< ViewId, List< ViewId > > bleachers( final List< ? extends ViewId > views, final Map< ViewId, RealInterval > bounds, final double bleachFactor )
+	{
+		final Map< ViewId, List< ViewId > > bleachers = new HashMap<>();
+		if ( bleachFactor > 0 )
+			views.stream().collect( Collectors.groupingBy( ViewId::getTimePointId ) ).values().forEach( v -> {
+				final List< ViewId > ordered = new ArrayList<>( v );
+				ordered.sort( Comparator.comparingInt( ViewId::getViewSetupId ) );
+				bleachers.putAll( IntensityCorrection.getPotentialBleachers( ordered, bounds ) );
+			} );
+		return bleachers;
+	}
+
+	/**
 	 * Threshold (LI / OTSU, 1 if the view is constant at this scale) and background level (a low percentile) of one
 	 * view, both from the same stored resolution level, at most {@code 1 / renderScale} downsampled.
 	 *
@@ -225,15 +269,37 @@ public class IntensityCorrectionPipeline
 	 * Matches one pair of overlapping views, only where both are foreground.
 	 *
 	 * @param thresholds per-view thresholds (LI / OTSU), null for the fixed {@link Parameters#minIntensity}
+	 * @param bleachers see {@link #bleachers}
 	 */
 	public static ViewPairCoefficientMatches matchPair(
 			final AbstractSpimData< ? > data,
 			final ViewId view1,
 			final ViewId view2,
 			final Map< ViewId, Double > thresholds,
+			final Map< ViewId, List< ViewId > > bleachers,
 			final Parameters p )
 	{
 		final double minIntensity = thresholds == null ? p.minIntensity : Math.max( thresholds.get( view1 ), thresholds.get( view2 ) );
+
+		if ( p.method == Method.MEDIAN )
+		{
+			final Map< ViewId, List< ViewId > > b = bleachers == null ? Collections.emptyMap() : bleachers;
+			return IntensityCorrection.matchMedians( data, view1, b.getOrDefault( view1, Collections.emptyList() ), view2,
+					b.getOrDefault( view2, Collections.emptyList() ), UnbleachFunction.bleachFactor( p.bleachFactor ), p.renderScale,
+					p.numCoefficients, minIntensity, p.maxIntensity, p.minNumCandidates );
+		}
+
+		if ( p.bleachFactor > 0 )
+		{
+			final List< ViewId > b1 = bleachers.getOrDefault( view1, Collections.emptyList() );
+			final List< ViewId > b2 = bleachers.getOrDefault( view2, Collections.emptyList() );
+			final UnbleachFunction unbleach = UnbleachFunction.bleachFactor( p.bleachFactor );
+			return p.method == Method.RANSAC
+					? IntensityCorrection.matchRansac( data, view1, b1, view2, b2, unbleach, p.renderScale, p.numCoefficients,
+							minIntensity, p.maxIntensity, p.minNumCandidates, p.createModel(), p.ransacIterations, p.maxEpsilon, p.minInlierRatio, p.minNumInliers, p.maxTrust )
+					: IntensityCorrection.matchHistograms( data, view1, b1, view2, b2, unbleach, p.renderScale, p.numCoefficients,
+							minIntensity, p.maxIntensity, p.minNumCandidates, p.createModel(), p.numBins );
+		}
 
 		return p.method == Method.RANSAC
 				? IntensityCorrection.matchRansac( data, view1, view2, p.renderScale, p.numCoefficients,
@@ -245,12 +311,25 @@ public class IntensityCorrectionPipeline
 	/**
 	 * Global solve. Drops weak matches ({@link Parameters#minSignal}) and adds background matches
 	 * ({@link Parameters#backgroundWeight}) if asked for, stores each view's threshold (fusion can then correct only
-	 * above it) with its coefficients.
+	 * above it) and the bleach factor with its coefficients.
 	 *
 	 * @param thresholds per-view thresholds the matches were gated at, null for a fixed threshold
 	 * @param backgrounds per-view background levels, needed for {@link Parameters#backgroundWeight}
 	 */
 	public static Map< ViewId, Coefficients > solve(
+			final List< ViewPairCoefficientMatches > matches,
+			final Map< ViewId, Double > thresholds,
+			final Map< ViewId, Double > backgrounds,
+			final Parameters p )
+	{
+		return solve( null, matches, thresholds, backgrounds, p );
+	}
+
+	/**
+	 * @param data the views' geometry, needed for {@link Parameters#gainField} (null otherwise)
+	 */
+	public static Map< ViewId, Coefficients > solve(
+			final AbstractSpimData< ? > data,
 			final List< ViewPairCoefficientMatches > matches,
 			final Map< ViewId, Double > thresholds,
 			final Map< ViewId, Double > backgrounds,
@@ -270,9 +349,22 @@ public class IntensityCorrectionPipeline
 			toSolve = IntensityCorrection.addBackgroundMatches( toSolve, backgrounds, p.backgroundWeight );
 		}
 
-		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( p.numCoefficients, toSolve, p.solverIterations, p.createModel() );
+		final Map< ViewId, Coefficients > coefficients;
+		if ( p.gainField )
+		{
+			if ( data == null )
+				throw new IllegalArgumentException( "the gain field needs the views' geometry (spimData)" );
+			final StringBuilder log = new StringBuilder();
+			coefficients = GainField.solve( data, p.numCoefficients, toSolve, p.gainFieldLambda, log );
+			IOFunctions.println( log.toString() );
+		}
+		else
+			coefficients = IntensityCorrection.solve( p.numCoefficients, toSolve, p.solverIterations, p.createModel() );
 
-		coefficients.replaceAll( ( v, c ) -> thresholds != null && thresholds.containsKey( v ) ? c.withThreshold( thresholds.get( v ) ) : c );
+		coefficients.replaceAll( ( v, c ) -> {
+			Coefficients r = thresholds != null && thresholds.containsKey( v ) ? c.withThreshold( thresholds.get( v ) ) : c;
+			return p.bleachFactor > 0 ? r.withBleachFactor( p.bleachFactor ) : r;
+		} );
 		return coefficients;
 	}
 
@@ -292,6 +384,7 @@ public class IntensityCorrectionPipeline
 		if ( pairs.isEmpty() )
 			return new HashMap<>();
 
+		final Map< ViewId, List< ViewId > > bleachers = bleachers( views, bounds, p.bleachFactor );
 
 		final ForkJoinPool pool = new ForkJoinPool( Math.max( 1, numThreads ) );
 		try
@@ -320,14 +413,14 @@ public class IntensityCorrectionPipeline
 			final List< ViewPairCoefficientMatches > matches = Collections.synchronizedList( new ArrayList<>() );
 			final AtomicInteger done = new AtomicInteger();
 			pool.submit( () -> pairs.parallelStream().forEach( pair -> {
-				matches.add( matchPair( data, pair[ 0 ], pair[ 1 ], thresholds, p ) );
+				matches.add( matchPair( data, pair[ 0 ], pair[ 1 ], thresholds, bleachers, p ) );
 				final int n = done.incrementAndGet();
 				if ( n % Math.max( 1, pairs.size() / 10 ) == 0 || n == pairs.size() )
 					IOFunctions.println( new Date() + ": matched " + n + " / " + pairs.size() + " pairs" );
 			} ) ).get();
 
 			IOFunctions.println( new Date() + ": solving ..." );
-			final Map< ViewId, Coefficients > coefficients = solve( matches, thresholds, backgrounds, p );
+			final Map< ViewId, Coefficients > coefficients = solve( data, matches, thresholds, backgrounds, p );
 			IOFunctions.println( new Date() + ": intensity correction computed for " + coefficients.size() + " views." );
 			return coefficients;
 		}

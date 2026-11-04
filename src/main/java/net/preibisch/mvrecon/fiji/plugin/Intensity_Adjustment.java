@@ -80,6 +80,9 @@ public class Intensity_Adjustment implements PlugIn
 	public static int defaultSolverIterations = DEFAULTS.solverIterations;
 	public static double defaultMinSignal = DEFAULTS.minSignal;
 	public static double defaultBackgroundWeight = DEFAULTS.backgroundWeight;
+	public static double defaultBleachFactor = DEFAULTS.bleachFactor;
+	public static boolean defaultGainField = DEFAULTS.gainField;
+	public static double defaultGainFieldLambda = DEFAULTS.gainFieldLambda;
 
 	private static final String[] thresholdChoices = { "Fixed minimum intensity", "LI (per view)", "OTSU (per view)" };
 
@@ -163,6 +166,9 @@ public class Intensity_Adjustment implements PlugIn
 		gd.addChoice( "Regularization_2", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization2 ].name() );
 		gd.addNumericField( "Lambda_2 [0..1]", defaultLambda2, 3 );
 		gd.addMessage( "" );
+		gd.addCheckbox( "Gain_field (per-view gains + one ramp across every view, instead of the model above; use MEDIAN)", defaultGainField );
+		gd.addNumericField( "Gain_field_lambda (ridge on the log gains)", defaultGainFieldLambda, 4 );
+		gd.addMessage( "" );
 		gd.addCheckbox( "Show_advanced_parameters", defaultAdvanced );
 
 		gd.showDialog();
@@ -181,6 +187,8 @@ public class Intensity_Adjustment implements PlugIn
 		p.lambda1 = defaultLambda1 = gd.getNextNumber();
 		p.regularization2 = RegularizationModel.values()[ defaultRegularization2 = gd.getNextChoiceIndex() ];
 		p.lambda2 = defaultLambda2 = gd.getNextNumber();
+		p.gainField = defaultGainField = gd.getNextBoolean();
+		p.gainFieldLambda = defaultGainFieldLambda = gd.getNextNumber();
 		final boolean advanced = defaultAdvanced = gd.getNextBoolean();
 
 		try
@@ -204,13 +212,14 @@ public class Intensity_Adjustment implements PlugIn
 				gda.addNumericField( "Minimal_number_of_inliers", defaultMinNumInliers, 0 );
 				gda.addNumericField( "Maximal_trust (x median cost)", defaultMaxTrust, 1 );
 			}
-			else
+			else if ( p.method == Method.HISTOGRAM )
 			{
 				gda.addNumericField( "Number_of_histogram_samples", defaultNumBins, 0 );
 			}
 			gda.addNumericField( "Minimal_number_of_overlapping_pixels", defaultMinNumCandidates, 0 );
 			gda.addNumericField( "Maximum_intensity (0 = no limit)", defaultMaxIntensity, 1 );
 			gda.addNumericField( "Solver_iterations", defaultSolverIterations, 0 );
+			gda.addNumericField( "Bleach_factor (intensity lost per earlier exposure, views acquired in setup id order; 0 = off)", defaultBleachFactor, 3 );
 			if ( p.threshold != Threshold.FIXED )
 			{
 				gda.addNumericField( "Minimal_signal above threshold (0 = off)", defaultMinSignal, 1 );
@@ -229,13 +238,14 @@ public class Intensity_Adjustment implements PlugIn
 				p.minNumInliers = defaultMinNumInliers = ( int ) Math.round( gda.getNextNumber() );
 				p.maxTrust = defaultMaxTrust = gda.getNextNumber();
 			}
-			else
+			else if ( p.method == Method.HISTOGRAM )
 			{
 				p.numBins = defaultNumBins = ( int ) Math.round( gda.getNextNumber() );
 			}
 			p.minNumCandidates = defaultMinNumCandidates = ( int ) Math.round( gda.getNextNumber() );
 			defaultMaxIntensity = gda.getNextNumber();
 			p.solverIterations = defaultSolverIterations = ( int ) Math.round( gda.getNextNumber() );
+			p.bleachFactor = defaultBleachFactor = gda.getNextNumber();
 			if ( p.threshold != Threshold.FIXED )
 			{
 				p.minSignal = defaultMinSignal = gda.getNextNumber();
@@ -252,6 +262,7 @@ public class Intensity_Adjustment implements PlugIn
 			p.numBins = defaultNumBins;
 			p.minNumCandidates = defaultMinNumCandidates;
 			p.solverIterations = defaultSolverIterations;
+			p.bleachFactor = defaultBleachFactor;
 			if ( p.threshold != Threshold.FIXED )
 			{
 				p.minSignal = defaultMinSignal;

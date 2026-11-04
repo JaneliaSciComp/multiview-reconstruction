@@ -50,6 +50,21 @@ public class Coefficients implements Serializable {
 	 */
 	private final double threshold;
 
+	/**
+	 * Fraction of intensity lost each time a voxel was imaged before (0 = no bleaching), see {@link Bleaching}.
+	 */
+	private final double bleachFactor;
+
+	/**
+	 * Log-gain ramp {@code c} across the image: the scale {@code a} is multiplied by {@code exp(sum_d c[d] * u_d)},
+	 * where {@code u_d = (x_d + 0.5) / n_d - 0.5} is the position in [-0.5, 0.5] along an image axis of {@code n_d}
+	 * voxels (at any resolution level). null = none. See {@link GainField}.
+	 */
+	private final double[] gainField;
+
+	/** Where the voxels of the view were imaged before; set per image by the caller, never stored. */
+	private final transient Bleaching bleaching;
+
 	public Coefficients(
 			final double[][] coefficients,
 			final int... fieldDimensions) {
@@ -71,13 +86,20 @@ public class Coefficients implements Serializable {
 		flattenedCoefficients = new double[numCoefficients][];
 		Arrays.setAll(flattenedCoefficients, i -> coefficients[i].clone());
 		threshold = Double.NaN;
+		bleachFactor = 0;
+		gainField = null;
+		bleaching = null;
 	}
 
-	private Coefficients(final Coefficients other, final double threshold) {
+	private Coefficients(final Coefficients other, final double threshold, final double bleachFactor,
+			final double[] gainField, final Bleaching bleaching) {
 		this.size = other.size;
 		this.strides = other.strides;
 		this.flattenedCoefficients = other.flattenedCoefficients;
 		this.threshold = threshold;
+		this.bleachFactor = bleachFactor;
+		this.gainField = gainField;
+		this.bleaching = bleaching;
 	}
 
 	/**
@@ -93,7 +115,55 @@ public class Coefficients implements Serializable {
 	 *         (pass {@link Double#NaN} to correct every voxel)
 	 */
 	public Coefficients withThreshold(final double threshold) {
-		return new Coefficients(this, threshold);
+		return new Coefficients(this, threshold, bleachFactor, gainField, bleaching);
+	}
+
+	/**
+	 * @return the fraction of intensity lost each time a voxel was imaged before, which the intensities these
+	 *         coefficients were matched on were corrected for (0 = none)
+	 */
+	public double bleachFactor() {
+		return bleachFactor;
+	}
+
+	/**
+	 * @return a view of these coefficients that applies to intensities unbleached with {@code bleachFactor}
+	 */
+	public Coefficients withBleachFactor(final double bleachFactor) {
+		if (!(bleachFactor >= 0 && bleachFactor < 1))
+			throw new IllegalArgumentException("bleachFactor must be in [0, 1), but was " + bleachFactor);
+		return new Coefficients(this, threshold, bleachFactor, gainField, bleaching);
+	}
+
+	/**
+	 * @return the log-gain ramp across the image (one entry per axis), or null if there is none
+	 */
+	public double[] gainField() {
+		return gainField == null ? null : gainField.clone();
+	}
+
+	/**
+	 * @return a view of these coefficients whose scale varies across the image as {@code exp(c . u)}
+	 *         (null = no ramp), see {@link #gainField()}
+	 */
+	public Coefficients withGainField(final double[] c) {
+		if (c != null && c.length != numDimensions())
+			throw new IllegalArgumentException("gain field needs " + numDimensions() + " entries, but has " + c.length);
+		return new Coefficients(this, threshold, bleachFactor, c == null ? null : c.clone(), bleaching);
+	}
+
+	/** @return where the voxels of the image were imaged before, or null (not stored) */
+	public Bleaching bleaching() {
+		return bleaching;
+	}
+
+	/**
+	 * @return a view of these coefficients that first unbleaches every voxel by {@code bleaching} (built for the image
+	 *         these coefficients are applied to, at its resolution level); null = no unbleaching. Only meaningful when
+	 *         {@link #bleachFactor()} is the factor the bleaching was built with.
+	 */
+	public Coefficients withBleaching(final Bleaching bleaching) {
+		return new Coefficients(this, threshold, bleachFactor, gainField, bleaching);
 	}
 
 	int size(final int d) {

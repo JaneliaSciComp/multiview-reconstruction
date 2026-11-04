@@ -279,6 +279,23 @@ class IntensityMatcher {
     }
 
     /**
+     * Match by the ratio of the medians of the voxels both views see above {@code minIntensity} (a pure gain per
+     * pair of coefficient regions, see {@link MedianIntensityMatchingFilter}).
+     */
+    public List<CoefficientMatch> matchMedians(
+            final ViewId view1,
+            final List<ViewId> view1Bleachers,
+            final ViewId view2,
+            final List<ViewId> view2Bleachers,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates
+    ) {
+        return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates,
+                new MedianIntensityMatchingFilter());
+    }
+
+    /**
      *
      * @param view1
      * @param view1Bleachers
