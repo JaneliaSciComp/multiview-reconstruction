@@ -218,7 +218,12 @@ public class IntensityPreview
 			reg.updateModel();
 			final AffineTransform3D sourceToGlobal = reg.getModel().copy();
 			sourceToGlobal.concatenate( raw.getMipmapTransforms()[ level ] );
-			final Coefficients coefficients = stored == null ? IntensityCorrectionViewer.IDENTITY : stored;
+
+			// coefficients matched on unbleached intensities apply to unbleached intensities: undo the bleaching of
+			// each voxel by the earlier views first (the gain field, if any, is applied by the map itself)
+			final Coefficients coefficients = stored == null
+					? IntensityCorrectionViewer.IDENTITY
+					: stored.withBleaching( Bleaching.of( spimData, new ViewId( timepointId, setupId ), sourceToGlobal, stored.bleachFactor() ) );
 			final ClosestViewSource.Geometry geometry = layout.geometry( t );
 			final int index = setupIndex.get( setupId );
 

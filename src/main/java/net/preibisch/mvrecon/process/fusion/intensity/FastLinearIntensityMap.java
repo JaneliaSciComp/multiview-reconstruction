@@ -92,7 +92,8 @@ public class FastLinearIntensityMap {
 
 		final FloatType floatType = new FloatType();
 		final LinearIntensityMapProcessor processor = new LinearIntensityMapProcessor(
-				TransformCoefficients.create(imageDimensions, coefficients), coefficients.threshold());
+				TransformCoefficients.create(imageDimensions, coefficients), coefficients.threshold(),
+				PerVoxelGain.of(coefficients, imageDimensions));
 		final UnaryBlockOperator<FloatType, FloatType> op = new DefaultUnaryBlockOperator<>(floatType, floatType, numDimensions, numDimensions, processor);
 		return op.adaptSourceType(type, ClampType.NONE).adaptTargetType(type, clampType);
 	}
@@ -105,6 +106,9 @@ public class FastLinearIntensityMap {
 
 		private final TransformCoefficients coefficients;
 		private final float threshold;
+		private final PerVoxelGain gain; // null = none
+		private final TempArray<float[]> tmp_gain = TempArray.forPrimitiveType(FLOAT);
+		private int[] tmp_count = new int[0];
 		private final int[] sourceStride;
 		private final long[] start;
 		private final TempArray<float[]>[] tempArrays;
@@ -113,9 +117,17 @@ public class FastLinearIntensityMap {
 		 * @param threshold intensities below this are left unchanged; {@code NaN} corrects everything
 		 */
 		public LinearIntensityMapProcessor(final TransformCoefficients coefficients, final double threshold) {
+			this(coefficients, threshold, null);
+		}
+
+		/**
+		 * @param gain per-voxel factor on the scale (gain field, unbleaching), null = none
+		 */
+		LinearIntensityMapProcessor(final TransformCoefficients coefficients, final double threshold, final PerVoxelGain gain) {
 			super(PrimitiveType.FLOAT, coefficients.numDimensions());
 			this.coefficients = coefficients;
 			this.threshold = (float) threshold;
+			this.gain = gain;
 
 			final int n = coefficients.numDimensions();
 			sourceStride = new int[n];
@@ -129,6 +141,7 @@ public class FastLinearIntensityMap {
 			super(processor);
 			this.coefficients = processor.coefficients.independentCopy();
 			this.threshold = processor.threshold;
+			this.gain = processor.gain;
 
 			final int n = coefficients.numDimensions();
 			sourceStride = new int[n];
@@ -169,6 +182,14 @@ public class FastLinearIntensityMap {
 				coefficients.line(start, len, 0, tmp_coeff0);
 				coefficients.line(start, len, 1, tmp_coeff1);
 				System.arraycopy(src, o, tmp_lsrc, 0, len);
+				if (gain != null) {
+					final float[] g = tmp_gain.get(len);
+					if (tmp_count.length < len)
+						tmp_count = new int[len];
+					gain.line(start, len, g, tmp_count);
+					for (int x = 0; x < len; ++x)
+						tmp_coeff0[x] *= g[x];
+				}
 				map(tmp_lsrc, tmp_coeff0, tmp_coeff1, tmp_ldst, len, threshold);
 				System.arraycopy(tmp_ldst, 0, dst, o, len);
 			}
@@ -180,6 +201,61 @@ public class FastLinearIntensityMap {
 				final float v = src[x];
 				// NaN threshold compares false, so the unthresholded case corrects every voxel
 				dst[x] = v < threshold ? v : v * a[x] + b[x];
+			}
+		}
+	}
+
+	/**
+	 * The factor on the scale {@code a} at each voxel: the gain field {@code exp(c . u)} of {@link Coefficients#gainField()}
+	 * times the unbleaching {@code 1 / (1 - bleachFactor)^n} of {@link Coefficients#bleaching()}. Shared by the processor
+	 * copies (no mutable state).
+	 */
+	static final class PerVoxelGain {
+
+		private final double[] c; // null = no ramp
+		private final long[] n;
+		private final Bleaching bleaching; // null = none
+		private final float[] bleachGains;
+
+		private PerVoxelGain(final double[] c, final Dimensions dims, final Bleaching bleaching) {
+			this.c = c;
+			this.n = dims.dimensionsAsLongArray();
+			this.bleaching = bleaching;
+			if (bleaching == null)
+				bleachGains = null;
+			else {
+				bleachGains = new float[bleaching.size() + 1];
+				for (int k = 0; k < bleachGains.length; ++k)
+					bleachGains[k] = (float) bleaching.gain(k);
+			}
+		}
+
+		/** @return null if {@code coefficients} have neither a gain field nor a bleaching */
+		static PerVoxelGain of(final Coefficients coefficients, final Dimensions imageDimensions) {
+			final double[] c = coefficients.gainField();
+			final Bleaching b = coefficients.bleaching();
+			return c == null && b == null ? null : new PerVoxelGain(c, imageDimensions, b);
+		}
+
+		private double u(final int d, final double x) {
+			return (x + 0.5) / n[d] - 0.5;
+		}
+
+		/** fills {@code g[0..len)} for the voxels {@code start + (i, 0, ...)} */
+		void line(final long[] start, final int len, final float[] g, final int[] count) {
+			if (c == null)
+				Arrays.fill(g, 0, len, 1f);
+			else {
+				double rest = 0;
+				for (int d = 1; d < n.length; ++d)
+					rest += c[d] * u(d, start[d]);
+				for (int x = 0; x < len; ++x)
+					g[x] = (float) Math.exp(c[0] * u(0, start[0] + x) + rest);
+			}
+			if (bleaching != null) {
+				bleaching.countLine(start, len, count);
+				for (int x = 0; x < len; ++x)
+					g[x] *= bleachGains[count[x]];
 			}
 		}
 	}

@@ -403,6 +403,29 @@ public class IntensityCorrection {
         return new ViewPairCoefficientMatches(viewId1, viewId2, match);
     }
 
+    /**
+     * Match {@code viewId1} and {@code viewId2} by the ratio of the medians of the voxels both see above
+     * {@code minIntensity}, a pure gain per pair of coefficient regions (spotlight's "intersection" estimator); for a
+     * SCALE solve or {@link GainField}.
+     */
+    public static ViewPairCoefficientMatches matchMedians(
+            final AbstractSpimData<?> spimData,
+            final ViewId viewId1,
+            final List<ViewId> viewId1Bleachers,
+            final ViewId viewId2,
+            final List<ViewId> viewId2Bleachers,
+            final UnbleachFunction unbleachFunction,
+            final double renderScale,
+            final int[] coefficientsSize,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates
+    ) {
+        final IntensityMatcher matcher = new IntensityMatcher(spimData, renderScale, coefficientsSize, unbleachFunction);
+        return new ViewPairCoefficientMatches(viewId1, viewId2, matcher.matchMedians(
+                viewId1, viewId1Bleachers, viewId2, viewId2Bleachers, minIntensity, maxIntensity, minNumCandidates));
+    }
+
     public static Map<ViewId, Coefficients> solve(
 			final int[] coefficientsSize,
 			final Collection<ViewPairCoefficientMatches> pairwiseMatches,

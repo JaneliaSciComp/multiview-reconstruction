@@ -54,6 +54,10 @@ class CoefficientsIO {
 		n5Writer.setAttribute(datasetPath, "coefficients version", "1.0");
 		if (Double.isFinite(coefficients.threshold()))
 			n5Writer.setAttribute(datasetPath, "threshold", coefficients.threshold());
+		if (coefficients.bleachFactor() > 0)
+			n5Writer.setAttribute(datasetPath, "bleachFactor", coefficients.bleachFactor());
+		if (coefficients.gainField() != null)
+			n5Writer.setAttribute(datasetPath, "gainField", coefficients.gainField());
 
 		final long[] gridPosition = new long[n + 1];
 		for (int i = 0; i < coefficients.numCoefficients(); ++i) {
@@ -77,7 +81,13 @@ class CoefficientsIO {
 			coefficients[i] = (double[]) block.getData();
 		}
 		final Double threshold = n5Reader.getAttribute(datasetPath, "threshold", double.class);
-		final Coefficients loaded = new Coefficients(coefficients, fieldDimensions);
-		return threshold == null ? loaded : loaded.withThreshold(threshold);
+		final Double bleachFactor = n5Reader.getAttribute(datasetPath, "bleachFactor", double.class);
+		Coefficients loaded = new Coefficients(coefficients, fieldDimensions);
+		if (threshold != null)
+			loaded = loaded.withThreshold(threshold);
+		if (bleachFactor != null)
+			loaded = loaded.withBleachFactor(bleachFactor);
+		final double[] gainField = n5Reader.getAttribute(datasetPath, "gainField", double[].class);
+		return gainField == null ? loaded : loaded.withGainField(gainField);
 	}
 }
