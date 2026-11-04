@@ -64,10 +64,12 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVFlyThrough;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVUtils;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.IntensityAdjustmentPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ExplorerWindowSetable;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.selection.SelectionDialog;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import util.BDVTools;
 import util.URITools;
@@ -545,6 +547,37 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 						toggleViewSetupIdOverlay( p.getBDV() );
 					}
 				}
+			}
+		} );
+	}
+
+	/**
+	 * Key 'i' toggles the intensity-correction preview set up with Intensity Adjustment &gt; Preview Intensity
+	 * Correction Coefficients. Independent of 'c' (colors) and 'v' (ViewSetup ids).
+	 */
+	protected void addIntensityPreviewShortcut()
+	{
+		table.addKeyListener( new KeyAdapter()
+		{
+			@Override
+			public void keyPressed( final KeyEvent arg0 )
+			{
+				if ( arg0.getKeyChar() != 'i' && arg0.getKeyChar() != 'I' )
+					return;
+
+				final IntensityPreview preview = IntensityPreview.get( data );
+				if ( preview == null || !preview.isConfigured() )
+				{
+					final String message = "Intensity correction preview is not set up: right-click > Intensity Adjustment > "
+							+ "Preview Intensity Correction Coefficients ... first.";
+					IOFunctions.println( message );
+					final BasicBDVPopup p = runningBdvPopup();
+					if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
+						p.getBDV().getViewer().showMessage( "Intensity preview not set up (see log)" );
+					return;
+				}
+
+				IntensityAdjustmentPopup.showPreviewState( FilteredAndGroupedExplorerPanel.this, preview.toggle() );
 			}
 		} );
 	}

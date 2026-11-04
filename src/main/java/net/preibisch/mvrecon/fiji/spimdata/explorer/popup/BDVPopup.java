@@ -22,6 +22,9 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
+
 import bdv.cache.CacheControl;
 import bdv.spimdata.WrapBasicImgLoader;
 import bdv.tools.brightness.ConverterSetup;
@@ -361,11 +364,21 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 			IOFunctions.println( "WARNING: <SpimData> dataset wrapped for BDV browsing; consider resaving as HDF5/N5." );
 
 		final AbstractSequenceDescription< ?, ?, ? > seq = spimData.getSequenceDescription();
-		for ( final BasicViewSetup setup : seq.getViewSetupsOrdered() )
-			BDVSourceNaming.initSetupViewIdName( spimData, setup, converterSetups, sources );
+		// sources read through the intensity-correction preview (key 'i'), which passes the raw data through until enabled
+		final BasicImgLoader original = IntensityPreview.install( spimData );
+		final CacheControl cache;
+		try
+		{
+			for ( final BasicViewSetup setup : seq.getViewSetupsOrdered() )
+				BDVSourceNaming.initSetupViewIdName( spimData, setup, converterSetups, sources );
+			cache = ( ( ViewerImgLoader ) seq.getImgLoader() ).getCacheControl();
+		}
+		finally
+		{
+			IntensityPreview.restore( spimData, original );
+		}
 
 		final int numTimepoints = seq.getTimePoints().size();
-		final CacheControl cache = ( ( ViewerImgLoader ) seq.getImgLoader() ).getCacheControl();
 
 		final BigDataViewer bdv = new BigDataViewer( converterSetups, sources, spimData, numTimepoints, cache,
 				xml.toString(), IOFunctions.getProgressWriter(), ViewerOptions.options() );
