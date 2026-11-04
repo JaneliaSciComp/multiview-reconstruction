@@ -22,6 +22,9 @@
  */
 package net.preibisch.mvrecon.fiji.plugin;
 
+import java.awt.Checkbox;
+import java.awt.Choice;
+import java.awt.Component;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -58,16 +61,17 @@ public class Intensity_Adjustment implements PlugIn
 	private static final Parameters DEFAULTS = new Parameters();
 
 	public static int defaultMethod = DEFAULTS.method.ordinal();
-	public static String defaultNumCoefficients = "8,8,8";
+	public static String defaultNumCoefficients = "1,1,1";
 	public static double defaultRenderScale = DEFAULTS.renderScale;
-	public static int defaultThreshold = DEFAULTS.threshold.ordinal();
+	public static int defaultThreshold = Threshold.LI.ordinal();
 	public static double defaultMinIntensity = DEFAULTS.minIntensity;
 	public static int defaultModel = DEFAULTS.model.ordinal();
+	/** MEDIAN matches are pure gains: without the gain field they are solved with SCALE unless asked otherwise */
+	public static int defaultMedianModel = TransformationModel.SCALE.ordinal();
 	public static int defaultRegularization1 = DEFAULTS.regularization1.ordinal();
 	public static double defaultLambda1 = DEFAULTS.lambda1;
 	public static int defaultRegularization2 = DEFAULTS.regularization2.ordinal();
 	public static double defaultLambda2 = DEFAULTS.lambda2;
-	public static boolean defaultAdvanced = false;
 
 	public static double defaultMaxIntensity = 0;
 	public static int defaultMinNumCandidates = DEFAULTS.minNumCandidates;
@@ -147,29 +151,93 @@ public class Intensity_Adjustment implements PlugIn
 		return true;
 	}
 
-	/** @return the parameters, or null if canceled or invalid */
+	/**
+	 * One dialog: the choices that decide what else applies come first (method, coefficients, render scale,
+	 * threshold, gain field), and only the fields those choices use are shown, updated as they change. Every field
+	 * always exists and is read in the same order, so a recorded macro replays whatever was chosen.
+	 *
+	 * @return the parameters, or null if canceled or invalid
+	 */
 	public static Parameters queryParameters()
 	{
 		final GenericDialog gd = new GenericDialog( "Intensity Correction" );
+		final boolean[] medianModelShown = { Method.values()[ defaultMethod ] == Method.MEDIAN };
 
 		gd.addChoice( "Matching_method", names( Method.values() ), Method.values()[ defaultMethod ].name() );
 		gd.addStringField( "Number_of_coefficients (x,y,z)", defaultNumCoefficients, 10 );
 		gd.addNumericField( "Render_scale (0.25 = 4x downsampled)", defaultRenderScale, 3 );
-		gd.addMessage( "" );
 		gd.addChoice( "Foreground_threshold", thresholdChoices, thresholdChoices[ defaultThreshold ] );
-		gd.addNumericField( "Minimum_intensity (fixed threshold only)", defaultMinIntensity, 1 );
-		gd.addCheckbox( "Correct_only_above_threshold (preview & fusion default; LI/OTSU only)", FusionGUI.defaultIntensityOnlyAboveThreshold );
+		final List< Component > fixedThreshold = added( gd, () -> gd.addNumericField( "Minimum_intensity", defaultMinIntensity, 1 ) );
+		final List< Component > autoThreshold = added( gd, () -> {
+			gd.addCheckbox( "Correct_only_above_threshold (preview & fusion default)", FusionGUI.defaultIntensityOnlyAboveThreshold );
+			gd.addNumericField( "Minimal_signal above threshold (0 = off)", defaultMinSignal, 1 );
+		} );
+		gd.addCheckbox( "Gain_field (per-view gains + one ramp across every view; best with MEDIAN)", defaultGainField );
+		final List< Component > gainField = added( gd, () -> gd.addNumericField( "Gain_field_lambda (ridge on the log gains)", defaultGainFieldLambda, 4 ) );
+		final List< Component > coefficientSolve = added( gd, () -> gd.addNumericField( "Solver_iterations", defaultSolverIterations, 0 ) );
+		final List< Component > backgroundWeight = added( gd, () -> gd.addNumericField( "Background_weight (0 = off)", defaultBackgroundWeight, 1 ) );
+
 		gd.addMessage( "" );
-		gd.addChoice( "Intensity_model", names( TransformationModel.values() ), TransformationModel.values()[ defaultModel ].name() );
-		gd.addChoice( "Regularization_1", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization1 ].name() );
-		gd.addNumericField( "Lambda_1 [0..1]", defaultLambda1, 3 );
-		gd.addChoice( "Regularization_2", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization2 ].name() );
-		gd.addNumericField( "Lambda_2 [0..1]", defaultLambda2, 3 );
-		gd.addMessage( "" );
-		gd.addCheckbox( "Gain_field (per-view gains + one ramp across every view, instead of the model above; use MEDIAN)", defaultGainField );
-		gd.addNumericField( "Gain_field_lambda (ridge on the log gains)", defaultGainFieldLambda, 4 );
-		gd.addMessage( "" );
-		gd.addCheckbox( "Show_advanced_parameters", defaultAdvanced );
+		final List< Component > ransac = added( gd, () -> {
+			gd.addNumericField( "RANSAC_iterations", defaultRansacIterations, 0 );
+			gd.addNumericField( "Maximal_error (intensity)", defaultMaxEpsilon, 2 );
+			gd.addNumericField( "Minimal_inlier_ratio", defaultMinInlierRatio, 2 );
+			gd.addNumericField( "Minimal_number_of_inliers", defaultMinNumInliers, 0 );
+			gd.addNumericField( "Maximal_trust (x median cost)", defaultMaxTrust, 1 );
+		} );
+		final List< Component > histogram = added( gd, () -> gd.addNumericField( "Number_of_histogram_samples", defaultNumBins, 0 ) );
+		gd.addNumericField( "Minimal_number_of_overlapping_pixels", defaultMinNumCandidates, 0 );
+		gd.addNumericField( "Maximum_intensity (0 = no limit)", defaultMaxIntensity, 1 );
+		gd.addNumericField( "Bleach_factor (intensity lost per earlier exposure, views acquired in setup id order; 0 = off)", defaultBleachFactor, 3 );
+
+		final List< Component > model = added( gd, () -> {
+			gd.addMessage( "" );
+			final int m = medianModelShown[ 0 ] ? defaultMedianModel : defaultModel;
+			gd.addChoice( "Intensity_model", names( TransformationModel.values() ), TransformationModel.values()[ m ].name() );
+			gd.addChoice( "Regularization_1", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization1 ].name() );
+			gd.addNumericField( "Lambda_1 [0..1]", defaultLambda1, 3 );
+			gd.addChoice( "Regularization_2", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization2 ].name() );
+			gd.addNumericField( "Lambda_2 [0..1]", defaultLambda2, 3 );
+		} );
+		gd.addMessage( "MEDIAN: ratio of the medians of the voxels both views see (a pure gain per pair); HISTOGRAM: matched\n"
+				+ "intensity quantiles; RANSAC: robust fit to voxel pairs. The model is used by RANSAC / HISTOGRAM matching\n"
+				+ "and by the solve without the gain field." );
+
+		final Choice methodChoice = ( Choice ) gd.getChoices().get( 0 );
+		final Choice thresholdChoice = ( Choice ) gd.getChoices().get( 1 );
+		final Choice modelChoice = ( Choice ) gd.getChoices().get( 2 );
+		final Checkbox gainFieldBox = ( Checkbox ) gd.getCheckboxes().get( 1 );
+
+		final Runnable update = () -> {
+			final Method method = Method.values()[ methodChoice.getSelectedIndex() ];
+			final boolean fixed = Threshold.values()[ thresholdChoice.getSelectedIndex() ] == Threshold.FIXED;
+			final boolean gain = gainFieldBox.getState();
+			// MEDIAN matches are pure gains: offer SCALE (or what was last chosen for MEDIAN) when switching to it
+			final boolean median = method == Method.MEDIAN;
+			if ( median != medianModelShown[ 0 ] )
+			{
+				if ( median )
+					defaultModel = modelChoice.getSelectedIndex();
+				else
+					defaultMedianModel = modelChoice.getSelectedIndex();
+				modelChoice.select( median ? defaultMedianModel : defaultModel );
+				medianModelShown[ 0 ] = median;
+			}
+			show( fixedThreshold, fixed );
+			show( autoThreshold, !fixed );
+			show( gainField, gain );
+			show( coefficientSolve, !gain );
+			show( backgroundWeight, !fixed && !gain );
+			show( ransac, method == Method.RANSAC );
+			show( histogram, method == Method.HISTOGRAM );
+			show( model, !median || !gain );
+		};
+		update.run();
+		gd.addDialogListener( ( dialog, e ) -> {
+			update.run();
+			gd.pack();
+			return true;
+		} );
 
 		gd.showDialog();
 		if ( gd.wasCanceled() )
@@ -180,16 +248,44 @@ public class Intensity_Adjustment implements PlugIn
 		defaultNumCoefficients = gd.getNextString().trim();
 		p.renderScale = defaultRenderScale = gd.getNextNumber();
 		p.threshold = Threshold.values()[ defaultThreshold = gd.getNextChoiceIndex() ];
-		p.minIntensity = defaultMinIntensity = gd.getNextNumber();
-		FusionGUI.defaultIntensityOnlyAboveThreshold = gd.getNextBoolean();
-		p.model = TransformationModel.values()[ defaultModel = gd.getNextChoiceIndex() ];
+		defaultMinIntensity = gd.getNextNumber();
+		final boolean onlyAboveThreshold = gd.getNextBoolean();
+		defaultMinSignal = gd.getNextNumber();
+		p.gainField = defaultGainField = gd.getNextBoolean();
+		p.gainFieldLambda = defaultGainFieldLambda = gd.getNextNumber();
+		p.solverIterations = defaultSolverIterations = ( int ) Math.round( gd.getNextNumber() );
+		defaultBackgroundWeight = gd.getNextNumber();
+		p.ransacIterations = defaultRansacIterations = ( int ) Math.round( gd.getNextNumber() );
+		p.maxEpsilon = defaultMaxEpsilon = gd.getNextNumber();
+		p.minInlierRatio = defaultMinInlierRatio = gd.getNextNumber();
+		p.minNumInliers = defaultMinNumInliers = ( int ) Math.round( gd.getNextNumber() );
+		p.maxTrust = defaultMaxTrust = gd.getNextNumber();
+		p.numBins = defaultNumBins = ( int ) Math.round( gd.getNextNumber() );
+		p.minNumCandidates = defaultMinNumCandidates = ( int ) Math.round( gd.getNextNumber() );
+		defaultMaxIntensity = gd.getNextNumber();
+		p.maxIntensity = defaultMaxIntensity > 0 ? defaultMaxIntensity : Double.NaN;
+		p.bleachFactor = defaultBleachFactor = gd.getNextNumber();
+		final int modelIndex = gd.getNextChoiceIndex();
+		if ( p.method == Method.MEDIAN )
+			defaultMedianModel = modelIndex;
+		else
+			defaultModel = modelIndex;
+		p.model = TransformationModel.values()[ modelIndex ];
 		p.regularization1 = RegularizationModel.values()[ defaultRegularization1 = gd.getNextChoiceIndex() ];
 		p.lambda1 = defaultLambda1 = gd.getNextNumber();
 		p.regularization2 = RegularizationModel.values()[ defaultRegularization2 = gd.getNextChoiceIndex() ];
 		p.lambda2 = defaultLambda2 = gd.getNextNumber();
-		p.gainField = defaultGainField = gd.getNextBoolean();
-		p.gainFieldLambda = defaultGainFieldLambda = gd.getNextNumber();
-		final boolean advanced = defaultAdvanced = gd.getNextBoolean();
+
+		// what the choices do not use stays at its default, whatever the hidden field holds
+		if ( p.threshold == Threshold.FIXED )
+			p.minIntensity = defaultMinIntensity;
+		else
+		{
+			FusionGUI.defaultIntensityOnlyAboveThreshold = onlyAboveThreshold;
+			p.minSignal = defaultMinSignal;
+			if ( !p.gainField )
+				p.backgroundWeight = defaultBackgroundWeight;
+		}
 
 		try
 		{
@@ -197,79 +293,9 @@ public class Intensity_Adjustment implements PlugIn
 		}
 		catch ( final NumberFormatException e )
 		{
-			IOFunctions.println( "Number of coefficients must be like 8,8,8 but was '" + defaultNumCoefficients + "'." );
+			IOFunctions.println( "Number of coefficients must be like 1,1,1 but was '" + defaultNumCoefficients + "'." );
 			return null;
 		}
-
-		if ( advanced )
-		{
-			final GenericDialog gda = new GenericDialog( "Intensity Correction: advanced" );
-			if ( p.method == Method.RANSAC )
-			{
-				gda.addNumericField( "RANSAC_iterations", defaultRansacIterations, 0 );
-				gda.addNumericField( "Maximal_error (intensity)", defaultMaxEpsilon, 2 );
-				gda.addNumericField( "Minimal_inlier_ratio", defaultMinInlierRatio, 2 );
-				gda.addNumericField( "Minimal_number_of_inliers", defaultMinNumInliers, 0 );
-				gda.addNumericField( "Maximal_trust (x median cost)", defaultMaxTrust, 1 );
-			}
-			else if ( p.method == Method.HISTOGRAM )
-			{
-				gda.addNumericField( "Number_of_histogram_samples", defaultNumBins, 0 );
-			}
-			gda.addNumericField( "Minimal_number_of_overlapping_pixels", defaultMinNumCandidates, 0 );
-			gda.addNumericField( "Maximum_intensity (0 = no limit)", defaultMaxIntensity, 1 );
-			gda.addNumericField( "Solver_iterations", defaultSolverIterations, 0 );
-			gda.addNumericField( "Bleach_factor (intensity lost per earlier exposure, views acquired in setup id order; 0 = off)", defaultBleachFactor, 3 );
-			if ( p.threshold != Threshold.FIXED )
-			{
-				gda.addNumericField( "Minimal_signal above threshold (0 = off)", defaultMinSignal, 1 );
-				gda.addNumericField( "Background_weight (0 = off)", defaultBackgroundWeight, 1 );
-			}
-
-			gda.showDialog();
-			if ( gda.wasCanceled() )
-				return null;
-
-			if ( p.method == Method.RANSAC )
-			{
-				p.ransacIterations = defaultRansacIterations = ( int ) Math.round( gda.getNextNumber() );
-				p.maxEpsilon = defaultMaxEpsilon = gda.getNextNumber();
-				p.minInlierRatio = defaultMinInlierRatio = gda.getNextNumber();
-				p.minNumInliers = defaultMinNumInliers = ( int ) Math.round( gda.getNextNumber() );
-				p.maxTrust = defaultMaxTrust = gda.getNextNumber();
-			}
-			else if ( p.method == Method.HISTOGRAM )
-			{
-				p.numBins = defaultNumBins = ( int ) Math.round( gda.getNextNumber() );
-			}
-			p.minNumCandidates = defaultMinNumCandidates = ( int ) Math.round( gda.getNextNumber() );
-			defaultMaxIntensity = gda.getNextNumber();
-			p.solverIterations = defaultSolverIterations = ( int ) Math.round( gda.getNextNumber() );
-			p.bleachFactor = defaultBleachFactor = gda.getNextNumber();
-			if ( p.threshold != Threshold.FIXED )
-			{
-				p.minSignal = defaultMinSignal = gda.getNextNumber();
-				p.backgroundWeight = defaultBackgroundWeight = gda.getNextNumber();
-			}
-		}
-		else
-		{
-			p.ransacIterations = defaultRansacIterations;
-			p.maxEpsilon = defaultMaxEpsilon;
-			p.minInlierRatio = defaultMinInlierRatio;
-			p.minNumInliers = defaultMinNumInliers;
-			p.maxTrust = defaultMaxTrust;
-			p.numBins = defaultNumBins;
-			p.minNumCandidates = defaultMinNumCandidates;
-			p.solverIterations = defaultSolverIterations;
-			p.bleachFactor = defaultBleachFactor;
-			if ( p.threshold != Threshold.FIXED )
-			{
-				p.minSignal = defaultMinSignal;
-				p.backgroundWeight = defaultBackgroundWeight;
-			}
-		}
-		p.maxIntensity = defaultMaxIntensity > 0 ? defaultMaxIntensity : Double.NaN;
 
 		try
 		{
@@ -282,6 +308,22 @@ public class Intensity_Adjustment implements PlugIn
 		}
 
 		return p;
+	}
+
+	/** @return the components {@code adder} put into {@code gd} (labels and fields), to show or hide them together */
+	private static List< Component > added( final GenericDialog gd, final Runnable adder )
+	{
+		final int before = gd.getComponentCount();
+		adder.run();
+		final List< Component > components = new ArrayList<>();
+		for ( int i = before; i < gd.getComponentCount(); ++i )
+			components.add( gd.getComponent( i ) );
+		return components;
+	}
+
+	private static void show( final List< Component > components, final boolean visible )
+	{
+		components.forEach( c -> c.setVisible( visible ) );
 	}
 
 	private static String[] names( final Enum< ? >[] values )
