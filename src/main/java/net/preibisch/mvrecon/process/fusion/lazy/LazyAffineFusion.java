@@ -30,7 +30,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 import ij.ImageJ;
-import mpicbg.models.AffineModel1D;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
@@ -76,7 +76,7 @@ public class LazyAffineFusion<T extends RealType<T> & NativeType<T>> implements 
 
 	final FusionType fusionType;
 	final int interpolation;
-	final Map< ViewId, AffineModel1D > intensityAdjustments;
+	final Map< ViewId, Coefficients > intensityAdjustments;
 
 	/**
 	 * Creates a consumer that will fill the requested RandomAccessibleInterval single-threaded
@@ -101,7 +101,7 @@ public class LazyAffineFusion<T extends RealType<T> & NativeType<T>> implements 
 			final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions,
 			final FusionType fusionType,
 			final int interpolation,
-			final Map< ViewId, AffineModel1D > intensityAdjustments,
+			final Map< ViewId, Coefficients > intensityAdjustments,
 			final long[] globalMin,
 			final T type )
 	{
@@ -173,7 +173,7 @@ public class LazyAffineFusion<T extends RealType<T> & NativeType<T>> implements 
 			final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions,
 			final FusionType fusionType,
 			final int interpolation,
-			final Map< ViewId, AffineModel1D > intensityAdjustments,
+			final Map< ViewId, Coefficients > intensityAdjustments,
 			final Interval fusionInterval,
 			final T type,
 			final int[] blockSize )
