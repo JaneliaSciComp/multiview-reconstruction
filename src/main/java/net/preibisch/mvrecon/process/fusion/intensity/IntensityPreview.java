@@ -32,7 +32,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
-import org.janelia.saalfeldlab.n5.N5Reader;
 
 import bdv.ViewerImgLoader;
 import bdv.ViewerSetupImgLoader;
@@ -70,9 +69,8 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
  * Switchable intensity-correction preview for the explorer's BigDataViewer.
  * <p>
  * BigDataViewer's sources are built while the dataset's img loader is {@link #install installed} as a wrapper that
- * hands out images which, every time they are accessed, show either the raw data or, once {@link #configure
- * configured} and {@link #toggle enabled}, the data corrected with coefficients from BigStitcher-Spark's
- * {@code solve-intensities}. Every voxel is then shown from the closest view only, as fused with
+ * hands out images which, every time they are accessed, show either the raw data or, while the preview is on
+ * ({@link #refresh}), the data corrected with the coefficients stored in the dataset. Every voxel is then shown from the closest view only, as fused with
  * {@code CLOSEST_PIXEL_WINS} (anisotropy from the metadata, as with {@code --preserveAnisotropy}). The sources
  * themselves stay what the explorer expects, so coloring, selection and overlays keep working, and toggling only
  * needs a repaint. One preview per dataset.
@@ -117,7 +115,7 @@ public class IntensityPreview
 
 	private SharedQueue queue;
 
-	private volatile Config config; // null until configured
+	private volatile Config config; // null if there is nothing to show
 
 	private volatile boolean enabled;
 
@@ -136,32 +134,22 @@ public class IntensityPreview
 	}
 
 	/**
-	 * Loads the coefficients of every view from {@code n5Reader} (at {@code {group}/setup{s}/timepoint{t}/{dataset}})
-	 * and enables the preview. Views without coefficients are shown uncorrected.
+	 * Shows the coefficients stored in {@code spimData} (computed or imported), with the current registrations; the
+	 * preview is on if there are any.
 	 *
-	 * @param onlyAboveThreshold
-	 *            correct only voxels above the threshold stored with a view's coefficients (as fusion with
-	 *            {@code --intensityMaskBelowThreshold}); otherwise every voxel
-	 * @return the number of setups that have coefficients
+	 * @param onlyAboveThreshold correct only voxels above the threshold stored with each view's coefficients
+	 * @return whether the preview is on
 	 */
-	public static int configure( final SpimData2 spimData, final N5Reader n5Reader, final String group, final String dataset, final boolean onlyAboveThreshold )
+	public static boolean refresh( final SpimData2 spimData, final boolean onlyAboveThreshold )
 	{
-		final List< Integer > setupIds = new ArrayList<>();
-		spimData.getSequenceDescription().getViewSetupsOrdered().forEach( s -> setupIds.add( s.getId() ) );
-		final List< Integer > timepointIds = new ArrayList<>();
-		spimData.getSequenceDescription().getTimePoints().getTimePointsOrdered().forEach( t -> timepointIds.add( t.getId() ) );
-
-		final Map< Integer, Coefficients[] > coefficients = IntensityCorrectionViewer.loadCoefficients( n5Reader, group, dataset, setupIds, timepointIds, !onlyAboveThreshold );
-
+		final Map< ViewId, Coefficients > coefficients = spimData.getIntensityAdjustments().getCoefficients( onlyAboveThreshold );
 		final IntensityPreview preview = of( spimData );
-		preview.config = new Config( spimData, setupIds, timepointIds, coefficients );
-		preview.enabled = true;
-		return coefficients.size();
-	}
-
-	public boolean isConfigured()
-	{
-		return config != null;
+		synchronized ( preview )
+		{
+			preview.config = coefficients.isEmpty() ? null : new Config( spimData, coefficients );
+			preview.enabled = preview.config != null;
+			return preview.enabled;
+		}
 	}
 
 	public boolean isEnabled()
@@ -169,16 +157,9 @@ public class IntensityPreview
 		return enabled;
 	}
 
-	/** @return whether the preview is enabled now */
-	public synchronized boolean toggle()
+	public synchronized void disable()
 	{
-		if ( config == null )
-			throw new IllegalStateException( "intensity preview is not configured" );
-		// views may have been re-registered meanwhile, which moves the seams
-		if ( !enabled )
-			config = config.refreshed();
-		enabled = !enabled;
-		return enabled;
+		enabled = false;
 	}
 
 	/** null when the preview is off */
@@ -202,28 +183,23 @@ public class IntensityPreview
 	private static final class Config
 	{
 		final SpimData2 spimData;
-		final List< Integer > setupIds;
-		final List< Integer > timepointIds;
+		final List< Integer > timepointIds = new ArrayList<>();
 		final Map< Integer, Integer > setupIndex = new HashMap<>();
-		final Map< Integer, Coefficients[] > coefficients;
+		final Map< ViewId, Coefficients > coefficients;
 		final ClosestViewSource.Layout layout;
 		final Map< List< Object >, RandomAccessibleInterval< ? > > images = new ConcurrentHashMap<>();
 
-		Config( final SpimData2 spimData, final List< Integer > setupIds, final List< Integer > timepointIds, final Map< Integer, Coefficients[] > coefficients )
+		Config( final SpimData2 spimData, final Map< ViewId, Coefficients > coefficients )
 		{
 			this.spimData = spimData;
-			this.setupIds = setupIds;
-			this.timepointIds = timepointIds;
 			this.coefficients = coefficients;
+			final List< Integer > setupIds = new ArrayList<>();
+			spimData.getSequenceDescription().getViewSetupsOrdered().forEach( s -> setupIds.add( s.getId() ) );
+			spimData.getSequenceDescription().getTimePoints().getTimePointsOrdered().forEach( t -> timepointIds.add( t.getId() ) );
 			for ( int i = 0; i < setupIds.size(); ++i )
 				setupIndex.put( setupIds.get( i ), i );
 			final double anisotropy = TransformationTools.getAverageAnisotropyFactor( spimData, spimData.getSequenceDescription().getViewDescriptions().values() );
 			layout = new ClosestViewSource.Layout( spimData, setupIds, timepointIds, anisotropy );
-		}
-
-		Config refreshed()
-		{
-			return new Config( spimData, setupIds, timepointIds, coefficients );
 		}
 
 		/**
@@ -237,13 +213,12 @@ public class IntensityPreview
 		{
 			final RandomAccessibleInterval< T > image = raw.getImage( timepointId, level );
 			final int t = timepointIds.indexOf( timepointId );
-			final Coefficients[] perTimepoint = coefficients.get( setupId );
-			final Coefficients coefficients = perTimepoint == null ? IntensityCorrectionViewer.IDENTITY : perTimepoint[ t ];
-
+			final Coefficients stored = this.coefficients.get( new ViewId( timepointId, setupId ) );
 			final ViewRegistration reg = spimData.getViewRegistrations().getViewRegistration( new ViewId( timepointId, setupId ) );
 			reg.updateModel();
 			final AffineTransform3D sourceToGlobal = reg.getModel().copy();
 			sourceToGlobal.concatenate( raw.getMipmapTransforms()[ level ] );
+			final Coefficients coefficients = stored == null ? IntensityCorrectionViewer.IDENTITY : stored;
 			final ClosestViewSource.Geometry geometry = layout.geometry( t );
 			final int index = setupIndex.get( setupId );
 
