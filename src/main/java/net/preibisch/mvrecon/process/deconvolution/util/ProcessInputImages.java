@@ -31,7 +31,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
 import bdv.util.ConstantRandomAccessible;
-import mpicbg.models.AffineModel1D;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
@@ -55,7 +55,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.deconvolution.MultiViewDeconvolution;
 import net.preibisch.mvrecon.process.deconvolution.normalization.NormalizingRandomAccessibleInterval;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
-import net.preibisch.mvrecon.process.fusion.intensityadjust.IntensityAdjuster;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.transformed.FusedRandomAccessibleInterval;
 import net.preibisch.mvrecon.process.fusion.transformed.FusedRandomAccessibleInterval.Fusion;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformView;
@@ -80,7 +80,7 @@ public class ProcessInputImages< V extends ViewId >
 	final HashMap< Group< V >, RandomAccessibleInterval< FloatType > > images;
 	final HashMap< Group< V >, RandomAccessibleInterval< FloatType > > unnormalizedWeights, normalizedWeights;
 	final HashMap< V, AffineTransform3D > models;
-	final Map< ? extends ViewId, AffineModel1D > intensityAdjustments;
+	final Map< ? extends ViewId, Coefficients > intensityAdjustments;
 
 	public ProcessInputImages(
 			final AbstractSpimData< ? > spimData,
@@ -94,7 +94,7 @@ public class ProcessInputImages< V extends ViewId >
 			final boolean useWeightsDecon,
 			final float blendingRangeDeconvolution,
 			final float blendingBorderDeconvolution,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments )
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments )
 	{
 		this.spimData = spimData;
 		this.groups = SpimData2.filterGroupsForMissingViews( spimData, groups );
@@ -123,7 +123,7 @@ public class ProcessInputImages< V extends ViewId >
 			final ExecutorService service,
 			final Interval bb,
 			final double downsampling,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments )
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments )
 	{
 		this(
 				spimData, groups, service, bb, downsampling,
@@ -137,7 +137,7 @@ public class ProcessInputImages< V extends ViewId >
 			final Collection< Group< V > > groups,
 			final ExecutorService service,
 			final Interval bb,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments )
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments )
 	{
 		this( spimData, groups, service, bb, Double.NaN, intensityAdjustments );
 	}
@@ -288,7 +288,7 @@ public class ProcessInputImages< V extends ViewId >
 			final float[] blendingBorderFusion,
 			final float[] blendingRangeDecon,
 			final float[] blendingBorderDecon,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments )
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments )
 	{
 		int i = 0;
 
@@ -334,10 +334,7 @@ public class ProcessInputImages< V extends ViewId >
 				RandomAccessibleInterval inputImg = DownsampleTools.openDownsampled( imgloader, viewId, model, ds );
 
 				if ( intensityAdjustments != null && intensityAdjustments.containsKey( viewId ) )
-					inputImg = Converters.convert(
-							FusionTools.convertInput( inputImg ),
-							new IntensityAdjuster( intensityAdjustments.get( viewId ) ),
-							new FloatType() );
+					inputImg = IntensityCorrection.correct( inputImg, intensityAdjustments.get( viewId ) );
 
 				images.add( TransformView.transformView( inputImg, model, bb, MultiViewDeconvolution.minValueImg, MultiViewDeconvolution.outsideValueImg, 1 ) );
 

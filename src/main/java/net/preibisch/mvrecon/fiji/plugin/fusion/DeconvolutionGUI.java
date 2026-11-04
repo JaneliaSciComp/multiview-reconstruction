@@ -80,7 +80,6 @@ import net.preibisch.mvrecon.process.export.ImgExport;
 import net.preibisch.mvrecon.process.export.Save3dTIFF;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools.ImgDataType;
-import net.preibisch.mvrecon.process.fusion.intensityadjust.IntensityAdjustmentTools;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -329,7 +328,7 @@ public class DeconvolutionGUI implements FusionExportInterface
 		if ( maxDimPSF == null )
 			return false;
 
-		final boolean hasIntensityAdjustments = IntensityAdjustmentTools.containsAdjustments( spimData.getIntensityAdjustments(), views );
+		final boolean hasIntensityAdjustments = spimData.getIntensityAdjustments().containsAny( views );
 		final boolean enableNonRigid = false; //NonRigidParametersGUI.enableNonRigid;
 		this.nrgui = new NonRigidParametersGUI( spimData, views );
 

@@ -68,11 +68,8 @@ public class RemoveIntensity_Adjustment implements PlugIn
 	{
 		for ( final ViewId viewId : viewIds )
 		{
-			if ( data.getIntensityAdjustments().getIntensityAdjustments().containsKey( viewId ) )
-			{
-				data.getIntensityAdjustments().getIntensityAdjustments().remove( viewId );
-				IOFunctions.println( "Removed intensity adjustment for: " + Group.pvid( viewId ) );
-			}
+			if ( data.getIntensityAdjustments().remove( viewId ) )
+				IOFunctions.println( "Removed intensity correction for: " + Group.pvid( viewId ) );
 		}
 
 		if ( saveXML )

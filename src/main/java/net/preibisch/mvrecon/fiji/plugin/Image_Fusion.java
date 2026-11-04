@@ -304,7 +304,7 @@ public class Image_Fusion implements PlugIn
 							fusion.getNonRigidParameters().getAlpha(),
 							false,
 							fusion.getInterpolation(),
-							fusion.adjustIntensities() ? spimData.getIntensityAdjustments().getIntensityAdjustments() : null,
+							fusion.adjustIntensities() ? spimData.getIntensityAdjustments().getCoefficients( fusion.intensityOnlyAboveThreshold() ) : null,
 							taskExecutor,
 							fusion.getBoundingBox(),
 							(RealType & NativeType)type,
@@ -328,7 +328,7 @@ public class Image_Fusion implements PlugIn
 								false,
 								fusion.getInterpolation(),
 								fusion.getBoundingBox(),
-								fusion.adjustIntensities() ? spimData.getIntensityAdjustments().getIntensityAdjustments() : null,
+								fusion.adjustIntensities() ? spimData.getIntensityAdjustments().getCoefficients( fusion.intensityOnlyAboveThreshold() ) : null,
 								taskExecutor );
 				*/
 			}
@@ -346,7 +346,7 @@ public class Image_Fusion implements PlugIn
 						fusion.getFusionType(),
 						fusion.getAnisotropyFactor(),
 						fusion.getInterpolation(), // linear interpolatio
-						fusion.adjustIntensities() ? spimData.getIntensityAdjustments().getIntensityAdjustments() : null,
+						fusion.adjustIntensities() ? spimData.getIntensityAdjustments().getCoefficients( fusion.intensityOnlyAboveThreshold() ) : null,
 						fusion.getBoundingBox(),
 						(RealType & NativeType)type,
 						blocksize );

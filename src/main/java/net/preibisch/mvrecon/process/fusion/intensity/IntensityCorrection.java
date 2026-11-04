@@ -39,7 +39,13 @@ import mpicbg.models.PointMatch;
 import mpicbg.models.TranslationModel1D;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealInterval;
+import net.imglib2.algorithm.blocks.BlockSupplier;
+import net.imglib2.algorithm.blocks.convert.Convert;
+import net.imglib2.type.NativeType;
+import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.view.Views;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityMatcher.CoefficientMatch;
@@ -518,12 +524,47 @@ public class IntensityCorrection {
 	/**
 	 * Get N5 path to coefficients for the specified view, as {@code "{group}/setup{setupId}/timepoint{timepointId}/{dataset}"}.
 	 */
-	static String getCoefficientsDatasetPath(
+	public static String getCoefficientsDatasetPath(
 			final String group,
 			final String dataset,
 			final int setupId,
 			final int timePointId
 	) {
 		return String.format("%s/setup%d/timepoint%d/%s", group, setupId, timePointId, dataset);
+	}
+
+	/**
+	 * {@code image} (any resolution level of its view: the coefficient field spans the whole image) with the
+	 * intensity correction applied, as {@code FloatType}, computed lazily block by block. Voxels below a finite
+	 * {@link Coefficients#threshold()} are left unchanged; strip it with {@code withThreshold(Double.NaN)} to
+	 * correct every voxel.
+	 */
+	public static <T extends NativeType<T>> RandomAccessibleInterval<FloatType> correct(
+			final RandomAccessibleInterval<T> image,
+			final Coefficients coefficients
+	) {
+		final RandomAccessibleInterval<T> zeroMin = Views.zeroMin(image);
+		final RandomAccessibleInterval<FloatType> corrected = BlockSupplier.of(zeroMin)
+				.andThen(Convert.convert(new FloatType()))
+				.andThen(FastLinearIntensityMap.linearIntensityMap(coefficients, zeroMin))
+				.toCellImg(zeroMin.dimensionsAsLongArray(), 64);
+		return Views.translate(corrected, image.minAsLongArray());
+	}
+
+	/** e.g. "8x8x8 regions, gain 0.91..1.12, offset -3.2..4.0, threshold 105.3" */
+	public static String describe(final Coefficients c) {
+		final StringBuilder sb = new StringBuilder();
+		for (int d = 0; d < c.numDimensions(); ++d)
+			sb.append(d == 0 ? "" : "x").append(c.size(d));
+		sb.append(" regions");
+		final String[] names = {"gain", "offset"};
+		for (int i = 0; i < Math.min(names.length, c.numCoefficients()); ++i) {
+			final double[] v = c.flattenedCoefficients[i];
+			sb.append(String.format(", %s %.3g..%.3g", names[i],
+					Arrays.stream(v).min().orElse(Double.NaN), Arrays.stream(v).max().orElse(Double.NaN)));
+		}
+		if (Double.isFinite(c.threshold()))
+			sb.append(String.format(", threshold %.1f", c.threshold()));
+		return sb.toString();
 	}
 }

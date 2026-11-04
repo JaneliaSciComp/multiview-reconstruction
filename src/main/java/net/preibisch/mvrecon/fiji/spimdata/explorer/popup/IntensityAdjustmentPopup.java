@@ -23,10 +23,10 @@
 package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -40,42 +40,40 @@ import net.preibisch.mvrecon.fiji.plugin.Intensity_Adjustment;
 import net.preibisch.mvrecon.fiji.plugin.RemoveIntensity_Adjustment;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
+import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionViewer;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import util.URITools;
 
+/**
+ * Intensity correction of the selected views: compute coefficients, list, remove, or import them from
+ * BigStitcher-Spark (they are saved with the XML); preview a coefficients container in BigDataViewer.
+ */
 public class IntensityAdjustmentPopup extends JMenu implements ExplorerWindowSetable
 {
 	private static final long serialVersionUID = 1L;
 
-	ExplorerWindow< ? > panel;
-
-	protected static String[] types = new String[]{ "Compute ...", "List all", "Remove", "Preview Intensity Correction Coefficients ..." };
+	public static String defaultImportPath = "";
 
 	// remembered between invocations of the preview dialog
 	public static String defaultCoefficientsPath = "";
 	public static boolean defaultOnlyAboveThreshold = false;
 
+	ExplorerWindow< ? > panel;
+
 	public IntensityAdjustmentPopup()
 	{
 		super( "Intensity Adjustment" );
 
-		final JMenuItem compute = new JMenuItem( types[ 0 ] );
-		final JMenuItem list = new JMenuItem( types[ 1 ] );
-		final JMenuItem remove = new JMenuItem( types[ 2 ] );
-		final JMenuItem preview = new JMenuItem( types[ 3 ] );
-
-		compute.addActionListener( new MyActionListener( 0 ) );
-		list.addActionListener( new MyActionListener( 1 ) );
-		remove.addActionListener( new MyActionListener( 2 ) );
-		preview.addActionListener( new MyActionListener( 3 ) );
-
-		this.add( compute );
-		this.add( list );
-		this.add( remove );
-		this.addSeparator();
-		this.add( preview );
+		add( item( "Compute ...", this::compute ) );
+		add( item( "List all", this::list ) );
+		add( item( "Remove", this::remove ) );
+		addSeparator();
+		add( item( "Import coefficients (BigStitcher-Spark) ...", this::importCoefficients ) );
+		add( item( "Preview Intensity Correction Coefficients ...", ( data, selected ) -> previewCoefficients( panel, data ) ) );
 	}
 
 	@Override
@@ -85,66 +83,85 @@ public class IntensityAdjustmentPopup extends JMenu implements ExplorerWindowSet
 		return this;
 	}
 
-	public class MyActionListener implements ActionListener
+	private JMenuItem item( final String name, final Action action )
 	{
-		final int index; // 0 == Compute, 1 == List, 2 == Remove, 3 == Preview coefficients
-
-		public MyActionListener( final int index )
-		{
-			this.index = index;
-		}
-
-		@Override
-		public void actionPerformed( final ActionEvent e )
-		{
+		final JMenuItem item = new JMenuItem( name );
+		item.addActionListener( ( final ActionEvent e ) -> {
 			if ( panel == null )
 			{
-				IOFunctions.println( "Panel not set for " + this.getClass().getSimpleName() );
+				IOFunctions.println( "Panel not set for " + getClass().getSimpleName() );
 				return;
 			}
-
-			if ( !SpimData2.class.isInstance( panel.getSpimData() ) )
+			if ( !( panel.getSpimData() instanceof SpimData2 ) )
 			{
-				IOFunctions.println( "Only supported for SpimData2 objects: " + this.getClass().getSimpleName() );
+				IOFunctions.println( "Only supported for SpimData2 objects: " + getClass().getSimpleName() );
 				return;
 			}
+			new Thread( () -> action.run( ( SpimData2 ) panel.getSpimData(), ApplyTransformationPopup.getSelectedViews( panel ) ) ).start();
+		} );
+		return item;
+	}
 
-			final SpimData2 sd = (SpimData2)panel.getSpimData();
+	private interface Action { void run( SpimData2 data, List< ViewId > selected ); }
 
-			new Thread( new Runnable()
-			{
-				@Override
-				public void run()
-				{
-					final List< ViewId > viewIds = ApplyTransformationPopup.getSelectedViews( panel );
+	private void compute( final SpimData2 data, final List< ViewId > selected )
+	{
+		if ( new Intensity_Adjustment().intensityAdjustment( data, selected ) )
+			panel.updateContent();
+	}
 
-					if ( index == 0 )
-						new Intensity_Adjustment().intensityAdjustment( sd, viewIds );
-					else if ( index == 1 )
-					{
-						String text = "Intensity Adjustments:\n";
-
-						if ( sd.getIntensityAdjustments().getIntensityAdjustments().size() == 0 )
-						{
-							text += "None defined\n";
-						}
-						else
-						{
-							final ArrayList< ViewId > views = new ArrayList<>( sd.getIntensityAdjustments().getIntensityAdjustments().keySet() );
-							Collections.sort( views );
-							for ( final ViewId v : views )
-								text += Group.pvid( v ) + ": " + sd.getIntensityAdjustments().getIntensityAdjustments().get( v ) + "\n";
-						}
-
-						IOFunctions.println( text );
-					}
-					else if ( index == 2 )
-						new RemoveIntensity_Adjustment().removeAdjustment( sd, viewIds );
-					else
-						previewCoefficients( panel, sd );
-				}
-			} ).start();
+	private void list( final SpimData2 data, final List< ViewId > selected )
+	{
+		final Map< ViewId, Coefficients > coefficients = data.getIntensityAdjustments().getCoefficients();
+		if ( coefficients.isEmpty() )
+		{
+			IOFunctions.println( "Intensity correction: none defined." );
+			return;
 		}
+		final ArrayList< ViewId > views = new ArrayList<>( coefficients.keySet() );
+		Collections.sort( views );
+		IOFunctions.println( "Intensity correction coefficients (" + views.size() + " views):" );
+		for ( final ViewId v : views )
+			IOFunctions.println( Group.pvid( v ) + ": " + IntensityCorrection.describe( coefficients.get( v ) ) );
+	}
+
+	private void remove( final SpimData2 data, final List< ViewId > selected )
+	{
+		new RemoveIntensity_Adjustment().removeAdjustment( data, selected );
+		panel.updateContent();
+	}
+
+	/** reads coefficients written by BigStitcher-Spark's solve-intensities into the dataset */
+	private void importCoefficients( final SpimData2 data, final List< ViewId > selected )
+	{
+		final GenericDialogPlus gd = new GenericDialogPlus( "Import Intensity Correction Coefficients" );
+		gd.addDirectoryOrFileField( "Coefficients_container", defaultImportPath, 50 );
+		gd.addMessage( "From solve-intensities on this dataset (not a split version of it); format guessed from the ending.\n"
+				+ "Replaces the coefficients of the views it has; they are saved next to the XML on the next save." );
+		gd.showDialog();
+		if ( gd.wasCanceled() )
+			return;
+
+		final String path = defaultImportPath = gd.getNextString().trim();
+		final StorageFormat format = IntensityCorrectionViewer.guessFormat( path );
+		if ( format == null )
+		{
+			IOFunctions.println( "Intensity correction: cannot guess the storage format of '" + path + "' (expected .n5, .zarr, .h5 or .hdf5)." );
+			return;
+		}
+
+		final IntensityAdjustments imported = new IntensityAdjustments();
+		imported.setContainer( URITools.toURI( path ), format, data.getSequenceDescription().getViewDescriptions().keySet() );
+		final Map< ViewId, Coefficients > coefficients = imported.getCoefficients();
+		if ( coefficients.isEmpty() )
+		{
+			IOFunctions.println( "Intensity correction: no coefficients found in " + path + " (expected setup<s>/timepoint<t>/intensity datasets)." );
+			return;
+		}
+
+		data.getIntensityAdjustments().putAll( coefficients );
+		IOFunctions.println( "Imported intensity correction coefficients for " + coefficients.size() + " views." );
+		panel.updateContent();
 	}
 
 	/**
