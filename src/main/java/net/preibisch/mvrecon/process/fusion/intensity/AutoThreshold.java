@@ -22,7 +22,6 @@
  */
 package net.preibisch.mvrecon.process.fusion.intensity;
 
-import ij.process.AutoThresholder;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
@@ -33,32 +32,20 @@ import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 
 /**
- * Per-image foreground threshold from a 256-bin histogram over the image's
- * [min, max] range, handed to ImageJ's {@link AutoThresholder}. Same recipe as
- * scikit-image's {@code threshold_li} / {@code threshold_otsu}, which the
- * reference Python pipeline uses.
+ * Per-image foreground threshold from a {@value #NUM_BINS}-bin histogram over the image's [min, max] range, in double
+ * precision (no count limit): Li by the iteration of scikit-image's {@code threshold_li}, Otsu by maximal
+ * between-class variance, as the reference Python pipeline (spotlight) computes them.
  */
 public class AutoThreshold
 {
 	public enum Method { LI, OTSU }
 
-	private static final int NUM_BINS = 256;
-
-	// Σ bin * count stays below Integer.MAX_VALUE
-	private static final long MAX_TOTAL = Integer.MAX_VALUE / NUM_BINS;
-
 	/**
-	 * The coarsest STORED resolution level that is no coarser than {@code maxDownsampling},
-	 * read as-is.
-	 * <p>
-	 * Deliberately not BigStitcher-Spark's {@code openAndDownsample}: that refines the
-	 * best stored level with extra factors of 2 through {@code LazyDownsample2x}, which is both
-	 * needless here (a histogram does not need an exact scale) and throws
-	 * {@code ArrayIndexOutOfBoundsException} on production-sized views. Reading a stored level
-	 * streams cell by cell, so it also needs no extra memory.
-	 *
-	 * @return the image, and the downsampling factor it actually corresponds to
+	 * Histogram resolution: fine enough that a few bright outliers cannot quantize the foreground / background split
+	 * away (256 bins over [0, 83887] made every bin 328 wide, and LI could not return less than that).
 	 */
+	static final int NUM_BINS = 65536;
+
 	public static Pair< RandomAccessibleInterval< ? >, Long > openForHistogram(
 			final BasicImgLoader imgLoader,
 			final ViewId viewId,
@@ -125,40 +112,77 @@ public class AutoThreshold
 		for ( final T t : Views.iterable( img ) )
 			++counts[ Math.min( NUM_BINS - 1, ( int ) ( ( t.getRealDouble() - min ) / binWidth ) ) ];
 
-		final int[] histogram = toIntHistogram( counts );
-
-		// AutoThresholder returns the index of the last background bin (or -1 if it
-		// cannot split); intensity matching discards anything strictly below the
-		// threshold, so the floor is the next bin's lower edge
-		final int bin = new AutoThresholder().getThreshold( ijMethod( method ), histogram );
-
-		if ( bin < 0 )
-			return Double.NaN;
-
-		return min + ( bin + 1 ) * binWidth;
+		return method == Method.LI ? li( counts, min, binWidth ) : otsu( counts, min, binWidth );
 	}
 
 	/**
-	 * AutoThresholder.Li sums {@code bin * count} over the histogram in {@code int}s, which
-	 * overflows past ~8M voxels and on large views ends in a negative bin index. Both methods
-	 * only depend on relative counts, so scale them down until that sum fits.
+	 * Minimum cross-entropy threshold (Li & Tam 1998, the iteration of skimage's {@code threshold_li}) of a histogram
+	 * whose bin {@code i} holds the values around {@code min + (i + 0.5) * binWidth}; foreground is above it.
 	 */
-	static int[] toIntHistogram( final long[] counts )
+	static double li( final long[] counts, final double min, final double binWidth )
 	{
-		long total = 0;
-		for ( final long c : counts )
-			total += c;
-
-		final double scale = Math.min( 1.0, ( double ) MAX_TOTAL / total );
-		final int[] histogram = new int[ counts.length ];
+		// shifted so that every value is positive (the iteration takes logs of the class means)
+		double sum = 0, n = 0;
 		for ( int i = 0; i < counts.length; ++i )
-			histogram[ i ] = ( int ) Math.round( counts[ i ] * scale );
-
-		return histogram;
+		{
+			sum += counts[ i ] * ( i + 0.5 ) * binWidth;
+			n += counts[ i ];
+		}
+		final double tolerance = binWidth / 2;
+		double next = sum / n, current = -2 * tolerance;
+		for ( int iteration = 0; iteration < 1000 && Math.abs( next - current ) > tolerance; ++iteration )
+		{
+			current = next;
+			double sb = 0, nb = 0, sf = 0, nf = 0;
+			for ( int i = 0; i < counts.length; ++i )
+			{
+				final double v = ( i + 0.5 ) * binWidth;
+				if ( v > current )
+				{
+					sf += counts[ i ] * v;
+					nf += counts[ i ];
+				}
+				else
+				{
+					sb += counts[ i ] * v;
+					nb += counts[ i ];
+				}
+			}
+			if ( nb == 0 || nf == 0 )
+				break;
+			final double meanBack = sb / nb, meanFore = sf / nf;
+			next = ( meanBack - meanFore ) / ( Math.log( meanBack ) - Math.log( meanFore ) );
+		}
+		return min + next;
 	}
 
-	private static AutoThresholder.Method ijMethod( final Method method )
+	/** Otsu's threshold (maximal between-class variance) of the same histogram: the lower edge of the first foreground bin */
+	static double otsu( final long[] counts, final double min, final double binWidth )
 	{
-		return method == Method.LI ? AutoThresholder.Method.Li : AutoThresholder.Method.Otsu;
+		double n = 0, sum = 0;
+		for ( int i = 0; i < counts.length; ++i )
+		{
+			n += counts[ i ];
+			sum += counts[ i ] * ( double ) i;
+		}
+		double nb = 0, sb = 0, best = -1;
+		int split = -1;
+		for ( int i = 0; i < counts.length - 1; ++i )
+		{
+			nb += counts[ i ];
+			sb += counts[ i ] * ( double ) i;
+			final double nf = n - nb;
+			if ( nb == 0 || nf == 0 )
+				continue;
+			final double d = sb / nb - ( sum - sb ) / nf;
+			final double between = nb * nf * d * d;
+			if ( between > best )
+			{
+				best = between;
+				split = i;
+			}
+		}
+		return split < 0 ? Double.NaN : min + ( split + 1 ) * binWidth;
 	}
+
 }
