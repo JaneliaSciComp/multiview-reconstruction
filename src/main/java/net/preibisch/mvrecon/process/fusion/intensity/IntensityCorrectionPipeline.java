@@ -121,7 +121,7 @@ public class IntensityCorrectionPipeline
 		public double backgroundWeight = 0;
 		/**
 		 * solve per-view gains plus one log-linear ramp fixed in every view's frame ({@link GainField}) instead of the
-		 * coefficient model; best with {@link Method#MEDIAN} matches
+		 * coefficient model; for {@link Method#MEDIAN} matches (the dialog offers it only there)
 		 */
 		public boolean gainField = false;
 		/** ridge on the log gains of the gain-field solve (0.001 .. 0.1) */
