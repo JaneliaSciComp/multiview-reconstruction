@@ -291,6 +291,12 @@ References:
 ### Two Workflows
 - **Fusion Export** (`ExportN5Api.java`): blends multiple views into a single fused volume per timepoint/channel, or one combined 5D OME-ZARR `[x,y,z,c,t]` container. Used for final visualization and downstream analysis.
 - **Resave** (`Resave_N5Api.java`): per-view re-export to N5 / HDF5 / Zarr **preserving the original view structure**. Multi-resolution pyramids per view, BDV-compatible XML metadata. For Zarr, **always** uses 5D OME-ZARR (3D expanded to `[x,y,z,c=1,t=1]`). Used for converting legacy formats or producing cloud-compatible copies.
+  Since 2026-11-04 `N5ApiTools.resaveS0Block( ..., preloadBlock )` copies each compute block into memory first (`copyBlockToMemory`:
+  the virtual Bio-Formats file-list loader caches one plane and `N5Utils.saveBlock` traverses the planes once per N5 block, so
+  streaming re-read every plane hundreds of times; the dialog shows the memory per thread, `preloadComputeBlocks`), and datasets of
+  the views that already exist are deleted after one question in the GUI (`existsBDVView` / `removeBDVView`; programmatic callers get
+  an error naming `ParametersResaveN5Api.overwriteExistingDatasets`). BigStitcher-Spark's `resave` mirrors both since 2026-11-05
+  (`--no-preloadComputeBlocks`, `--overwriteExistingDatasets`, a memory line per task; test `TestSparkResaveLocal`).
 
 **Key distinction**: fusion = one fused volume; resaving = separate per-view volumes.
 
