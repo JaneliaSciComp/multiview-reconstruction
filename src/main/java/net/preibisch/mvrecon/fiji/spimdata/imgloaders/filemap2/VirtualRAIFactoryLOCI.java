@@ -109,7 +109,8 @@ class VirtualRAIFactoryLOCI
 
 		final long[] dims = { reader.getSizeX(), reader.getSizeY(), reader.getSizeZ() };
 		final int[] cellDims = { ( int ) dims[ 0 ], ( int ) dims[ 1 ], 1 };
-		// TODO: just use an ArrayImg/CellImg, no cache for re-saving
+		// a one-plane cache is enough for display; re-saving preloads every compute block into memory
+		// (N5ApiTools.resaveS0Block), otherwise each N5 block would re-read all its planes through this cache
 		final ReadOnlyCachedCellImgFactory factory = new ReadOnlyCachedCellImgFactory( options().cellDimensions( cellDims ).cacheType( CacheType.BOUNDED ).maxCacheSize( 1 ) );
 
 		//System.out.println( "new cache ... " );
