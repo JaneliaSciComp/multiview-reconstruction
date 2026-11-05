@@ -25,6 +25,8 @@ package net.preibisch.mvrecon.fiji.plugin;
 import java.awt.Checkbox;
 import java.awt.Choice;
 import java.awt.Component;
+import java.awt.EventQueue;
+import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -235,7 +237,15 @@ public class Intensity_Adjustment implements PlugIn
 			show( model, !gain );
 		};
 		update.run();
+		// ImageJ calls the listener once more with a null event as the dialog closes, and the macro recorder records
+		// only the fields read in that call (it stops recording right after), so that call reads them all
+		final Parameters[] closing = { null };
 		gd.addDialogListener( ( dialog, e ) -> {
+			if ( e == null )
+			{
+				closing[ 0 ] = read( gd );
+				return true;
+			}
 			update.run();
 			gd.pack();
 			return true;
@@ -245,6 +255,46 @@ public class Intensity_Adjustment implements PlugIn
 		if ( gd.wasCanceled() )
 			return null;
 
+		// after OK, the closing call runs on the event thread, possibly still after showDialog returned here
+		if ( !EventQueue.isDispatchThread() )
+		{
+			try
+			{
+				EventQueue.invokeAndWait( () -> {} );
+			}
+			catch ( final InterruptedException | InvocationTargetException e )
+			{
+				throw new RuntimeException( e );
+			}
+		}
+		final Parameters p = closing[ 0 ] != null ? closing[ 0 ] : read( gd );
+
+		try
+		{
+			p.numCoefficients = Arrays.stream( defaultNumCoefficients.split( "," ) ).mapToInt( s -> Integer.parseInt( s.trim() ) ).toArray();
+		}
+		catch ( final NumberFormatException e )
+		{
+			IOFunctions.println( "Number of coefficients must be like 1,1,1 but was '" + defaultNumCoefficients + "'." );
+			return null;
+		}
+
+		try
+		{
+			p.validate();
+		}
+		catch ( final IllegalArgumentException e )
+		{
+			IOFunctions.println( "Intensity correction: " + e.getMessage() );
+			return null;
+		}
+
+		return p;
+	}
+
+	/** reads every field, shown or not, in the order they were added; what the choices do not use stays at its default */
+	private static Parameters read( final GenericDialog gd )
+	{
 		final Parameters p = new Parameters();
 		p.method = Method.values()[ defaultMethod = gd.getNextChoiceIndex() ];
 		defaultNumCoefficients = gd.getNextString().trim();
@@ -288,26 +338,6 @@ public class Intensity_Adjustment implements PlugIn
 			p.minSignal = defaultMinSignal;
 			if ( !p.gainField )
 				p.backgroundWeight = defaultBackgroundWeight;
-		}
-
-		try
-		{
-			p.numCoefficients = Arrays.stream( defaultNumCoefficients.split( "," ) ).mapToInt( s -> Integer.parseInt( s.trim() ) ).toArray();
-		}
-		catch ( final NumberFormatException e )
-		{
-			IOFunctions.println( "Number of coefficients must be like 1,1,1 but was '" + defaultNumCoefficients + "'." );
-			return null;
-		}
-
-		try
-		{
-			p.validate();
-		}
-		catch ( final IllegalArgumentException e )
-		{
-			IOFunctions.println( "Intensity correction: " + e.getMessage() );
-			return null;
 		}
 
 		return p;
