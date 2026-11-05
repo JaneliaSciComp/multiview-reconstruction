@@ -93,7 +93,7 @@ public class FastLinearIntensityMap {
 		final FloatType floatType = new FloatType();
 		final LinearIntensityMapProcessor processor = new LinearIntensityMapProcessor(
 				TransformCoefficients.create(imageDimensions, coefficients), coefficients.threshold(),
-				PerVoxelGain.of(coefficients, imageDimensions));
+				PerVoxelGain.of(coefficients));
 		final UnaryBlockOperator<FloatType, FloatType> op = new DefaultUnaryBlockOperator<>(floatType, floatType, numDimensions, numDimensions, processor);
 		return op.adaptSourceType(type, ClampType.NONE).adaptTargetType(type, clampType);
 	}
@@ -121,7 +121,7 @@ public class FastLinearIntensityMap {
 		}
 
 		/**
-		 * @param gain per-voxel factor on the scale (gain field, unbleaching), null = none
+		 * @param gain per-voxel factor on the scale (unbleaching), null = none
 		 */
 		LinearIntensityMapProcessor(final TransformCoefficients coefficients, final double threshold, final PerVoxelGain gain) {
 			super(PrimitiveType.FLOAT, coefficients.numDimensions());
@@ -206,57 +206,32 @@ public class FastLinearIntensityMap {
 	}
 
 	/**
-	 * The factor on the scale {@code a} at each voxel: the gain field {@code exp(c . u)} of {@link Coefficients#gainField()}
-	 * times the unbleaching {@code 1 / (1 - bleachFactor)^n} of {@link Coefficients#bleaching()}. Shared by the processor
-	 * copies (no mutable state).
+	 * The factor on the scale {@code a} at each voxel: the unbleaching {@code 1 / (1 - bleachFactor)^n} of
+	 * {@link Coefficients#bleaching()}. Shared by the processor copies (no mutable state).
 	 */
 	static final class PerVoxelGain {
 
-		private final double[] c; // null = no ramp
-		private final long[] n;
-		private final Bleaching bleaching; // null = none
+		private final Bleaching bleaching;
 		private final float[] bleachGains;
 
-		private PerVoxelGain(final double[] c, final Dimensions dims, final Bleaching bleaching) {
-			this.c = c;
-			this.n = dims.dimensionsAsLongArray();
+		private PerVoxelGain(final Bleaching bleaching) {
 			this.bleaching = bleaching;
-			if (bleaching == null)
-				bleachGains = null;
-			else {
-				bleachGains = new float[bleaching.size() + 1];
-				for (int k = 0; k < bleachGains.length; ++k)
-					bleachGains[k] = (float) bleaching.gain(k);
-			}
+			bleachGains = new float[bleaching.size() + 1];
+			for (int k = 0; k < bleachGains.length; ++k)
+				bleachGains[k] = (float) bleaching.gain(k);
 		}
 
-		/** @return null if {@code coefficients} have neither a gain field nor a bleaching */
-		static PerVoxelGain of(final Coefficients coefficients, final Dimensions imageDimensions) {
-			final double[] c = coefficients.gainField();
+		/** @return null if {@code coefficients} have no bleaching */
+		static PerVoxelGain of(final Coefficients coefficients) {
 			final Bleaching b = coefficients.bleaching();
-			return c == null && b == null ? null : new PerVoxelGain(c, imageDimensions, b);
-		}
-
-		private double u(final int d, final double x) {
-			return (x + 0.5) / n[d] - 0.5;
+			return b == null ? null : new PerVoxelGain(b);
 		}
 
 		/** fills {@code g[0..len)} for the voxels {@code start + (i, 0, ...)} */
 		void line(final long[] start, final int len, final float[] g, final int[] count) {
-			if (c == null)
-				Arrays.fill(g, 0, len, 1f);
-			else {
-				double rest = 0;
-				for (int d = 1; d < n.length; ++d)
-					rest += c[d] * u(d, start[d]);
-				for (int x = 0; x < len; ++x)
-					g[x] = (float) Math.exp(c[0] * u(0, start[0] + x) + rest);
-			}
-			if (bleaching != null) {
-				bleaching.countLine(start, len, count);
-				for (int x = 0; x < len; ++x)
-					g[x] *= bleachGains[count[x]];
-			}
+			bleaching.countLine(start, len, count);
+			for (int x = 0; x < len; ++x)
+				g[x] = bleachGains[count[x]];
 		}
 	}
 }

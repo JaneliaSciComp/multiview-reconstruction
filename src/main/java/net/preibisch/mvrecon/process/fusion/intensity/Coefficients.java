@@ -55,13 +55,6 @@ public class Coefficients implements Serializable {
 	 */
 	private final double bleachFactor;
 
-	/**
-	 * Log-gain ramp {@code c} across the image: the scale {@code a} is multiplied by {@code exp(sum_d c[d] * u_d)},
-	 * where {@code u_d = (x_d + 0.5) / n_d - 0.5} is the position in [-0.5, 0.5] along an image axis of {@code n_d}
-	 * voxels (at any resolution level). null = none. See {@link GainField}.
-	 */
-	private final double[] gainField;
-
 	/** Where the voxels of the view were imaged before; set per image by the caller, never stored. */
 	private final transient Bleaching bleaching;
 
@@ -87,18 +80,16 @@ public class Coefficients implements Serializable {
 		Arrays.setAll(flattenedCoefficients, i -> coefficients[i].clone());
 		threshold = Double.NaN;
 		bleachFactor = 0;
-		gainField = null;
 		bleaching = null;
 	}
 
 	private Coefficients(final Coefficients other, final double threshold, final double bleachFactor,
-			final double[] gainField, final Bleaching bleaching) {
+			final Bleaching bleaching) {
 		this.size = other.size;
 		this.strides = other.strides;
 		this.flattenedCoefficients = other.flattenedCoefficients;
 		this.threshold = threshold;
 		this.bleachFactor = bleachFactor;
-		this.gainField = gainField;
 		this.bleaching = bleaching;
 	}
 
@@ -115,7 +106,7 @@ public class Coefficients implements Serializable {
 	 *         (pass {@link Double#NaN} to correct every voxel)
 	 */
 	public Coefficients withThreshold(final double threshold) {
-		return new Coefficients(this, threshold, bleachFactor, gainField, bleaching);
+		return new Coefficients(this, threshold, bleachFactor, bleaching);
 	}
 
 	/**
@@ -132,24 +123,7 @@ public class Coefficients implements Serializable {
 	public Coefficients withBleachFactor(final double bleachFactor) {
 		if (!(bleachFactor >= 0 && bleachFactor < 1))
 			throw new IllegalArgumentException("bleachFactor must be in [0, 1), but was " + bleachFactor);
-		return new Coefficients(this, threshold, bleachFactor, gainField, bleaching);
-	}
-
-	/**
-	 * @return the log-gain ramp across the image (one entry per axis), or null if there is none
-	 */
-	public double[] gainField() {
-		return gainField == null ? null : gainField.clone();
-	}
-
-	/**
-	 * @return a view of these coefficients whose scale varies across the image as {@code exp(c . u)}
-	 *         (null = no ramp), see {@link #gainField()}
-	 */
-	public Coefficients withGainField(final double[] c) {
-		if (c != null && c.length != numDimensions())
-			throw new IllegalArgumentException("gain field needs " + numDimensions() + " entries, but has " + c.length);
-		return new Coefficients(this, threshold, bleachFactor, c == null ? null : c.clone(), bleaching);
+		return new Coefficients(this, threshold, bleachFactor, bleaching);
 	}
 
 	/** @return where the voxels of the image were imaged before, or null (not stored) */
@@ -163,7 +137,7 @@ public class Coefficients implements Serializable {
 	 *         {@link #bleachFactor()} is the factor the bleaching was built with.
 	 */
 	public Coefficients withBleaching(final Bleaching bleaching) {
-		return new Coefficients(this, threshold, bleachFactor, gainField, bleaching);
+		return new Coefficients(this, threshold, bleachFactor, bleaching);
 	}
 
 	int size(final int d) {

@@ -220,7 +220,7 @@ public class IntensityPreview
 			sourceToGlobal.concatenate( raw.getMipmapTransforms()[ level ] );
 
 			// coefficients matched on unbleached intensities apply to unbleached intensities: undo the bleaching of
-			// each voxel by the earlier views first (the gain field, if any, is applied by the map itself)
+			// each voxel by the earlier views first
 			final Coefficients coefficients = stored == null
 					? IntensityCorrectionViewer.IDENTITY
 					: stored.withBleaching( Bleaching.of( spimData, new ViewId( timepointId, setupId ), sourceToGlobal, stored.bleachFactor() ) );

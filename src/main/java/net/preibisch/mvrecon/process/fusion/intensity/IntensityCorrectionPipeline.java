@@ -64,7 +64,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  */
 public class IntensityCorrectionPipeline
 {
-	/** MEDIAN: the ratio of the medians of the voxels both views see (a pure gain, spotlight's "intersection"; for a SCALE solve or the gain field) */
+	/** MEDIAN: the ratio of the medians of the voxels both views see (a pure gain, spotlight's "intersection"; for a SCALE solve) */
 	public enum Method { RANSAC, HISTOGRAM, MEDIAN }
 
 	public enum TransformationModel { AFFINE, TRANSLATION, SCALE, IDENTITY }
@@ -119,13 +119,6 @@ public class IntensityCorrectionPipeline
 		public double minSignal = 0;
 		/** LI / OTSU only: weight of each pair's background levels as an extra match, 0 = off */
 		public double backgroundWeight = 0;
-		/**
-		 * solve per-view gains plus one log-linear ramp fixed in every view's frame ({@link GainField}) instead of the
-		 * coefficient model; for {@link Method#MEDIAN} matches (the dialog offers it only there)
-		 */
-		public boolean gainField = false;
-		/** ridge on the log gains of the gain-field solve (0.001 .. 0.1) */
-		public double gainFieldLambda = 0.001;
 
 		/** sets {@link #threshold} and {@link #minIntensity} from a number, "LI" or "OTSU" */
 		public Parameters threshold( final String minThreshold )
@@ -170,10 +163,6 @@ public class IntensityCorrectionPipeline
 				throw new IllegalArgumentException( "render scale must be in (0, 1], but was " + renderScale );
 			if ( !( bleachFactor >= 0 && bleachFactor < 1 ) )
 				throw new IllegalArgumentException( "bleach factor must be in [0, 1), but was " + bleachFactor );
-			if ( gainField && backgroundWeight > 0 )
-				throw new IllegalArgumentException( "the gain field solves pure gains; background matches (background weight) do not apply" );
-			if ( !( gainFieldLambda >= 0 ) )
-				throw new IllegalArgumentException( "gain field lambda must be >= 0, but was " + gainFieldLambda );
 		}
 
 		/** the matching parameters; also recorded with BigStitcher-Spark's matches ("matching-done.txt") */
@@ -322,19 +311,6 @@ public class IntensityCorrectionPipeline
 			final Map< ViewId, Double > backgrounds,
 			final Parameters p )
 	{
-		return solve( null, matches, thresholds, backgrounds, p );
-	}
-
-	/**
-	 * @param data the views' geometry, needed for {@link Parameters#gainField} (null otherwise)
-	 */
-	public static Map< ViewId, Coefficients > solve(
-			final AbstractSpimData< ? > data,
-			final List< ViewPairCoefficientMatches > matches,
-			final Map< ViewId, Double > thresholds,
-			final Map< ViewId, Double > backgrounds,
-			final Parameters p )
-	{
 		List< ViewPairCoefficientMatches > toSolve = matches;
 		if ( p.minSignal > 0 )
 		{
@@ -349,17 +325,7 @@ public class IntensityCorrectionPipeline
 			toSolve = IntensityCorrection.addBackgroundMatches( toSolve, backgrounds, p.backgroundWeight );
 		}
 
-		final Map< ViewId, Coefficients > coefficients;
-		if ( p.gainField )
-		{
-			if ( data == null )
-				throw new IllegalArgumentException( "the gain field needs the views' geometry (spimData)" );
-			final StringBuilder log = new StringBuilder();
-			coefficients = GainField.solve( data, p.numCoefficients, toSolve, p.gainFieldLambda, log );
-			IOFunctions.println( log.toString() );
-		}
-		else
-			coefficients = IntensityCorrection.solve( p.numCoefficients, toSolve, p.solverIterations, p.createModel() );
+		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( p.numCoefficients, toSolve, p.solverIterations, p.createModel() );
 
 		coefficients.replaceAll( ( v, c ) -> {
 			Coefficients r = thresholds != null && thresholds.containsKey( v ) ? c.withThreshold( thresholds.get( v ) ) : c;
@@ -420,7 +386,7 @@ public class IntensityCorrectionPipeline
 			} ) ).get();
 
 			IOFunctions.println( new Date() + ": solving ..." );
-			final Map< ViewId, Coefficients > coefficients = solve( data, matches, thresholds, backgrounds, p );
+			final Map< ViewId, Coefficients > coefficients = solve( matches, thresholds, backgrounds, p );
 			IOFunctions.println( new Date() + ": intensity correction computed for " + coefficients.size() + " views." );
 			return coefficients;
 		}

@@ -22,7 +22,6 @@
  */
 package net.preibisch.mvrecon.fiji.plugin;
 
-import java.awt.Checkbox;
 import java.awt.Choice;
 import java.awt.Component;
 import java.awt.EventQueue;
@@ -68,7 +67,7 @@ public class Intensity_Adjustment implements PlugIn
 	public static int defaultThreshold = Threshold.LI.ordinal();
 	public static double defaultMinIntensity = DEFAULTS.minIntensity;
 	public static int defaultModel = DEFAULTS.model.ordinal();
-	/** MEDIAN matches are pure gains: without the gain field they are solved with SCALE unless asked otherwise */
+	/** MEDIAN matches are pure gains: they are solved with SCALE unless asked otherwise */
 	public static int defaultMedianModel = TransformationModel.SCALE.ordinal();
 	public static int defaultRegularization1 = DEFAULTS.regularization1.ordinal();
 	public static double defaultLambda1 = DEFAULTS.lambda1;
@@ -87,8 +86,6 @@ public class Intensity_Adjustment implements PlugIn
 	public static double defaultMinSignal = DEFAULTS.minSignal;
 	public static double defaultBackgroundWeight = DEFAULTS.backgroundWeight;
 	public static double defaultBleachFactor = DEFAULTS.bleachFactor;
-	public static boolean defaultGainField = DEFAULTS.gainField;
-	public static double defaultGainFieldLambda = DEFAULTS.gainFieldLambda;
 
 	private static final String[] thresholdChoices = { "Fixed minimum intensity", "LI (per view)", "OTSU (per view)" };
 
@@ -155,7 +152,7 @@ public class Intensity_Adjustment implements PlugIn
 
 	/**
 	 * One dialog: the choices that decide what else applies come first (method, coefficients, render scale,
-	 * threshold, gain field), and only the fields those choices use are shown, updated as they change. Every field
+	 * threshold), and only the fields those choices use are shown, updated as they change. Every field
 	 * always exists and is read in the same order, so a recorded macro replays whatever was chosen.
 	 *
 	 * @return the parameters, or null if canceled or invalid
@@ -174,10 +171,7 @@ public class Intensity_Adjustment implements PlugIn
 			gd.addCheckbox( "Correct_only_above_threshold (preview & fusion default)", FusionGUI.defaultIntensityOnlyAboveThreshold );
 			gd.addNumericField( "Minimal_signal above threshold (0 = off)", defaultMinSignal, 1 );
 		} );
-		// MEDIAN only: the gain field needs one gain ratio per pair, which a RANSAC / HISTOGRAM line only approximates
-		final List< Component > gainFieldOption = added( gd, () -> gd.addCheckbox( "Gain_field (per-view gains + one ramp across every view)", defaultGainField ) );
-		final List< Component > gainField = added( gd, () -> gd.addNumericField( "Gain_field_lambda (ridge on the log gains)", defaultGainFieldLambda, 4 ) );
-		final List< Component > coefficientSolve = added( gd, () -> gd.addNumericField( "Solver_iterations", defaultSolverIterations, 0 ) );
+		gd.addNumericField( "Solver_iterations", defaultSolverIterations, 0 );
 		final List< Component > backgroundWeight = added( gd, () -> gd.addNumericField( "Background_weight (0 = off)", defaultBackgroundWeight, 1 ) );
 
 		gd.addMessage( "" );
@@ -193,30 +187,26 @@ public class Intensity_Adjustment implements PlugIn
 		gd.addNumericField( "Maximum_intensity (0 = no limit)", defaultMaxIntensity, 1 );
 		gd.addNumericField( "Bleach_factor (intensity lost per earlier exposure, views acquired in setup id order; 0 = off)", defaultBleachFactor, 3 );
 
-		final List< Component > model = added( gd, () -> {
-			gd.addMessage( "" );
-			final int m = medianModelShown[ 0 ] ? defaultMedianModel : defaultModel;
-			gd.addChoice( "Intensity_model", names( TransformationModel.values() ), TransformationModel.values()[ m ].name() );
-			gd.addChoice( "Regularization_1", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization1 ].name() );
-			gd.addNumericField( "Lambda_1 [0..1]", defaultLambda1, 3 );
-			gd.addChoice( "Regularization_2", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization2 ].name() );
-			gd.addNumericField( "Lambda_2 [0..1]", defaultLambda2, 3 );
-		} );
+		gd.addMessage( "" );
+		final int m = medianModelShown[ 0 ] ? defaultMedianModel : defaultModel;
+		gd.addChoice( "Intensity_model", names( TransformationModel.values() ), TransformationModel.values()[ m ].name() );
+		gd.addChoice( "Regularization_1", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization1 ].name() );
+		gd.addNumericField( "Lambda_1 [0..1]", defaultLambda1, 3 );
+		gd.addChoice( "Regularization_2", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization2 ].name() );
+		gd.addNumericField( "Lambda_2 [0..1]", defaultLambda2, 3 );
 		gd.addMessage( "MEDIAN: ratio of the medians of the voxels both views see (a pure gain per pair); HISTOGRAM: matched\n"
 				+ "intensity quantiles; RANSAC: robust fit to voxel pairs. The model is used by RANSAC / HISTOGRAM matching\n"
-				+ "and by the solve without the gain field." );
+				+ "and by the solve." );
 
 		final Choice methodChoice = ( Choice ) gd.getChoices().get( 0 );
 		final Choice thresholdChoice = ( Choice ) gd.getChoices().get( 1 );
 		final Choice modelChoice = ( Choice ) gd.getChoices().get( 2 );
-		final Checkbox gainFieldBox = ( Checkbox ) gd.getCheckboxes().get( 1 );
 
 		final Runnable update = () -> {
 			final Method method = Method.values()[ methodChoice.getSelectedIndex() ];
 			final boolean fixed = Threshold.values()[ thresholdChoice.getSelectedIndex() ] == Threshold.FIXED;
 			// MEDIAN matches are pure gains: offer SCALE (or what was last chosen for MEDIAN) when switching to it
 			final boolean median = method == Method.MEDIAN;
-			final boolean gain = median && gainFieldBox.getState();
 			if ( median != medianModelShown[ 0 ] )
 			{
 				if ( median )
@@ -228,13 +218,9 @@ public class Intensity_Adjustment implements PlugIn
 			}
 			show( fixedThreshold, fixed );
 			show( autoThreshold, !fixed );
-			show( gainFieldOption, median );
-			show( gainField, gain );
-			show( coefficientSolve, !gain );
-			show( backgroundWeight, !fixed && !gain );
+			show( backgroundWeight, !fixed );
 			show( ransac, method == Method.RANSAC );
 			show( histogram, method == Method.HISTOGRAM );
-			show( model, !gain );
 		};
 		update.run();
 		// ImageJ calls the listener once more with a null event as the dialog closes, and the macro recorder records
@@ -303,9 +289,6 @@ public class Intensity_Adjustment implements PlugIn
 		defaultMinIntensity = gd.getNextNumber();
 		final boolean onlyAboveThreshold = gd.getNextBoolean();
 		defaultMinSignal = gd.getNextNumber();
-		// the checkbox is remembered for MEDIAN, and is no option for the other methods
-		p.gainField = ( defaultGainField = gd.getNextBoolean() ) && p.method == Method.MEDIAN;
-		p.gainFieldLambda = defaultGainFieldLambda = gd.getNextNumber();
 		p.solverIterations = defaultSolverIterations = ( int ) Math.round( gd.getNextNumber() );
 		defaultBackgroundWeight = gd.getNextNumber();
 		p.ransacIterations = defaultRansacIterations = ( int ) Math.round( gd.getNextNumber() );
@@ -336,8 +319,7 @@ public class Intensity_Adjustment implements PlugIn
 		{
 			FusionGUI.defaultIntensityOnlyAboveThreshold = onlyAboveThreshold;
 			p.minSignal = defaultMinSignal;
-			if ( !p.gainField )
-				p.backgroundWeight = defaultBackgroundWeight;
+			p.backgroundWeight = defaultBackgroundWeight;
 		}
 
 		return p;
