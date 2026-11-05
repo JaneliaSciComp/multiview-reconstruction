@@ -40,7 +40,7 @@ import ij.gui.StackWindow;
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Interval;
-import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
@@ -55,7 +55,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools.ImgDataType;
-import net.preibisch.mvrecon.process.fusion.lazy.LazyAffineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.export.DisplayImage;
@@ -214,18 +214,20 @@ public class DisplayFusedImagesPopup extends JMenu implements ExplorerWindowSeta
 									Double.NaN,
 									downsampling );
 
-					final RandomAccessibleInterval<FloatType> lazyFused = LazyAffineFusion.init(
+					// same block-based fusion as Image Fusion (overlap is pre-filtered once, not per block)
+					final BlockSupplier<FloatType> fused = BlkAffineFusion.init(
 							null,
 							spimData.getSequenceDescription().getImgLoader(),
 							views,
 							registrations,
 							spimData.getSequenceDescription().getViewDescriptions(),
 							defaultFusionType, // blending
+							Double.NaN,
 							defaultInterpolation, // linear interpolatio
 							null,
 							bbDS,
 							new FloatType(),
-							new int[] { 128, 128, 1 } );
+							new DisplayImage().blocksize() );
 					/*
 					final ImagePlus imp =
 							FusionTools.display(
@@ -237,7 +239,7 @@ public class DisplayFusedImagesPopup extends JMenu implements ExplorerWindowSeta
 									imgType );
 					*/
 
-					final ImagePlus imp = FusionTools.getImagePlusInstance( lazyFused, false, "Fused Non-rigid", 0, 255, DisplayImage.service );
+					final ImagePlus imp = DisplayImage.getImagePlusInstance( fused, bbDS, new DisplayImage().blocksize(), true, "Fused", 0, 255, DisplayImage.service ); // virtual: only viewed slices are fused
 
 					if ( imp.getStack().getSize() > 1 )
 					{
