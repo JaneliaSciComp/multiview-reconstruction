@@ -172,7 +172,8 @@ public class Intensity_Adjustment implements PlugIn
 			gd.addCheckbox( "Correct_only_above_threshold (preview & fusion default)", FusionGUI.defaultIntensityOnlyAboveThreshold );
 			gd.addNumericField( "Minimal_signal above threshold (0 = off)", defaultMinSignal, 1 );
 		} );
-		gd.addCheckbox( "Gain_field (per-view gains + one ramp across every view; best with MEDIAN)", defaultGainField );
+		// MEDIAN only: the gain field needs one gain ratio per pair, which a RANSAC / HISTOGRAM line only approximates
+		final List< Component > gainFieldOption = added( gd, () -> gd.addCheckbox( "Gain_field (per-view gains + one ramp across every view)", defaultGainField ) );
 		final List< Component > gainField = added( gd, () -> gd.addNumericField( "Gain_field_lambda (ridge on the log gains)", defaultGainFieldLambda, 4 ) );
 		final List< Component > coefficientSolve = added( gd, () -> gd.addNumericField( "Solver_iterations", defaultSolverIterations, 0 ) );
 		final List< Component > backgroundWeight = added( gd, () -> gd.addNumericField( "Background_weight (0 = off)", defaultBackgroundWeight, 1 ) );
@@ -211,9 +212,9 @@ public class Intensity_Adjustment implements PlugIn
 		final Runnable update = () -> {
 			final Method method = Method.values()[ methodChoice.getSelectedIndex() ];
 			final boolean fixed = Threshold.values()[ thresholdChoice.getSelectedIndex() ] == Threshold.FIXED;
-			final boolean gain = gainFieldBox.getState();
 			// MEDIAN matches are pure gains: offer SCALE (or what was last chosen for MEDIAN) when switching to it
 			final boolean median = method == Method.MEDIAN;
+			final boolean gain = median && gainFieldBox.getState();
 			if ( median != medianModelShown[ 0 ] )
 			{
 				if ( median )
@@ -225,12 +226,13 @@ public class Intensity_Adjustment implements PlugIn
 			}
 			show( fixedThreshold, fixed );
 			show( autoThreshold, !fixed );
+			show( gainFieldOption, median );
 			show( gainField, gain );
 			show( coefficientSolve, !gain );
 			show( backgroundWeight, !fixed && !gain );
 			show( ransac, method == Method.RANSAC );
 			show( histogram, method == Method.HISTOGRAM );
-			show( model, !median || !gain );
+			show( model, !gain );
 		};
 		update.run();
 		gd.addDialogListener( ( dialog, e ) -> {
@@ -251,7 +253,8 @@ public class Intensity_Adjustment implements PlugIn
 		defaultMinIntensity = gd.getNextNumber();
 		final boolean onlyAboveThreshold = gd.getNextBoolean();
 		defaultMinSignal = gd.getNextNumber();
-		p.gainField = defaultGainField = gd.getNextBoolean();
+		// the checkbox is remembered for MEDIAN, and is no option for the other methods
+		p.gainField = ( defaultGainField = gd.getNextBoolean() ) && p.method == Method.MEDIAN;
 		p.gainFieldLambda = defaultGainFieldLambda = gd.getNextNumber();
 		p.solverIterations = defaultSolverIterations = ( int ) Math.round( gd.getNextNumber() );
 		defaultBackgroundWeight = gd.getNextNumber();
