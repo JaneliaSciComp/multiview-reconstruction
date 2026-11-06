@@ -67,6 +67,8 @@ import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.downsample.Downsample;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.planar.PlanarImgFactory;
+import net.imglib2.loops.LoopBuilder;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
@@ -167,6 +169,58 @@ public class N5ApiTools
 		}
 
 		return path;
+	}
+
+	/** the group that holds all datasets (all resolution levels) of a view for the given storage format */
+	public static String createBDVViewGroup( final ViewId viewId, final StorageFormat storageType )
+	{
+		if ( StorageFormat.N5.equals( storageType ) )
+			return "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId();
+		else if ( StorageFormat.HDF5.equals( storageType ) )
+			return "t" + String.format( "%05d", viewId.getTimePointId() ) + "/s" + String.format( "%02d", viewId.getViewSetupId() );
+		else if ( StorageFormat.ZARR.equals( storageType ) || StorageFormat.ZARR2.equals( storageType ) )
+			return "s" + viewId.getViewSetupId() + "-t" + viewId.getTimePointId() + ".zarr";
+		else
+			throw new RuntimeException( "BDV-compatible dataset cannot be written for " + storageType + " (yet)." );
+	}
+
+	/** whether the container already holds datasets of this view */
+	public static boolean existsBDVView( final N5Writer n5, final ViewId viewId, final StorageFormat storageType )
+	{
+		return n5.exists( createBDVViewGroup( viewId, storageType ) );
+	}
+
+	/**
+	 * Deletes the datasets of a view (all resolution levels) from the container, and the setup-level group
+	 * (N5: the setup attributes, HDF5: resolutions and subdivisions) if no other timepoint of that setup remains,
+	 * so that a following re-save starts from a clean state. Datasets of other views are not touched.
+	 */
+	public static void removeBDVView( final N5Writer n5, final ViewId viewId, final StorageFormat storageType )
+	{
+		final String group = createBDVViewGroup( viewId, storageType );
+
+		if ( n5.exists( group ) )
+			n5.remove( group );
+
+		if ( StorageFormat.N5.equals( storageType ) )
+		{
+			final String setupGroup = "setup" + viewId.getViewSetupId();
+
+			if ( n5.exists( setupGroup ) && n5.list( setupGroup ).length == 0 )
+				n5.remove( setupGroup );
+		}
+		else if ( StorageFormat.HDF5.equals( storageType ) )
+		{
+			final String setup = "s" + String.format( "%02d", viewId.getViewSetupId() );
+			boolean otherTimepoints = false;
+
+			for ( final String child : n5.list( "/" ) )
+				if ( child.startsWith( "t" ) && n5.exists( child + "/" + setup ) )
+					otherTimepoints = true;
+
+			if ( !otherTimepoints && n5.exists( setup ) )
+				n5.remove( setup );
+		}
 	}
 
 	public static String createDownsampledBDVPath( final String s0path, final int level, final StorageFormat storageType )
@@ -780,6 +834,10 @@ public class N5ApiTools
 		return ds;
 	}
 
+	/**
+	 * Re-saves one s0 compute block, preloading it into memory first (see
+	 * {@link #resaveS0Block(SpimData2, N5Writer, StorageFormat, DataType, Function, long[][], boolean)}).
+	 */
 	public static <T extends NativeType<T>> void resaveS0Block(
 			final SpimData2 data,
 			final N5Writer n5,
@@ -787,6 +845,28 @@ public class N5ApiTools
 			final DataType dataType,
 			final Function<long[][], String> gridBlockToDataset, // gridBlock to dataset name for s0
 			final long[][] gridBlock )
+	{
+		resaveS0Block( data, n5, storageType, dataType, gridBlockToDataset, gridBlock, true );
+	}
+
+	/**
+	 * Re-saves one s0 compute block (block size x compute block size factor, i.e. one shard or a group of blocks).
+	 *
+	 * @param preloadBlock if true, the compute block is copied into memory once before it is written block by block
+	 *        ({@link #copyBlockToMemory(RandomAccessibleInterval)}). Virtual image loaders such as the Bio-Formats
+	 *        based file-list loader cache a single plane, and N5Utils.saveBlock traverses the planes once per N5
+	 *        block, so without the copy every plane is re-read from the file for every N5 block of the compute block
+	 *        (hundreds of times for a full-plane compute block). The copy needs the memory of one compute block per
+	 *        thread; if it cannot be allocated, the block is streamed as before.
+	 */
+	public static <T extends NativeType<T>> void resaveS0Block(
+			final SpimData2 data,
+			final N5Writer n5,
+			final StorageFormat storageType,
+			final DataType dataType,
+			final Function<long[][], String> gridBlockToDataset, // gridBlock to dataset name for s0
+			final long[][] gridBlock,
+			final boolean preloadBlock )
 	{
 		final ViewId viewId = gridBlockToViewId( gridBlock );
 		final String dataset = gridBlockToDataset.apply( gridBlock );
@@ -825,9 +905,56 @@ public class N5ApiTools
 		}
 
 		final RandomAccessibleInterval< T > sourceGridBlock = Views.offsetInterval( image, blockOffset, blockSize );
-		saveNonEmptyBlock( sourceGridBlock, n5, dataset, gridOffset, image.getType().createVariable() );
+		final RandomAccessibleInterval< T > block = preloadBlock ? copyBlockToMemory( sourceGridBlock ) : sourceGridBlock;
+		saveNonEmptyBlock( block, n5, dataset, gridOffset, image.getType().createVariable() );
 
 		System.out.println( "ViewId " + Group.pvid( viewId ) + ", written block: offset=" + Util.printCoordinates( blockOffset ) + ", dimension=" + Util.printCoordinates( blockSize ) );
+	}
+
+	/**
+	 * Copies a block into a PlanarImg, plane by plane (first dimension innermost, last dimension outermost), so a
+	 * virtual source with a one-plane cache reads every plane exactly once. If the memory cannot be allocated, a
+	 * warning is printed and the source itself is returned.
+	 */
+	public static < T extends NativeType< T > > RandomAccessibleInterval< T > copyBlockToMemory( final RandomAccessibleInterval< T > source )
+	{
+		final Img< T > copy;
+
+		try
+		{
+			copy = new PlanarImgFactory<>( source.getType().createVariable() ).create( source.dimensionsAsLongArray() );
+		}
+		catch ( final OutOfMemoryError e )
+		{
+			IOFunctions.println( "WARNING: not enough memory to preload a compute block of " + Util.printCoordinates( source.dimensionsAsLongArray() ) +
+					" pixels, streaming it from the image loader instead (slow for virtual TIFF loaders). Reduce the compute block size factor or the number of threads." );
+			return source;
+		}
+
+		// LoopBuilder iterates with the first dimension innermost and the last one outermost, i.e. plane by plane
+		LoopBuilder.setImages( Views.zeroMin( source ), copy ).forEachPixel( ( i, o ) -> o.set( i ) );
+
+		return Views.translate( copy, source.minAsLongArray() );
+	}
+
+	/** bytes per pixel of an N5 data type (8 for unknown ones) */
+	public static int bytesPerPixel( final DataType dataType )
+	{
+		switch ( dataType )
+		{
+		case UINT8:
+		case INT8:
+			return 1;
+		case UINT16:
+		case INT16:
+			return 2;
+		case UINT32:
+		case INT32:
+		case FLOAT32:
+			return 4;
+		default:
+			return 8;
+		}
 	}
 
 	public static Map< Integer, DataType > assembleDataTypes(

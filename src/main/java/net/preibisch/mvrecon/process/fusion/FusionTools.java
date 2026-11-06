@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
 import bdv.util.ConstantRandomAccessible;
 import ij.IJ;
 import ij.ImagePlus;
-import mpicbg.models.AffineModel1D;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
@@ -100,7 +100,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DisplayFusedImagesPopu
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.export.DisplayImage;
-import net.preibisch.mvrecon.process.fusion.intensityadjust.IntensityAdjuster;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.lazy.LazyFusionTools;
 import net.preibisch.mvrecon.process.fusion.transformed.FusedRandomAccessibleInterval;
 import net.preibisch.mvrecon.process.fusion.transformed.FusedRandomAccessibleInterval.Fusion;
@@ -209,7 +209,7 @@ public class FusionTools
 				viewIds,
 				fusionType,
 				new BoundingBoxMaximal( viewIds, spimData ).estimate( "Full Bounding Box" ),
-				adjustIntensities ? spimData.getIntensityAdjustments().getIntensityAdjustments() : null );
+				adjustIntensities ? spimData.getIntensityAdjustments().getCoefficients( false ) : null );
 	}
 
 	/**
@@ -270,7 +270,7 @@ public class FusionTools
 			final Collection< ? extends ViewId > viewIds,
 			final FusionType fusionType,
 			final Interval bb,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments )
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments )
 	{
 		return fuseVirtual( spimData, viewIds, fusionType, 1, bb, intensityAdjustments );
 	}
@@ -281,7 +281,7 @@ public class FusionTools
 			final FusionType fusionType,
 			final int interpolation,
 			final Interval boundingBox,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments )
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments )
 	{
 		final BasicImgLoader imgLoader = spimData.getSequenceDescription().getImgLoader();
 
@@ -422,7 +422,7 @@ public class FusionTools
 			final int interpolation,
 			final Interval boundingBox, // is already downsampled
 			//final double downsampling,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments )
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments )
 	{
 		// go through the views and check if they are all 2-dimensional
 		final boolean is2d = is2d( views.stream().map( v -> viewDescriptions.get( v ) ).collect( Collectors.toList() ) );
@@ -513,10 +513,7 @@ public class FusionTools
 			RandomAccessibleInterval inputImg = DownsampleTools.openDownsampled( imgloader, viewId, model, usedDownsampleFactors );
 
 			if ( intensityAdjustments != null && intensityAdjustments.containsKey( viewId ) )
-				inputImg = Converters.convert(
-						convertInput( inputImg ),
-						new IntensityAdjuster( intensityAdjustments.get( viewId ) ),
-						new FloatType() );
+				inputImg = IntensityCorrection.correct( inputImg, intensityAdjustments.get( viewId ) );
 
 			images.add( TransformView.transformView( inputImg, model, bb, 0, interpolation ) );
 

@@ -50,6 +50,7 @@ public class ParametersResaveN5Api
 	public static int defaultBlockSizeXY = 128;
 
 	public static boolean defaultUseSharding = true;
+	public static boolean defaultPreloadComputeBlocks = true;
 
 	public static int defaultFormat = 0; // ZARR
 	public static int defaultNumThreads = Math.max( 1, Runtime.getRuntime().availableProcessors() - 1 );
@@ -64,6 +65,27 @@ public class ParametersResaveN5Api
 	public Compression compression;
 	public StorageFormat format = StorageFormat.ZARR;
 	public int numCellCreatorThreads = 1;
+
+	/**
+	 * Load every compute block into memory before writing it (default). Virtual image loaders (e.g. the Bio-Formats
+	 * based file-list loader) cache one plane only, so streaming re-reads every plane for every N5 block of a compute
+	 * block; preloading reads each plane once but needs the memory of one compute block per thread.
+	 */
+	public boolean preloadComputeBlocks = true;
+
+	/**
+	 * Delete datasets of the views to re-save that already exist in the container (e.g. from an interrupted run)
+	 * before writing. If false (default), the user is asked once when such datasets are found; set it to true
+	 * programmatically to skip the question.
+	 */
+	public boolean overwriteExistingDatasets = false;
+
+	/**
+	 * True only when the parameters come from the GUI dialog ({@link #getParamtersIJ}); then, and only with a
+	 * display, re-saving may ask questions (currently: whether to overwrite existing datasets). Parameters created
+	 * programmatically (scripts, BigStitcher-Spark) never trigger a dialog.
+	 */
+	public boolean interactive = false;
 
 	public static URI createN5URIfromXMLURI( final URI xmlURI )
 	{
@@ -102,6 +124,7 @@ public class ParametersResaveN5Api
 		}
 
 		final ParametersResaveN5Api n5params = new ParametersResaveN5Api();
+		n5params.interactive = true;
 
 		final Map< Integer, ExportMipmapInfo > perSetupExportMipmapInfo = Resave_HDF5.proposeMipmaps( setupsToProcess ); //xml.getViewSetupsToProcess() );
 		final int firstviewSetupId = setupsToProcess.iterator().next().getId();// xml.getData().getSequenceDescription().getViewSetupsOrdered().get( 0 ).getId();
@@ -179,6 +202,20 @@ public class ParametersResaveN5Api
 		gdp.addMessage( "Max dimensions of the images that will be re-saved: " + Arrays.toString( maxDimensions ), GUIHelper.smallStatusFont, Color.red );
 		gdp.addNumericField( "Number_of_threads (CPUs:" + Runtime.getRuntime().availableProcessors() + ")", defaultNumThreads, 0 );
 
+		// memory needed to preload one compute block with the default values above (16 bit assumed; the exact numbers are printed when re-saving starts)
+		long computeBlockPixels = 1;
+		for ( int d = 0; d < maxDimensions.length; ++d )
+			computeBlockPixels *= Math.min( maxDimensions[ d ], (long)autoMipmapSettings.getSubdivisions()[ 0 ][ d ] * blockSizeFactor[ d ] );
+		final long computeBlockBytes = computeBlockPixels * 2;
+
+		gdp.addCheckbox( "Preload_compute_blocks_into_memory", defaultPreloadComputeBlocks );
+		gdp.addMessage(
+				"Reads every image plane exactly once, but needs the memory of one compute block (block size x compute block size factor)\n" +
+				"per thread: with the values above about " + memoryString( computeBlockBytes ) + " per thread at 16 bit, " + memoryString( computeBlockBytes * defaultNumThreads ) + " for " + defaultNumThreads + " threads\n" +
+				"(max heap " + memoryString( Runtime.getRuntime().maxMemory() ) + "). Lower the compute block size factor or the number of threads to save memory.\n" +
+				"Turn off only for in-memory or well-cached image loaders: with virtual loaders (e.g. the Bio-Formats based file list)\n" +
+				"streaming re-reads every plane for every block and is extremely slow.", GUIHelper.smallStatusFont );
+
 		if ( askForPaths )
 		{
 			gdp.addMessage( "" );
@@ -208,6 +245,7 @@ public class ParametersResaveN5Api
 
 		n5params.blockSizeFactor = new int[] { blockSizeFactorX, blockSizeFactorY, blockSizeFactorZ };
 		n5params.numCellCreatorThreads = defaultNumThreads = Math.max( 1, (int)Math.round( gdp.getNextNumber() ) );
+		n5params.preloadComputeBlocks = defaultPreloadComputeBlocks = gdp.getNextBoolean();
 
 		if ( askForPaths )
 		{
@@ -249,6 +287,14 @@ public class ParametersResaveN5Api
 				setupsToProcess.stream().map( vs -> vs.getId() ).collect( Collectors.toList() ) );
 
 		return n5params;
+	}
+
+	public static String memoryString( final long bytes )
+	{
+		if ( bytes >= 1024l * 1024l * 1024l )
+			return String.format( "%.1f GB", bytes / ( 1024.0 * 1024.0 * 1024.0 ) );
+		else
+			return String.format( "%.0f MB", bytes / ( 1024.0 * 1024.0 ) );
 	}
 
 	public static Map< Integer, ExportMipmapInfo > createProposedMipMaps(

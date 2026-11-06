@@ -22,24 +22,30 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.intensityadjust;
 
-import mpicbg.models.AffineModel1D;
-import mpicbg.spim.data.SpimDataException;
-import mpicbg.spim.data.XmlHelpers;
-import mpicbg.spim.data.generic.base.XmlIoSingleton;
-import mpicbg.spim.data.sequence.ViewId;
-
-import java.util.ArrayList;
-import java.util.Collections;
-
+import static net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlKeysIntensityAdjustments.INTENSITYADJ_CONTAINER_TAG;
+import static net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlKeysIntensityAdjustments.INTENSITYADJ_FORMAT_TAG;
 import static net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlKeysIntensityAdjustments.INTENSITYADJ_SETUP_ATTRIBUTE_NAME;
 import static net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlKeysIntensityAdjustments.INTENSITYADJ_TAG;
 import static net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlKeysIntensityAdjustments.INTENSITYADJ_TIMEPOINT_ATTRIBUTE_NAME;
 import static net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlKeysIntensityAdjustments.INTENSITYADJ_VALUE_TAG;
-import static net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlKeysInterestPoints.VIEWINTERESTPOINTS_SETUP_ATTRIBUTE_NAME;
-import static net.preibisch.mvrecon.fiji.spimdata.interestpoints.XmlKeysInterestPoints.VIEWINTERESTPOINTS_TIMEPOINT_ATTRIBUTE_NAME;
 
+import java.net.URI;
+import java.util.Collection;
+
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.jdom2.Element;
 
+import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.XmlHelpers;
+import mpicbg.spim.data.generic.base.XmlIoSingleton;
+import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
+
+/**
+ * {@code <IntensityAdjustments>} holds the path (relative to the XML) and format of the coefficients container.
+ * Older XMLs list one affine intensity mapping per view instead; those are read as coefficients with a single
+ * region (the same mapping) and written to a container on the next save.
+ */
 public class XmlIoIntensityAdjustments extends XmlIoSingleton< IntensityAdjustments >
 {
 	public XmlIoIntensityAdjustments()
@@ -48,50 +54,44 @@ public class XmlIoIntensityAdjustments extends XmlIoSingleton< IntensityAdjustme
 		handledTags.add( INTENSITYADJ_TAG );
 	}
 
-	public Element toXml( final IntensityAdjustments intensityAdustments )
+	/** call after {@link IntensityAdjustments#save}, which decides where the coefficients are */
+	public Element toXml( final IntensityAdjustments intensityAdjustments, final URI basePath )
 	{
 		final Element elem = super.toXml();
 
-		final ArrayList< ViewId > viewIds = new ArrayList<>( intensityAdustments.getIntensityAdjustments().keySet() );
-		Collections.sort( viewIds );
-
-		for ( final ViewId viewId : viewIds )
-			elem.addContent( affineModel1dToXml( viewId, intensityAdustments.getIntensityAdjustments().get( viewId ) ) );
+		final URI container = intensityAdjustments.getContainer();
+		if ( container != null )
+		{
+			elem.addContent( XmlHelpers.pathElementURI( INTENSITYADJ_CONTAINER_TAG, container, basePath ) );
+			elem.addContent( XmlHelpers.textElement( INTENSITYADJ_FORMAT_TAG, intensityAdjustments.getFormat().name() ) );
+		}
 
 		return elem;
 	}
 
-	public IntensityAdjustments fromXml( final Element allIntensityAdjustments ) throws SpimDataException
+	/**
+	 * @param views the views whose coefficients may be in the container
+	 */
+	public IntensityAdjustments fromXml( final Element allIntensityAdjustments, final URI basePath, final Collection< ? extends ViewId > views ) throws SpimDataException
 	{
 		final IntensityAdjustments intensityAdjustments = super.fromXml( allIntensityAdjustments );
 
-		for ( final Element intensityAdjustmentElement : allIntensityAdjustments.getChildren( INTENSITYADJ_TAG ) )
+		if ( allIntensityAdjustments.getChild( INTENSITYADJ_CONTAINER_TAG ) != null )
 		{
-			final int timepointId = Integer.parseInt( intensityAdjustmentElement.getAttributeValue( INTENSITYADJ_TIMEPOINT_ATTRIBUTE_NAME ) );
-			final int setupId = Integer.parseInt( intensityAdjustmentElement.getAttributeValue( INTENSITYADJ_SETUP_ATTRIBUTE_NAME ) );
+			final URI container = XmlHelpers.loadPathURI( allIntensityAdjustments, INTENSITYADJ_CONTAINER_TAG, basePath );
+			final StorageFormat format = StorageFormat.valueOf( XmlHelpers.getText( allIntensityAdjustments, INTENSITYADJ_FORMAT_TAG ) );
+			intensityAdjustments.setContainer( container, format, views );
+		}
 
-			final double[] modelArray = XmlHelpers.getDoubleArray( intensityAdjustmentElement, INTENSITYADJ_VALUE_TAG );
-
-			final AffineModel1D model = new AffineModel1D();
-			model.set( modelArray[ 0 ], modelArray[ 1 ] );
-
-			intensityAdjustments.addIntensityAdjustments( new ViewId( timepointId, setupId ), model );
+		// legacy: y = m * x + t per view
+		for ( final Element legacy : allIntensityAdjustments.getChildren( INTENSITYADJ_TAG ) )
+		{
+			final int timepointId = Integer.parseInt( legacy.getAttributeValue( INTENSITYADJ_TIMEPOINT_ATTRIBUTE_NAME ) );
+			final int setupId = Integer.parseInt( legacy.getAttributeValue( INTENSITYADJ_SETUP_ATTRIBUTE_NAME ) );
+			final double[] m = XmlHelpers.getDoubleArray( legacy, INTENSITYADJ_VALUE_TAG );
+			intensityAdjustments.put( new ViewId( timepointId, setupId ), new Coefficients( new double[][] { { m[ 0 ] }, { m[ 1 ] } }, 1, 1, 1 ) );
 		}
 
 		return intensityAdjustments;
-	}
-
-	protected Element affineModel1dToXml( final ViewId viewId, final AffineModel1D model )
-	{
-		final Element elem = new Element( INTENSITYADJ_TAG );
-
-		elem.setAttribute( INTENSITYADJ_TIMEPOINT_ATTRIBUTE_NAME, Integer.toString( viewId.getTimePointId() ) );
-		elem.setAttribute( INTENSITYADJ_SETUP_ATTRIBUTE_NAME, Integer.toString( viewId.getViewSetupId() ) );
-
-		final double[] values = new double[ 2 ];
-		model.toArray( values );
-		elem.addContent( XmlHelpers.doubleArrayElement( INTENSITYADJ_VALUE_TAG, values ) );
-
-		return elem;
 	}
 }

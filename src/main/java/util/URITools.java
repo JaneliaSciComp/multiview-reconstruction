@@ -264,6 +264,8 @@ public class URITools
 				throw new SpimDataException( "Could not point spread function for '" + xmlURI + "' in paralell: " + e );
 			}
 
+			XmlIoSpimData2.saveIntensityAdjustments( data );
+
 			try
 			{
 				final Document doc = new Document( io.toXml( data, getParentURI( xmlURI ) ) );

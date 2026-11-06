@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.fiji.plugin.resave;
 
 import java.io.File;
 import java.net.URI;
+import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -52,6 +53,7 @@ import bdv.export.ProgressWriter;
 import bdv.img.hdf5.Hdf5ImageLoader;
 import bdv.img.n5.N5ImageLoader;
 import ij.IJ;
+import ij.gui.GenericDialog;
 import ij.ImageJ;
 import ij.plugin.PlugIn;
 import mpicbg.spim.data.sequence.TimePoint;
@@ -146,6 +148,51 @@ public class Resave_N5Api implements PlugIn
 		// TODO: if (n5Params.format == StorageFormat.ZARR && n5Params.useSharding) >>> USE SHARDING
 		final N5Writer n5Writer = URITools.instantiateN5Writer( n5Params.format, n5Params.n5URI );
 
+		// datasets of the views to re-save that already exist in the container (e.g. from an interrupted run):
+		// creating them again fails, so ask once and delete them first; other views in the container are kept
+		final List< ViewId > existingViews = new ArrayList<>();
+
+		for ( final ViewId viewId : vidsToResave )
+			if ( N5ApiTools.existsBDVView( n5Writer, viewId, n5Params.format ) )
+				existingViews.add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
+
+		if ( !existingViews.isEmpty() )
+		{
+			final String existingList = existingViews.stream().limit( 10 ).map( v -> N5ApiTools.createBDVViewGroup( v, n5Params.format ) ).collect( Collectors.joining( ", " ) ) + ( existingViews.size() > 10 ? ", ..." : "" );
+
+			if ( !n5Params.overwriteExistingDatasets )
+			{
+				// no GUI (scripts, BigStitcher-Spark, headless Fiji): never ask, fail with a clear message
+				if ( !n5Params.interactive || GraphicsEnvironment.isHeadless() )
+				{
+					IOFunctions.println( "ERROR: " + existingViews.size() + " of the " + vidsToResave.size() + " views to re-save already exist in " + n5Params.n5URI + " (" + existingList + "). " +
+							"Set ParametersResaveN5Api.overwriteExistingDatasets = true to delete them first, or delete them yourself." );
+					n5Writer.close();
+					return null;
+				}
+
+				final GenericDialog gd = new GenericDialog( "Existing datasets" );
+				gd.addMessage( existingViews.size() + " of the " + vidsToResave.size() + " views to re-save already exist in\n" + URITools.fromURI( n5Params.n5URI ) + ":\n" + existingList );
+				gd.addMessage( "Overwriting deletes these datasets before re-saving; datasets of other views are kept." );
+				gd.addCheckbox( "Overwrite_existing_datasets", false );
+				gd.showDialog();
+
+				if ( gd.wasCanceled() || !gd.getNextBoolean() )
+				{
+					IOFunctions.println( "Re-saving cancelled: " + existingViews.size() + " view(s) already exist in " + n5Params.n5URI + " (" + existingList + ")." );
+					n5Writer.close();
+					return null;
+				}
+
+				n5Params.overwriteExistingDatasets = true;
+			}
+
+			IOFunctions.println( "Deleting existing datasets of " + existingViews.size() + " view(s) in " + n5Params.n5URI + ": " + existingList );
+
+			for ( final ViewId viewId : existingViews )
+				N5ApiTools.removeBDVView( n5Writer, viewId, n5Params.format );
+		}
+
 		final int[] blockSize = n5Params.subdivisions[ 0 ];
 		final int[] computeBlockSize = new int[ blockSize.length ];
 		final Compression compression = n5Params.compression;
@@ -232,6 +279,20 @@ public class Resave_N5Api implements PlugIn
 		IOFunctions.println( "Created BDV-metadata, took: " + (System.currentTimeMillis() - time ) + " ms." );
 		IOFunctions.println( "Number of compute blocks (s0): " + totalBlocksS0 );
 
+		// memory needed to preload the largest compute block (per thread)
+		final long maxComputeBlockBytes = gridS0ByView.entrySet().stream().mapToLong( e ->
+		{
+			final long bytes = N5ApiTools.bytesPerPixel( dataTypes.get( e.getKey().getViewSetupId() ) );
+			return e.getValue().stream().mapToLong( gb -> Arrays.stream( gb[ 1 ] ).reduce( 1, ( a, b ) -> a * b ) * bytes ).max().orElse( 0 );
+		} ).max().orElse( 0 );
+
+		if ( n5Params.preloadComputeBlocks )
+			IOFunctions.println( "Preloading compute blocks into memory: up to " + ParametersResaveN5Api.memoryString( maxComputeBlockBytes ) + " per thread, " +
+					ParametersResaveN5Api.memoryString( maxComputeBlockBytes * n5Params.numCellCreatorThreads ) + " for " + n5Params.numCellCreatorThreads + " threads (max heap " +
+					ParametersResaveN5Api.memoryString( Runtime.getRuntime().maxMemory() ) + ")." );
+		else
+			IOFunctions.println( "Streaming compute blocks from the image loader (no preloading): slow for virtual (e.g. Bio-Formats file-list) loaders, every plane is re-read for every block." );
+
 		final AtomicInteger progress = new AtomicInteger( 0 );
 		IJ.showProgress( progress.get(), totalBlocksS0 );
 
@@ -272,7 +333,8 @@ public class Resave_N5Api implements PlugIn
 									n5Params.format,
 									dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
 									N5ApiTools.gridToDatasetBdv( 0, n5Params.format ),
-									gridBlock );
+									gridBlock,
+									n5Params.preloadComputeBlocks );
 
 							IJ.showProgress( progress.incrementAndGet(), totalBlocksS0 );
 

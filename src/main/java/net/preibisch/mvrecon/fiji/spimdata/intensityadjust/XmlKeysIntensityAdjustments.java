@@ -30,4 +30,7 @@ public class XmlKeysIntensityAdjustments
 	public static final String INTENSITYADJ_SETUP_ATTRIBUTE_NAME = "setup";
 
 	public static final String INTENSITYADJ_VALUE_TAG = "model";
+
+	public static final String INTENSITYADJ_CONTAINER_TAG = "coefficients";
+	public static final String INTENSITYADJ_FORMAT_TAG = "format";
 }

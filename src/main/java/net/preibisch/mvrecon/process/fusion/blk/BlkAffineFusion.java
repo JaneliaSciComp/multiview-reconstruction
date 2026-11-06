@@ -32,7 +32,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import mpicbg.models.AffineModel1D;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.generic.sequence.BasicViewSetup;
@@ -65,7 +64,6 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.FastLinearIntensityMap;
-import net.preibisch.mvrecon.process.fusion.lazy.LazyAffineFusion;
 import net.preibisch.mvrecon.process.fusion.lazy.LazyFusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -114,13 +112,13 @@ public class BlkAffineFusion
 			final FusionType fusionType,
 			final double anisotropyFactor, // can be Double.NAN, only for content-based fusion
 			final int interpolationMethod,
-			final Map< ViewId, AffineModel1D > intensityAdjustments,
+			final Map< ViewId, Coefficients > intensityAdjustments,
 			final Interval fusionInterval,
 			final T type,
 			final int[] blockSize )
 	{
 		return init( converter, imgloader, viewIds, viewRegistrations, viewDescriptions, fusionType, anisotropyFactor, null, interpolationMethod,
-				intensityAdjustments, null,
+				intensityAdjustments,
 				fusionInterval, type, blockSize );
 	}
 
@@ -140,7 +138,7 @@ public class BlkAffineFusion
 			final int[] blockSize )
 	{
 		return init( converter, imgloader, viewIds, viewRegistrations, viewDescriptions, fusionType, anisotropyFactor, fusionMap, interpolationMethod,
-				null, intensityAdjustments,
+				intensityAdjustments,
 				fusionInterval, type, blockSize );
 	}
 
@@ -155,7 +153,6 @@ public class BlkAffineFusion
 			// TODO: replace with Comparator<Integer>
 			final Map< Integer, Integer > fusionMap, // old setupId > new setupId for fusion order, only makes sense with FusionType.FIRST_LOW or FusionType.FIRST_HIGH
 			final int interpolationMethod,
-			final Map< ViewId, AffineModel1D > intensityAdjustmentModels,
 			final Map< ViewId, Coefficients > intensityAdjustmentCoefficients,
 			final Interval fusionInterval,
 			final T type,
@@ -163,18 +160,6 @@ public class BlkAffineFusion
 	{
 		// go through the views and check if they are all 2-dimensional
 		final boolean is2d = is2d( viewIds, viewDescriptions );
-
-		if ( !supports( intensityAdjustmentModels ) )
-		{
-			if ( intensityAdjustmentCoefficients != null )
-				// TODO: support intensity adjustmen with Coefficients in LazyAffineFusion
-				throw new UnsupportedOperationException( "BlkAffineFusion: Fusion method not supported (yet)." );
-
-			//throw new UnsupportedOperationException( "BlkAffineFusion: Fusion method not supported (yet)." );
-			IOFunctions.println( "BlkAffineFusion: Fusion method not supported (yet). Falling back to LazyAffineFusion." );
-			return BlockSupplier.of(
-					Views.zeroMin( LazyAffineFusion.init( converter, imgloader, viewIds, viewRegistrations, viewDescriptions, fusionType, interpolationMethod, intensityAdjustmentModels, fusionInterval, type, blockSize ) ) );
-		}
 
 		final HashMap< ViewId, Dimensions > viewDimensions = LazyFusionTools.assembleDimensions( viewIds, viewDescriptions );
 		final Interpolation interpolation = ( interpolationMethod == 1 ) ? NLINEAR : NEARESTNEIGHBOR;
@@ -414,11 +399,4 @@ public class BlkAffineFusion
 		.allMatch( vs -> vs.getSize().dimension( 2 ) == 1 );
 	}
 
-	private static boolean supports( final Map< ViewId, AffineModel1D > intensityAdjustments )
-	{
-		if ( intensityAdjustments != null )
-			return false; // TODO
-
-		return true;
-	}
 }

@@ -36,7 +36,7 @@ import bdv.util.BdvFunctions;
 import bdv.util.BdvOptions;
 import bdv.util.BdvPointsSource;
 import bdv.util.volatiles.VolatileViews;
-import mpicbg.models.AffineModel1D;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.registration.ViewRegistration;
@@ -99,7 +99,7 @@ public class MultiResolutionTools
 			final double alpha,
 			final int interpolation,
 			final Interval boundingBox,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments,
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments,
 			final ExecutorService service,
 			final int minDS,
 			final int maxDS,
@@ -142,7 +142,7 @@ public class MultiResolutionTools
 			final double alpha,
 			final int interpolation,
 			final Interval boundingBox,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments,
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments,
 			final ExecutorService service,
 			final int minDS,
 			final int maxDS,
@@ -250,7 +250,7 @@ public class MultiResolutionTools
 			final FusionType fusionType,
 			final int interpolation,
 			final Interval boundingBox,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments,
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments,
 			final int minDS,
 			final int maxDS,
 			final int dsInc )

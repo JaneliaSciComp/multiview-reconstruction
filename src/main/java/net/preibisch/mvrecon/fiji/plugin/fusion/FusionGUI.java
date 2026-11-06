@@ -64,7 +64,6 @@ import net.preibisch.mvrecon.process.export.ImgExport;
 import net.preibisch.mvrecon.process.export.OpenSeaDragon;
 import net.preibisch.mvrecon.process.export.Save3dTIFF;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
-import net.preibisch.mvrecon.process.fusion.intensityadjust.IntensityAdjustmentTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -106,6 +105,7 @@ public class FusionGUI implements FusionExportInterface
 	public static int defaultSplittingType = 0;
 
 	public static boolean defaultAdjustIntensities = false;
+	public static boolean defaultIntensityOnlyAboveThreshold = false;
 	public static boolean defaultPreserveAnisotropy = false;
 
 	public final static ArrayList< ImgExport > staticImgExportAlgorithms = new ArrayList< ImgExport >();
@@ -122,6 +122,7 @@ public class FusionGUI implements FusionExportInterface
 	protected double downsampling = defaultDownsampling;
 	protected int fusionType = defaultFusionType;
 	protected boolean adjustIntensities = defaultAdjustIntensities;
+	protected boolean intensityOnlyAboveThreshold = defaultIntensityOnlyAboveThreshold;
 	protected boolean preserveAnisotropy = defaultPreserveAnisotropy;
 	protected double avgAnisoF;
 	protected int imgExport = defaultImgExportAlgorithm;
@@ -223,6 +224,8 @@ public class FusionGUI implements FusionExportInterface
 	public FusionType getFusionType() { return FusionType.values()[ fusionType ]; }
 
 	public boolean adjustIntensities() { return adjustIntensities; }
+	/** correct only voxels above the threshold stored with each view's coefficients */
+	public boolean intensityOnlyAboveThreshold() { return intensityOnlyAboveThreshold; }
 
 	@Override
 	public double getAnisotropyFactor() { return avgAnisoF; }
@@ -312,7 +315,7 @@ public class FusionGUI implements FusionExportInterface
 		if ( defaultBB >= choices.length )
 			defaultBB = 0;
 
-		final boolean hasIntensityAdjustments = IntensityAdjustmentTools.containsAdjustments( spimData.getIntensityAdjustments(), views );
+		final boolean hasIntensityAdjustments = spimData.getIntensityAdjustments().containsAny( views );
 
 		final GenericDialog gd = new GenericDialog( "Image Fusion" );
 		Label label1 = null, label2 = null;
@@ -357,7 +360,10 @@ public class FusionGUI implements FusionExportInterface
 		//contentbasedCheckbox = PluginHelper.isHeadless() ? null : (Checkbox)gd.getCheckboxes().lastElement();
 
 		if ( hasIntensityAdjustments )
-			gd.addCheckbox( "Adjust_image_intensities (only use with 32-bit output)", defaultAdjustIntensities );
+		{
+			gd.addCheckbox( "Adjust_image_intensities (intensity correction coefficients; only use with 32-bit output)", defaultAdjustIntensities );
+			gd.addCheckbox( "Correct_only_above_stored_threshold", defaultIntensityOnlyAboveThreshold );
+		}
 
 		IJ.log( "avgAnisoF: " + avgAnisoF );
 		if ( avgAnisoF > 1.01 || avgAnisoF < 0.99 ) // for numerical instabilities (computed upon instantiation)
@@ -440,7 +446,10 @@ public class FusionGUI implements FusionExportInterface
 		}
 
 		if ( hasIntensityAdjustments )
+		{
 			adjustIntensities = defaultAdjustIntensities = gd.getNextBoolean();
+			intensityOnlyAboveThreshold = defaultIntensityOnlyAboveThreshold = gd.getNextBoolean();
+		}
 		else
 			adjustIntensities = false;
 		if ( avgAnisoF > 1.01 || avgAnisoF < 0.99 )

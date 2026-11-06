@@ -36,7 +36,7 @@ import java.util.function.Consumer;
 import com.google.common.collect.Sets;
 
 import ij.ImageJ;
-import mpicbg.models.AffineModel1D;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
@@ -86,7 +86,7 @@ public class LazyNonRigidFusion <T extends RealType<T> & NativeType<T>> implemen
 	final FusionType fusionType;
 	final boolean displayDistances;
 	final int interpolation;
-	final Map< ? extends ViewId, AffineModel1D > intensityAdjustments;
+	final Map< ? extends ViewId, Coefficients > intensityAdjustments;
 
 	final double maxDist;
 
@@ -109,7 +109,7 @@ public class LazyNonRigidFusion <T extends RealType<T> & NativeType<T>> implemen
 			final double alpha,
 			final boolean virtualGrid,
 			final int interpolation,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments,
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments,
 			final ExecutorService service,
 			final Interval boundingBox,
 			final long[] globalMin,
@@ -213,7 +213,7 @@ public class LazyNonRigidFusion <T extends RealType<T> & NativeType<T>> implemen
 			final double alpha,
 			final boolean virtualGrid,
 			final int interpolation,
-			final Map< ? extends ViewId, AffineModel1D > intensityAdjustments,
+			final Map< ? extends ViewId, Coefficients > intensityAdjustments,
 			final ExecutorService service,
 			final Interval fusionInterval,
 			final T type,
