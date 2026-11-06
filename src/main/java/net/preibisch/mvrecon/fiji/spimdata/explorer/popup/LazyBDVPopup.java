@@ -225,7 +225,8 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 		IntensityPreview.restore( spimData, original );
 		final BigDataViewer newBdv = new BigDataViewer( emptyConverterSetups, emptySources, spimData,
 				numTimepoints, cache, panel.xml().toString(),
-				IOFunctions.getProgressWriter(), ViewerOptions.options() );
+				IOFunctions.getProgressWriter(), ViewerOptions.options().accumulateProjectorFactory( IntensityPreview.CLOSEST_VIEW_WINS ) );
+		IntensityPreview.follow( spimData, newBdv.getViewer() );
 		newBdv.getViewerFrame().setVisible( true );
 		ScrollableBrightnessDialog.setAsBrightnessDialog( newBdv );
 

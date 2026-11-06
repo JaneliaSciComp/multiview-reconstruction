@@ -381,7 +381,8 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 		final int numTimepoints = seq.getTimePoints().size();
 
 		final BigDataViewer bdv = new BigDataViewer( converterSetups, sources, spimData, numTimepoints, cache,
-				xml.toString(), IOFunctions.getProgressWriter(), ViewerOptions.options() );
+				xml.toString(), IOFunctions.getProgressWriter(), ViewerOptions.options().accumulateProjectorFactory( IntensityPreview.CLOSEST_VIEW_WINS ) );
+		IntensityPreview.follow( spimData, bdv.getViewer() );
 
 		if ( wrapped )
 			WrapBasicImgLoader.removeWrapperIfPresent( spimData );

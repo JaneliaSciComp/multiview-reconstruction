@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
@@ -38,6 +39,14 @@ import bdv.ViewerSetupImgLoader;
 import bdv.cache.CacheControl;
 import bdv.cache.SharedQueue;
 import bdv.util.volatiles.VolatileViews;
+import bdv.viewer.BlendMode;
+import bdv.viewer.SourceAndConverter;
+import bdv.viewer.ViewerPanel;
+import bdv.viewer.ViewerState;
+import bdv.viewer.ViewerStateChange;
+import bdv.viewer.render.AccumulateProjectorARGB;
+import bdv.viewer.render.AccumulateProjectorFactory;
+import bdv.viewer.render.VolatileProjector;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
@@ -48,6 +57,7 @@ import net.imglib2.AbstractInterval;
 import net.imglib2.Cursor;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccess;
+import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealLocalizable;
 import net.imglib2.algorithm.blocks.BlockSupplier;
@@ -60,6 +70,7 @@ import net.imglib2.img.cell.AbstractCellImg;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.BoolType;
+import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.NumericType;
 import net.imglib2.util.Cast;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -70,8 +81,10 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
  * <p>
  * BigDataViewer's sources are built while the dataset's img loader is {@link #install installed} as a wrapper that
  * hands out images which, every time they are accessed, show either the raw data or, while the preview is on
- * ({@link #refresh}), the data corrected with the coefficients stored in the dataset. Every voxel is then shown from the closest view only, as fused with
- * {@code CLOSEST_PIXEL_WINS} (anisotropy from the metadata, as with {@code --preserveAnisotropy}). The sources
+ * ({@link #refresh}), the data corrected with the coefficients stored in the dataset. How the corrected views are combined
+ * follows BigDataViewer's blend mode ({@link #follow}): Sum and Avg add up / average them like the raw data; Custom shows
+ * every voxel from the closest view only, as fused with {@code CLOSEST_PIXEL_WINS} (anisotropy from the metadata, as with
+ * {@code --preserveAnisotropy}). The sources
  * themselves stay what the explorer expects, so coloring, selection and overlays keep working, and toggling only
  * needs a repaint. One preview per dataset.
  */
@@ -118,6 +131,50 @@ public class IntensityPreview
 	private volatile Config config; // null if there is nothing to show
 
 	private volatile boolean enabled;
+
+	/** BigDataViewer's blend mode is Custom: every voxel from its closest view */
+	private volatile boolean closestWins = true;
+
+	/**
+	 * BigDataViewer's plain sum, as a Custom blend mode, for a viewer opened without one (the blend mode button cycles
+	 * Sum, Avg and Custom only if the viewer has a custom projector): with the preview on, Custom shows every voxel from
+	 * its closest view, which the sum of the masked views is.
+	 */
+	public static final AccumulateProjectorFactory< ARGBType > CLOSEST_VIEW_WINS = new AccumulateProjectorFactory< ARGBType >()
+	{
+		@Override
+		public VolatileProjector createProjector( final List< VolatileProjector > sourceProjectors, final List< SourceAndConverter< ? > > sources,
+				final List< ? extends RandomAccessible< ? extends ARGBType > > sourceScreenImages, final RandomAccessibleInterval< ARGBType > targetScreenImage,
+				final int numThreads, final ExecutorService executorService )
+		{
+			return AccumulateProjectorARGB.factory.createProjector( sourceProjectors, sources, sourceScreenImages, targetScreenImage, numThreads, executorService );
+		}
+
+		@Override
+		public boolean requiresMaskedSources()
+		{
+			return AccumulateProjectorARGB.factory.requiresMaskedSources();
+		}
+	};
+
+	/**
+	 * Makes the preview of {@code spimData} follow {@code viewer}'s blend mode: Sum and Avg combine the corrected views as
+	 * they do the raw ones, Custom shows every voxel from its closest view. Call once the viewer exists.
+	 * <p>
+	 * ponytail: one preview per dataset, so with two viewers on one dataset the last blend mode change wins for both.
+	 */
+	public static void follow( final AbstractSpimData< ? > spimData, final ViewerPanel viewer )
+	{
+		final IntensityPreview preview = of( spimData );
+		final ViewerState state = viewer.state();
+		preview.closestWins = BlendMode.of( state.getAccumulateProjectorFactory() ) == BlendMode.CUSTOM;
+		state.changeListeners().add( change -> {
+			if ( change != ViewerStateChange.ACCUMULATE_PROJECTOR_CHANGED )
+				return;
+			preview.closestWins = BlendMode.of( state.getAccumulateProjectorFactory() ) == BlendMode.CUSTOM;
+			viewer.requestRepaint();
+		} );
+	}
 
 	private synchronized PreviewImgLoader wrapper( final ViewerImgLoader original )
 	{
@@ -168,11 +225,12 @@ public class IntensityPreview
 		final Config c = config;
 		if ( !enabled || c == null )
 			return null;
-		final RandomAccessibleInterval< ? > img = c.images.computeIfAbsent( List.of( setupId, timepointId, level, false ),
-				k -> c.correct( setupId, timepointId, level, Cast.unchecked( raw ) ) );
+		final boolean closest = closestWins;
+		final RandomAccessibleInterval< ? > img = c.images.computeIfAbsent( List.of( setupId, timepointId, level, false, closest ),
+				k -> c.correct( setupId, timepointId, level, Cast.unchecked( raw ), closest ) );
 		if ( !isVolatile )
 			return img;
-		return c.images.computeIfAbsent( List.of( setupId, timepointId, level, true ), k -> {
+		return c.images.computeIfAbsent( List.of( setupId, timepointId, level, true, closest ), k -> {
 			final SharedQueue q = queue();
 			q.ensureNumPriorities( raw.numMipmapLevels() );
 			return VolatileViews.wrapAsVolatile( img, q, new CacheHints( LoadingStrategy.BUDGETED, raw.numMipmapLevels() - 1 - level, false ) );
@@ -203,13 +261,14 @@ public class IntensityPreview
 		}
 
 		/**
-		 * The corrected image, with every voxel where another view's center is closer set to zero (BigDataViewer adds
-		 * up the sources, so each voxel shows one view).
+		 * The corrected image; if {@code closest}, with every voxel where another view's center is closer set to zero
+		 * (BigDataViewer adds up the sources, or takes their maximum, so each voxel shows one view).
 		 * <p>
 		 * ponytail: decides at voxel centers, so at coarse levels a seam can be off by a voxel; sampling at the
 		 * rendered position (as ClosestViewSource does with masks) needs source-level wrapping.
 		 */
-		< T extends NativeType< T > & NumericType< T > > RandomAccessibleInterval< T > correct( final int setupId, final int timepointId, final int level, final ViewerSetupImgLoader< T, ? > raw )
+		< T extends NativeType< T > & NumericType< T > > RandomAccessibleInterval< T > correct( final int setupId, final int timepointId, final int level, final ViewerSetupImgLoader< T, ? > raw,
+				final boolean closest )
 		{
 			final RandomAccessibleInterval< T > image = raw.getImage( timepointId, level );
 			final int t = timepointIds.indexOf( timepointId );
@@ -233,6 +292,8 @@ public class IntensityPreview
 
 			final CellLoader< T > loader = cell -> {
 				supplier.copy( cell, cell.getStorageArray() );
+				if ( !closest )
+					return;
 				final BiConsumer< RealLocalizable, BoolType > wins = geometry.closest( index, sourceToGlobal );
 				final BoolType w = new BoolType();
 				for ( final Cursor< T > c = cell.localizingCursor(); c.hasNext(); )

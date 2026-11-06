@@ -170,7 +170,8 @@ public class IntensityAdjustmentPopup extends JMenu implements ExplorerWindowSet
 	{
 		final boolean on = IntensityPreview.refresh( data, FusionGUI.defaultIntensityOnlyAboveThreshold );
 		if ( on )
-			IOFunctions.println( "Intensity correction preview: every voxel from the closest view (CLOSEST_PIXEL_WINS)"
+			IOFunctions.println( "Intensity correction preview: BigDataViewer's blend mode Sum / Avg adds up / averages the corrected views, "
+					+ "Custom shows every voxel from the closest view (CLOSEST_PIXEL_WINS)"
 					+ ( FusionGUI.defaultIntensityOnlyAboveThreshold ? ", corrected only above each view's threshold" : "" )
 					+ ". Press 'i' in the explorer to toggle." );
 		showPreviewState( panel, on );
