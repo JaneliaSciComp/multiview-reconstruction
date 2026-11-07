@@ -62,6 +62,7 @@ import net.preibisch.mvrecon.fiji.plugin.apply.BigDataViewerTransformationWindow
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.SelectedViewDescriptionListener;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.GlobalAlignActions;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.ScrollableBrightnessDialog;
 import util.BDVTools;
 
@@ -222,6 +223,7 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 				IOFunctions.getProgressWriter(), ViewerOptions.options() );
 		newBdv.getViewerFrame().setVisible( true );
 		ScrollableBrightnessDialog.setAsBrightnessDialog( newBdv );
+		GlobalAlignActions.install( newBdv );
 
 
 		// Switch BDV into fused display mode so multiple active sources render

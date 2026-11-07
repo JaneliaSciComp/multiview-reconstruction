@@ -50,6 +50,7 @@ import net.preibisch.mvrecon.fiji.plugin.apply.BigDataViewerTransformationWindow
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.GlobalAlignActions;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AbstractImgLoader;
 
@@ -208,6 +209,7 @@ public class BoundingBoxBigDataViewer implements BoundingBoxEstimation
 
 			bdv = BigDataViewer.open( spimData, "BigDataViewer", IOFunctions.getProgressWriter(), ViewerOptions.options() );
 			bdvIsLocal = true;
+			GlobalAlignActions.install( bdv );
 
 //			if ( !bdv.tryLoadSettings( panel.xml() ) ) TODO: this should work, but currently tryLoadSettings is protected. fix that.
 				InitializeViewerState.initBrightness( 0.001, 0.999, bdv.getViewer(), bdv.getSetupAssignments() );

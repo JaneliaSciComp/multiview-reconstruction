@@ -70,6 +70,7 @@ import net.preibisch.mvrecon.fiji.plugin.apply.BigDataViewerTransformationWindow
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.GroupedRowWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.GlobalAlignActions;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.ScrollableBrightnessDialog;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AbstractImgLoader;
 
@@ -380,6 +381,9 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 
 		// do not rotate BDV view by default
 		BDVPopup.initTransform( bdv.getViewer() );
+
+		// shift+X/Y/Z align with the global axes, not with the current source
+		GlobalAlignActions.install( bdv );
 
 		ScrollableBrightnessDialog.setAsBrightnessDialog( bdv );
 
