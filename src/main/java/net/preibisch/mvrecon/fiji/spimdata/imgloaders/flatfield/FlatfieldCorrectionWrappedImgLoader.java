@@ -9,12 +9,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -22,18 +22,28 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
-import java.io.File;
-
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 
 public interface FlatfieldCorrectionWrappedImgLoader<IL extends ImgLoader> extends ImgLoader
 {
-	public IL getWrappedImgLoder();
-	public void setActive(boolean active);
-	public boolean isActive();
-	public void setCached(boolean cached);
-	public boolean isCached();
-	public void setBrightImage(ViewId vId, File imgFile);
-	public void setDarkImage(ViewId vId, File imgFile);
+	IL getWrappedImgLoder();
+	void setActive(boolean active);
+	boolean isActive();
+	void setCached(boolean cached);
+	boolean isCached();
+
+	/**
+	 * Set the bright (flatfield) image for a view.
+	 * @param vId view id
+	 * @param info flatfield image info containing URI, format, and optional dataset path
+	 */
+	void setBrightImage(ViewId vId, FlatfieldImageInfo info);
+
+	/**
+	 * Set the dark (darkfield) image for a view.
+	 * @param vId view id
+	 * @param info flatfield image info containing URI, format, and optional dataset path
+	 */
+	void setDarkImage(ViewId vId, FlatfieldImageInfo info);
 }
