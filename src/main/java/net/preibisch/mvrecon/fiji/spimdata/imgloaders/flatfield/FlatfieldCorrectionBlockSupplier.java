@@ -73,8 +73,8 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 	 * Create a flatfield correction BlockSupplier.
 	 *
 	 * @param source source image BlockSupplier (can be 2D or 3D)
-	 * @param bright bright (flatfield) image as BlockSupplier (2D)
-	 * @param dark dark image as BlockSupplier (2D)
+	 * @param bright bright (flatfield) image as BlockSupplier (2D), null = constant 1
+	 * @param dark dark image as BlockSupplier (2D), null = constant 0
 	 * @param meanBrightCorrected pre-computed mean of (bright - dark)
 	 */
 	public FlatfieldCorrectionBlockSupplier(
@@ -96,8 +96,8 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 
 	private FlatfieldCorrectionBlockSupplier(final FlatfieldCorrectionBlockSupplier s) {
 		this.source = s.source.independentCopy();
-		this.bright = s.bright.independentCopy();
-		this.dark = s.dark.independentCopy();
+		this.bright = s.bright == null ? null : s.bright.independentCopy();
+		this.dark = s.dark == null ? null : s.dark.independentCopy();
 		this.meanBrightCorrected = s.meanBrightCorrected;
 		this.numDimensions = s.numDimensions;
 
@@ -173,10 +173,12 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 
 		final double meanBrightCorrected = meanCorrected(brightImg, darkImg, bright, dark);
 
+		// a missing field is a constant, filled in copy(): BlockSupplier.of() cannot analyze a
+		// ConstantRandomAccessible and would copy every block pixel by pixel (PrimitiveBlocks fall-back)
 		return new FlatfieldCorrectionBlockSupplier(
 				source,
-				BlockSupplier.of(bright),
-				BlockSupplier.of(dark),
+				brightImg == null ? null : BlockSupplier.of(bright),
+				darkImg == null ? null : BlockSupplier.of(dark),
 				meanBrightCorrected);
 	}
 
@@ -263,8 +265,14 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 		}
 
 		// Copy bright/dark blocks (2D)
-		bright.copy(interval2D, brightArray);
-		dark.copy(interval2D, darkArray);
+		if (bright == null)
+			Arrays.fill(brightArray, 0, xyLen, 1f);
+		else
+			bright.copy(interval2D, brightArray);
+		if (dark == null)
+			Arrays.fill(darkArray, 0, xyLen, 0f);
+		else
+			dark.copy(interval2D, darkArray);
 
 		// Apply correction
 		final float[] fdest = Cast.unchecked(dest);
@@ -296,8 +304,8 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 	public BlockSupplier<FloatType> threadSafe() {
 		return new FlatfieldCorrectionBlockSupplier(
 				source.threadSafe(),
-				bright.threadSafe(),
-				dark.threadSafe(),
+				bright == null ? null : bright.threadSafe(),
+				dark == null ? null : dark.threadSafe(),
 				meanBrightCorrected);
 	}
 

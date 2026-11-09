@@ -35,4 +35,21 @@ public class FlatFieldCorrectedRandomAccessibleIntervalsTest
 		assertEquals( 500, corrected.randomAccess().setPositionAndGet( 0, 0, 0 ).get() );
 		assertEquals( 0, corrected.randomAccess().setPositionAndGet( 1, 2, 1 ).get() );
 	}
+
+	/** bright only (a gain field, no dark image): corrected = raw * mean(bright) / bright */
+	@Test
+	public void brightOnly()
+	{
+		final ArrayImg< UnsignedShortType, ShortArray > raw = ArrayImgs.unsignedShorts( 4, 4, 2 );
+		raw.forEach( v -> v.set( 600 ) );
+		final ArrayImg< FloatType, ? > bright = ArrayImgs.floats( 4, 4 );
+		bright.forEach( v -> v.set( 1 ) );
+		bright.randomAccess().setPositionAndGet( 3, 0 ).set( 3 ); // mean = (15 + 3) / 16 = 1.125
+
+		final RandomAccessibleInterval< FloatType > corrected =
+				FlatFieldCorrectedRandomAccessibleIntervals.create( raw, bright, null, new FloatType() );
+
+		assertEquals( 600 * 1.125, corrected.randomAccess().setPositionAndGet( 0, 0, 1 ).get(), 1e-3 );
+		assertEquals( 600 * 1.125 / 3, corrected.randomAccess().setPositionAndGet( 3, 0, 1 ).get(), 1e-3 );
+	}
 }
