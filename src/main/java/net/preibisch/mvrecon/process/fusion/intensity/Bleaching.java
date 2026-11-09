@@ -71,7 +71,19 @@ public final class Bleaching {
 			final double bleachFactor) {
 		if (bleachFactor == 0)
 			return null;
+		return build(spimData, view, imageToGlobal, bleachFactor);
+	}
 
+	/**
+	 * The earlier views covering {@code view}, for counting exposures only ({@link #countLine}), e.g. to estimate a
+	 * bleach factor; null if no earlier view overlaps it.
+	 */
+	public static Bleaching footprints(final AbstractSpimData<?> spimData, final ViewId view, final AffineTransform3D imageToGlobal) {
+		return build(spimData, view, imageToGlobal, 0.5); // the factor only matters for gain(), unused when counting
+	}
+
+	private static Bleaching build(final AbstractSpimData<?> spimData, final ViewId view, final AffineTransform3D imageToGlobal,
+			final double bleachFactor) {
 		final RealInterval bounds = globalBounds(spimData, view);
 		final List<AffineTransform3D> toEarlier = new ArrayList<>();
 		final List<Dimensions> earlierDimensions = new ArrayList<>();
@@ -80,7 +92,8 @@ public final class Bleaching {
 				continue;
 			if (Intervals.isEmpty(Intervals.intersect(bounds, globalBounds(spimData, vd))))
 				continue;
-			final AffineTransform3D t = model(spimData, vd).inverse();
+			// inverse() is the registration's cached inverse, recomputed in place whenever its model is updated: copy it
+			final AffineTransform3D t = model(spimData, vd).inverse().copy();
 			t.concatenate(imageToGlobal);
 			toEarlier.add(t);
 			earlierDimensions.add(vd.getViewSetup().getSize());
@@ -115,7 +128,7 @@ public final class Bleaching {
 	 * Sets {@code count[i]} to the number of earlier views covering image voxel {@code start + (i, 0, 0)},
 	 * {@code 0 <= i < len}. A footprint intersects a line in one interval, so this costs one solve per earlier view.
 	 */
-	void countLine(final long[] start, final int len, final int[] count) {
+	public void countLine(final long[] start, final int len, final int[] count) {
 		java.util.Arrays.fill(count, 0, len, 0);
 		for (int j = 0; j < toEarlier.length; ++j) {
 			final AffineTransform3D t = toEarlier[j];

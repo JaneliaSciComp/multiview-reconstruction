@@ -40,6 +40,7 @@ import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
+import net.preibisch.mvrecon.fiji.plugin.Intensity_Adjustment;
 import net.preibisch.mvrecon.process.flatfield.Basic;
 import net.preibisch.mvrecon.process.flatfield.FlatfieldEstimation;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
@@ -224,6 +225,7 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 	public static double defaultLambda = 0;
 	public static boolean defaultAutotune = true;
 	public static int defaultWorkingSize = 0;
+	public static boolean defaultModelBleaching = true;
 
 	private void estimate( final SpimData2 data, final boolean gainField )
 	{
@@ -237,7 +239,13 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 		final GenericDialog gd = new GenericDialog( gainField ? "Estimate Gain Field" : "Estimate Flatfield (BaSiC)" );
 		gd.addNumericField( "Downsampling_for_statistics", defaultDownsampling, 0 );
 		gd.addMessage( "the coarsest pyramid level that is downsampled no more than this (in every dimension)" );
-		if ( !gainField )
+		if ( gainField )
+		{
+			gd.addCheckbox( "Model_bleaching (one factor per earlier exposure, acquisition order = setup id)", defaultModelBleaching );
+			gd.addMessage( "Regions imaged a second time are dimmer; without this the field takes that for a ramp.\n"
+					+ "The factor is not applied here: it is pre-filled as the bleach factor of Adjust Intensities." );
+		}
+		else
 		{
 			gd.addChoice( "Darkfield", DARKFIELD, DARKFIELD[ defaultDarkfield ] );
 			gd.addNumericField( "Fixed_darkfield (counts)", defaultDarkfieldValue, 1 );
@@ -252,7 +260,9 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 
 		defaultDownsampling = Math.max( 1, Math.round( gd.getNextNumber() ) );
 		final Basic.Parameters p = new Basic.Parameters();
-		if ( !gainField )
+		if ( gainField )
+			defaultModelBleaching = gd.getNextBoolean();
+		else
 		{
 			defaultDarkfield = gd.getNextChoiceIndex();
 			defaultDarkfieldValue = gd.getNextNumber();
@@ -271,9 +281,18 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 			if ( gainField )
 			{
 				IOFunctions.println( "Estimating the gain field of " + views.size() + " views ..." );
-				final FlatfieldEstimation.GainFieldResult r = FlatfieldEstimation.fitGainField( data, views, defaultDownsampling, Threads.numThreads() );
+				final FlatfieldEstimation.GainFieldResult r = FlatfieldEstimation.fitGainField( data, views, defaultDownsampling, defaultModelBleaching, Threads.numThreads() );
 				FlatfieldEstimation.writeGainFields( data, views, r.fields );
 				r.fields.forEach( ( c, f ) -> IOFunctions.println( "Gain field " + c + ": " + f ) );
+				if ( defaultModelBleaching )
+				{
+					IOFunctions.println( String.format( "Bleach factor per earlier exposure: k = %.3f +- %.3f (%s)", r.fit.bleachFactor, r.fit.bleachSigma, r.fit.bleachStatus ) );
+					if ( r.fit.bleachFactor > 0 )
+					{
+						Intensity_Adjustment.defaultBleachFactor = Math.round( r.fit.bleachFactor * 1000 ) / 1000.0;
+						IOFunctions.println( "Adjust Intensities will suggest Bleach_factor = " + Intensity_Adjustment.defaultBleachFactor + "." );
+					}
+				}
 			}
 			else
 			{

@@ -29,6 +29,13 @@ import Jama.Matrix;
  * over {@link #RHO_GRID}. Random rather than free per-tile gains: free ones absorb any pattern at the level of a pair,
  * so a field beside them is pinned only by the variation within each overlap. An axis is kept only if its
  * coefficient clears {@link #FIELD_SIGMA} standard errors in every camera, then the fit is repeated without the rest.
+ * <p>
+ * Optionally ({@link #fit(List, int[], boolean)}) one bleach factor k for the whole dataset: a voxel imaged n times before
+ * (by the earlier views covering it, acquisition order = setup id, as {@code Bleaching}) shows {@code (1 - k)^n} of its
+ * intensity, so a pair adds {@code -log(1 - k) (n_b - n_a)}, n the mean count over its matched voxels. Without it, the
+ * dimming of regions imaged a second time lands in the field as a ramp towards where the acquisition came from (on the
+ * Ciona dataset x3.6 along x, while tiles without x neighbours show no x trend at all). k is kept by the same
+ * {@link #FIELD_SIGMA} rule (k &gt; 0 only); it is not part of the field but goes to the intensity correction.
  */
 public class GainField
 {
@@ -55,16 +62,23 @@ public class GainField
 		public final double w;
 		/** mean frame coordinate of the matched voxels in each tile: ya, xa, yb, xb */
 		public final double[] pos;
+		/** mean number of earlier exposures of the matched voxels in tile a and in tile b */
+		public final double na, nb;
 
 		public Constraint( final int a, final int b, final double d, final double w, final double[] pos )
 		{
-			this.a = a; this.b = b; this.d = d; this.w = w; this.pos = pos;
+			this( a, b, d, w, pos, 0, 0 );
+		}
+
+		public Constraint( final int a, final int b, final double d, final double w, final double[] pos, final double na, final double nb )
+		{
+			this.a = a; this.b = b; this.d = d; this.w = w; this.pos = pos; this.na = na; this.nb = nb;
 		}
 
 		@Override
 		public String toString()
 		{
-			return String.format( "%d-%d: d=%+.3f w=%.0f pos=(%.2f, %.2f | %.2f, %.2f)", a, b, d, w, pos[ 0 ], pos[ 1 ], pos[ 2 ], pos[ 3 ] );
+			return String.format( "%d-%d: d=%+.3f w=%.0f pos=(%.2f, %.2f | %.2f, %.2f) earlier exposures %.2f | %.2f", a, b, d, w, pos[ 0 ], pos[ 1 ], pos[ 2 ], pos[ 3 ], na, nb );
 		}
 	}
 
@@ -108,10 +122,15 @@ public class GainField
 		public final String[] status;
 		/** tile-to-tile log-gain scatter the REML fit allowed for */
 		public final double tau;
+		/** the bleach factor k per earlier exposure (0 if not modelled or not kept), its standard error, and why */
+		public final double bleachFactor, bleachSigma;
+		public final String bleachStatus;
 
-		Fit( final Map< Integer, Field > fields, final double[] gains, final String[] status, final double tau )
+		Fit( final Map< Integer, Field > fields, final double[] gains, final String[] status, final double tau,
+				final double bleachFactor, final double bleachSigma, final String bleachStatus )
 		{
 			this.fields = fields; this.gains = gains; this.status = status; this.tau = tau;
+			this.bleachFactor = bleachFactor; this.bleachSigma = bleachSigma; this.bleachStatus = bleachStatus;
 		}
 	}
 
@@ -126,8 +145,25 @@ public class GainField
 	 */
 	public static Fit fit( final List< Constraint > constraints, final int[] cameraOfTile )
 	{
+		return fit( constraints, cameraOfTile, false );
+	}
+
+	/**
+	 * @param bleaching also fit one bleach factor (see the class description)
+	 */
+	public static Fit fit( final List< Constraint > constraints, final int[] cameraOfTile, final boolean bleaching )
+	{
 		final int[] all = { 0, 1 };
-		Gls g = gls( constraints, cameraOfTile, all );
+		boolean bleach = bleaching;
+		Gls g = gls( constraints, cameraOfTile, all, bleach );
+		String bleachStatus = "not modelled";
+		if ( bleach )
+		{
+			final double z = g.bleachSigma > 0 ? g.bleach / g.bleachSigma : 0;
+			bleachStatus = g.bleach > 0 && z > FIELD_SIGMA ? "kept" : String.format( "not significant (%.1f sigma)", z );
+			if ( !bleachStatus.equals( "kept" ) )
+				g = gls( constraints, cameraOfTile, all, bleach = false );
+		}
 		final String[] status = new String[ AXES.length ];
 		final List< Integer > keep = new ArrayList<>();
 		for ( final int k : all )
@@ -140,8 +176,10 @@ public class GainField
 				keep.add( k );
 		}
 		if ( keep.size() != all.length )
-			g = gls( constraints, cameraOfTile, keep.stream().mapToInt( Integer::intValue ).toArray() );
-		return new Fit( g.fields, g.gains, status, g.tau );
+			g = gls( constraints, cameraOfTile, keep.stream().mapToInt( Integer::intValue ).toArray(), bleach );
+		final double k = bleach ? 1 - Math.exp( -g.bleach ) : 0;
+		final double kSigma = bleach ? Math.exp( -g.bleach ) * g.bleachSigma : 0;   // delta method
+		return new Fit( g.fields, g.gains, status, g.tau, k, kSigma, bleachStatus );
 	}
 
 	private static class Gls
@@ -150,15 +188,17 @@ public class GainField
 		double[] gains;
 		double tau;
 		Map< Integer, String > why;
+		/** -log(1 - k) and its standard error, if modelled */
+		double bleach, bleachSigma;
 	}
 
-	private static Gls gls( final List< Constraint > constraints, final int[] cameraOfTile, final int[] axes )
+	private static Gls gls( final List< Constraint > constraints, final int[] cameraOfTile, final int[] axes, final boolean bleach )
 	{
 		final TreeSet< Integer > camSet = new TreeSet<>();
 		for ( final int c : cameraOfTile )
 			camSet.add( c );
 		final List< Integer > cams = new ArrayList<>( camSet );
-		final int nTiles = cameraOfTile.length, nGain = cams.size() - 1, p = nGain + cams.size() * axes.length;
+		final int nTiles = cameraOfTile.length, nGain = cams.size() - 1, nField = nGain + cams.size() * axes.length, p = nField + ( bleach ? 1 : 0 );
 		final Map< Integer, Integer > gcol = new HashMap<>();
 		for ( int i = 1; i < cams.size(); ++i )                 // camera 0 is the reference
 			gcol.put( cams.get( i ), i - 1 );
@@ -182,6 +222,8 @@ public class GainField
 				X[ r ][ fcol( cams, ca, j, axes, nGain ) ] += con.pos[ k ];        // (ya, xa)[k]
 				X[ r ][ fcol( cams, cb, j, axes, nGain ) ] -= con.pos[ 2 + k ];    // (yb, xb)[k]
 			}
+			if ( bleach )
+				X[ r ][ nField ] = con.nb - con.na;
 			D[ r ][ con.a ] += 1;
 			D[ r ][ con.b ] -= 1;
 			d[ r ] = con.d;
@@ -230,6 +272,11 @@ public class GainField
 			g.fields.put( c, new Field( coef, sig ) );
 		}
 		g.tau = Math.sqrt( res.rho * res.s2 );
+		if ( bleach )
+		{
+			g.bleach = res.beta[ nField ];
+			g.bleachSigma = Math.sqrt( res.var[ nField ] );
+		}
 		return g;
 	}
 

@@ -33,6 +33,7 @@ import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrect
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldImageInfo;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.MultiResolutionFlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.process.fusion.intensity.AutoThreshold;
+import net.preibisch.mvrecon.process.fusion.intensity.Bleaching;
 import util.URITools;
 
 /**
@@ -81,6 +82,8 @@ public class FlatfieldEstimation
 		double[] min, max;
 		double threshold;
 		boolean empty;
+		/** the earlier views covering this one (acquisition order = setup id), null if none */
+		Bleaching earlier;
 	}
 
 	public static class GainFieldResult
@@ -106,14 +109,21 @@ public class FlatfieldEstimation
 	 * {@code d = log median_a - log median_b}, weighted by the number of such voxels.
 	 *
 	 * @param maxDownsampling the statistics are measured at the coarsest pyramid level no coarser than this
+	 * @param bleaching also fit one bleach factor per earlier exposure ({@link GainField}), so that the dimming of
+	 *        regions imaged before does not land in the field; it is reported, for the intensity correction
 	 */
 	public static GainFieldResult fitGainField( final SpimData2 data, final Collection< ? extends ViewId > views,
-			final long maxDownsampling, final int numThreads )
+			final long maxDownsampling, final boolean bleaching, final int numThreads )
 	{
 		final BasicImgLoader il = rawLoader( data );
 		final List< Tile > tiles = new ArrayList<>();
 		for ( final ViewId v : views )
-			tiles.add( tile( data, il, v, maxDownsampling ) );
+		{
+			final Tile t = tile( data, il, v, maxDownsampling );
+			if ( bleaching )
+				t.earlier = Bleaching.footprints( data, v, t.toWorld );
+			tiles.add( t );
+		}
 
 		final ExecutorService ex = Executors.newFixedThreadPool( Math.max( 1, numThreads ) );
 		try
@@ -176,13 +186,15 @@ public class FlatfieldEstimation
 					camKeys.add( tiles.get( i ).camera );
 				cameraOfTile[ i ] = camKeys.indexOf( tiles.get( i ).camera );
 			}
-			final GainField.Fit fit = GainField.fit( constraints, cameraOfTile );
+			final GainField.Fit fit = GainField.fit( constraints, cameraOfTile, bleaching );
 			final Map< String, GainField.Field > fields = new LinkedHashMap<>();
 			fit.fields.forEach( ( c, f ) -> fields.put( camKeys.get( c ), f ) );
 
 			for ( int k = 0; k < GainField.AXES.length; ++k )
 				System.out.println( "gain field: axis " + GainField.AXES[ k ] + ": " + fit.status[ k ] );
 			fields.forEach( ( c, f ) -> System.out.println( "gain field: " + c + ": " + f ) );
+			if ( bleaching )
+				System.out.println( String.format( "gain field: bleach factor per earlier exposure k = %.3f +- %.3f (%s)", fit.bleachFactor, fit.bleachSigma, fit.bleachStatus ) );
 			System.out.println( String.format( "gain field: tile scatter tau = %.3f, %d constraints from %d pairs", fit.tau, constraints.size(), pairs.size() ) );
 
 			final List< ViewId > tileViews = new ArrayList<>();
@@ -301,10 +313,15 @@ public class FlatfieldEstimation
 		float[] va = new float[ 1 << 16 ], vb = new float[ 1 << 16 ];
 		int n = 0;
 		long mapped = 0;
-		double sya = 0, sxa = 0, syb = 0, sxb = 0;
+		double sya = 0, sxa = 0, syb = 0, sxb = 0, sna = 0, snb = 0;
 		final long[] posB = new long[ 3 ];
+		final int lineLength = ( int ) ( to[ 0 ] - from[ 0 ] + 1 );
+		final int[] countA = new int[ lineLength ], countB = new int[ 1 ];
 		for ( long z = from[ 2 ]; z <= to[ 2 ]; ++z )
 			for ( long y = from[ 1 ]; y <= to[ 1 ]; ++y )
+			{
+				if ( a.earlier != null )
+					a.earlier.countLine( new long[] { from[ 0 ], y, z }, lineLength, countA );
 				for ( long x = from[ 0 ]; x <= to[ 0 ]; ++x )
 				{
 					p[ 0 ] = x; p[ 1 ] = y; p[ 2 ] = z;
@@ -338,12 +355,20 @@ public class FlatfieldEstimation
 					sxa += GainField.frameCoord( x, ( int ) a.dims[ 0 ] );
 					syb += GainField.frameCoord( posB[ 1 ], ( int ) b.dims[ 1 ] );
 					sxb += GainField.frameCoord( posB[ 0 ], ( int ) b.dims[ 0 ] );
+					if ( a.earlier != null )
+						sna += countA[ ( int ) ( x - from[ 0 ] ) ];
+					if ( b.earlier != null )
+					{
+						b.earlier.countLine( posB, 1, countB );
+						snb += countB[ 0 ];
+					}
 				}
+			}
 
 		if ( n < minOverlapForeground || n < minOverlapFraction * mapped )
 			return null;
 		final double d = Math.log( median( va, n ) ) - Math.log( median( vb, n ) );
-		return new GainField.Constraint( ia, ib, d, n, new double[] { sya / n, sxa / n, syb / n, sxb / n } );
+		return new GainField.Constraint( ia, ib, d, n, new double[] { sya / n, sxa / n, syb / n, sxb / n }, sna / n, snb / n );
 	}
 
 	/** numpy's median of the first n values (sorts them) */
@@ -393,6 +418,8 @@ public class FlatfieldEstimation
 	/** a row-major (y, x) plane as a 2D float32 dataset (x by y) */
 	private static FlatfieldImageInfo save( final N5Writer w, final URI container, final String dataset, final float[] plane, final long sx, final long sy )
 	{
+		if ( w.exists( dataset ) )
+			w.remove( dataset ); // a new estimate replaces the old one
 		N5Utils.save( ArrayImgs.floats( plane, sx, sy ), w, dataset, new int[] { ( int ) sx, ( int ) sy }, new org.janelia.saalfeldlab.n5.RawCompression() );
 		return new FlatfieldImageInfo( container, StorageFormat.ZARR, dataset );
 	}
