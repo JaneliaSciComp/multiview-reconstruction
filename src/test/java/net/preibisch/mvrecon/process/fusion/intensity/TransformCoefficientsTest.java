@@ -20,36 +20,25 @@
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
  * #L%
  */
-package net.preibisch.mvrecon.process.fusion.intensityadjust;
+package net.preibisch.mvrecon.process.fusion.intensity;
 
-import mpicbg.models.AffineModel1D;
-import net.imglib2.converter.Converter;
-import net.imglib2.type.numeric.real.FloatType;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-public class IntensityAdjuster implements Converter< FloatType, FloatType >
-{
-	final double m00, m01;
+import org.junit.jupiter.api.Test;
 
-	public IntensityAdjuster( final AffineModel1D intensityTransform )
-	{
-		final double[] m = new double[ 2 ];
+public class TransformCoefficientsTest {
 
-		intensityTransform.getMatrix( m );
-		this.m00 = m[ 0 ];
-		this.m01 = m[ 1 ];
-	}
-
-	@Override
-	public void convert( final FloatType input, final FloatType output )
-	{
-		// cannot use this because the double[] array l cannot be shared
-		//this.intensityTransform.applyInPlace( this.l );
-
-		output.set( (float)apply( input.get() ) );
-	}
-
-	final public double apply( final double l )
-	{
-		return l * m00 + m01;
+	/**
+	 * 1x1x2 grid over a 4x1x4 image: z slab 0 has a = 1, slab 1 has a = 3. Past the last coefficient center in x the
+	 * line must be padded with this row's coefficient, not row 0's.
+	 */
+	@Test
+	public void rightPaddingStaysInTheCurrentRow() {
+		final Coefficients coefficients = new Coefficients(new double[][] { { 1, 3 }, { 0, 0 } }, 1, 1, 2);
+		final TransformCoefficients t = TransformCoefficients.create(new net.imglib2.FinalDimensions(4, 1, 4), coefficients);
+		final float[] a = new float[4];
+		t.line(new long[] { 0, 0, 3 }, 4, 0, a); // z = 3 is slab 1's center
+		for (int x = 0; x < 4; ++x)
+			assertEquals(3, a[x], 1e-6, "x = " + x);
 	}
 }

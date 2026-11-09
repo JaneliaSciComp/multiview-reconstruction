@@ -34,6 +34,8 @@ import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import mpicbg.models.AffineModel1D;
+import mpicbg.models.Model;
 import mpicbg.models.PointMatch;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.sequence.ViewId;
@@ -64,7 +66,6 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.LinAlgHelpers;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.FastAffineModel1D;
 import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.FlattenedMatches;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,7 +73,7 @@ import org.slf4j.LoggerFactory;
 import static net.imglib2.util.Intervals.intersect;
 import static net.imglib2.util.Intervals.isEmpty;
 import static net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension.border;
-import static net.imglib2.view.fluent.RandomAccessibleView.Interpolation.nLinear;
+import static net.imglib2.view.fluent.RandomAccessibleView.Interpolation.nearestNeighbor;
 
 class IntensityMatcher {
 
@@ -120,7 +121,7 @@ class IntensityMatcher {
 	}
 
     /**
-     * Match using RANSAC
+     * Match using RANSAC (with an {@code AffineModel1D})
      *
      * @param view1
      * @param view1Bleachers
@@ -150,14 +151,52 @@ class IntensityMatcher {
             final int minNumInliers,
             final double maxTrust
     ) {
+        return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates,
+                new AffineModel1D(), iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust);
+    }
+
+    /**
+     * Match using RANSAC with the given model
+     *
+     * @param view1
+     * @param view1Bleachers
+     * @param view2
+     * @param view2Bleachers
+     * @param minIntensity threshold for intensities to consider for RANSAC, anything below that value will be discarded
+     * @param maxIntensity threshold for intensities to consider for RANSAC, anything above that value will be discarded
+     * @param minNumCandidates minimum number of (non-discarded) overlapping pixels required to consider two coefficient regions overlapping
+     * @param ransacModel 1D model to fit with RANSAC ({@code AffineModel1D}, {@code TranslationModel1D},
+     *        or any {@code InterpolatedAffineModel1D}); it is copied, the given instance is never modified
+     * @param iterations number of RANSAC iterations (only for RANSAC)
+     * @param maxEpsilon maximal allowed transfer error (only for RANSAC)
+     * @param minInlierRatio minimal number of inliers to number of candidates (only for RANSAC)
+     * @param minNumInliers minimally required absolute number of inliers (only for RANSAC)
+     * @param maxTrust reject candidates with a cost larger than maxTrust * median cost (only for RANSAC)
+     * @return
+     */
+    public List<CoefficientMatch> match(
+            final ViewId view1,
+            final List<ViewId> view1Bleachers,
+            final ViewId view2,
+            final List<ViewId> view2Bleachers,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates,
+            final Model<?> ransacModel,
+            final int iterations,
+            final double maxEpsilon,
+            final double minInlierRatio,
+            final int minNumInliers,
+            final double maxTrust
+    ) {
         final IntensityMatchingFilter filter = new RansacIntensityMatchingFilter(
-                new FastAffineModel1D(),
+                ransacModel,
                 iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust);
         return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates, filter);
     }
 
     /**
-     * Match using Histograms
+     * Match using Histograms (with an {@code AffineModel1D})
      *
      * @param view1
      * @param view1Bleachers
@@ -177,8 +216,83 @@ class IntensityMatcher {
             final double maxIntensity,
             final int minNumCandidates
     ) {
-        final IntensityMatchingFilter filter = new HistogramIntensityMatchingFilter(new FastAffineModel1D());
+        return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates,
+                new AffineModel1D());
+    }
+
+    /**
+     * Match using Histograms with the given model
+     *
+     * @param view1
+     * @param view1Bleachers
+     * @param view2
+     * @param view2Bleachers
+     * @param minIntensity threshold for intensities to consider for RANSAC, anything below that value will be discarded
+     * @param maxIntensity threshold for intensities to consider for RANSAC, anything above that value will be discarded
+     * @param minNumCandidates minimum number of (non-discarded) overlapping pixels required to consider two coefficient regions overlapping
+     * @param model 1D model to fit to the matched histogram quantiles ({@code AffineModel1D}, {@code TranslationModel1D},
+     *        or any {@code InterpolatedAffineModel1D}); it is copied, the given instance is never modified
+     * @return
+     */
+    public List<CoefficientMatch> match(
+            final ViewId view1,
+            final List<ViewId> view1Bleachers,
+            final ViewId view2,
+            final List<ViewId> view2Bleachers,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates,
+            final Model<?> model
+    ) {
+        return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates,
+                model, HistogramIntensityMatchingFilter.DEFAULT_NUM_SAMPLES);
+    }
+
+    /**
+     * Match using Histograms with the given model and quantile sample count
+     *
+     * @param view1
+     * @param view1Bleachers
+     * @param view2
+     * @param view2Bleachers
+     * @param minIntensity threshold for intensities to consider for RANSAC, anything below that value will be discarded
+     * @param maxIntensity threshold for intensities to consider for RANSAC, anything above that value will be discarded
+     * @param minNumCandidates minimum number of (non-discarded) overlapping pixels required to consider two coefficient regions overlapping
+     * @param model 1D model to fit to the matched histogram quantiles ({@code AffineModel1D}, {@code TranslationModel1D},
+     *        or any {@code InterpolatedAffineModel1D}); it is copied, the given instance is never modified
+     * @param numSamples number of quantile samples taken from each intensity distribution for the model fit
+     * @return
+     */
+    public List<CoefficientMatch> match(
+            final ViewId view1,
+            final List<ViewId> view1Bleachers,
+            final ViewId view2,
+            final List<ViewId> view2Bleachers,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates,
+            final Model<?> model,
+            final int numSamples
+    ) {
+        final IntensityMatchingFilter filter = new HistogramIntensityMatchingFilter(model, numSamples);
         return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates, filter);
+    }
+
+    /**
+     * Match by the ratio of the medians of the voxels both views see above {@code minIntensity} (a pure gain per
+     * pair of coefficient regions, see {@link MedianIntensityMatchingFilter}).
+     */
+    public List<CoefficientMatch> matchMedians(
+            final ViewId view1,
+            final List<ViewId> view1Bleachers,
+            final ViewId view2,
+            final List<ViewId> view2Bleachers,
+            final double minIntensity,
+            final double maxIntensity,
+            final int minNumCandidates
+    ) {
+        return match(view1, view1Bleachers, view2, view2Bleachers, minIntensity, maxIntensity, minNumCandidates,
+                new MedianIntensityMatchingFilter());
     }
 
     /**
@@ -418,8 +532,11 @@ class IntensityMatcher {
 	 */
 	private static RandomAccessible<?> scaleTile(final TileInfo tile, final int mipmapLevel, final AffineTransform3D renderScale) {
 		final AffineTransform3D transform = mipmapToRenderCoordinates(tile, mipmapLevel, renderScale);
+		// nearest neighbour, NOT nLinear: interpolation is for rendering. Smoothing both views
+		// onto the render grid biases the intensity DISTRIBUTIONS the matcher measures (it also
+		// used to round every sample, since the interpolation ran in the integer pixel type).
 		return RealViews.affine(tile.getImage(mipmapLevel).view()
-						.extend(border()).interpolate(nLinear()),
+						.extend(border()).interpolate(nearestNeighbor()),
 				transform);
 	}
 

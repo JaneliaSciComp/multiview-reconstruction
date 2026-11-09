@@ -50,7 +50,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 /**
  * Computes the embeddings of the interest points of a view and stores them as the per-point array of the label (what
  * {@code pcmatch embed} does, now in Java): all points of the (base) label, sampled by a {@link PatchExtractor} and run
- * through an {@link EmbeddingModel} block by block, one row per point, written by {@link InterestPointArrays#write} under
+ * through an {@link EmbeddingModel} block by block, one row per point, written by {@link InterestPointArrays#writeSetup} under
  * the base label with pcmatch's meta ({@code model.fingerprint}, {@code model.config}, {@code model.file}, the writer and
  * date). The array then satisfies the matcher's rule of one row per point of the base label, for the filtered labels of
  * the base as well. The GUI ("Compute Interest Point Embeddings") and BigStitcher-Spark ({@code embed-interestpoints}) share this code: the

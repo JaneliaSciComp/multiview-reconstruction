@@ -656,7 +656,7 @@ public class FileListDatasetDefinitionUtil
 				Set< Integer > presentValuesForVariable = variables.stream().map( j -> j.get( varIdx.get() ) ).collect( Collectors.toSet() );
 				// get present str
 				List< String > presentValuesStrings = new ArrayList<>(valuesForVariable.stream().filter( s -> presentValuesForVariable.contains( Integer.parseInt( s ) ) ).collect( Collectors.toSet() ) );
-				Collections.sort( presentValuesStrings );
+				presentValuesStrings.sort( Comparator.comparingInt( Integer::parseInt ) ); // numeric, not lexicographic (unpadded names)
 
 				String pattern = String.join( ",", presentValuesStrings );
 				varIdx.incrementAndGet();

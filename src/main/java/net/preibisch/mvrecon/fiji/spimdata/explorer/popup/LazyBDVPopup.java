@@ -22,6 +22,9 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
+
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.ArrayList;
@@ -62,6 +65,7 @@ import net.preibisch.mvrecon.fiji.plugin.apply.BigDataViewerTransformationWindow
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.SelectedViewDescriptionListener;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorerPanel;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.GlobalAlignActions;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.ScrollableBrightnessDialog;
 import util.BDVTools;
 
@@ -216,12 +220,17 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 		final ArrayList< ConverterSetup > emptyConverterSetups = new ArrayList<>();
 		final ArrayList< SourceAndConverter< ? > > emptySources = new ArrayList<>();
 		final int numTimepoints = seq.getTimePoints().size();
+		// sources read through the intensity-correction preview (key 'i'), see createSourceAndConverter
+		final BasicImgLoader original = IntensityPreview.install( spimData );
 		final CacheControl cache = ( ( ViewerImgLoader ) seq.getImgLoader() ).getCacheControl();
+		IntensityPreview.restore( spimData, original );
 		final BigDataViewer newBdv = new BigDataViewer( emptyConverterSetups, emptySources, spimData,
 				numTimepoints, cache, panel.xml().toString(),
-				IOFunctions.getProgressWriter(), ViewerOptions.options() );
+				IOFunctions.getProgressWriter(), ViewerOptions.options().accumulateProjectorFactory( IntensityPreview.CLOSEST_VIEW_WINS ) );
+		IntensityPreview.follow( spimData, newBdv.getViewer() );
 		newBdv.getViewerFrame().setVisible( true );
 		ScrollableBrightnessDialog.setAsBrightnessDialog( newBdv );
+		GlobalAlignActions.install( newBdv );
 
 
 		// Switch BDV into fused display mode so multiple active sources render
@@ -402,7 +411,16 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 			final BasicViewSetup setup = seq.getViewSetups().get( id );
 			if ( setup == null )
 				continue;
-			final SourceAndConverter< ? > soc = createSourceAndConverter( spimData, setup );
+			final BasicImgLoader original = IntensityPreview.install( spimData );
+			final SourceAndConverter< ? > soc;
+			try
+			{
+				soc = createSourceAndConverter( spimData, setup );
+			}
+			finally
+			{
+				IntensityPreview.restore( spimData, original );
+			}
 			final ConverterSetup cs = BigDataViewer.createConverterSetup( soc, id );
 
 			// First-ever add with no prior brightness → sample histogram now.

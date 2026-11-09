@@ -44,6 +44,20 @@ public class Coefficients implements Serializable {
 	 */
 	final double[][] flattenedCoefficients;
 
+	/**
+	 * The lowest intensity the correction applies to. {@link Double#NaN} (the default)
+	 * means every voxel is corrected.
+	 */
+	private final double threshold;
+
+	/**
+	 * Fraction of intensity lost each time a voxel was imaged before (0 = no bleaching), see {@link Bleaching}.
+	 */
+	private final double bleachFactor;
+
+	/** Where the voxels of the view were imaged before; set per image by the caller, never stored. */
+	private final transient Bleaching bleaching;
+
 	public Coefficients(
 			final double[][] coefficients,
 			final int... fieldDimensions) {
@@ -64,6 +78,66 @@ public class Coefficients implements Serializable {
 		strides = IntervalIndexer.createAllocationSteps(size);
 		flattenedCoefficients = new double[numCoefficients][];
 		Arrays.setAll(flattenedCoefficients, i -> coefficients[i].clone());
+		threshold = Double.NaN;
+		bleachFactor = 0;
+		bleaching = null;
+	}
+
+	private Coefficients(final Coefficients other, final double threshold, final double bleachFactor,
+			final Bleaching bleaching) {
+		this.size = other.size;
+		this.strides = other.strides;
+		this.flattenedCoefficients = other.flattenedCoefficients;
+		this.threshold = threshold;
+		this.bleachFactor = bleachFactor;
+		this.bleaching = bleaching;
+	}
+
+	/**
+	 * @return the lowest intensity the correction applies to; voxels below it are left
+	 *         unchanged. {@link Double#NaN} means every voxel is corrected.
+	 */
+	public double threshold() {
+		return threshold;
+	}
+
+	/**
+	 * @return a view of these coefficients that only applies to intensities {@code >= threshold}
+	 *         (pass {@link Double#NaN} to correct every voxel)
+	 */
+	public Coefficients withThreshold(final double threshold) {
+		return new Coefficients(this, threshold, bleachFactor, bleaching);
+	}
+
+	/**
+	 * @return the fraction of intensity lost each time a voxel was imaged before, which the intensities these
+	 *         coefficients were matched on were corrected for (0 = none)
+	 */
+	public double bleachFactor() {
+		return bleachFactor;
+	}
+
+	/**
+	 * @return a view of these coefficients that applies to intensities unbleached with {@code bleachFactor}
+	 */
+	public Coefficients withBleachFactor(final double bleachFactor) {
+		if (!(bleachFactor >= 0 && bleachFactor < 1))
+			throw new IllegalArgumentException("bleachFactor must be in [0, 1), but was " + bleachFactor);
+		return new Coefficients(this, threshold, bleachFactor, bleaching);
+	}
+
+	/** @return where the voxels of the image were imaged before, or null (not stored) */
+	public Bleaching bleaching() {
+		return bleaching;
+	}
+
+	/**
+	 * @return a view of these coefficients that first unbleaches every voxel by {@code bleaching} (built for the image
+	 *         these coefficients are applied to, at its resolution level); null = no unbleaching. Only meaningful when
+	 *         {@link #bleachFactor()} is the factor the bleaching was built with.
+	 */
+	public Coefficients withBleaching(final Bleaching bleaching) {
+		return new Coefficients(this, threshold, bleachFactor, bleaching);
 	}
 
 	int size(final int d) {

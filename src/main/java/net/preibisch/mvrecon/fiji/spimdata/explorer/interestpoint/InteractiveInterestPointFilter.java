@@ -102,7 +102,7 @@ public class InteractiveInterestPointFilter extends JFrame
 	public static int numBins = 100;
 	public static int sliderResolution = 1000;
 	public static int chartWidth = 520;
-	/** log10 binning per axis (response, intensity, sigma), a generalized log (glog10) where values <= 0 exist; the last toggle is remembered */
+	/** log10 binning per axis (response, intensity, sigma), a generalized log (glog10) where values &lt;= 0 exist; the last toggle is remembered */
 	public static boolean[] defaultLog = new boolean[] { true, false, false };
 	/** the "Apply_to" of "Create filtered label ...": 0 = the selected views, 1 = all views with the label; the last choice is remembered */
 	public static int defaultApplyTo = 0;

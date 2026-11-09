@@ -26,12 +26,14 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.legacy.io.IOFunctions;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -101,6 +103,18 @@ public abstract class PairwiseSetup< V extends Comparable< V > >
 
 		// return the removed ones
 		return removed;
+	}
+
+	/**
+	 * definePairs() followed by removeNonOverlappingPairs( ovlp ). Strategies that can generate the overlapping pairs
+	 * directly (instead of enumerating all n^2 pairs and discarding most of them) override this.
+	 *
+	 * @param ovlp - implementation of {@link OverlapDetection}
+	 */
+	public void defineOverlappingPairs( final OverlapDetection< V > ovlp )
+	{
+		IOFunctions.println( "Defined pairs, removed " + definePairs().size() + " redundant view pairs." );
+		IOFunctions.println( "Removed " + removeNonOverlappingPairs( ovlp ).size() + " pairs because they do not overlap (Strategy='" + ovlp.getClass().getSimpleName() + "')" );
 	}
 
 	/**
@@ -233,53 +247,24 @@ public abstract class PairwiseSetup< V extends Comparable< V > >
 			final List< Pair< V, V > > pairs,
 			final Set< Group< V > > groups )
 	{
+		// view -> groups it is a member of, instead of scanning all groups for every pair
+		final HashMap< V, ArrayList< Group< V > > > memberOf = new HashMap<>();
+		for ( final Group< V > group : groups )
+			for ( final V view : group )
+				memberOf.computeIfAbsent( view, v -> new ArrayList<>() ).add( group );
+
 		final ArrayList< Pair< V, V > > removed = new ArrayList<>();
+		final ArrayList< Group< V > > none = new ArrayList<>();
 
-		for ( int i = pairs.size() - 1; i >= 0; --i )
-		{
-			final Pair< V, V > pair = pairs.get( i );
-
-			final V viewA = pair.getA();
-			final V viewB = pair.getB();
-
-			// if both views of a pair are contained in the same group
-			// we can safely remove this pair
-
-			boolean removedPair = false;
-
-			for ( final Group< V > group : groups )
-			{
-				if ( group.contains( viewA ) && group.contains( viewB ) )
-				{
-					pairs.remove( i );
-					removed.add( pair );
-					removedPair = true;
-
-					break;
-				}
-			}
-			
-			// we removed pair on first test, nothing more to be done
-
-			if ( removedPair )
-				continue;
-
-			// now test if the groups that both views belong to overlap,
-			// because if they do, there is no point in comparing this pair
-			final ArrayList< Group< V > > memberA = Group.memberOf( viewA, groups );
-			final ArrayList< Group< V > > memberB = Group.memberOf( viewB, groups );
-
-			for ( int a = 0; a < memberA.size() && !removedPair; ++a )
-				for ( int b = 0; b < memberB.size() && !removedPair; ++b )
-				{
-					if ( Group.overlaps( memberA.get( a ), memberB.get( b ) ) )
-					{
-						pairs.remove( i );
-						removed.add( pair );
-						removedPair = true;
-					}
-				}
-		}
+		// if the groups that both views belong to overlap (e.g. both views are in the same group),
+		// there is no point in comparing this pair
+		pairs.removeIf( pair -> {
+			for ( final Group< V > groupA : memberOf.getOrDefault( pair.getA(), none ) )
+				for ( final Group< V > groupB : memberOf.getOrDefault( pair.getB(), none ) )
+					if ( Group.overlaps( groupA, groupB ) )
+						return removed.add( pair );
+			return false;
+		} );
 
 		return removed;
 	}

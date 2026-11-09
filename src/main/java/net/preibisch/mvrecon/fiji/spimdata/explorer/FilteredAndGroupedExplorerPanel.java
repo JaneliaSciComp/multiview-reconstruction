@@ -64,10 +64,12 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVFlyThrough;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVUtils;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.IntensityAdjustmentPopup;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ExplorerWindowSetable;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.selection.SelectionDialog;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewNeighboursWindow;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.viewneighbours.ViewOverlapWindow;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import util.BDVTools;
 import util.URITools;
@@ -549,6 +551,45 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 						toggleViewSetupIdOverlay( p.getBDV() );
 					}
 				}
+			}
+		} );
+	}
+
+	/**
+	 * Key 'i' toggles the preview of the dataset's intensity correction (Intensity Adjustment &gt; Compute or Import)
+	 * in BigDataViewer. Independent of 'c' (colors) and 'v' (ViewSetup ids).
+	 */
+	protected void addIntensityPreviewShortcut()
+	{
+		table.addKeyListener( new KeyAdapter()
+		{
+			@Override
+			public void keyPressed( final KeyEvent arg0 )
+			{
+				if ( arg0.getKeyChar() != 'i' && arg0.getKeyChar() != 'I' )
+					return;
+
+				final IntensityPreview preview = IntensityPreview.get( data );
+				if ( preview != null && preview.isEnabled() )
+				{
+					preview.disable();
+					IntensityAdjustmentPopup.showPreviewState( FilteredAndGroupedExplorerPanel.this, false );
+					return;
+				}
+
+				// may read the coefficients from disk and finds the closest views: not on the event thread
+				new Thread( () -> {
+					if ( data.getIntensityAdjustments().isEmpty() )
+					{
+						IOFunctions.println( "No intensity correction to preview: right-click > Intensity Adjustment > Compute ... "
+								+ "(or Import coefficients ...) first." );
+						final BasicBDVPopup p = runningBdvPopup();
+						if ( p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible() )
+							p.getBDV().getViewer().showMessage( "No intensity correction (see log)" );
+						return;
+					}
+					IntensityAdjustmentPopup.applyPreview( FilteredAndGroupedExplorerPanel.this, data );
+				} ).start();
 			}
 		} );
 	}

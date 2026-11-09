@@ -23,16 +23,19 @@
 package net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.LongStream;
 
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.AbstractSequenceDescription;
@@ -50,7 +53,6 @@ import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.range.RangeComparator;
 
 public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDetection< V >
 {
@@ -309,116 +311,106 @@ public class SimpleBoundingBoxOverlap< V extends ViewId > implements OverlapDete
 	}
 
 	/**
-	 * Generate overlapping pairs directly without creating all n^2 pairs first.
-	 * This is MUCH faster for large datasets where most pairs don't overlap.
-	 * Every pair of views is a candidate; see the other overload for the pairing rule of a registration type.
+	 * Generate overlapping pairs directly without creating all n^2 pairs first (see {@link #overlappingIndexPairs(List)}).
 	 *
 	 * @param views - list of views to generate pairs from
 	 * @param groups - groups (views in same group are skipped)
-	 * @return list of overlapping pairs only
+	 * @return list of overlapping pairs only, (views[a], views[b]) with a &lt; b in the order of a double loop over views
 	 */
 	public List<Pair<V, V>> generateOverlappingPairs(
 			final List<V> views,
 			final Collection<? extends Group<V>> groups)
 	{
-		return generateOverlappingPairs( views, groups, null, null, null );
-	}
+		if (views.size() < 2) return new ArrayList<>();
 
-	/**
-	 * Generate the overlapping pairs a {@code PairwiseSetup} would define, directly without creating all n^2 pairs first:
-	 * the pairs within the range of the registration type (same timepoint, reference timepoint, all; what
-	 * {@code AllToAllRange.definePairs()} applies), not within one group, whose bounding boxes overlap.
-	 *
-	 * @param views - list of views to generate pairs from
-	 * @param groups - groups (views in same group are skipped)
-	 * @param rangeComparator - the pairing rule of the registration type, pairs it rejects are skipped (null = every pair is in range)
-	 * @param notPaired - if not null, incremented for every pair outside the range or within one group
-	 * @param nonOverlapping - if not null, incremented for every pair in range whose bounding boxes do not overlap
-	 * @return list of overlapping pairs within the range only
-	 */
-	public List<Pair<V, V>> generateOverlappingPairs(
-			final List<V> views,
-			final Collection<? extends Group<V>> groups,
-			final RangeComparator<? super V> rangeComparator,
-			final LongAdder notPaired,
-			final LongAdder nonOverlapping)
-	{
-		final int n = views.size();
-		if (n < 2) return new ArrayList<>();
-
-
-		// Step 1: Pre-compute all bounding boxes
 		final Map<V, BoundingBox> boundingBoxes = precomputeBoundingBoxes(views);
 
-		// Step 2: Pre-compute group membership for O(1) lookup
-		final Map<V, Set<Integer>> viewToGroups = new ConcurrentHashMap<>();
+		// Pre-compute group membership for O(1) lookup
+		final Map<V, Set<Integer>> viewToGroups = new HashMap<>();
 		int groupIdx = 0;
 		for (final Group<V> group : groups)
 		{
 			final int idx = groupIdx++;
 			for (final V view : group.getViews())
-			{
-				viewToGroups.computeIfAbsent(view, k -> new java.util.HashSet<>()).add(idx);
-			}
+				viewToGroups.computeIfAbsent(view, k -> new HashSet<>()).add(idx);
 		}
 		final Set<Integer> emptySet = Collections.emptySet();
 
-		// Step 3: Generate only overlapping pairs in parallel
+		final ArrayList<Pair<V, V>> overlappingPairs = new ArrayList<>();
+		for (final long ab : overlappingIndexPairs(views.stream().map(boundingBoxes::get).collect(Collectors.toList())))
+		{
+			final V viewIdA = views.get((int)(ab >>> 32));
+			final V viewIdB = views.get((int)ab);
+
+			// skip if both in same group
+			final Set<Integer> groupsB = viewToGroups.getOrDefault(viewIdB, emptySet);
+			if (viewToGroups.getOrDefault(viewIdA, emptySet).stream().noneMatch(groupsB::contains))
+				overlappingPairs.add(new ValuePair<>(viewIdA, viewIdB));
+		}
+
+		return overlappingPairs;
+	}
+
+	/**
+	 * All index pairs (a, b), a &lt; b, of boxes that {@link #overlaps(BoundingBox, BoundingBox)}, encoded as
+	 * {@code (long)a << 32 | b} and sorted, i.e. in the order of a double loop. Null boxes overlap nothing.
+	 *
+	 * Sweep and prune: the boxes are sorted by their min along the axis on which they are spread out the most, and a box
+	 * is only compared to the boxes that start before it ends along that axis. O(n log n + n*s) for s boxes per slab
+	 * instead of O(n^2), which matters for split datasets with 10^4 - 10^5 views.
+	 *
+	 * @param boxes - the bounding boxes, may contain null
+	 * @return the sorted encoded index pairs
+	 */
+	public static long[] overlappingIndexPairs(final List<BoundingBox> boxes)
+	{
+		final int[] valid = IntStream.range(0, boxes.size()).filter(i -> boxes.get(i) != null).toArray();
+		if (valid.length < 2) return new long[0];
+
+		// sweep axis: the one where the extent of all boxes holds the most average box widths
+		final int numDimensions = boxes.get(valid[0]).numDimensions();
+		int axis = 0;
+		double maxSlabs = -1;
+		for (int d = 0; d < numDimensions; ++d)
+		{
+			long min = Long.MAX_VALUE, max = Long.MIN_VALUE, sumWidth = 0;
+			for (final int i : valid)
+			{
+				final BoundingBox bb = boxes.get(i);
+				min = Math.min(min, bb.getMin()[d]);
+				max = Math.max(max, bb.getMax()[d]);
+				sumWidth += bb.getMax()[d] - bb.getMin()[d] + 1;
+			}
+			final double slabs = (max - min + 1) * (double)valid.length / sumWidth;
+			if (slabs > maxSlabs) { maxSlabs = slabs; axis = d; }
+		}
+
+		final int sweepAxis = axis;
+		final int[] order = Arrays.stream(valid).boxed()
+				.sorted(Comparator.comparingInt(i -> boxes.get(i).getMin()[sweepAxis]))
+				.mapToInt(Integer::intValue).toArray();
+		final int[] sortedMin = Arrays.stream(order).map(i -> boxes.get(i).getMin()[sweepAxis]).toArray();
+
 		final ForkJoinPool pool = new ForkJoinPool(Threads.numThreads());
 		try
 		{
-			final List<Pair<V, V>> overlappingPairs = pool.submit(() ->
-				IntStream.range(0, n - 1).parallel()
-					.boxed()
-					.<Pair<V, V>>flatMap(a -> {
-						final V viewIdA = views.get(a);
-						final BoundingBox bbA = boundingBoxes.get(viewIdA);
-						if (bbA == null) return java.util.stream.Stream.empty();
+			return pool.submit(() ->
+				IntStream.range(0, order.length).parallel().boxed().flatMapToLong(p -> {
+					final int a = order[p];
+					final BoundingBox bbA = boxes.get(a);
+					final int maxA = bbA.getMax()[sweepAxis];
+					final LongStream.Builder pairs = LongStream.builder();
 
-						final Set<Integer> groupsA = viewToGroups.getOrDefault(viewIdA, emptySet);
-
-						return IntStream.range(a + 1, n)
-							.<Pair<V, V>>mapToObj(b -> {
-								final V viewIdB = views.get(b);
-
-								// the pairing rule of the registration type (same timepoint, reference timepoint, ...)
-								if (rangeComparator != null && !rangeComparator.inRange(viewIdA, viewIdB))
-								{
-									if (notPaired != null) notPaired.increment();
-									return null;
-								}
-
-								// Check if both in same group
-								if (!groupsA.isEmpty())
-								{
-									final Set<Integer> groupsB = viewToGroups.getOrDefault(viewIdB, emptySet);
-									for (final Integer g : groupsA)
-									{
-										if (groupsB.contains(g))
-										{
-											if (notPaired != null) notPaired.increment();
-											return null;
-										}
-									}
-								}
-
-								// Check bounding box overlap
-								final BoundingBox bbB = boundingBoxes.get(viewIdB);
-								if (bbB == null || !overlaps(bbA, bbB))
-								{
-									if (nonOverlapping != null) nonOverlapping.increment();
-									return null;
-								}
-
-								return new ValuePair<>(viewIdA, viewIdB);
-							})
-							.filter(p -> p != null);
-					})
-					.collect(Collectors.toList())
+					// sortedMin[q] >= sortedMin[p], so min <= max along the sweep axis holds for all q in this range
+					for (int q = p + 1; q < order.length && sortedMin[q] <= maxA; ++q)
+					{
+						final int b = order[q];
+						if (overlaps(bbA, boxes.get(b)))
+							pairs.add(a < b ? (long)a << 32 | b : (long)b << 32 | a);
+					}
+					return pairs.build();
+				}).sorted().toArray()
 			).get();
-
-
-			return overlappingPairs;
 		}
 		catch (final Exception e)
 		{

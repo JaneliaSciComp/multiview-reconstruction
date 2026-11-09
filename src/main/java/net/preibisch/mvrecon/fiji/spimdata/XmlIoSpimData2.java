@@ -153,6 +153,8 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 			throw new SpimDataException( "Could not point spread function for '" + lastURI() + "' in paralell: " + e );
 		}
 
+		saveIntensityAdjustments( spimData );
+
 		try
 		{
 			super.save( spimData, xmlPath );
@@ -256,7 +258,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		if ( elem == null )
 			intensityAdjustments = new IntensityAdjustments();
 		else
-			intensityAdjustments = xmlIntensityAdjustments.fromXml( elem );
+			intensityAdjustments = xmlIntensityAdjustments.fromXml( elem, spimData.getBasePathURI(), seq.getViewDescriptions().keySet() );
 		spimData.setIntensityAdjustments( intensityAdjustments );
 
 		final ActionHistory actionHistory;
@@ -285,10 +287,26 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		root.addContent( xmlBoundingBoxes.toXml( spimData.getBoundingBoxes() ) );
 		root.addContent( xmlPointSpreadFunctions.toXml( spimData.getPointSpreadFunctions() ) );
 		root.addContent( xmlStitchingResults.toXml( spimData.getStitchingResults() ) );
-		root.addContent( xmlIntensityAdjustments.toXml( spimData.getIntensityAdjustments() ) );
+		root.addContent( xmlIntensityAdjustments.toXml( spimData.getIntensityAdjustments(), xmlFileDirectory ) );
 		root.addContent( xmlActionHistory.toXml( spimData.getActionHistory() ) );
 
 		return root;
+	}
+
+	/** writes the intensity-correction coefficients next to the XML if they changed or the XML moved */
+	public static void saveIntensityAdjustments( final SpimData2 spimData ) throws SpimDataException
+	{
+		try
+		{
+			spimData.getIntensityAdjustments().save(
+					spimData.getBasePathURI(),
+					spimData.getSequenceDescription().getImgLoader(),
+					spimData.getSequenceDescription().getViewDescriptions().keySet() );
+		}
+		catch ( final Exception e )
+		{
+			throw new SpimDataException( "Could not save intensity correction coefficients: " + e );
+		}
 	}
 
 	public static void savePSFsInParallel( final SpimData2 spimData )

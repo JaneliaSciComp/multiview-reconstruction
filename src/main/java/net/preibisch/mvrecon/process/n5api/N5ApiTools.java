@@ -544,8 +544,9 @@ public class N5ApiTools
 				useSharding,
 				shardSize5d ); // 5d
 
+		// the levels are 5-D (x, y, z, c, t); the mipmap transform is the 3-D one (BDV asserts three dimensions)
 		final Function<Integer, AffineTransform3D> levelToMipmapTransform =
-				(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
+				(level) -> MipmapTransforms.getMipmapTransformDefault( Arrays.copyOf( mrInfo[level].absoluteDownsamplingDouble(), 3 ) );
 
 		// create metadata
 		final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
