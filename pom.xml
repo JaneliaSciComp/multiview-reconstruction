@@ -314,6 +314,13 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 			<artifactId>ijp-kheops</artifactId>
 			<version>${ijp-kheops.version}</version>
 			<optional>true</optional>
+			<exclusions>
+				<!-- NOTE: bigdataviewer-vistools merged into bigdataviewer-core. -->
+				<exclusion>
+					<groupId>sc.fiji</groupId>
+					<artifactId>bigdataviewer-vistools</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>com.google.code.gson</groupId>
