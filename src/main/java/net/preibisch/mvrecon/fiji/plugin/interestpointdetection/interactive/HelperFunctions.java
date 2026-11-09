@@ -32,7 +32,7 @@ import ij.gui.OvalRoi;
 import ij.gui.Overlay;
 import net.imglib2.RealLocalizable;
 import net.imglib2.util.Util;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 
 public class HelperFunctions {
 
@@ -83,12 +83,12 @@ public class HelperFunctions {
 	/**
 	 * @return the peaks inside the rectangle whose |value| exceeds the threshold (the test of the detection)
 	 */
-	public static ArrayList<InterestPointValue> filterPeaks(final Collection<InterestPointValue> peaks,
+	public static ArrayList<InterestPoint> filterPeaks(final Collection<InterestPoint> peaks,
 			final Rectangle rectangle, final double threshold) {
-		final ArrayList<InterestPointValue> filtered = new ArrayList<>();
+		final ArrayList<InterestPoint> filtered = new ArrayList<>();
 
-		for (final InterestPointValue peak : peaks)
-			if (HelperFunctions.isInside(peak, rectangle) && (Math.abs(peak.getIntensity()) > threshold))
+		for (final InterestPoint peak : peaks)
+			if (HelperFunctions.isInside(peak, rectangle) && (Math.abs(peak.getResponse()) > threshold))
 				filtered.add(peak);
 
 		return filtered;

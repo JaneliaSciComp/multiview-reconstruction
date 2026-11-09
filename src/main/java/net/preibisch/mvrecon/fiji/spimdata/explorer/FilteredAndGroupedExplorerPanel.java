@@ -225,7 +225,10 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	@Override
 	public void updateContent()
 	{
-		// this.getTableModel().fireTableDataChanged();
+		// the derived columns (#Registrations, #InterestPoints, PSF) are computed on every paint, so a repaint shows the new
+		// values in every row and keeps the selection (fireTableDataChanged would clear it and re-trigger the selection listeners)
+		table.repaint();
+
 		for ( final SelectedViewDescriptionListener< AS > l : listeners )
 			l.updateContent( this.data );
 	}
@@ -495,10 +498,11 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	@Override
 	public void saveXML()
 	{
-		io.save( data, xml );
-
+		// the deletes first (e.g. of interest points), so that the XML save below commits them
 		for ( final SelectedViewDescriptionListener< AS > l : listeners )
-			l.save(); // e.g. delete interest points
+			l.save();
+
+		io.save( data, xml );
 	}
 
 	protected void addPopupMenu( final JTable table )

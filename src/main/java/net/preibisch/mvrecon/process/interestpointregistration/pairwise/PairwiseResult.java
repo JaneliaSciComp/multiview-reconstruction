@@ -29,6 +29,7 @@ import java.util.List;
 
 import mpicbg.models.PointMatch;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.process.interestpointregistration.AlignmentLog;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 
@@ -39,7 +40,8 @@ public class PairwiseResult< I extends InterestPoint >
 	 * to print across one batch of pairwise tasks before per-pair output is suppressed.
 	 * Set to {@link Integer#MAX_VALUE} to print everything (legacy behavior).
 	 * The end-of-batch summary printed by {@code MatcherPairwiseTools.computePairs} is
-	 * emitted regardless of this threshold.
+	 * emitted regardless of this threshold. With {@link AlignmentLog#restricted} only
+	 * that summary is printed.
 	 *
 	 * The counter is reset by {@link #resetLogCounters()} at the start of each
 	 * {@code computePairs} invocation.
@@ -78,6 +80,9 @@ public class PairwiseResult< I extends InterestPoint >
 	/** Gate {@link #setResult}/{@link #setDescription} prints by the per-batch cap. */
 	private static void cappedPrintln( final String line )
 	{
+		if ( AlignmentLog.restricted )
+			return; // summaries only
+
 		final int n = printedCount.getAndIncrement();
 		if ( n < maxPerPairCorrLog )
 		{

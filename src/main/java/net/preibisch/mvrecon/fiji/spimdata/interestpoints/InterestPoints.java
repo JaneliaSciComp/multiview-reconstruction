@@ -23,13 +23,20 @@
 package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
 
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 
 /**
- * A list of interest points for a certain label, can save and load from textfile as specified in the XML
+ * The interest points and correspondences of one (view, label), as the XML lists them: stored in the dataset's Zarr store
+ * ({@link InterestPointsZarr}); the older layouts (N5 groups, text files) are read until an entry is in the store.
  * 
  * @author Stephan Preibisch (stephan.preibisch@gmx.de)
  *
@@ -48,22 +55,64 @@ public abstract class InterestPoints
 		this.modifiedCorrespondingInterestPoints = false;
 	}
 
+	/**
+	 * @return an {@link InterestPointsZarr} for the XML text {@code tpId_X_viewSetupId_Y/label} (the points are in the
+	 *         dataset's interestpoints.zarr, or still in the N5 group of the same name); a text-file label
+	 *         ({@code interestpoints/...}, the layout before the N5 one) needs the view and label of its XML element, see
+	 *         {@link #instantiatefromXML(URI, String, ViewId, String, String, String)}
+	 */
 	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo )
 	{
-		if ( fromXMLInfo.trim().toLowerCase().startsWith("interestpoints/") )
-			throw new RuntimeException( "text-file based interest points not supported anymore.");
-		else
-			return new InterestPointsN5( baseDir, fromXMLInfo );
+		if ( InterestPointsTextFiles.isTextFilePath( fromXMLInfo ) )
+			throw new RuntimeException( "'" + fromXMLInfo + "' names text-file based interest points, which need the view and label of their XML element: use instantiatefromXML( baseDir, xmlText, viewId, label, baseLabel, filter )." );
+
+		if ( !InterestPointsZarr.supports( fromXMLInfo ) )
+			throw new RuntimeException( "interest point path not of the form tpId_X_viewSetupId_Y/label: " + fromXMLInfo );
+
+		return new InterestPointsZarr( baseDir, fromXMLInfo );
+	}
+
+	/**
+	 * @param baseLabel - the label a filtered label filters (XML attribute 'base'), null for a plain label
+	 * @param filter - the filter of a filtered label (XML attribute 'filter', InterestPointFilter.toString), null for a plain label
+	 * @return a plain label (InterestPointsZarr) or a filtered one (VirtualFilteredInterestPoints)
+	 */
+	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo, final String baseLabel, final String filter )
+	{
+		if ( baseLabel == null && filter == null )
+			return instantiatefromXML( baseDir, fromXMLInfo );
+
+		if ( baseLabel == null || filter == null )
+			throw new RuntimeException( "A filtered label needs both the base label and the filter in the XML, got base='" + baseLabel + "', filter='" + filter + "' for '" + fromXMLInfo + "'." );
+
+		return new VirtualFilteredInterestPoints( baseDir, fromXMLInfo, baseLabel, InterestPointFilter.fromString( filter ) );
+	}
+
+	/**
+	 * What the XML reader calls: a text-file label ({@code interestpoints/<name>}, see {@link InterestPointsTextFiles})
+	 * becomes an {@link InterestPointsZarr} of the given view and label that reads the text files until its entry is in
+	 * the store (the XML text stays the file name until then); any other text is handled as by
+	 * {@link #instantiatefromXML(URI, String, String, String)}.
+	 *
+	 * @param viewId - the view of the XML element (attributes timepoint, setup)
+	 * @param label - the label of the XML element
+	 */
+	public static InterestPoints instantiatefromXML( final URI baseDir, final String fromXMLInfo, final ViewId viewId, final String label, final String baseLabel, final String filter )
+	{
+		if ( InterestPointsTextFiles.isTextFilePath( fromXMLInfo ) )
+		{
+			if ( baseLabel != null || filter != null )
+				throw new RuntimeException( "'" + fromXMLInfo + "' names text-file based interest points, which cannot be a filtered label (base='" + baseLabel + "', filter='" + filter + "')." );
+
+			return new InterestPointsZarr( baseDir, viewId, label, InterestPointsTextFiles.normalize( fromXMLInfo ) );
+		}
+
+		return instantiatefromXML( baseDir, fromXMLInfo, baseLabel, filter );
 	}
 
 	public static InterestPoints newInstance( final URI baseDir, final ViewId viewId, final String label )
 	{
-		final InterestPoints list;
-
-		final String n5dataset = InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label );
-		list = new InterestPointsN5( baseDir, n5dataset );
-
-		return list;
+		return new InterestPointsZarr( baseDir, viewId, label );
 	}
 
 	public boolean hasModifiedInterestPoints() { return modifiedInterestPoints; }
@@ -79,6 +128,33 @@ public abstract class InterestPoints
 
 	public abstract boolean deleteInterestPoints();
 	public abstract boolean deleteCorrespondingInterestPoints();
+
+	/**
+	 * Recreates this label elsewhere: under another base path, for another view and/or under another name, e.g. when a
+	 * dataset is copied (SpimData2Tools.reduceSpimData2) or its views are split (SplittingTools). A plain label copies its
+	 * points through the point mapping, a filtered label stays a filter of the mapped base label, so that callers need not
+	 * know which kind of label they hold. The copy carries the parameters of this label (adapted to the mapped base label
+	 * for a filtered one) and is not saved.
+	 *
+	 * @param basePath - the base path of the copy
+	 * @param viewId - the view of the copy
+	 * @param label - the name of the copy
+	 * @param labelMapping - how the labels of this view map to the labels of the copy's view (the base label of a filtered label), e.g. l -&gt; l or l -&gt; l + "_split"
+	 * @param pointMapping - the point of the copy for a point of this label, null drops the point; ip -&gt; ip copies
+	 * @param copyCorrespondences - whether the copy gets the correspondences of this label (otherwise none): the ones of
+	 *        dropped points are dropped, the detection ids follow the point mapping and the corresponding labels the label
+	 *        mapping; the other end of a correspondence (corresponding view and detection id) lives in another view and is
+	 *        NOT checked, so a caller that drops or renumbers points must only copy correspondences when the corresponding
+	 *        points of the other views survive the same way (SplittingTools copies none)
+	 * @return the copy
+	 */
+	public abstract InterestPoints copyTo(
+			final URI basePath,
+			final ViewId viewId,
+			final String label,
+			final Function< String, String > labelMapping,
+			final Function< InterestPoint, InterestPoint > pointMapping,
+			final boolean copyCorrespondences );
 
 	/** 
 	 * @return the parameters used for segmenting these points
@@ -108,6 +184,35 @@ public abstract class InterestPoints
 	 * @return - the collection of corresponding interest points (copied), tries to load from disc if null
 	 */
 	public abstract Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy();
+
+	/**
+	 * @return the correspondences (copied) to one partner (view, label); a storage that has an index of the partners
+	 *         reads only those, this default filters the whole list
+	 */
+	public Collection< CorrespondingInterestPoints > getCorrespondingInterestPointsCopy( final ViewId partnerView, final String partnerLabel )
+	{
+		final ArrayList< CorrespondingInterestPoints > list = new ArrayList<>();
+
+		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
+			if ( c.getCorrespondingViewId().equals( partnerView ) && c.getCorrespodingLabel().equals( partnerLabel ) )
+				list.add( c );
+
+		return list;
+	}
+
+	/**
+	 * @return the (view, label)s this list has correspondences with; a storage that has an index of the partners
+	 *         answers without loading the list, this default derives them from the whole list
+	 */
+	public Set< Pair< ViewId, String > > getCorrespondingViews()
+	{
+		final HashSet< Pair< ViewId, String > > partners = new HashSet<>();
+
+		for ( final CorrespondingInterestPoints c : getCorrespondingInterestPointsCopy() )
+			partners.add( new ValuePair<>( c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
+
+		return partners;
+	}
 
 	public void setInterestPoints( final Collection< InterestPoint > list )
 	{

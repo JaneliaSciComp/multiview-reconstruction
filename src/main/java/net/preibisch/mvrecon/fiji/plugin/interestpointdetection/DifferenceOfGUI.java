@@ -24,7 +24,9 @@ package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
 import java.text.NumberFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.concurrent.ExecutorService;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -36,10 +38,12 @@ import ij.gui.GenericDialog;
 import mpicbg.spim.data.generic.base.Entity;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.Illumination;
+import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
@@ -52,72 +56,173 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections.FilterParameters;
+import net.preibisch.mvrecon.fiji.plugin.Limit_Detections;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.ViewSetupUtils;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.DisplayFusedImagesPopup;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
+import net.preibisch.mvrecon.process.interestpointdetection.OverlappingRegions;
 import net.preibisch.mvrecon.process.export.DisplayImage;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
-import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.interestpointdetection.NoiseFloor;
+import net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 {
-	protected static final int[] ds = { 1, 2, 4, 8, 16, 32, 64 };
-
-	public static String[] downsampleChoiceXY = { ds[ 0 ] + "x", ds[ 1 ] + "x", ds[ 2 ] + "x", ds[ 3 ] + "x", ds[ 4 ] + "x", ds[ 5 ] + "x", ds[ 6 ] + "x", "Match Z Resolution (less downsampling)", "Match Z Resolution (more downsampling)"  };
-	public static String[] downsampleChoiceZ = { ds[ 0 ] + "x", ds[ 1 ] + "x", ds[ 2 ] + "x", ds[ 3 ] + "x" };
 	public static String[] localizationChoice = { "None", "3-dimensional quadratic fit", "Gaussian mask localization fit" };	
 	public static String[] brightnessChoice = { "Very weak & small (beads)", "Weak & small (beads)", "Comparable to Sample & small (beads)", "Strong & small (beads)", "Advanced ...", "Interactive ..." };
 
-	public static int defaultDownsampleXYIndex = 7;
-	public static int defaultDownsampleZIndex = 0;
+	// the resolution the detection runs at (the starting resolution of the scale space): a precomputed resolution level (by default the second one) or manually typed factors
+	public static final String manualResolution = "Manually (powers of two) ...";
+	public static int defaultResolutionIndex = 1;
+	public static boolean defaultManual = false;
+	public static long[] defaultManualDownsampling = null;
+
+	// the anisotropy at full resolution (z voxel / x voxel): by default the estimate from the calibration (estimateAnisotropy, the PSF
+	// blurs z more than the calibration says), remembered while the calibration is the same; the "Estimate Anisotropy (BDV)" tool sets it, too
+	public static double anisotropyEstimateFactor = 0.8;
+	public static double defaultAnisotropyZ = Double.NaN;
+	public static double defaultAnisotropyCalibration = Double.NaN;
 
 	public static int defaultLocalization = 1;
 	public static int defaultBrightness = 5;
 
-	public static double defaultImageSigmaX = 0.5;
-	public static double defaultImageSigmaY = 0.5;
-	public static double defaultImageSigmaZ = 0.5;
 
 	public static int defaultViewChoice = 0;
 	public static int defaultGroupChoice = 0;
-
-	public static double defaultAdditionalSigmaX = 0.0;
-	public static double defaultAdditionalSigmaY = 0.0;
-	public static double defaultAdditionalSigmaZ = 0.0;
 
 	public static double defaultMinIntensity = 0.0;
 	public static double defaultMaxIntensity = 65535.0;
 	public static boolean defaultSameMinMax = false;
 
-	public static int defaultMaxDetections = 3000;
-	public static int defaultMaxDetectionsTypeIndex = 0;
+	/** "Only in regions overlapping other views": detect only where other volumes (another tile or angle of the same timepoint, among the selected views) overlap by the current registrations (OverlappingRegions) */
+	public static boolean defaultOverlappingOnly = false;
 
-	protected boolean limitDetections = false;
-	protected double imageSigmaX, imageSigmaY, imageSigmaZ;
 	protected double minIntensity, maxIntensity;
-	protected int maxDetections, maxDetectionsTypeIndex;
 
-	// downsampleXYIndex == 0 : a bit less then z-resolution
-	// downsampleXYIndex == -1 : a bit more then z-resolution
-	protected int localization, downsampleXYIndex, downsampleZ;
+	protected int localization;
+
+	/** the resolution the detection runs at, as downsampling in x, y, z of the full-resolution views (the starting resolution of the scale space) */
+	protected long[] downsampling;
+
+	/** z voxel / x voxel at full resolution as estimated by the user (the PSF blurs z more than the calibration says, see estimateAnisotropy); converted to the opened resolution per view (DownsampleTools.anisotropy) */
+	protected double anisotropyZ;
+
+	/** the precomputed resolution levels of the first view ("fx, fy, fz"), the entries of the drop-down */
+	protected String[] resolutions;
+
+	/** the anisotropy of the image the interactive preview was opened with (getImagePlusForInteractive, getGroupedImagePlusForInteractive), for the preview's detection */
+	protected double[] previewAnisotropy = null;
 
 	public static boolean useAverageMapBack = true;
 
 	boolean groupTiles, groupIllums, sameMinMax;
+
+	/** detect only in the regions of a view that overlap other volumes (OverlappingRegions.forOtherVolumes), see defaultOverlappingOnly */
+	protected boolean overlappingOnly = false;
+
+	/** the regions of this run once computed (regions()) */
+	private OverlappingRegions regions = null;
 	public static int defaultFuseFrom = 0;
 	public static int defaultFuseTo = 100;
 	protected int fuseFrom = 0, fuseTo = 100;
 	public static boolean defaultUseMinMaxForAll = false;
 	boolean useMinMaxForAll = false;
+
+	/** the threshold of the detection */
+	protected double threshold;
+
+	/** the factor of "Estimate from noise floor": the threshold becomes noiseFactor x the pooled noise floor of all views (thresholdFromNoiseFloor) */
+	protected double noiseFactor = defaultNoiseFactor;
+
+	/** the intensity ranges of the views at the dialog's resolution once computed for a noise floor (a full pass per view), so the previews' estimates at other sigmas skip it */
+	private final HashMap< ViewId, double[] > noiseRangeCache = new HashMap<>();
+	private long[] noiseRangeDownsampling = null;
+
+	/** the entries of "Filter_interest_points": the range dialog (Filter_Detections), the fixed-number dialog (Limit_Detections), the threshold ramp (the range dialog prefilled) or none; the last choice is remembered, initially none */
+	public static final String[] filterChoice = new String[] { "Filter interest points (response/sigma/intensity)", "Filter interest points (keep fixed number)", "Filter interest points (threshold ramp)", "Do not filter interest points" };
+	public static int defaultFilterChoice = filterChoice.length - 1;
+
+	/** the entries of "Threshold_type" of the Advanced dialogs: the threshold as typed, or noiseFactor x the noise floor of all views (NoiseFloor), estimated when the dialog closes; the last choice is remembered */
+	public static final String[] thresholdChoices = new String[] { "Fixed threshold", "Estimate from noise floor (noise factor x the noise floor of all views)" };
+	public static int defaultThresholdChoice = 0;
+	public static double defaultNoiseFactor = 2.5;
+
+	/** the filters chosen for the detections of this run (one, or the labels of a ramp), filtered labels or plain copies that Interest_Point_Detection creates once the points exist; empty = none */
+	protected final ArrayList< FilterParameters > filters = new ArrayList<>();
+
+	/** whether the threshold of this run was estimated from the noise floor (the "Advanced ..." dialog), stored with the label as provenance (getParameters) */
+	protected boolean thresholdFromNoiseFloor = false;
+
+	/** the names of the subpixel localizations in the parameters string (localizationChoice: none, quadratic fit, Gaussian mask fit) */
+	public static final String[] localizationKeys = new String[] { "NONE", "QUADRATIC", "GAUSS_FIT" };
+
+	/** @return the name of a subpixel localization in the parameters string, see localizationKeys */
+	public static String localizationKey( final int localization )
+	{
+		return localization >= 0 && localization < localizationKeys.length ? localizationKeys[ localization ] : "NONE";
+	}
+
+	/** @return the index (localizationChoice) of a name in the parameters string, also a plain index; -1 if unknown */
+	public static int localizationIndex( final String key )
+	{
+		for ( int i = 0; i < localizationKeys.length; ++i )
+			if ( localizationKeys[ i ].equals( key ) )
+				return i;
+
+		try
+		{
+			final int index = Integer.parseInt( key );
+			return index >= 0 && index < localizationKeys.length ? index : -1;
+		}
+		catch ( final NumberFormatException e )
+		{
+			return -1;
+		}
+	}
+
+	/**
+	 * The part of the parameters string stored with a label (getParameters) that both methods share, after their own
+	 * values: the resolution and the anisotropy the detection ran with, the intensity range (NaN if none was set; the
+	 * entered one or the common one the detection computed), and what else decides the detections: the subpixel
+	 * localization, the grouping of tiles and illuminations, whether only the regions overlapping other views were
+	 * detected in, the threshold type (fixed, or estimated from the noise floor with the noise factor; the estimated
+	 * value itself is in t). StoredDetectionParameters reads it back to detect a label again with the same settings.
+	 */
+	protected String commonParameters()
+	{
+		return " downsampleX=" + downsampling[ 0 ] + " downsampleY=" + downsampling[ 1 ] + " downsampleZ=" + downsampling[ 2 ] + " anisotropy=" + anisotropyZ +
+				" minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity +
+				" localization=" + localizationKey( localization ) + " groupTiles=" + groupTiles + " groupIllums=" + groupIllums + " overlappingOnly=" + overlappingOnly +
+				( thresholdFromNoiseFloor ? " thresholdType=noisefloor noiseFactor=" + noiseFactor : " thresholdType=fixed" );
+	}
+
+	/**
+	 * @return the regions of the views that overlap other volumes (OverlappingRegions.forOtherVolumes over the views of
+	 *         this run, computed once) if the detection is restricted to them, null otherwise (the whole views)
+	 */
+	protected OverlappingRegions regions()
+	{
+		if ( !overlappingOnly )
+			return null;
+
+		if ( regions == null )
+			regions = OverlappingRegions.forOtherVolumes( spimData, viewIdsToProcess );
+
+		return regions;
+	}
 
 	public DifferenceOfGUI( final SpimData2 spimData, final List< ViewId > viewIdsToProcess )
 	{
@@ -170,9 +275,8 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 	@Override
 	public boolean queryParameters(
-			final boolean defineAnisotropy,
+			final String label,
 			final boolean setMinMax,
-			final boolean limitDetections,
 			final boolean groupTiles,
 			final boolean groupIllums )
 	{
@@ -182,16 +286,11 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		final GenericDialog gd = new GenericDialog( getDescription() );
 
 		gd.addChoice( "Subpixel_localization", localizationChoice, localizationChoice[ defaultLocalization ] );
-		gd.addChoice( "Interest_point_specification", brightnessChoice, brightnessChoice[ defaultBrightness ] );
+		final String[] specification = specificationChoices();
+		final int defaultSpecification = defaultSpecificationIndex() >= 0 && defaultSpecificationIndex() < specification.length ? defaultSpecificationIndex() : 0;
+		gd.addChoice( "Interest_point_specification", specification, specification[ defaultSpecification ] );
 
-		final String[] ds = DownsampleTools.availableDownsamplings( spimData, viewIdsToProcess.get( 0 ) );
-		String out = "(" + ds[ 0 ].replaceAll( " ", "" ) + ")";
-		for ( int i = 1; i < ds.length; ++i )
-			out += ", (" + ds[ i ].replaceAll( " ", "" ) + ")";
-		gd.addMessage( "Precomputed Resolutions:       " + out, GUIHelper.smallStatusFont );
-
-		gd.addChoice( "Downsample_XY", downsampleChoiceXY, downsampleChoiceXY[ defaultDownsampleXYIndex ] );
-		gd.addChoice( "Downsample_Z", downsampleChoiceZ, downsampleChoiceZ[ defaultDownsampleZIndex ] );
+		addDownsamplingParameters( gd );
 
 		if ( setMinMax )
 		{
@@ -205,22 +304,12 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			gd.addCheckbox( "Use_same_min & max intensity for all views", defaultSameMinMax );
 		}
 
-		if ( defineAnisotropy )
-		{
-			gd.addNumericField( "Image_Sigma_X", defaultImageSigmaX, 5 );
-			gd.addNumericField( "Image_Sigma_Y", defaultImageSigmaY, 5 );
-			gd.addNumericField( "Image_Sigma_Z", defaultImageSigmaZ, 5 );
-			
-			gd.addMessage( "Please consider that usually the lower resolution in z is compensated by a lower sampling rate in z.\n" +
-					"Only adjust the initial sigma's if this is not the case.", GUIHelper.mediumstatusfont );
-		}
+		// only where other volumes overlap, by the current registrations (OverlappingRegions)
+		gd.addCheckbox( "Only_in_regions_overlapping_other_views", defaultOverlappingOnly );
+		gd.addMessage( "(other tiles or angles of the same timepoint among the selected views; a view without one gets no points)", GUIHelper.smallStatusFont );
 
-		this.limitDetections = limitDetections;
-		if ( limitDetections )
-		{
-			gd.addNumericField( "Maximum_number of detections (highest n)", defaultMaxDetections, 0 );
-			gd.addChoice( "Type_of_detections_to_use", InterestPointTools.limitDetectionChoice, InterestPointTools.limitDetectionChoice[ defaultMaxDetectionsTypeIndex ] );
-		}
+		// a shortcut to the filter dialogs of the explorer for the label of this detection (the chosen dialog opens after this one)
+		gd.addChoice( "Filter_interest_points", filterChoice, filterChoice[ defaultFilterChoice ] );
 
 		addAddtionalParameters( gd );
 
@@ -231,38 +320,11 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		
 		this.localization = defaultLocalization = gd.getNextChoiceIndex();
 
-		final int brightness = defaultBrightness = gd.getNextChoiceIndex();
+		final int brightness = gd.getNextChoiceIndex();
+		setDefaultSpecificationIndex( brightness );
 
-		int dsxy = defaultDownsampleXYIndex = gd.getNextChoiceIndex();
-		int dsz = defaultDownsampleZIndex = gd.getNextChoiceIndex();
-
-		if ( dsz == 0 )
-			downsampleZ = 1;
-		else if ( dsz == 1 )
-			downsampleZ = 2;
-		else if ( dsz == 2 )
-			downsampleZ = 4;
-		else
-			downsampleZ = 8;
-
-		if ( dsxy == 0 )
-			downsampleXYIndex = 1;
-		else if ( dsxy == 1 )
-			downsampleXYIndex = 2;
-		else if ( dsxy == 2 )
-			downsampleXYIndex = 4;
-		else if ( dsxy == 3 )
-			downsampleXYIndex = 8;
-		else if ( dsxy == 4 )
-			downsampleXYIndex = 16;
-		else if ( dsxy == 5 )
-			downsampleXYIndex = 32;
-		else if ( dsxy == 6 )
-			downsampleXYIndex = 64;
-		else if ( dsxy == 7 )
-			downsampleXYIndex = 0;
-		else
-			downsampleXYIndex = -1;
+		if ( !queryDownsamplingParameters( gd ) )
+			return false;
 
 		if ( setMinMax )
 		{
@@ -276,43 +338,435 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			sameMinMax = defaultSameMinMax = gd.getNextBoolean();
 		}
 
-		if ( brightness <= 3 )
-		{
-			if ( !setDefaultValues( brightness ) )
-				return false;
-		}
-		else if ( brightness == 4 )
-		{
-			if ( !setAdvancedValues() )
-				return false;
-		}
-		else
-		{
-			if ( !setInteractiveValues() )
-				return false;
-		}
+		overlappingOnly = defaultOverlappingOnly = gd.getNextBoolean();
 
-		if ( defineAnisotropy )
-		{
-			imageSigmaX = defaultImageSigmaX = gd.getNextNumber();
-			imageSigmaY = defaultImageSigmaY = gd.getNextNumber();
-			imageSigmaZ = defaultImageSigmaZ = gd.getNextNumber();
-		}
-		else
-		{
-			imageSigmaX = imageSigmaY = imageSigmaZ = 0.5;
-		}
+		if ( !dispatchSpecification( brightness ) )
+			return false;
 
-		if ( limitDetections )
-		{
-			maxDetections = defaultMaxDetections = (int)Math.round( gd.getNextNumber() );
-			maxDetectionsTypeIndex = defaultMaxDetectionsTypeIndex = gd.getNextChoiceIndex();
-		}
+		final int filterIndex = defaultFilterChoice = gd.getNextChoiceIndex();
 
 		if ( !queryAdditionalParameters( gd ) )
 			return false;
+
+		// the dialog of the chosen filter opens last, when the main dialog is complete
+		return queryFilter( label, filterIndex );
+	}
+
+	/**
+	 * The noise floor (NoiseFloor) of the finest DoG level in every view to process, pooled as the highest of them: at a resolution
+	 * (null = the one chosen in the dialog), with the sigma of the finest level, k = 2^(1/steps), the method's anisotropy
+	 * and the intensity range the detection will use (preprocess computes a common range first if one is wanted). Logs
+	 * every view's floor, the pooled one and a warning if they spread by more than a factor of two, because the views are
+	 * normalized with their own ranges unless a range is given.
+	 *
+	 * @return the pooled floors, null if none could be estimated (logged)
+	 */
+	public NoiseFloor.Pooled estimateNoiseFloor( final long[] downsampling, final double sigma, final int steps )
+	{
+		preprocess();
+
+		final long[] ds = downsampling == null ? this.downsampling : downsampling;
+
+		// the cached ranges belong to one resolution
+		if ( !Arrays.equals( ds, noiseRangeDownsampling ) )
+		{
+			noiseRangeCache.clear();
+			noiseRangeDownsampling = ds.clone();
+		}
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): " + getDescription() + ": estimating the noise floor of " + viewIdsToProcess.size() + " view(s) at downsampling " + Util.printCoordinates( ds ) + ", sigma " + sigma + ", k = 2^(1/" + steps + "), " + NoiseFloor.defaultNumBlocks + " random blocks of " + Util.printCoordinates( NoiseFloor.defaultBlockSize ) + " each ..." );
+
+		final long time = System.currentTimeMillis();
+		final ExecutorService service = Threads.createFixedExecutorService( Threads.numThreads() );
+		final NoiseFloor.Pooled pooled;
+
+		try
+		{
+			pooled = NoiseFloor.estimate(
+					spimData.getSequenceDescription().getImgLoader(),
+					NoiseFloor.presentViews( spimData, viewIdsToProcess ),
+					ds,
+					sigma,
+					LaPlaceFunctions.computeK( steps ),
+					( vd, t ) -> DownsampleTools.anisotropy( vd, t, anisotropyZ ),
+					minIntensity,
+					maxIntensity,
+					noiseRangeCache,
+					NoiseFloor.defaultNumBlocks,
+					NoiseFloor.defaultBlockSize,
+					NoiseFloor.defaultSeed,
+					service );
+		}
+		catch ( final Exception e )
+		{
+			IOFunctions.println( "ERROR: Could not estimate the noise floor: " + e );
+			return null;
+		}
+		finally
+		{
+			service.shutdown();
+		}
+
+		if ( pooled.perView.isEmpty() || !( pooled.floor() > 0 ) )
+		{
+			IOFunctions.println( "ERROR: Could not estimate the noise floor (" + pooled.describe() + ")." );
+			return null;
+		}
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): " + pooled.describe() + " (" + ( System.currentTimeMillis() - time ) + " ms)" );
+
+		if ( pooled.max() > 2 * pooled.min() )
+			IOFunctions.println( "WARNING: the noise floors of the views spread by more than a factor of two [" + InterestPointFilter.plain( pooled.min() ) + " .. " + InterestPointFilter.plain( pooled.max() ) +
+					"]: the views are normalized with their own intensity ranges, so one threshold is not equally selective for all of them ('Use_same_min & max intensity for all views' or a fixed range makes them comparable)." );
+
+		return pooled;
+	}
+
+	/**
+	 * @return estimateNoiseFloor for the previews, which know only their own view
+	 */
+	public NoiseFloor.Estimator noiseEstimator()
+	{
+		return new NoiseFloor.Estimator()
+		{
+			@Override
+			public int numViews() { return viewIdsToProcess.size(); }
+
+			@Override
+			public NoiseFloor.Pooled estimate( final long[] downsampling, final double sigma, final int steps ) { return estimateNoiseFloor( downsampling, sigma, steps ); }
+		};
+	}
+
+	/**
+	 * "Estimate from noise floor" of the Advanced dialogs: the threshold becomes noiseFactor x the pooled noise floor of all
+	 * views at the dialog's resolution (estimateNoiseFloor), logged; the caller remembers it as the default threshold
+	 *
+	 * @param sigma - the sigma of the finest level (the DoG sigma, the initial blur of the scale space)
+	 * @param steps - k = 2^(1/steps), 4 for the single-scale DoG
+	 * @return false if no floor could be estimated
+	 */
+	protected boolean thresholdFromNoiseFloor( final double sigma, final int steps )
+	{
+		if ( !( noiseFactor > 0 ) || Double.isInfinite( noiseFactor ) )
+		{
+			IOFunctions.println( "The noise factor must be > 0, but is " + noiseFactor + "." );
+			return false;
+		}
+
+		final NoiseFloor.Pooled pooled = estimateNoiseFloor( null, sigma, steps );
+
+		if ( pooled == null )
+			return false;
+
+		threshold = noiseFactor * pooled.floor();
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): threshold = " + noiseFactor + " x " + InterestPointFilter.plain( pooled.floor() ) + " (the noise floor) = " + InterestPointFilter.plain( threshold ) );
+
+		return true;
+	}
+
+	/**
+	 * Opens the dialog of the chosen entry of "Filter_interest_points" for the label of this detection: the ranges
+	 * (Filter_Detections, several entries per field give several labels), the fixed number per view (Limit_Detections) or
+	 * the threshold ramp (the range dialog prefilled with thresholds relative to the threshold of this detection,
+	 * Filter_Detections.rampEntries); the labels are created by Interest_Point_Detection once the points exist
+	 * (getFilters), so this is only a shortcut to the dialogs of the explorer
+	 *
+	 * @return false if the dialog was cancelled
+	 */
+	protected boolean queryFilter( final String label, final int choice )
+	{
+		filters.clear();
+
+		if ( choice == 0 || choice == 2 )
+		{
+			// the threshold ramp is the range dialog with the response field prefilled relative to the threshold of this detection
+			final String preset = choice == 2 ? Filter_Detections.rampEntries( threshold, Filter_Detections.rampFactor, Filter_Detections.rampSteps, Filter_Detections.rampMinEnd ) : null;
+			final List< FilterParameters > ranges = Filter_Detections.getParameters( spimData, viewIdsToProcess, label, preset );
+
+			if ( ranges == null )
+				return false;
+
+			filters.addAll( ranges );
+		}
+		else if ( choice == 1 )
+		{
+			final FilterParameters p = Limit_Detections.getParameters( spimData, viewIdsToProcess, label );
+
+			if ( p == null )
+				return false;
+
+			filters.add( p );
+		}
+
+		for ( final FilterParameters p : filters )
+			IOFunctions.println( getDescription() + ": also creating the " + ( p.copy ? "label" : "filtered label" ) + " '" + p.newLabel + "' (" + p.filter.describe( label ) + ")" );
+
+		return true;
+	}
+
+	@Override
+	public List< FilterParameters > getFilters() { return filters; }
+
+	/**
+	 * @return the entries of "Interest_point_specification" (the presets, "Advanced ...", "Interactive ..."); a subclass
+	 * can offer another list and must then dispatch it in dispatchSpecification
+	 */
+	protected String[] specificationChoices() { return brightnessChoice; }
+
+	/**
+	 * @return the index of the entry that is preselected (the last choice)
+	 */
+	protected int defaultSpecificationIndex() { return defaultBrightness; }
+
+	/**
+	 * Remembers the chosen entry for the next dialog
+	 */
+	protected void setDefaultSpecificationIndex( final int index ) { defaultBrightness = index; }
+
+	/**
+	 * Applies the chosen entry of "Interest_point_specification": the presets (setDefaultValues), "Advanced ..."
+	 * (setAdvancedValues) or "Interactive ..." (setInteractiveValues)
+	 *
+	 * @return false if the dialog should be aborted
+	 */
+	protected boolean dispatchSpecification( final int choice )
+	{
+		if ( choice <= 3 )
+			return setDefaultValues( choice );
+		else if ( choice == 4 )
+			return setAdvancedValues();
 		else
+			return setInteractiveValues();
+	}
+
+	/**
+	 * Adds the resolution the detection runs at (a drop-down of the precomputed resolution levels of the first view with
+	 * the resulting voxel size, by default the second level, and a manual entry for powers of two) and the anisotropy
+	 * (z voxel / x voxel at full resolution, by default the estimate from the calibration, estimateAnisotropy, kept while
+	 * the calibration stays the same); the scale space adds its initial blur after them. queryDownsamplingParameters
+	 * reads them back in the same order
+	 */
+	protected void addDownsamplingParameters( final GenericDialog gd )
+	{
+		final ViewId firstView = viewIdsToProcess.get( 0 );
+
+		resolutions = DownsampleTools.availableDownsamplings( spimData, firstView );
+
+		if ( !sameResolutionLevels( spimData, viewIdsToProcess ) )
+		{
+			IOFunctions.println( "WARNING: The resolution levels differ between the views to process, listing those of " + Group.pvid( firstView ) + ". Each view is opened at its closest level with factors <= the chosen ones." );
+			gd.addMessage( "The resolution levels differ between the views, listing those of the first view", GUIHelper.smallStatusFont, GUIHelper.warning );
+		}
+
+		final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( firstView.getTimePointId(), firstView.getViewSetupId() );
+		final VoxelDimensions voxelSize = vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null;
+		final String[] choices = resolutionChoices( resolutions, voxelSize );
+
+		gd.addChoice( resolutionFieldLabel(), choices, choices[ defaultResolutionChoice( resolutions.length, defaultResolutionIndex, defaultManual ) ] );
+
+		final double calibration = calibrationAnisotropy( voxelSize );
+
+		if ( Double.isNaN( defaultAnisotropyZ ) || defaultAnisotropyCalibration != calibration )
+		{
+			defaultAnisotropyZ = estimateAnisotropy( calibration );
+			defaultAnisotropyCalibration = calibration;
+		}
+
+		gd.addNumericField( "Anisotropy_z (z voxel / xy voxel at full resolution; estimate: calibration x " + anisotropyEstimateFactor + ")", defaultAnisotropyZ, 3 );
+	}
+
+	/**
+	 * @return the label of the resolution drop-down (the scale space calls it the starting resolution)
+	 */
+	protected String resolutionFieldLabel() { return "Resolution (downsampling x, y, z)"; }
+
+	/**
+	 * Reads the resolution (opens the manual dialog if that entry was chosen) and the anisotropy into downsampling and anisotropyZ
+	 *
+	 * @return false if the dialog should be aborted
+	 */
+	protected boolean queryDownsamplingParameters( final GenericDialog gd )
+	{
+		final int choice = gd.getNextChoiceIndex();
+
+		this.anisotropyZ = gd.getNextNumber();
+
+		if ( !( anisotropyZ > 0 ) || Double.isInfinite( anisotropyZ ) )
+		{
+			IOFunctions.println( "ERROR: The anisotropy must be a positive number, but is " + anisotropyZ + "." );
+			return false;
+		}
+
+		defaultAnisotropyZ = anisotropyZ;
+
+		if ( choice == resolutions.length )
+		{
+			// the manual entry, pre-filled with the last manual choice or the default level
+			if ( defaultManualDownsampling == null )
+				defaultManualDownsampling = DownsampleTools.parseDownsampleChoice( resolutions[ defaultResolutionChoice( resolutions.length, defaultResolutionIndex, false ) ] );
+
+			final long[] ds = queryManualResolution( defaultManualDownsampling );
+
+			if ( ds == null )
+				return false;
+
+			downsampling = ds;
+			defaultManualDownsampling = ds.clone();
+			defaultManual = true;
+		}
+		else
+		{
+			downsampling = DownsampleTools.parseDownsampleChoice( resolutions[ choice ] );
+			defaultResolutionIndex = choice;
+			defaultManual = false;
+
+			for ( int d = 0; d < 3; ++d )
+				if ( !isPowerOfTwo( downsampling[ d ] ) )
+					IOFunctions.println( "WARNING: The resolution level (" + resolutions[ choice ] + ") is not a power of two, the closest level with powers of two <= these factors is used." );
+		}
+
+		IOFunctions.println( getDescription() + ": resolution (downsampling x, y, z) = " + Util.printCoordinates( downsampling ) + ", anisotropy z = " + anisotropyZ );
+
+		return true;
+	}
+
+	/**
+	 * The dialog for manually typed resolutions (powers of two)
+	 *
+	 * @param initial - the pre-filled factors
+	 * @return the factors, null if cancelled or not powers of two
+	 */
+	public static long[] queryManualResolution( final long[] initial )
+	{
+		final GenericDialog gd = new GenericDialog( "Resolution" );
+
+		gd.addMessage( "Downsampling of the image that the detection runs on (powers of two)", GUIHelper.smallStatusFont );
+		gd.addNumericField( "Downsample_X", initial[ 0 ], 0 );
+		gd.addNumericField( "Downsample_Y", initial[ 1 ], 0 );
+		gd.addNumericField( "Downsample_Z", initial[ 2 ], 0 );
+
+		gd.showDialog();
+
+		if ( gd.wasCanceled() )
+			return null;
+
+		final long[] ds = new long[ 3 ];
+
+		for ( int d = 0; d < 3; ++d )
+		{
+			ds[ d ] = Math.round( gd.getNextNumber() );
+
+			if ( !isPowerOfTwo( ds[ d ] ) )
+			{
+				IOFunctions.println( "ERROR: The downsampling factors must be powers of two >= 1, but the factor for dimension " + d + " is " + ds[ d ] + "." );
+				return null;
+			}
+		}
+
+		return ds;
+	}
+
+	/**
+	 * @return the entries of the drop-down: one per precomputed resolution level ("fx, fy, fz" plus the
+	 * resulting voxel size if known) and the manual entry last
+	 */
+	public static String[] resolutionChoices( final String[] resolutions, final VoxelDimensions voxelSize )
+	{
+		final String[] choices = new String[ resolutions.length + 1 ];
+
+		for ( int i = 0; i < resolutions.length; ++i )
+		{
+			choices[ i ] = resolutions[ i ];
+
+			if ( voxelSize != null )
+			{
+				final long[] ds = DownsampleTools.parseDownsampleChoice( resolutions[ i ] );
+
+				choices[ i ] += "  (" + round( ds[ 0 ] * voxelSize.dimension( 0 ) ) + " x " + round( ds[ 1 ] * voxelSize.dimension( 1 ) ) + " x " + round( ds[ 2 ] * voxelSize.dimension( 2 ) ) + " " + voxelSize.unit() + ")";
+			}
+		}
+
+		choices[ resolutions.length ] = manualResolution;
+
+		return choices;
+	}
+
+	/**
+	 * @return the index of the default entry: the manual entry if it was used last, otherwise the last
+	 * used level (initially the second one), limited to the levels that exist
+	 */
+	public static int defaultResolutionChoice( final int numResolutions, final int defaultIndex, final boolean manual )
+	{
+		if ( manual )
+			return numResolutions;
+		else
+			return Math.max( 0, Math.min( defaultIndex, numResolutions - 1 ) );
+	}
+
+	/**
+	 * @return whether all views have the same precomputed resolution levels (true if not multi-resolution)
+	 */
+	public static boolean sameResolutionLevels( final SpimData2 spimData, final List< ViewId > views )
+	{
+		if ( !MultiResolutionImgLoader.class.isInstance( spimData.getSequenceDescription().getImgLoader() ) )
 			return true;
+
+		final MultiResolutionImgLoader loader = (MultiResolutionImgLoader)spimData.getSequenceDescription().getImgLoader();
+		final double[][] first = loader.getSetupImgLoader( views.get( 0 ).getViewSetupId() ).getMipmapResolutions();
+
+		for ( final ViewId view : views )
+			if ( !Arrays.deepEquals( first, loader.getSetupImgLoader( view.getViewSetupId() ).getMipmapResolutions() ) )
+				return false;
+
+		return true;
+	}
+
+	/**
+	 * @return z voxel / x voxel of the calibration (1 if unknown)
+	 */
+	public static double calibrationAnisotropy( final VoxelDimensions voxelSize )
+	{
+		if ( voxelSize == null )
+			return 1.0;
+		else
+			return voxelSize.dimension( 2 ) / voxelSize.dimension( 0 );
+	}
+
+	/**
+	 * @return z voxel / x voxel of the calibration of the view (1 if unknown)
+	 */
+	public static double calibrationAnisotropy( final ViewDescription vd )
+	{
+		return calibrationAnisotropy( vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null );
+	}
+
+	/**
+	 * @return the estimate of the anisotropy (z voxel / x voxel at full resolution) from the calibration: the ratio of the
+	 * calibration times anisotropyEstimateFactor (0.8, Stephan 2026-10-20), because the PSF blurs z more than xy, so structures
+	 * appear less squeezed in z than the voxel ratio says
+	 */
+	public static double estimateAnisotropy( final double calibration )
+	{
+		return anisotropyEstimateFactor * calibration;
+	}
+
+	/**
+	 * @return the estimate of the anisotropy from the calibration, see estimateAnisotropy( double ) (0.8 if unknown)
+	 */
+	public static double estimateAnisotropy( final VoxelDimensions voxelSize )
+	{
+		return estimateAnisotropy( calibrationAnisotropy( voxelSize ) );
+	}
+
+	protected static boolean isPowerOfTwo( final long value )
+	{
+		return value >= 1 && ( value & ( value - 1 ) ) == 0;
+	}
+
+	protected static double round( final double value )
+	{
+		return Math.round( value * 100.0 ) / 100.0;
 	}
 
 	/*
@@ -464,30 +918,27 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 	protected ImagePlus getImagePlusForInteractive( final String dialogHeader )
 	{
-		final ViewId view = getViewSelection( "Interactive Difference-of-Gaussian", "Please select view to use" );
+		final ViewId view = getViewSelection( dialogHeader, "Please select view to use" );
 		
 		if ( view == null )
 			return null;
 
 		final ViewDescription viewDescription = spimData.getSequenceDescription().getViewDescription( view.getTimePointId(), view.getViewSetupId() );
 
-		// downsampleXY == 0 : a bit less then z-resolution
-		// downsampleXY == -1 : a bit more then z-resolution
-		final int downsampleXY;
-
-		if ( downsampleXYIndex < 1 )
-			downsampleXY = DownsampleTools.downsampleFactor( downsampleXYIndex, downsampleZ, viewDescription.getViewSetup().getVoxelSize() );
-		else
-			downsampleXY = downsampleXYIndex;
-
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Opening and downsampling ... " );
 
-		@SuppressWarnings("unchecked")
-		RandomAccessibleInterval<RealType<?>> imgGeneric = DownsampleTools.openAndDownsample(
+		@SuppressWarnings("rawtypes")
+		final Pair< RandomAccessibleInterval, AffineTransform3D > opened = DownsampleTools.openAndDownsample(
 			spimData.getSequenceDescription().getImgLoader(),
 			viewDescription,
-			new long[] { downsampleXY, downsampleXY, downsampleZ },
-			true ).getA();
+			downsampling,
+			true );
+
+		@SuppressWarnings("unchecked")
+		RandomAccessibleInterval<RealType<?>> imgGeneric = opened.getA();
+
+		// the anisotropy of the opened image, the preview detects with it (DifferenceOfGaussianGUI.setInteractiveValues)
+		previewAnisotropy = DownsampleTools.anisotropy( viewDescription, opened.getB(), anisotropyZ );
 
 		if ( imgGeneric == null )
 		{
@@ -543,39 +994,12 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Using group " + group );
 
-		// determine desired downsampling
-		final HashMap< Integer, Integer > dsXY = new HashMap<>();
+		// the resolution of the dialog (one factor for x and y)
+		final long downsampleXY = downsampling[ 0 ];
+		final long downsampleZ = downsampling[ 2 ];
 
-		for ( final ViewDescription vd : group )
-		{
-			// downsampleXY == 0 : a bit less then z-resolution
-			// downsampleXY == -1 : a bit more then z-resolution
-			final int downsampleXY;
-
-			if ( downsampleXYIndex < 1 )
-				downsampleXY = DownsampleTools.downsampleFactor( downsampleXYIndex, downsampleZ, vd.getViewSetup().getVoxelSize() );
-			else
-				downsampleXY = downsampleXYIndex;
-
-			if ( dsXY.containsKey( downsampleXY ) )
-				dsXY.put( downsampleXY, dsXY.get( downsampleXY ) + 1 );
-			else
-				dsXY.put( downsampleXY, 1 );
-		}
-
-		int downsampleXY = -1;
-		int maxCount = -1;
-
-		for ( final int ds : dsXY.keySet() )
-		{
-			final int count = dsXY.get( ds );
-
-			if ( count > maxCount )
-			{
-				downsampleXY = ds;
-				maxCount = count;
-			}
-		}
+		// the fused group is isotropic in physical units, what remains of the anisotropy is the user's estimate relative to the calibration (the PSF)
+		previewAnisotropy = new double[] { 1, 1, anisotropyZ / calibrationAnisotropy( group.iterator().next() ) };
 
 		final NumberFormat f = TransformationTools.f;
 

@@ -90,8 +90,8 @@ public class GUIHelper
 	public static final void addHyperLink( final GenericDialog gd, final String msg, final String url )
 	{
 		gd.addMessage( msg, new Font( Font.SANS_SERIF, Font.ITALIC + Font.BOLD, 12 ) );
-		MultiLineLabel text =  (MultiLineLabel) gd.getMessage();
-		GUIHelper.addHyperLinkListener( text, url );
+		// a one-line message is a java.awt.Label, only a message with a line break a MultiLineLabel
+		GUIHelper.addHyperLinkListener( gd.getMessage(), url );
 	}
 
 	public static final void addCredits( final GenericDialog gd )
@@ -186,7 +186,8 @@ public class GUIHelper
 		return names;
 	}
 
-	public static final void addHyperLinkListener( final MultiLineLabel text, final String myURL )
+	/** @param text the label of the message ({@code GenericDialog.getMessage()}: a {@code Label} for one line, a {@code MultiLineLabel} with line breaks) */
+	public static final void addHyperLinkListener( final Component text, final String myURL )
 	{
 		if ( text != null && myURL != null )
 		{

@@ -22,12 +22,14 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
 import net.preibisch.mvrecon.fiji.plugin.util.DescribesParameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections.FilterParameters;
 
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
@@ -66,21 +68,26 @@ public abstract class InterestPointDetectionGUI implements DescribesParameters
 	 * @return
 	 */
 	public abstract HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint tp );
+
+	/**
+	 * The filters chosen for the detections of this run (the range dialog, the fixed-number dialog or the threshold ramp
+	 * of the explorer, opened by the detection dialog as a shortcut): Interest_Point_Detection creates the filtered labels
+	 * (or the plain copies) once the points exist; empty = none
+	 */
+	public List< FilterParameters > getFilters() { return Collections.emptyList(); }
 	
 	/**
 	 * Query the necessary parameters for the interestpoint detection
 	 * 
-	 * @param defineAnisotropy - whether to use/query for anisotropy in resolution of the data
+	 * @param label - the label the detections are stored under (a filter chosen in the dialog names its label after it)
 	 * @param setMinMax - whether to define minimal and maximal intensity relative to whom everything is normalized to [0...1]
-	 * @param limitDetections - offers the chance to select certain detections only based on their intensity
 	 * @param groupTiles - if grouping of tiles is wanted
 	 * @param groupIllums - if grouping of illums is wanted
 	 * @return - if it was successful
 	 */
 	public abstract boolean queryParameters(
-			final boolean defineAnisotropy,
+			final String label,
 			final boolean setMinMax,
-			final boolean limitDetections,
 			final boolean groupTiles,
 			final boolean groupIllums );
 

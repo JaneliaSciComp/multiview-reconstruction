@@ -50,10 +50,191 @@ Multi-view reconstruction combines multiple images of the same specimen taken fr
 - `net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation` — pairwise setup, subsets
 - `net.preibisch.mvrecon.process.splitting` — oct-tree image splitting
 
-### Interest Point Storage
-- **N5 format** (`InterestPointsN5.java`): modern, scalable backend
-- Legacy text-file backend (`InterestPointsTextFileList.java`) was removed
-- Stored fields: ID, position (x, y, z), optionally correspondences to other views
+### Interest Point Storage (Zarr v3 store, 2026-10)
+
+All interest points of a dataset live in `interestpoints.zarr` next to the XML, one self-contained group per (label, timepoint):
+- `InterestPointsZarr extends InterestPoints`: one per (view, label), what the XML and all callers use (`InterestPoints.newInstance`,
+  `instantiatefromXML`; the XML text stays `tpId_X_viewSetupId_Y/label`). `VirtualFilteredInterestPoints` (a filtered label) extends it.
+- `InterestPointsZarrStore`: one per dataset dir (`InterestPointsZarrStore.get( baseDir )`): groups, staging, commit, chunk cache.
+- `InterestPointsN5` is static-only: the N5 layout (`interestpoints.n5/tpId_X_viewSetupId_Y/label`) that BigStitcher-Spark's
+  temporary block lists and test fixtures still use; `InterestPointsN5ToZarr` reads unconverted N5 entries (read-only fallback
+  of the handles), moves the entries of selected views into the store (`legacyLabels` / `legacyLists` / `moveIntoStore`: the
+  ViewSetup Explorer's right-click menu Filter/Manage Interest Points > "Resave as ZARR store", multi-threaded, one (label,
+  timepoint) group per batch and commit, grayed out when the selected views have nothing old, "ALL labels" when several;
+  the N5 is kept) and converts a dataset (`java -cp <fat jar> ...interestpoints.InterestPointsN5ToZarr <dataset.xml>`, which
+  verifies and deletes the N5). The XML save moves nothing by itself (Stephan, 2026-10-26: an explicit action, not a side effect).
+  Old labels (points without response/sigma/intensity, NaN) are detected again via Filter/Manage Interest Points > "Re-detect
+  interest points with attributes" (`fiji.plugin.interestpointdetection.StoredDetectionParameters.parse/preset`: the label's
+  parameters string sets the static defaults of the detection dialog, label included via `presetLabel`, and the detection
+  replaces the label; otherwise the dialog suggests a label none of the selected views has, `Interest_Point_Detection.suggestLabel`:
+  beads, beads2, beads3, a trailing number increased; Stephan, 2026-10-27).
+  Since 2026-10-27 the strings also record `localization=`, `groupTiles=`, `groupIllums=`, `thresholdType=` (+ `noiseFactor=`),
+  built in `DifferenceOfGUI.commonParameters()`; a stored grouping wins over the explorer's when a label is detected again. A
+  string without `anisotropy=` is preset with what its detection used (`effectiveAnisotropy`: downsampleXY / downsampleZ for the
+  old and the Spark DoG, the calibration ratio for the early scale space), not the dialog's estimate.
+  BigStitcher-Spark's branch `scalespace-pr108` (commit 484b16a of 2026-10-24 plus 2026-10-27) runs on the store: detection
+  tasks `stagePoints`, split-images tasks `saveStaged`, the driver's XML save commits (`InterestPointTools.addInterestPointEntries`
+  registers a detected label, after `removeReferences` for an existing one), matching commits through
+  `saveInterestPointsInParallel`, clear-interestpoints deletes through the lists; its per-block scratch stays an N5 group
+  `interestpoints.n5/spark_tmp_*` and the container is removed when it holds nothing else; its "(Spark)" strings carry the
+  `commonParameters()` tail. Build it against `mvn install -DskipTests` of this repo (main + tests jar).
+  "Only in regions overlapping other views" (2026-10-27, `process.interestpointdetection.OverlappingRegions`): a checkbox of the
+  detection dialog; partners = one view per other selected volume (tile, angle) of the same timepoint, the view's own channel
+  preferred, whose boxes intersect; regions inside another are dropped (a neighbour tile gives one strip, not one per channel);
+  the detection cells are no larger than the region (`OverlappingRegions.cellSize`, same result, a thin strip costs no whole cells);
+  one detection call per region (DoG: region + 1 px, the view's intensity range once; scale space: whole image as imageInterval),
+  the lists combined at 0.5 px (`combine`, new ids). `InterestPointParameters.regions` null = whole view, unchanged. Key
+  `overlappingOnly=` in the strings, `overlappingOnly`/`onlyCompareOverlapTiles` in the history; BigStitcher-Spark calls the same statics.
+
+```
+interestpoints.zarr/zarr.json            root: interestpoints = "2.0.0"
+<label>/tp<T>/zarr.json                  group: label, timepoint, generation K          (label percent-encoded for the file system)
+<label>/tp<T>/gK/points   FLOAT32 [6, N]  x, y, z, response, sigma, intensity (NaN = unknown), all setups in setup order
+<label>/tp<T>/gK/id       INT32   [1, N]
+<label>/tp<T>/gK/corr     INT32   [3, M]  own detection, partner detection, consensus set; per setup, grouped by partner
+<label>/tp<T>/gK/entries  INT64   [6, E]  setup, kind (0 plain, 1 filtered), points offset, count, corr offset, count
+<label>/tp<T>/gK/partners INT64   [6, P]  setup, partner tp, setup, label id (attr partnerLabels), offset, count
+staging/<millis>_<nanos>_<rnd>.stage     one per Spark task, folded in by the next commit
+```
+Sharded arrays, raw + crc32c, 65,536 rows per inner chunk, 1,048,576 per shard (statics `defaultChunkRows/defaultShardRows`,
+a group keeps its grid). Zarr order reverses the dimensions (`[6, N]` appears as shape `[N, 6]`). Positions are float32 (local
+full-resolution pixels, exact to ~0.004 px at 32k px); `Point.l` stays double in memory.
+
+**Writing.** The XML save (`XmlIoSpimData2.saveInterestPointsInParallel`) opens a batch, the lists stage in memory, one `commit()`
+writes every (label, timepoint) that changed: new arrays `gK+1` (kept entries copied chunk by chunk, staged ones appended), the
+flip of the group's `generation` under a lock file after re-reading the generation (a commit always starts from the generation on
+disk, so a JVM that staged earlier merges onto others' commits; a commit that lands inside another's write window is refused, nothing
+overwritten, the changes stay staged), then `gK` is deleted. No append, no compaction: a commit costs the (label, timepoint), never the dataset. Each
+(view, label) owns its correspondence list (a symmetric match is stored twice), as in the N5 layout. Spark executors never
+commit: `InterestPointsZarr.saveStaged( lists )` / `stagePoints(...)` write one staging file per task, the driver's XML save
+folds them. Deletes (`deleteInterestPoints` = the whole entry) are staged until the next commit; a group without entries is removed.
+Entries still in `interestpoints.n5` stay there across saves (a save stages only modified lists; changed correspondences of such
+an entry pull its points along in the commit); "Resave as ZARR store" or the command-line conversion moves them unchanged, NaN
+attributes included. `InterestPointsZarrStore.missingEntries( keys )` is the batched "is it in the store" lookup: never call
+`hasEntry` per key over many keys, it relists the staging directory and re-reads the group's generation for every key it lacks.
+
+**Text-file labels (the layout before N5, re-added read-only 2026-10-31).** XML text `interestpoints/<name>` (any name, e.g.
+`interestpoints/new_tpId_0_viewSetupId_0.things`; view and label are the XML attributes), files `<name>.ip.txt` (`id x y z`,
+no attributes) and `<name>.corr.txt` (missing until matched = empty list). `InterestPointsTextFiles` reads them (static, via
+KeyValueAccess); `XmlIoViewInterestPoints` creates an `InterestPointsZarr( baseDir, viewId, label, textFile )` through
+`InterestPoints.instantiatefromXML( baseDir, text, viewId, label, base, filter )`, a "text-backed" handle: reads store → N5 →
+text files, `getXMLRepresentation()` is the file name while text-backed and `tpId_X_viewSetupId_Y/label` once the entry is
+in the store. Nothing is ever written as text and the files are never deleted. A text-backed list that changed saves points
+AND correspondences together (`saveTextBacked`, also in `saveStaged`: the commit can pull the points of an unconverted label
+only from the N5 by key, text files have any name); an unchanged one is not touched by a save (Stephan, 2026-10-31: the same
+explicit-migration policy as for N5). `XmlIoSpimData2.saveInterestPointsInParallel` ends with one batched
+`InterestPointsZarr.updateTextBacked` (entries another JVM moved). "Resave as ZARR store" lists and moves text labels too
+(`legacyLists` keeps text-backed candidates without an N5 container, `InterestPointsN5ToZarr.read( list )`); the command-line
+`convert` is N5-only. Test `TestInterestPointStorage.testTextFileLabels`.
+
+**Reading.** staged → staging file → the group's index (cached per JVM, its generation compared with the disk at most every
+`generationCheckMillis` = 2 s, so a group another JVM rewrote is picked up; a missing chunk triggers one reload). An XML entry
+with data in neither the store nor the N5 throws; a plain list stored under a filtered label's name, or the other way round,
+throws. Decoded chunks are cached per store, bounded by `chunkCacheBytes` (256 MB, `-Dmvr.interestpoints.cacheBytes=0` = off);
+it matters on Spark executors whose tasks re-create their lists, not in Fiji.
+
+**Per-point arrays and matching on them (embeddings, 2026-10-29).** A writer may keep rows about the store's points next to the
+generations, keyed by point id: `<label>/tp<T>/arrays/<name>/zarr.json` (`columns` D, `dtype` float32, the writer's `meta` with
+`model.fingerprint`) and `setup<S>/{id, values}` (int32 [N, 1], float32 [N, D]; pcmatch's `embed` writes one 64-D unit vector
+per point as `embedding` (named `descriptor` until 2026-10-29); further tables in `setup<S>` are ignored, pcmatch wrote a `loc` table until 2026-10-29). Java only
+reads them, `InterestPointArrays` (`attributes`, `read`, `join`, `vectors( lists, label, name )`): a filtered label reads its base
+label's rows; rows are joined by id, and the array must have exactly one row per point of the (base) label in the view (another
+number of rows, or a point without a row = the label was detected again and the ids name other points: the view fails with "run
+pcmatch embed again"; no positions are compared, Stephan's decision of 2026-10-29: a re-detection changes the number of points;
+the count is the base label's, so pcmatch embeds all points of the base even when asked for a filtered label); a NaN row = no
+vector. A fresh N5 reader per read (the writer swaps a setup's tables in place). A commit leaves `arrays/` alone, removing the label removes it with its timepoint
+group. The matcher on these rows is `pairwise.methods.embeddings.EmbeddingsMatcher` (KD-tree radius query in the registered frame,
+inclusive at the radius, so the tree is asked for `Math.nextUp( radius )` and the squared distance tested; one cosine per pair
+accumulated in double; a single neighbour is a candidate if cos > smin (the minimal cosine similarity, 0.3 by default; a dialog slider and `--minSimilarity` since 2026-10-29 late); otherwise best/second: candidate if cos > smin and
+(1 - best) < ratio x (1 - second), ratio 0.85; one candidate per point of A at most, direction matters) wrapped by
+`EmbeddingsPairwise( rp, EmbeddingsParameters( model, searchRadius, ratio, smin, arrayName ), viewInterestPoints )`: it reads the
+vectors through the labels' handles (the count check needs the base label's points; note that the lists a matcher gets carry
+the registered coordinates, `applyTransformation` derives a point whose `getL()` is global), checks that both views' arrays have one width and one `model.fingerprint`, drops
+points without a vector, skips the pair when fewer than max(model, RANSAC) min matches of either view have a partner within the
+radius, then RANSAC as BigStitcher-Spark's LOAD_CANDIDATES. GUI: `EmbeddingsGUI` ("Embedding Cosine Similarity", until 2026-10-31 "Embeddings (stored per-point vectors, pcmatch)"; since 2026-10-31 the registration dialog's default algorithm when the selected views have stored embeddings and none was chosen yet in the session, `Interest_Point_Registration.defaultAlgorithm` -1 = none yet, `EmbeddingsGUI.hasEmbeddings`; also since 2026-10-31 `PairwiseGUI.prepareQuery` returns a boolean and the registration stops before its parameter dialog when it is false: `EmbeddingsGUI.prepareQuery` offers only the arrays that hold one row per point of the (base) label in EVERY selected view, and if none does it lists the views with missing or stale rows in the log and returns false, Stephan: a dialog that cannot be completed is confusing:
+model, "Limit search radius" + radius (off by default, Stephan: it works great without; 500 px when on, as the geometric descriptor dialog; off = every point of the other view is a possible partner, `Double.POSITIVE_INFINITY`, no KD-tree), ratio, a choice of the stored embeddings the selected labels have (`PairwiseGUI.prepareQuery` runs before
+`addQuery` with the views and labels, `InterestPointArrays.names`; none = the dialog cannot be completed), RANSAC; grouped views
+refused); Spark `match-interestpoints -m EMBEDDINGS [--searchRadius R] [--descriptorRatio 0.85] [--arrayName x]` (no radius = no limit,
+as for PRECISE_TRANSLATION; `--arrayName` only when the labels have several arrays, the one array they have is used otherwise: it is the registration's uncertainty, about 20 px
+for a well pre-registered dataset, 300-500 for large translations); the action history maps `searchRadius`, `descriptorRatio` and
+`arrayName` (`ActionToSparkCli`). Verified 2026-10-29 against pcmatch's reference candidates on
+`~/Documents/pcmatch_data/ds1_java_matching` (1,825 at R = 20, 3,769 at R = 300, id for id over the 11 pairs) and the embryo pair of
+`embryo_detect` (filtered label `ss-iso_r0.008`, rows under the base `ss-iso`, points still in the N5: 60,341 candidates at R = 500,
+none stale; reading 0.2 s, matching 6-8 s, RANSAC 190 s at 10,000 iterations on 60k candidates). Tests: `TestInterestPointArrays`,
+`TestEmbeddingsMatcher`, `TestEmbeddingsPairwise`; BigStitcher-Spark `TestEmbeddings`.
+
+**Computing the embeddings in Java (`process.interestpointembedding`, 2026-10-30).** What `pcmatch embed` does, in MVR: "Embed
+Interest Points (ONNX model) ..." of the ViewSetup Explorer (Processing, directly below "Detect Interest Points", Stephan's choice of
+2026-10-30) / Plugins > BigStitcher > Interest Points > Tools (`Embed_Interest_Points`, `EmbedInterestPointsPopup`; action
+`embed-interestpoints`, rendered by `ActionToSparkCli` as the BigStitcher-Spark command of that name; the explorer entries save
+the dataset first, `panel.saveXML()`, and the dialog says so, Stephan 2026-11-01: the arrays need the points in the store and fresh
+detections are only in memory until saved, `createArray` without a store says to save or to "Resave as ZARR store"; the plugin from
+the menu has just loaded the XML and saves it afterwards)
+writes the per-point array of a label with a model, and the matcher above reads it. The model is pcmatch's ONNX export
+(`pcmatch export-onnx`: `x.onnx` plus the sidecar `x.onnx.json` with the fingerprint, the `DescriptorConfig` and the tensor contract),
+behind a thin abstraction: `EmbeddingModel` (the `Contract` from the sidecar, `embed( patches, n )`, `load( Path )`) with one backend,
+`JavaOnnxEmbeddingModel` = `OnnxModel` (the file read as protobuf wire format, no protobuf-java) + `OnnxEvaluator` (an interpreter of
+the operator set such exports use: the standardisation as elementwise/reduce ops, 3-D Conv/Relu/MaxPool, Gemm, L2 normalisation,
+Shape/Reshape/Expand/Concat/Where/Cast..., float32, `SUPPORTED_OPS`; anything else, or an unsupported form such as grouped or
+strided convolutions, is refused in the constructor by name: such a model needs an ONNX Runtime backend behind the same interface,
+not yet written). Its convolution is im2col with one array per tap and a fresh accumulator, because the C2 JIT of JDK 21 vectorizes
+a stride-1 loop only when the loads and stores are provably aligned (an invariant offset between two arrays runs scalar, 4x slower,
+measured); ~500 points/s per thread for the 5 x 16^3 -> 64 model (PyTorch's CPU path 880). `PatchExtractor` samples the cubes
+exactly as pcmatch's `patches.extract_multiscale` (`SCALESPACE_TASK_onnx.md` section 3): `DetectionScale.of( label, parameters,
+voxelSize )` gives the detection sigma `s x downsampleXY` and the level the DoG ran at (`StoredDetectionParameters`, the legacy
+`downsampleXYIndex` 0/-1 via `DownsampleTools.downsampleFactor` of the XML's voxel size, pcmatch's `LEARNED` strings); a point's
+sigma is the label's, or `max( own, label's )` quantised to 2^(1/12) when every point of the view has one (scale space); per extent
+`k` the spacing `k sigma / patch` px, the pyramid level = the finest whose xy factor fits, never finer than the detection's level
+(`read_floor` "detection"); the grid is isotropic in physical units (voxel-size ratios), trilinear, NaN outside `[0, size - 1]`; the
+levels' half-voxel offsets are ignored as in pcmatch. `InterestPointEmbedding.embedView( data, view, label, model, blockSize,
+service )` embeds all points of the base label in blocks (one `Sampler` per thread; `prepare` + `blocks` + `embed`);
+`embedViews( data, views, label, model, blockSize, service, viewsInFlight, consumer )` is the GUI's path: the blocks of `viewsInFlight`
+views (dialog "Views in parallel", default the number of threads) are in one pool at a time, so that single-block views (a few
+hundred points) keep all threads busy, a view's rows go to the consumer (the writer) on the calling thread as soon as its last block
+is done and the next view is admitted (an `ExecutorCompletionService` over the blocks; `viewsInFlight` bounds the memory, the points
+and opened images of that many views); a Spark task embeds its one view with `embedView`. `prepareArray` creates the array or replaces
+one of another model/width whole (the matcher refuses mixed fingerprints anyway), `write` stores a setup's rows
+(`InterestPointArrays.createArray` / `writeSetup` / `remove`, zarr v3 sharded as pcmatch writes; a setup is replaced whole; the meta
+is pcmatch's: `model.{config, file, fingerprint, onnx}`, `writer`, `date`, `point_sigma`). Verified 2026-10-30 against pcmatch's
+fixtures: ds1 `beads` (256 points) and the embryo `ss-iso_r0.008` (255 points, per-point sigma 12.7..181 px, levels 3-5): identical
+NaN masks, levels and spacings, cubes within 1e-4 relative, vectors within 3e-5 of pcmatch's own and 2.5e-4 of its stored GPU rows
+(TF32), and the matcher gives the same 158 candidates / 116 inliers on Java's rows of ds1 as on pcmatch's (with pcmatch's voxel
+override 0.45 0.45 2.0; the XML's 1.1 1.1 3.512 is a wrong calibration and changes the rows, as pcmatch documents). Tests:
+`TestOnnxEvaluator` (a tiny encoder written by `TestOnnxModels` in the wire format, against a direct computation; the real model
+on the fixture when present), `TestInterestPointEmbedding` (scale, levels, cubes on a synthetic image, the chain on the simulated
+beads, replacement, several views on one pool, filtered label, the plugin with a tiny ONNX model); BigStitcher-Spark
+`TestInterestPointEmbedding`. **Models on the Hugging Face Hub (`ModelHub`, 2026-10-30).** Several models will exist (translation
+invariant, rotation invariant, static grid matching); Stephan hosts them on the hub himself, one public repository per model holding
+the `.onnx`, its `.onnx.json` sidecar and a model card tagged `bigstitcher` (the first: `JaneliaSciComp/bigstitcher-embedding-translation-stack64`,
+MIT, the stack64 export; uploaded under Stephan's account on 2026-10-30 and moved into the JaneliaSciComp organisation he created on
+2026-10-31; the hub redirects the old name, and `resolve` names a model as the hub does, so old URIs resolve to the new name). `ModelHub` needs nothing but
+the JDK's HTTP client: `list( namespaces, timeout )` asks `/api/models?author=<ns>&filter=bigstitcher` for each of `defaultNamespaces`
+(`JaneliaSciComp` only, since the move on 2026-10-31) and `/api/models/<repo>?blobs=true` per repository (its commit `sha`, the files with sizes and the
+sha256 of LFS files; gated repositories are skipped), one `HubModel( repo, revision, file, size, sha256, sidecarSize )` per `.onnx` with a
+sidecar; `resolve( uri, cacheDir, timeout )` pins `hf://<ns>/<name>[@<revision>][/<file>]` to a commit (revision "main" by default, the
+only `.onnx` if no file; a pinned URI whose model is cached is answered from the cache's `hub.json` without the hub); `download( model,
+cacheDir, timeout )` fetches `/<repo>/resolve/<revision>/<file>` (one redirect) and the sidecar into `<cache>/<ns>/<name>/<revision>/`
+through a part file moved in atomically (safe for several processes on a shared cache), verifies size and sha256, checks the sidecar
+is a contract and writes `hub.json`; a model already there and verified costs no request; `localModel( spec, cacheDir, timeout )` turns
+a path or a URI into `Local( path, spec )` where spec is the pinned URI (or the absolute path), which the action history records as
+`model` and `ActionToSparkCli` passes to `--model`. The cache is `~/.bigstitcher/models` or the system property `bigstitcher.models`.
+GUI (Stephan 2026-10-31 late): the explorer's "Compute Interest Point Embeddings" is a submenu with "Translation invariant (Hugging
+Face) ..." (the hub's models tagged `translation-invariant`, `HubModel.tags` from the model card and kept in `hub.json`, plus such
+cached models the hub no longer lists; a "Model" choice whose text is "name (namespace)" and nothing else, since macros record it: no
+"cached", no commit, only an older cached revision next to the hub's current one carries its commit; a hyperlink to the organisation's
+page; default array name `translation-invariant`) and "Local model ..." (file field, default array `local-embedding`); each entry
+remembers its own array name (`Embed_Interest_Points.Source`), plugins.config has both under Interest Points > Tools (plugin arg
+"translation"/"local"); no model of the kind on the hub or in the cache = a log line, no dialog; `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
+viewsInFlight )` downloads on demand. BigStitcher-Spark: `--model hf://...` is pinned on the driver, every executor downloads once into
+`--modelCache` (default as above; nodes without internet get a path). Tests `TestModelHub` (a loopback `FakeHub` serving the three API
+answers and the redirecting downloads: URIs, listing by tag and sidecar, pinned resolve, cache hits without requests, a damaged cached
+file re-downloaded, wrong bytes refused by sha256, the plugin with a hub model; and Stephan's repository on the real hub when
+reachable), BigStitcher-Spark `TestInterestPointEmbedding` (an `hf://` run against the fake hub). Verified 2026-10-30 on ds1: the rows
+from the hub model are bit-identical to those from the local file.
+
+Design and the staging format follow PR 108 (Lila, 2026-09); its global append-only arrays with compaction were replaced by
+per-(label, timepoint) groups (Stephan, 2026-10-23: fewer moving parts; whole-label changes dominate; a few test views go into
+a separate label). Test: `TestInterestPointsZarr`, `TestInterestPointStorage`.
 
 ## InterestPointExplorer GUI
 
@@ -97,7 +278,7 @@ In filter mode (fade ≥ 1.0): background tints light red, only points within pl
 
 ### Key Files
 - `InterestPointOverlay.java` — `InterestPointSource` interface, `getColor()`, `drawOverlays()`, `drawCross()`, `drawDiagonalCross()`
-- `InterestPointTableModel.java` — implements `InterestPointSource`, holds slider state (`pointSizeScale`, `planeThickness`, `distanceFade`, `filterMode`); each setter calls `bdvPopup.updateBDV()`
+- `InterestPointTableModel.java` — implements `InterestPointSource`, holds slider state (`pointSizeScale`, `planeThickness`, `distanceFade`, `filterMode`); each setter calls `bdvPopup.updateBDV()`. Column "Attributes" (`LabelAttributes`, `computeAttributes`): which of DoG response / intensity / sigma the points of a label store (NaN = unknown), short in the cell ("resp, int, sigma", "none (old)", "int only", "mixed"), spelled out in the tooltip; after a "+" the embeddings of the label (its per-point arrays: `withArrays`, `InterestPointArrays.list`/`rows`; a filtered label shows its base's): "embedding 64-D" when every selected view has one row per point of the base label, "(1/4 views)" otherwise, the array's name only when it is not `InterestPointArrays.EMBEDDING` ("embedding 'descriptor' 64-D"). An old label (none, some, or views that differ) and an incomplete array are drawn in dark red by `MyRenderer` with a tooltip that says what is missing
 - `InterestPointExplorerPanel.java` — slider + text-field UI
 - `src/main/resources/mvr/InterestPointHelp.html` — F1 help content
 
@@ -165,6 +346,16 @@ else // both present in different sets
 
 **Why it was hard to spot**: every other branch of the conditional correctly added the pair. The merge branch was the only one that didn't, and the bug only manifested when a pair connected previously-disconnected groups.
 
+### Lesson: Overlap Fast Path Ignored the Registration Type (2026-11-02)
+`Interest_Point_Registration.identifySubsets` has a fast path for `SimpleBoundingBoxOverlap` (commit f95db0765, 2026-02-23)
+that creates only the overlapping pairs (`SimpleBoundingBoxOverlap.generateOverlappingPairs`) instead of `definePairs()` +
+`removeNonOverlappingPairs()`. It skipped the range of the registration type (`AllToAllRange.getRangeComparator()`: same
+timepoint for "Register timepoints individually", the reference timepoint, all), so a time series registered per timepoint
+compared all timepoints with each other (Stephan's C. elegans embryo, 198 views: 19,503 pairs instead of 99). The generator
+now takes the range comparator and counts skipped (out of range or one group) and non-overlapping pairs separately; a setup
+that is not an `AllToAllRange` takes the sequential path. BigStitcher-Spark's `AbstractRegistration.identifySubsets` never
+had the fast path. Test `TestIdentifySubsets` compares both paths for all three registration types.
+
 ## Performance: Large Datasets (100K+ Views)
 
 The registration workflow was optimized for 100K+ views. Key bottlenecks were in `TransformationTools.java` and `Subset.java`.
@@ -197,6 +388,16 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
 ### Potential Next Optimization
 `LoadCorrespondencesPairwise.match()` calls `ipA.getCorrespondingInterestPointsCopy()`, which lazily opens an N5 reader, reads attrs, opens the dataset, and iterates correspondences — per pair. Even with `computePairs()` parallelized, each pair triggers I/O. A bulk parallel pre-load before `computePairs()` would amortize this.
 
+### Alignment Log (2026-11-02)
+`process.interestpointregistration.AlignmentLog.restricted` (the "Large dataset" dialog's "Restrict alignment log outputs",
+`Data_Explorer.showAdvancedOptionsDialog`, also shown by BigStitcher; off by default) = summaries only: no line per view,
+pair, group or solver iteration, whatever the three caps (`maxPerPairLog`, `maxPerPairCorrLog`, `maxPerViewTransformLog`)
+say; the caps bound the same lines when it is off. It also turns off mpicbg's `TileUtil.optimizeConcurrently` verbose flag
+(one stdout line per iteration). Gated sites: `Interest_Point_Registration` (removed views, remaining points, grouping, fixed
+and reference views), `InterestPointMatchCreator`, `PairwiseResult`, `TransformationTools.printAndSummarizeTransformations`,
+`GlobalOpt`/`GlobalOptIterative` (progress and per-iteration errors, printed once at the end), `GlobalOptTwoRound`,
+`MaxErrorLinkRemoval`. Test `TestAlignmentLog`. BigStitcher-Spark has no flag for it yet.
+
 ## RGLDM Descriptor Matching (2026-09)
 
 - `RGLDMMatcher` compared every descriptor pair through `SubsetMatcher`/`SquareDistance`, allocating 16 lists per pair.
@@ -227,9 +428,9 @@ Now: build `Map<V, List<Integer>> viewToGroupIndices` once, then for each pair i
   distances (RGLDM default 3, GH default 10).
 - FRGLDM (`fastrgldm` package, `FRGLDMGUI`, `--method FAST_TRANSLATION` in BigStitcher-Spark) was removed on 2026-09-30
   together with its descriptor `TranslationInvariantLocalCoordinateSystemPointDescriptor`, whose `localize(double[])` had
-  filled only 6 of 9 components since 2017. RGLDM in AUTO mode is faster and exact. BigStitcher-Spark still references the
-  removed classes and must map `FAST_TRANSLATION` to RGLDM/AUTO (or drop it) before it bumps its multiview-reconstruction
-  dependency past 9.0.13.
+  filled only 6 of 9 components since 2017. RGLDM in AUTO mode is faster and exact. BigStitcher-Spark's `scalespace-pr108`
+  (mvr 10.0.0-SNAPSHOT) no longer references the removed classes; a BigStitcher-Spark branch that still offers `--method
+  FAST_TRANSLATION` must map it to RGLDM/AUTO (or drop it) before it bumps its multiview-reconstruction dependency past 9.0.13.
 
 ## BDV Performance — Use Batch APIs
 
@@ -472,6 +673,12 @@ When opening a Split dataset in Data Explorer:
 - **Group Illuminations** is OFF by default
 
 Detected via `isSplitDataset()` checking for `SplitViewerImgLoader` / `SplitMultiResolutionImgLoader`.
+
+## Data Explorer (plugin `Data_Explorer`)
+
+Closing the ViewSetup Explorer it opened brings the XML chooser back (`ViewSetupExplorer.setOnQuit`, run at the end of `quit()`
+in a new plugin thread; what BigStitcher's `StitchingExplorer.quit()` does; Stephan 2026-11-01). Explorers opened elsewhere
+(`Split_Views`) have no `onQuit` and do nothing on close.
 
 ## House Rules
 

@@ -35,6 +35,7 @@ import mpicbg.models.Tile;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.process.interestpointregistration.AlignmentLog;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.ConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.IterativeConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.linkremoval.LinkRemovalStrategy;
@@ -166,7 +167,10 @@ public class GlobalOptTwoRound
 		}
 
 		// every connected set becomes one group
-		IOFunctions.println( new Date( System.currentTimeMillis() ) + ": Identified the following (dis)connected groups:" );
+		if ( AlignmentLog.restricted )
+			IOFunctions.println( new Date( System.currentTimeMillis() ) + ": Identified " + sets.size() + " (dis)connected groups." );
+		else
+			IOFunctions.println( new Date( System.currentTimeMillis() ) + ": Identified the following (dis)connected groups:" );
 
 		final ArrayList< Group< ViewId > > groupsNew = new ArrayList<>();
 		int i = 0;
@@ -175,7 +179,9 @@ public class GlobalOptTwoRound
 			final Group< ViewId > group = assembleViews( connected, models1 );
 			groupsNew.add( group );
 
-			IOFunctions.println( "Group " + i++ + ": [" + group + "]" );
+			if ( !AlignmentLog.restricted )
+				IOFunctions.println( "Group " + i + ": [" + group + "]" );
+			++i;
 		}
 
 		// compute the weak links using the new groups and the results of the first run

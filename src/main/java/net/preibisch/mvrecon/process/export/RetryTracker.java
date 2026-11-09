@@ -24,6 +24,7 @@ package net.preibisch.mvrecon.process.export;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -173,7 +174,7 @@ public class RetryTracker<T>
 	 * @return if it did not give up now
 	 */
 	public boolean processFailures(final Set<T> failedBlocks) {
-		IOFunctions.println("Blocks remaining for retry in " + operationName + ": " + failedBlocks.size());
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Blocks remaining for retry in " + operationName + ": " + failedBlocks.size());
 
 		final Iterator<T> blockIterator = failedBlocks.iterator();
 		while (blockIterator.hasNext()) {

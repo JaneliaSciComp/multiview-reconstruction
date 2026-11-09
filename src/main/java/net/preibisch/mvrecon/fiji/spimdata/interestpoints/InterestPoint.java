@@ -28,7 +28,11 @@ import mpicbg.models.Point;
 import net.imglib2.RealLocalizable;
 
 /**
- * Single interest point, extends mpicbg Point by an id
+ * Single interest point, extends mpicbg Point by an id and the attributes of its detection: the DoG response, the
+ * sigma of the DoG it was detected with and the image intensity at its position. The legacy DoG (DoGImgLib2) and
+ * the scale space (DoGScaleSpace) create the same points, the parameter string of the label tells them apart. An
+ * attribute is NaN when it is unknown (points of labels stored before the attributes existed, synthetic points).
+ * The attributes are floats (in memory and in the N5): millions of points of split views must stay small.
  * 
  * @author Stephan Preibisch (stephan.preibisch@gmx.de)
  *
@@ -39,13 +43,48 @@ public class InterestPoint extends Point implements RealLocalizable, Serializabl
 
 	protected final int id;
 
+	/** the DoG response at the (refined) position, signed (the legacy DoG without subpixel localization stores |response|) */
+	protected final float response;
+
+	/**
+	 * the lower sigma of the DoG the point was detected with, in x pixels of the image it was detected in; once the
+	 * point is mapped to full resolution (DownsampleTools.correctForDownsampling) in full-resolution pixels of the
+	 * view (geometric mean over x and y). For the scale space the sigma in z is this value divided by the anisotropy
+	 * the scale space was computed with (z voxel / x voxel), in z pixels.
+	 */
+	protected float sigma;
+
+	/** the intensity of the image the point was detected in at its (refined) position, linearly interpolated, in the units of the image (not normalized) */
+	protected float intensity;
+
 	public InterestPoint( final int id, final double[] l )
+	{
+		this( id, l, Float.NaN, Float.NaN, Float.NaN );
+	}
+
+	public InterestPoint( final int id, final double[] l, final float response )
+	{
+		this( id, l, response, Float.NaN, Float.NaN );
+	}
+
+	public InterestPoint( final int id, final double[] l, final float response, final float sigma, final float intensity )
 	{
 		super( l );
 		this.id = id;
+		this.response = response;
+		this.sigma = sigma;
+		this.intensity = intensity;
 	}
 
 	public int getId() { return id; }
+
+	public float getResponse() { return response; }
+
+	public float getSigma() { return sigma; }
+	public void setSigma( final float sigma ) { this.sigma = sigma; }
+
+	public float getIntensity() { return intensity; }
+	public void setIntensity( final float intensity ) { this.intensity = intensity; }
 
 	@Override
 	public int numDimensions() { return l.length; }
@@ -70,12 +109,20 @@ public class InterestPoint extends Point implements RealLocalizable, Serializabl
 	@Override
 	public double getDoublePosition( final int d ) { return w[ d ]; }
 
+	/**
+	 * @return a new point with this id and position and no attributes (e.g. a center of mass)
+	 */
 	public InterestPoint newInstance( final int id, final double[] l ) { return new InterestPoint( id, l ); }
+
+	/**
+	 * @return a new point with another id and position that keeps the attributes of this one (a transformed, shifted or renumbered copy)
+	 */
+	public InterestPoint derive( final int id, final double[] l ) { return new InterestPoint( id, l, response, sigma, intensity ); }
 
 	public InterestPoint duplicate() { return clone(); }
 
 	@Override
-	public InterestPoint clone() { return new InterestPoint( this.id, this.l.clone() ); }
+	public InterestPoint clone() { return new InterestPoint( this.id, this.l.clone(), response, sigma, intensity ); }
 
 	@Override
 	public int hashCode()

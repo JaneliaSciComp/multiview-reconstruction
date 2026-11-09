@@ -84,11 +84,12 @@ and which views contain them.
 
 <h3>Table Columns</h3>
 <ul>
-  <li><b>Interest Point Label:</b> The name/identifier of the detection (e.g., "beads", "DoG")</li>
+  <li><b>Interest Point Label:</b> The name/identifier of the detection (e.g., "beads", "DoG"). A <i>virtual</i> label (shown in italics with "(virtual)" after its name) has no points of its own: it filters the points of its base label on the fly (by |DoG response|, intensity, sigma or a fixed number per view) and only stores its own correspondences; the tooltip of the row names the base label and the filter. Deleting the base label deletes its virtual labels, too.</li>
   <li><b>#Detections:</b> Total number of interest points detected</li>
   <li><b>#Corresponding:</b> Number of points that have correspondences to other views</li>
   <li><b>#Correspondences:</b> Total number of point-to-point correspondences established</li>
   <li><b>Present in Views:</b> List of ViewSetup IDs and Timepoints where this detection exists</li>
+  <li><b>Attributes:</b> What the points store besides their position. First the attributes of the points: the DoG response, the intensity and the sigma (what the filters and the interactive filter work on). A label detected with a current version reads "resp, int, sigma". An <span style="color:#b40000;">old label</span> (detected before the attributes were stored) reads "none (old)", or lists the stored ones ("int only"), in dark red; "mixed" means the views differ (the label was detected again for some of them). Then, after a "+", the embeddings another tool keeps about the points (the per-point arrays that pcmatch's <i>embed</i> writes): "embedding 64-D" means 64 values per point and one row for every point of the label in the selected views (an array not named <i>embedding</i> shows its name, e.g. "embedding 'descriptor' 64-D") (<i>Register using Interest Points</i> &gt; <i>Embeddings</i> matches on it); "<span style="color:#b40000;">(1/4 views)</span>" means the other views have no rows or another number of rows than points: the label was detected again since the rows were written, or only some of its points were embedded (run pcmatch embed again for the base label). A filtered label shows the arrays of its base label. The tooltip of the cell says what is stored or missing. Such a label registers as before, but it cannot be filtered by a missing attribute: detect it again to store them (the right-click menu <i>Filter/Manage Interest Points</i> &gt; <i>Re-detect interest points with attributes</i> of the ViewSetup Explorer lists these labels and opens the detection dialog with the label's stored parameters preset).</li>
   <li><b>Parameters:</b> Detection parameters used (if saved)</li>
 </ul>
 
@@ -142,6 +143,7 @@ Click on different rows in the table to highlight different interest point sets.
 <b>Right-click</b> on table rows to access additional operations:
 </p>
 <ul>
+  <li><b>Filter interactively ...</b> (also <i>Filter interest points (interactively)</i> in the <i>Filter/Manage Interest Points</i> menu of the ViewSetup Explorer, which opens this window if needed)<b>:</b> Opens histograms of the |DoG response|, the intensity and the sigma of the selected label (for the selected views) with a range slider each (<i>log</i> bins a histogram in log10 space, as a generalized log where values &le; 0 exist, e.g. an intensity of 0 on a black voxel, so that those points stay visible at the left end); <i>Link histograms</i> makes each histogram show only the points that pass the ranges of the other two (so narrowing one shows what is left in the others), the points shown in BigDataViewer follow the ranges live, <i>Create filtered label ...</i> creates a filtered label (or a plain copy) for the selected or for all views, and the ranges are remembered as the defaults of <i>Filter interest points (response/sigma/intensity) ...</i> (right-click menu <i>Filter/Manage Interest Points</i> of the ViewSetup Explorer)</li>
   <li><b>Delete:</b> Remove the selected interest point detection(s) from the dataset</li>
   <li>Note: Deletion is immediate and cannot be undone without reloading the XML</li>
 </ul>

@@ -56,6 +56,9 @@ public class AllToAllRange< V extends Comparable< V >, R extends RangeComparator
 		this.rangeComparator = rangeComparator;
 	}
 
+	/** the pairing rule of this registration type: which pairs of views are compared at all (same timepoint, reference timepoint, all) */
+	public R getRangeComparator() { return rangeComparator; }
+
 	@Override
 	protected List< Pair< V, V > > definePairsAbstract()
 	{

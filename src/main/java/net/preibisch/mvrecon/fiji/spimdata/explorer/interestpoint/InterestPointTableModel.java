@@ -22,13 +22,18 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 import javax.swing.table.AbstractTableModel;
 
@@ -44,8 +49,14 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointO
 import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.BasicBDVPopup;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.Attributes;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import util.BDVTools;
@@ -53,7 +64,11 @@ import util.BDVTools;
 public class InterestPointTableModel extends AbstractTableModel implements InterestPointSource
 {
 	private static final long serialVersionUID = -1263388435427674269L;
-	
+
+	/** the column that shows which attributes the points of a label store (attributes( row )), where the renderer marks an old label */
+	public static final int ATTRIBUTES_COLUMN = 5;
+	public static final int PARAMETERS_COLUMN = 6;
+
 	ViewInterestPoints viewInterestPoints;
 	final ArrayList< String > columnNames;
 
@@ -73,6 +88,17 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 	HashMap< ViewId, Collection< ? extends RealLocalizable > > points = new HashMap<>();
 
+	// the labels whose points could not be read (e.g. a filtered label of a base label that stores no response): logged once, the cell says so, the label can still be deleted
+	private final HashSet< String > failed = new HashSet<>();
+
+	// which attributes (DoG response, intensity, sigma) the points of a label store in the selected views and which per-point arrays (embeddings) it has, computed once per label and selection (it loads the points)
+	private final HashMap< String, LabelAttributes > attributes = new HashMap<>();
+
+	// the preview of the interactive filter (InteractiveInterestPointFilter): only the points that pass it are drawn
+	private volatile InterestPointFilter previewFilter = null;
+	private HashMap< ViewId, Collection< ? extends RealLocalizable > > previewPoints = null, previewSource = null;
+	private InterestPointFilter previewWith = null;
+
 	public InterestPointTableModel( final ViewInterestPoints viewInterestPoints, final InterestPointExplorerPanel panel )
 	{
 		this.columnNames = new ArrayList< String >();
@@ -82,6 +108,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		this.columnNames.add( "#Corresponding" );
 		this.columnNames.add( "#Correspondences" );
 		this.columnNames.add( "Present in Views" );
+		this.columnNames.add( "Attributes" );
 		this.columnNames.add( "Parameters" );
 
 		this.viewInterestPoints = viewInterestPoints;
@@ -93,13 +120,22 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 	}
 
-	protected void update( final ViewInterestPoints viewInterestPoints ) { this.viewInterestPoints = viewInterestPoints; }
+	protected void update( final ViewInterestPoints viewInterestPoints )
+	{
+		this.viewInterestPoints = viewInterestPoints;
+
+		// the labels may have changed (detected again, filtered labels created)
+		this.failed.clear();
+		this.attributes.clear();
+	}
 	protected ViewInterestPoints getViewInterestPoints() { return viewInterestPoints; }
 	protected List< BasicViewDescription< ? > > getCurrentViewDescriptions() { return currentVDs; } 
 	
 	protected void updateViewDescription( final List< BasicViewDescription< ? > > vds )
 	{
 		this.currentVDs = vds;
+		this.failed.clear();
+		this.attributes.clear();
 
 		// update everything
 		fireTableDataChanged();
@@ -122,7 +158,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	@Override
 	public boolean isCellEditable( final int row, final int column )
 	{
-		if ( column == 5 )
+		if ( column == PARAMETERS_COLUMN )
 			return true;
 		else
 			return false;
@@ -133,9 +169,8 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 	public static String label( final HashMap< String, Integer > labelMap, final int row )
 	{
-		final ArrayList< String > labels = new ArrayList< String >();
-		labels.addAll( labelMap.keySet() );
-		Collections.sort( labels );
+		// the same natural order as the label drop-downs of the dialogs (InterestPointTools.getAllInterestPointLabels)
+		final ArrayList< String > labels = InterestPointTools.sortLabels( labelMap.keySet() );
 
 		if ( row >= labels.size() )
 			return null;
@@ -160,9 +195,21 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 			final String label = label( labels, row );
 
 			if ( column == 0 )
-				return label;
+				return virtualList( viewInterestPoints, currentVDs, label ) == null ? label : label + " (virtual)";
 			else if ( column == 1 )
-				return numDetections( viewInterestPoints, currentVDs, label );
+			{
+				try
+				{
+					return numDetections( viewInterestPoints, currentVDs, label );
+				}
+				catch ( final RuntimeException e )
+				{
+					if ( failed.add( label ) )
+						IOFunctions.println( "Cannot read the interest points '" + label + "': " + e.getMessage() );
+
+					return "ERROR (see log)";
+				}
+			}
 			else if ( column == 2 )
 			{
 				// Show fraction when in green state (state 2) for the selected row
@@ -191,11 +238,339 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 				return numCorrespondences( viewInterestPoints, currentVDs, label );
 			else if ( column == 4 )
 				return findNumPresent( labels, currentVDs, label );
-			else if ( column == 5 )
+			else if ( column == ATTRIBUTES_COLUMN )
+				return attributes( label ).text;
+			else if ( column == PARAMETERS_COLUMN )
 				return getParameters( viewInterestPoints, currentVDs, label );
 			else
 				return -1;
 		}
+	}
+
+	/**
+	 * @return the label's list of the first of the views where it is a virtual label (VirtualFilteredInterestPoints: filters
+	 * its base label on the fly, has no points of its own), null if it is a plain label everywhere
+	 */
+	protected static VirtualFilteredInterestPoints virtualList( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )
+	{
+		for ( final ViewId v : views )
+		{
+			final InterestPoints ips = vip.getViewInterestPointLists( v ).getInterestPointList( label );
+
+			if ( ips instanceof VirtualFilteredInterestPoints )
+				return (VirtualFilteredInterestPoints)ips;
+		}
+
+		return null;
+	}
+
+	/**
+	 * @return whether the row shows a virtual label (for the renderer, which marks it)
+	 */
+	public boolean isVirtual( final int row )
+	{
+		return virtualTooltip( row ) != null;
+	}
+
+	/**
+	 * @return the tooltip of a row that shows a virtual label (its base label and filter), null for a plain label
+	 */
+	public String virtualTooltip( final int row )
+	{
+		if ( currentVDs == null || currentVDs.isEmpty() )
+			return null;
+
+		final String label = label( InterestPointTools.getAllInterestPointMap( viewInterestPoints, currentVDs ), row );
+		final VirtualFilteredInterestPoints virtual = label == null ? null : virtualList( viewInterestPoints, currentVDs, label );
+
+		return virtual == null ? null : "Virtual label, no points of its own: " + virtual.getFilter().describe( virtual.getBaseLabel() );
+	}
+
+	/**
+	 * Which of the attributes of its points (the DoG response, the intensity and the sigma, see {@link InterestPoint}; NaN =
+	 * unknown) a label stores in the selected views: all of them for a label detected since they are stored, none for an
+	 * old one, some for one stored in between, or differing between the views (a label detected again for some of them).
+	 * An old label registers like any other, but it cannot be filtered by an attribute it lacks (the filter dialogs and the
+	 * interactive filter refuse), so the table shows it. After a "+" the per-point arrays of the label
+	 * ({@link InterestPointArrays}, e.g. the embeddings pcmatch writes): name and width, and whether every selected view
+	 * has one row per point.
+	 */
+	public static class LabelAttributes
+	{
+		/** the text of the cell, e.g. "resp, int, sigma", "none (old)", "int only" or "mixed", followed by e.g. " + embedding 64-D" or " + embedding 64-D (1/4 views)" */
+		public final String text;
+
+		/** the tooltip of the cell: what is stored or missing and what to do about it, null when there is nothing to say */
+		public final String tooltip;
+
+		/** false if an attribute is missing in any of the views, or a per-point array lacks rows for a view or has another number of rows than the view has points (the renderer marks the cell) */
+		public final boolean complete;
+
+		public LabelAttributes( final String text, final String tooltip, final boolean complete )
+		{
+			this.text = text;
+			this.tooltip = tooltip;
+			this.complete = complete;
+		}
+	}
+
+	/** nothing to show: the label has no points in the selected views, or they cannot be read (the detections column says so) */
+	public static final LabelAttributes noAttributes = new LabelAttributes( "", null, true );
+
+	/**
+	 * @return the attributes the label stores in the selected views (see {@link LabelAttributes}), computed once per label
+	 *         and selection since it loads the points; nothing if they cannot be read (the detections column reports that)
+	 */
+	protected LabelAttributes attributes( final String label )
+	{
+		LabelAttributes result = attributes.get( label );
+
+		if ( result == null )
+		{
+			try
+			{
+				result = computeAttributes( viewInterestPoints, currentVDs, label );
+			}
+			catch ( final RuntimeException e )
+			{
+				if ( failed.add( label ) )
+					IOFunctions.println( "Cannot read the interest points '" + label + "': " + e.getMessage() );
+
+				result = noAttributes;
+			}
+
+			attributes.put( label, result );
+		}
+
+		return result;
+	}
+
+	/**
+	 * @return the attributes the label of a row stores (for the renderer, which marks an old label and shows the tooltip), null if the row shows no label
+	 */
+	public LabelAttributes attributes( final int row )
+	{
+		if ( currentVDs == null || currentVDs.isEmpty() )
+			return null;
+
+		final String label = label( InterestPointTools.getAllInterestPointMap( viewInterestPoints, currentVDs ), row );
+
+		return label == null ? null : attributes( label );
+	}
+
+	/**
+	 * Loads the points of the label in every view that has it and counts, per attribute, the views with points whose
+	 * points all store it ({@link InterestPointFilter#missingAttributes}: one NaN and the view lacks it); then appends
+	 * the embeddings of the label ({@link #withArrays})
+	 */
+	public static LabelAttributes computeAttributes( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )
+	{
+		final EnumSet< Axis > all = EnumSet.allOf( Axis.class );
+		final int[] storing = new int[ Axis.values().length ]; // per attribute the number of views with points that store it
+		final LinkedHashMap< ViewId, Integer > pointsPerView = new LinkedHashMap<>(); // the views with the label and at least one point
+		int numViews = 0; // the views with the label and at least one point
+
+		for ( final ViewId v : views )
+		{
+			if ( !vip.getViewInterestPointLists( v ).getHashMap().containsKey( label ) )
+				continue;
+
+			final Collection< InterestPoint > points = vip.getViewInterestPointLists( v ).getInterestPointList( label ).getInterestPointsCopy().values();
+
+			if ( points.isEmpty() )
+				continue;
+
+			++numViews;
+			pointsPerView.put( new ViewId( v.getTimePointId(), v.getViewSetupId() ), points.size() );
+
+			final EnumSet< Axis > missing = InterestPointFilter.missingAttributes( points, all );
+
+			for ( final Axis axis : all )
+				if ( !missing.contains( axis ) )
+					++storing[ axis.ordinal() ];
+		}
+
+		if ( numViews == 0 )
+			return noAttributes;
+
+		final ArrayList< Axis > everywhere = new ArrayList<>(), nowhere = new ArrayList<>(), someViews = new ArrayList<>();
+
+		for ( final Axis axis : all )
+		{
+			if ( storing[ axis.ordinal() ] == numViews )
+				everywhere.add( axis );
+			else if ( storing[ axis.ordinal() ] == 0 )
+				nowhere.add( axis );
+			else
+				someViews.add( axis );
+		}
+
+		final String why = " (detected before the attributes were stored, or derived rather than detected, e.g. from correspondences).";
+		final String detectAgain = " It cannot be filtered by them; a new detection stores them.";
+		final LabelAttributes points;
+
+		if ( !someViews.isEmpty() )
+		{
+			// e.g. "the response is stored in 2 of 4 views, the intensity in 4 of 4, the sigma in 2 of 4"
+			final StringBuilder counts = new StringBuilder();
+			int i = 0;
+
+			for ( final Axis axis : all )
+			{
+				counts.append( i == 0 ? "the " : ", the " ).append( axis.key ).append( i == 0 ? " is stored in " : " in " ).append( storing[ axis.ordinal() ] ).append( " of " ).append( numViews );
+
+				if ( i++ == 0 )
+					counts.append( " views" );
+			}
+
+			points = new LabelAttributes( "mixed", "The views differ: " + counts + " (the label was detected again for some of the views, the others are old). It cannot be filtered by an attribute that any view lacks; a new detection of all views stores them everywhere.", false );
+		}
+		else if ( nowhere.isEmpty() )
+		{
+			points = new LabelAttributes( shortNames( everywhere ), "The points store the DoG response, the intensity and the sigma, the label can be filtered by them.", true );
+		}
+		else if ( everywhere.isEmpty() )
+		{
+			points = new LabelAttributes( "none (old)", "Old label: its points store no DoG response, intensity or sigma" + why + detectAgain, false );
+		}
+		else
+		{
+			points = new LabelAttributes( shortNames( everywhere ) + " only", "Old label: its points store no " + names( nowhere ) + why + detectAgain, false );
+		}
+
+		return withArrays( points, vip, pointsPerView, label );
+	}
+
+	/** the full names of attributes for the tooltips, e.g. "response, intensity, sigma" */
+	protected static String names( final Collection< Axis > axes )
+	{
+		return axes.stream().map( a -> a.key ).collect( Collectors.joining( ", " ) );
+	}
+
+	/** the short names of attributes for the cell, e.g. "resp, int, sigma" (the tooltip spells them out) */
+	protected static String shortNames( final Collection< Axis > axes )
+	{
+		return axes.stream().map( a -> a == Axis.RESPONSE ? "resp" : a == Axis.INTENSITY ? "int" : a.key ).collect( Collectors.joining( ", " ) );
+	}
+
+	/** the state of one per-point array over the selected views with points */
+	private static class ArrayState
+	{
+		final Attributes array;
+		int matching = 0; // views with one row per point
+		final ArrayList< String > stale = new ArrayList<>(); // views with another number of rows than points, as text
+
+		ArrayState( final Attributes array ) { this.array = array; }
+	}
+
+	/**
+	 * Appends the embeddings of the label (its per-point arrays, {@link InterestPointArrays}; a filtered label has its base
+	 * label's) to the attributes of its points: " + embedding 64-D" when every selected view with points has one row per
+	 * point of the (base) label, " + embedding 64-D (1/4 views)" and a mark when views have no rows or another number of
+	 * rows than points (the label was detected again since the rows were written, or only some of its points were
+	 * embedded); an array not named {@link InterestPointArrays#EMBEDDING} shows its name ("embedding 'descriptor' 64-D");
+	 * nothing when the label has no arrays.
+	 *
+	 * @param points the attributes of the points
+	 * @param vip all lists
+	 * @param pointsPerView the selected views with the label and at least one point, with their number of points
+	 * @param label the label
+	 */
+	protected static LabelAttributes withArrays( final LabelAttributes points, final ViewInterestPoints vip, final Map< ViewId, Integer > pointsPerView, final String label )
+	{
+		if ( pointsPerView.isEmpty() )
+			return points;
+
+		// the views by timepoint (the arrays are per label and timepoint)
+		final TreeMap< Integer, ArrayList< ViewId > > byTimepoint = new TreeMap<>();
+		for ( final ViewId v : pointsPerView.keySet() )
+			byTimepoint.computeIfAbsent( v.getTimePointId(), t -> new ArrayList<>() ).add( v );
+
+		final TreeMap< String, ArrayState > arrays = new TreeMap<>();
+		String base = label;
+
+		for ( final Map.Entry< Integer, ArrayList< ViewId > > e : byTimepoint.entrySet() )
+		{
+			final ViewInterestPointLists lists = vip.getViewInterestPointLists( e.getValue().get( 0 ) );
+			base = InterestPointArrays.baseLabel( lists, label );
+			final URI baseDir = lists.getInterestPointList( label ).getBasePath();
+
+			for ( final Attributes array : InterestPointArrays.list( baseDir, base, e.getKey() ) )
+			{
+				final ArrayState state = arrays.computeIfAbsent( array.name(), n -> new ArrayState( array ) );
+				final SortedMap< Integer, Long > rows = InterestPointArrays.rows( baseDir, array );
+
+				for ( final ViewId v : e.getValue() )
+				{
+					final Long r = rows.get( v.getViewSetupId() );
+					if ( r == null )
+						continue; // no rows for this view
+
+					// the array has to describe the base label, so a filtered label compares the base's points
+					final int expected = base.equals( label ) ? pointsPerView.get( v ) : vip.getViewInterestPointLists( v ).getInterestPointList( base ).getInterestPointsCopy().size();
+
+					if ( r == expected )
+						++state.matching;
+					else
+						state.stale.add( Group.pvid( v ) + ": " + r + " rows, " + expected + " points" );
+				}
+			}
+		}
+
+		if ( arrays.isEmpty() )
+			return points;
+
+		final int numViews = pointsPerView.size();
+		final StringBuilder text = new StringBuilder( points.text ).append( " + " );
+		final StringBuilder tooltip = new StringBuilder( points.tooltip == null ? "" : points.tooltip );
+		boolean complete = points.complete;
+		int i = 0;
+
+		for ( final ArrayState state : arrays.values() )
+		{
+			final Attributes array = state.array;
+			final String writer = metaString( array.meta(), "writer" ), model = metaString( array.meta(), "model", "file" ), date = metaString( array.meta(), "date" );
+			final String written = writer == null ? "" : ", written by " + writer + ( model == null ? "" : " with the model " + model ) + ( date == null ? "" : " on " + date );
+			final String under = base.equals( label ) ? "" : " They are stored under the base label '" + base + "'.";
+
+			text.append( i++ == 0 ? "" : ", " ).append( "embedding" ).append( array.name().equals( InterestPointArrays.EMBEDDING ) ? "" : " '" + array.name() + "'" ).append( ' ' ).append( array.columns() ).append( "-D" );
+
+			if ( state.matching == numViews )
+			{
+				tooltip.append( tooltip.length() == 0 ? "" : " " ).append( "The embeddings in the per-point array '" ).append( array.name() ).append( "' (" ).append( array.columns() ).append( " values per point" ).append( written )
+						.append( ") cover every point of the label in the selected views; 'Embedding Cosine Similarity' in Register using Interest Points matches on them." ).append( under );
+			}
+			else
+			{
+				final int noRows = numViews - state.matching - state.stale.size();
+				text.append( " (" ).append( state.matching ).append( '/' ).append( numViews ).append( " views)" );
+				complete = false;
+
+				tooltip.append( tooltip.length() == 0 ? "" : " " ).append( "The embeddings in the per-point array '" ).append( array.name() ).append( "' (" ).append( array.columns() ).append( " values per point" ).append( written )
+						.append( ") are incomplete for the selected views: " );
+				if ( noRows > 0 )
+					tooltip.append( noRows ).append( noRows == 1 ? " view has" : " views have" ).append( " no rows" ).append( state.stale.isEmpty() ? "" : ", " );
+				if ( !state.stale.isEmpty() )
+					tooltip.append( state.stale.size() ).append( state.stale.size() == 1 ? " view has" : " views have" ).append( " another number of rows than points (e.g. " )
+							.append( String.join( "; ", state.stale.subList( 0, Math.min( 3, state.stale.size() ) ) ) ).append( "), the label was detected again since the rows were written or only some of its points were embedded" );
+				tooltip.append( "; run pcmatch embed again for label '" ).append( base ).append( "'." ).append( under );
+			}
+		}
+
+		return new LabelAttributes( text.toString(), tooltip.toString(), complete );
+	}
+
+	/** @return the string at a path of the writer's meta (e.g. "model", "file"), or null if it is not there */
+	private static String metaString( final com.google.gson.JsonObject meta, final String... path )
+	{
+		com.google.gson.JsonElement element = meta;
+		for ( final String key : path )
+		{
+			if ( element == null || !element.isJsonObject() )
+				return null;
+			element = element.getAsJsonObject().get( key );
+		}
+		return element == null || !element.isJsonPrimitive() ? null : element.getAsString();
 	}
 
 	protected String getParameters( final ViewInterestPoints vip, final List< ? extends ViewId > views, final String label )
@@ -509,11 +884,67 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		if ( currentlyVisible == null || currentlyVisible.size() == 0 )
 			return coords;
 
+		final HashMap< ViewId, Collection< ? extends RealLocalizable > > displayed = displayedPoints();
+
 		for ( final ViewId viewId : currentlyVisible )
-			if ( points.containsKey( viewId ) )
-				coords.put( viewId, points.get( viewId ) );
+			if ( displayed.containsKey( viewId ) )
+				coords.put( viewId, displayed.get( viewId ) );
 
 		return coords;
+	}
+
+	/**
+	 * Sets the filter the drawn points are previewed with (null = none) and repaints BigDataViewer
+	 */
+	public void setPreviewFilter( final InterestPointFilter filter )
+	{
+		this.previewFilter = filter;
+
+		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().runningBdvPopup();
+		if ( bdvPopup != null && bdvPopup.bdvRunning() )
+			bdvPopup.updateBDV();
+	}
+
+	public InterestPointFilter getPreviewFilter() { return previewFilter; }
+
+	/**
+	 * @return the points to draw: the selected ones, or of those the ones that pass the preview filter (recomputed only
+	 *         when the selection or the filter changed; a point without the attribute does not pass)
+	 */
+	protected HashMap< ViewId, Collection< ? extends RealLocalizable > > displayedPoints()
+	{
+		final InterestPointFilter filter = previewFilter;
+		final HashMap< ViewId, Collection< ? extends RealLocalizable > > source = points;
+
+		if ( filter == null || filter.isEmpty() )
+			return source;
+
+		if ( previewPoints == null || previewSource != source || previewWith != filter )
+		{
+			final HashMap< ViewId, Collection< ? extends RealLocalizable > > filtered = new HashMap<>();
+
+			for ( final Map.Entry< ViewId, Collection< ? extends RealLocalizable > > e : source.entrySet() )
+			{
+				// the interest points of the view through the filter (ranges per point, a count limit per view), anything else passes
+				final ArrayList< InterestPoint > ips = new ArrayList<>();
+				final ArrayList< RealLocalizable > pass = new ArrayList<>();
+
+				for ( final RealLocalizable p : e.getValue() )
+					if ( p instanceof InterestPoint )
+						ips.add( (InterestPoint)p );
+					else
+						pass.add( p );
+
+				pass.addAll( filter.filterKnown( ips ) );
+				filtered.put( e.getKey(), pass );
+			}
+
+			previewPoints = filtered;
+			previewSource = source;
+			previewWith = filter;
+		}
+
+		return previewPoints;
 	}
 
 	@Override

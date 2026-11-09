@@ -26,6 +26,7 @@ import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -1036,7 +1037,7 @@ public class TransformationTools
 		{
 			final double[] l = new double[ 3 ];
 			m.apply( ip.getL(), l );
-			return new InterestPoint( ip.getId(), l );
+			return ip.derive( ip.getId(), l );
 		}).collect( Collectors.toList() );
 	}
 
@@ -1086,6 +1087,7 @@ public class TransformationTools
 	 * {@link #printAndSummarizeTransformations} per call before output is suppressed.
 	 * Set to {@link Integer#MAX_VALUE} to print everything (legacy behavior).
 	 * The identity-vs-non-identity summary is always emitted regardless of this threshold.
+	 * With {@link AlignmentLog#restricted} only that summary is printed.
 	 *
 	 * The cap is per-call (per "Transformation Models:" block), so in TWO_ROUND global opt
 	 * round 1 and round 2 each get their own budget.
@@ -1110,14 +1112,20 @@ public class TransformationTools
 			final Iterable< ? extends ViewId > views,
 			final Map< ? extends ViewId, ? extends Tile > map )
 	{
-		net.preibisch.legacy.io.IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Transformation Models:" );
+		if ( !AlignmentLog.restricted )
+			net.preibisch.legacy.io.IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Transformation Models:" );
 
 		int printed = 0;
 		boolean noticeEmitted = false;
 		long totalIdentity = 0;
 		long totalNonIdentity = 0;
 
-		for ( final ViewId viewId : views )
+		// by timepoint, then setup (ViewId's order), whatever order the caller's collection has
+		final ArrayList< ViewId > sorted = new ArrayList<>();
+		views.forEach( sorted::add );
+		Collections.sort( sorted );
+
+		for ( final ViewId viewId : sorted )
 		{
 			final Tile< ? > tile = map.get( viewId );
 			final Object model = tile.getModel();
@@ -1128,7 +1136,11 @@ public class TransformationTools
 			else
 				totalNonIdentity++;
 
-			if ( printed < maxPerViewTransformLog )
+			if ( AlignmentLog.restricted )
+			{
+				// summary only
+			}
+			else if ( printed < maxPerViewTransformLog )
 			{
 				final String output = Group.pvid( viewId ) + ": " + printAffine3D( ( Affine3D< ? > ) model );
 				if ( model instanceof RigidModel3D )

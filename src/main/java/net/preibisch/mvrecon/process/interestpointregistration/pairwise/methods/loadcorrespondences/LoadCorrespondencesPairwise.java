@@ -94,12 +94,11 @@ public class LoadCorrespondencesPairwise< I extends InterestPoint > implements M
 							ip -> ip.getId(),
 							ip -> ip ) );
 
+			// only the correspondences of this pair (the store reads just those; grouped views were refused above, so viewsB is a ViewId)
 			final Collection<CorrespondingInterestPoints> corrA =
-					ipA.getCorrespondingInterestPointsCopy();
+					ipA.getCorrespondingInterestPointsCopy( (ViewId) viewsB, labelB );
 
 			final List<CorrespondingInterestPoints> corrAFiltered = corrA.stream().filter( c ->
-				c.getCorrespodingLabel().equals( labelB ) &&
-				c.getCorrespondingViewId().equals( viewsB ) &&
 				mapA.containsKey( c.getDetectionId() ) &&
 				mapB.containsKey( c.getCorrespondingDetectionId() )
 			).collect( Collectors.toList() );

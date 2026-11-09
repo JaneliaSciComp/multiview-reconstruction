@@ -69,15 +69,18 @@ public class RegistrationStatistics implements Comparable< RegistrationStatistic
 		this.numInvalidPairs = numInvalidPairs;
 	}
 
-	int getTimePoint() { return timePoint; }
-	double getMinError() { return minError; }
-	double getAvgError() { return avgError; }
-	double getMaxError() { return maxError; }
-	double getMinRatio() { return minRatio; }
-	double getAvgRatio() { return avgRatio; }
-	double getMaxRatio() { return maxRatio; }
-	int getNumValidPairs() { return numValidPairs; }
-	int getNumInvalidPairs() { return numInvalidPairs; }
+	public int getTimePoint() { return timePoint; }
+	public double getMinError() { return minError; }
+	public double getAvgError() { return avgError; }
+	public double getMaxError() { return maxError; }
+	public double getMinRatio() { return minRatio; }
+	public double getAvgRatio() { return avgRatio; }
+	public double getMaxRatio() { return maxRatio; }
+	public int getNumValidPairs() { return numValidPairs; }
+	public int getNumInvalidPairs() { return numInvalidPairs; }
+
+	/** false = no pair of this timepoint has a model, the errors and ratios are NaN */
+	public boolean hasValidPairs() { return numValidPairs > 0; }
 
 	protected void collect(
 			final int timepoint,
@@ -121,6 +124,13 @@ public class RegistrationStatistics implements Comparable< RegistrationStatistic
 		{
 			avgError /= (double)numValidPairs;
 			avgRatio /= (double)numValidPairs;
+		}
+		else
+		{
+			// no pair of this timepoint has a model: no errors and no ratios. The chart leaves such a timepoint out;
+			// the sentinels Double.MAX_VALUE / -1 used to stay and blew up its axis range ("Must be finite").
+			minError = avgError = maxError = Double.NaN;
+			minRatio = avgRatio = maxRatio = Double.NaN;
 		}
 	}
 

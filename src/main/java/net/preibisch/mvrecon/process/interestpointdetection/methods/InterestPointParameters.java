@@ -26,22 +26,15 @@ import java.util.Collection;
 
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
+import net.preibisch.mvrecon.process.interestpointdetection.OverlappingRegions;
 
 public class InterestPointParameters
 {
 	public Collection< ViewDescription > toProcess;
 	public ImgLoader imgloader;
 
-	public double imageSigmaX = 0.5;
-	public double imageSigmaY = 0.5;
-	public double imageSigmaZ = 0.5;
-
 	public double minIntensity = Double.NaN;
 	public double maxIntensity = Double.NaN;
-
-	public boolean limitDetections;
-	public int maxDetections;
-	public int maxDetectionsTypeIndex; // { "Brightest", "Around median (of those above threshold)", "Weakest (above threshold)" };
 
 	// downsampleXY == 0 : a bit less then z-resolution
 	// downsampleXY == -1 : a bit more then z-resolution
@@ -49,6 +42,9 @@ public class InterestPointParameters
 
 	public double showProgressMin = Double.NaN;
 	public double showProgressMax = Double.NaN;
+
+	/** the regions of the views to detect in (OverlappingRegions, "only in regions overlapping other views"); null = the whole view */
+	public OverlappingRegions regions = null;
 
 	public InterestPointParameters() {}
 

@@ -41,6 +41,9 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 	public static final double xPosLog = 0.0;
 	public static final double yPosLog = 0.8;
 
+	/** run once the window is closed (quit), after everything of this explorer is gone; null = nothing (Data_Explorer shows the XML chooser again) */
+	protected Runnable onQuit = null;
+
 	public ViewSetupExplorer( final AS data, final URI xml, final XmlIoSpimData2 io )
 	{
 		this( data, xml, io, true );
@@ -85,6 +88,12 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 		panel.table.requestFocus();
 	}
 	
+	/** @param onQuit what to run once the window is closed, e.g. the XML chooser again; null = nothing */
+	public void setOnQuit( final Runnable onQuit ) { this.onQuit = onQuit; }
+
+	public Runnable getOnQuit() { return onQuit; }
+
+	/** Closes the explorer, its listeners (e.g. the Interest Point Explorer) and the BDV, then runs {@link #setOnQuit(Runnable) onQuit} */
 	public void quit()
 	{
 		for ( final SelectedViewDescriptionListener< AS > l : panel.getListeners() )
@@ -101,5 +110,8 @@ public class ViewSetupExplorer< AS extends SpimData2 > extends FilteredAndGroupe
 			bdvPopup.closeBDV();
 
 		ViewSetupExplorerPanel.currentInstance = null;
+
+		if ( onQuit != null )
+			onQuit.run();
 	}
 }

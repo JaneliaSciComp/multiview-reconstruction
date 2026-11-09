@@ -11,7 +11,7 @@
 
 	<groupId>net.preibisch</groupId>
 	<artifactId>multiview-reconstruction</artifactId>
-	<version>9.1.5-SNAPSHOT</version>
+	<version>10.0.0-SNAPSHOT</version>
 
 	<name>Multiview Reconstruction</name>
 	<description>Software for the reconstruction of multi-view microscopic acquisitions
@@ -427,6 +427,15 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 								<transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
 									<resource>META-INF/json/mpicbg.spim.data.generic.sequence.ImgLoaderIo</resource>
 								</transformer>
+								<!-- n5 discovers codecs, compressions and chunk layouts through these SciJava annotation indexes; every
+								     n5 jar ships its own copy, so they must be merged or e.g. the Zarr v3 chunk grid stays unregistered -->
+								<transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+									<resource>META-INF/json/org.janelia.saalfeldlab.n5.Compression$CompressionType</resource>
+								</transformer>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+									<resource>META-INF/json/org.janelia.saalfeldlab.n5.serialization.NameConfig$Name</resource>
+								</transformer>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
 							</transformers>
 							<!--<minimizeJar>true</minimizeJar> -->
 							<filters>

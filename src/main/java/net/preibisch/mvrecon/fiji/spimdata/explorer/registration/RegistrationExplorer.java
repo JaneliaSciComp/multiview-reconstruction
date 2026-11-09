@@ -95,8 +95,8 @@ public class RegistrationExplorer< AS extends SpimData2 >
 	@Override
 	public void updateContent( final AS data )
 	{
-		//panel.getTableModel().update( data.getViewRegistrations() );
-		//panel.getTableModel().fireTableDataChanged();
+		// the transformations of the selected views changed (e.g. one was removed): rebuild the rows from the current lists
+		panel.updateViewDescriptions( panel.lastSelectedVDs );
 	}
 
 }

@@ -22,24 +22,42 @@
  */
 package net.preibisch.mvrecon.process.interestpointdetection;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.TreeSet;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map.Entry;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.RandomAccessible;
+import net.imglib2.RealRandomAccess;
+import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
+import net.imglib2.type.numeric.RealType;
+import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
+import mpicbg.spim.data.sequence.ViewDescription;
+import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointValue;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 /**
  * The type Interest point tools.
@@ -78,6 +96,11 @@ public class InterestPointTools
 		return getAllInterestPointLabels( labels, viewIdsToProcess );
 	}
 
+	/**
+	 * @param labels - the labels and the number of views each is present in (getAllInterestPointMap)
+	 * @param viewIdsToProcess - the views, a label missing in some gets a warning appended
+	 * @return the labels in natural order (sortLabels), with a warning for the incomplete ones
+	 */
 	public static String[] getAllInterestPointLabels(
 			final HashMap< String, Integer > labels,
 			final List< ? extends ViewId > viewIdsToProcess )
@@ -86,7 +109,7 @@ public class InterestPointTools
 
 		int i = 0;
 		
-		for ( final String label : labels.keySet() )
+		for ( final String label : sortLabels( labels.keySet() ) )
 		{
 			allLabels[ i ] = label;
 
@@ -97,6 +120,59 @@ public class InterestPointTools
 		}
 
 		return allLabels;
+	}
+
+	/**
+	 * Natural order of labels (naturalOrder): numbers inside the labels compare as numbers (with a decimal fraction if
+	 * present), the text in between case-insensitively, so "beads" &lt; "beads_t0.001" &lt; "beads_t0.0046" &lt; "beads_t0.022"
+	 * &lt; "beads_t0.1" and "nuclei_t2" &lt; "nuclei_t10" (plain alphabetical order gives "nuclei_t10" first)
+	 *
+	 * @return the labels as a new, sorted list
+	 */
+	public static ArrayList< String > sortLabels( final Collection< String > labels )
+	{
+		final ArrayList< String > sorted = new ArrayList<>( labels );
+		Collections.sort( sorted, naturalOrder );
+		return sorted;
+	}
+
+	/** the comparator of sortLabels, see compareNatural */
+	public static final Comparator< String > naturalOrder = InterestPointTools::compareNatural;
+
+	/** a number (with an optional decimal fraction) or a run of anything else */
+	private static final Pattern numberOrText = Pattern.compile( "\\d+(\\.\\d+)?|\\D+" );
+
+	/**
+	 * Compares two strings in natural order: token by token, where a token is a number (digits with an optional decimal
+	 * fraction, compared by value) or the text in between (compared ignoring case); numbers sort before text, a string
+	 * that runs out of tokens first sorts first, and strings that only differ in spelling (case, leading zeros) fall back
+	 * to String.compareTo so that the order is total
+	 */
+	public static int compareNatural( final String a, final String b )
+	{
+		final Matcher ma = numberOrText.matcher( a ), mb = numberOrText.matcher( b );
+
+		while ( true )
+		{
+			final boolean fa = ma.find(), fb = mb.find();
+
+			if ( !fa || !fb )
+				return fa == fb ? a.compareTo( b ) : ( fa ? 1 : -1 );
+
+			final String ta = ma.group(), tb = mb.group();
+			final boolean na = Character.isDigit( ta.charAt( 0 ) ), nb = Character.isDigit( tb.charAt( 0 ) );
+			final int c;
+
+			if ( na && nb )
+				c = new BigDecimal( ta ).compareTo( new BigDecimal( tb ) );
+			else if ( na != nb )
+				c = na ? -1 : 1;
+			else
+				c = ta.compareToIgnoreCase( tb );
+
+			if ( c != 0 )
+				return c;
+		}
 	}
 
 	public static HashMap< String, Integer > getAllCorrespondingInterestPointMap( final ViewInterestPoints interestPoints, final Collection< ? extends ViewId > views )
@@ -206,72 +282,226 @@ public class InterestPointTools
 		return true;
 	}
 
-	public static List< InterestPoint > limitList( final int maxDetections, final int maxDetectionsTypeIndex, final List< InterestPoint > list )
+	/**
+	 * Adds the entries of a label whose points other JVMs already saved as staging files of the dataset's interest point
+	 * store (the tasks of a BigStitcher-Spark detection): nothing is set or modified, the next XML save commits the staged
+	 * data and the lists load it on first use. An existing label of that name is replaced.
+	 *
+	 * @param data the data
+	 * @param label the label
+	 * @param viewIds the views that were processed (also those without points, their staging files hold empty lists)
+	 * @param parameters the parameters
+	 */
+	public static void addInterestPointEntries( final SpimData2 data, final String label, final Collection< ? extends ViewId > viewIds, final String parameters )
 	{
-		if ( list.size() <= maxDetections )
+		for ( final ViewId viewId : viewIds )
 		{
-			return list;
+			final InterestPoints list = InterestPoints.newInstance( data.getBasePathURI(), viewId, label );
+			list.setParameters( parameters == null ? "" : parameters );
+			data.getViewInterestPoints().getViewInterestPointLists( viewId ).addInterestPointList( label, list );
 		}
-		else
+	}
+
+	/**
+	 * Adds a filtered label to every view: a label without points of its own that filters the base label on the fly
+	 * whenever its points are requested (VirtualFilteredInterestPoints, the ids of the base label are kept) and has its own
+	 * correspondences. An existing label of that name is replaced. Nothing is saved.
+	 *
+	 * @param data the data
+	 * @param label the new label
+	 * @param baseLabel the label it filters, must exist in every view
+	 * @param filter the filter
+	 * @param views the views
+	 * @return true if successful
+	 * @throws IllegalArgumentException if a view lacks the base label
+	 */
+	public static boolean addFilteredInterestPoints( final SpimData2 data, final String label, final String baseLabel, final InterestPointFilter filter, final Collection< ? extends ViewId > views )
+	{
+		for ( final ViewId viewId : views )
 		{
-			if ( !InterestPointValue.class.isInstance( list.get( 0 ) ) )
+			final ViewInterestPointLists vipl = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+
+			if ( !vipl.contains( baseLabel ) )
+				throw new IllegalArgumentException( "Cannot create the filtered label '" + label + "': its base label '" + baseLabel + "' does not exist for view " + Group.pvid( viewId ) + "." );
+
+			final VirtualFilteredInterestPoints list = VirtualFilteredInterestPoints.create( data.getBasePathURI(), viewId, label, baseLabel, filter );
+			list.setParameters( filter.describe( baseLabel ) );
+
+			vipl.addInterestPointList( label, list );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Adds a plain label to every view that holds copies of the points of the base label that pass the filter (with the
+	 * ids of the base label), e.g. for readers that do not know filtered labels. Nothing is saved.
+	 *
+	 * @throws IllegalArgumentException if a view lacks the base label
+	 */
+	public static boolean addFilteredInterestPointsCopy( final SpimData2 data, final String label, final String baseLabel, final InterestPointFilter filter, final Collection< ? extends ViewId > views )
+	{
+		final HashMap< ViewId, List< InterestPoint > > points = new HashMap<>();
+
+		for ( final ViewId viewId : views )
+		{
+			final InterestPoints base = data.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( baseLabel );
+
+			if ( base == null )
+				throw new IllegalArgumentException( "Cannot create the label '" + label + "': its base label '" + baseLabel + "' does not exist for view " + Group.pvid( viewId ) + "." );
+
+			points.put( viewId, filter.filter( base.getInterestPointsCopy().values() ) );
+		}
+
+		return addInterestPoints( data, label, points, filter.describe( baseLabel ) + " (copied)" );
+	}
+
+	/**
+	 * @return the attributes (of the given ones) that the points of the label lack in any of the views that have it (NaN,
+	 * e.g. a label stored before the attributes existed; a filter by them throws, InterestPointFilter.missingAttributes);
+	 * empty if nothing is missing or no view has the label. Loads the points of the label.
+	 */
+	public static EnumSet< Axis > missingAttributes( final SpimData2 data, final Collection< ? extends ViewId > views, final String label, final Collection< Axis > axes )
+	{
+		final EnumSet< Axis > missing = EnumSet.noneOf( Axis.class );
+
+		for ( final ViewId viewId : views )
+		{
+			final InterestPoints ips = data.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
+
+			if ( ips != null )
+				missing.addAll( InterestPointFilter.missingAttributes( ips.getInterestPointsCopy().values(), axes ) );
+		}
+
+		return missing;
+	}
+
+	/**
+	 * @return the views (sorted) of the collection that are present and have the label
+	 */
+	public static List< ViewId > viewsWithLabel( final SpimData2 data, final String label, final Collection< ? extends ViewId > viewCollection )
+	{
+		final ArrayList< ViewId > views = new ArrayList<>();
+
+		for ( final ViewId viewId : viewCollection )
+		{
+			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
+
+			if ( vd == null || !vd.isPresent() )
+				continue;
+
+			final ViewInterestPointLists vipl = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+
+			if ( vipl != null && vipl.contains( label ) )
+				views.add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
+		}
+
+		Collections.sort( views );
+
+		return views;
+	}
+
+	/**
+	 * @return whether a filtered label named newLabel with the base baseLabel would filter itself in the view: newLabel is
+	 * the base, or one of the labels the base is filtered from (the chain of bases; a base that does not exist ends it,
+	 * e.g. the label a detection is about to create). The only overwrite that cannot work.
+	 */
+	public static boolean wouldCycle( final ViewInterestPointLists vipl, final String newLabel, final String baseLabel )
+	{
+		final HashSet< String > seen = new HashSet<>();
+		String label = baseLabel;
+
+		while ( label != null && seen.add( label ) )
+		{
+			if ( label.equals( newLabel ) )
+				return true;
+
+			final InterestPoints ips = vipl == null ? null : vipl.getInterestPointList( label );
+
+			label = ips instanceof VirtualFilteredInterestPoints ? ( (VirtualFilteredInterestPoints)ips ).getBaseLabel() : null;
+		}
+
+		return false;
+	}
+
+	/**
+	 * @return the views (of the given ones) in which a filtered label named newLabel with the base baseLabel would filter itself (wouldCycle)
+	 */
+	public static List< ViewId > cyclingViews( final SpimData2 data, final Collection< ? extends ViewId > viewIds, final String newLabel, final String baseLabel )
+	{
+		final ArrayList< ViewId > views = new ArrayList<>();
+
+		for ( final ViewId viewId : viewIds )
+			if ( wouldCycle( data.getViewInterestPoints().getViewInterestPointLists( viewId ), newLabel, baseLabel ) )
+				views.add( viewId );
+
+		return views;
+	}
+
+	/**
+	 * Before a label is overwritten in the views (by a re-detection, a filtered label or a plain copy of the points that
+	 * pass a filter): removes the correspondences of other views that point to it
+	 * (CorrespondenceTools.removeCorrespondencesForViewLabel) and the records of the action history that produced it
+	 * ("interestpoints:" + label). Its dependants (filtered labels of it) stay and follow the new points; their
+	 * correspondences may be stale, which is logged.
+	 */
+	public static void removeReferences( final SpimData2 data, final String label, final Collection< ? extends ViewId > views )
+	{
+		int removed = 0;
+		final TreeSet< String > dependants = new TreeSet<>();
+
+		for ( final ViewId viewId : views )
+		{
+			removed += CorrespondenceTools.removeCorrespondencesForViewLabel( data.getViewInterestPoints(), viewId, label, Threads.numThreads() );
+			dependants.addAll( dependentLabels( data.getViewInterestPoints().getViewInterestPointLists( viewId ), label ) );
+		}
+
+		IOFunctions.println( "Overwriting label '" + label + "' in " + views.size() + " view(s): removed " + removed + " corresponding entries of other views that pointed to it." );
+
+		if ( !dependants.isEmpty() )
+			IOFunctions.println( "The filtered label(s) " + dependants + " filter '" + label + "' and now follow its new points, their correspondences may be stale." );
+
+		if ( data.getActionHistory() != null )
+			data.getActionHistory().removeByResultRef( "interestpoints:" + label );
+	}
+
+	/**
+	 * @return the filtered labels of the view that depend on the label, directly or through other filtered labels (a filter of a filter), without the label itself
+	 */
+	public static List< String > dependentLabels( final ViewInterestPointLists vipl, final String label )
+	{
+		final ArrayList< String > dependants = new ArrayList<>();
+		collectDependentLabels( vipl, label, dependants );
+		return dependants;
+	}
+
+	protected static void collectDependentLabels( final ViewInterestPointLists vipl, final String label, final List< String > dependants )
+	{
+		for ( final Entry< String, InterestPoints > entry : vipl.getHashMap().entrySet() )
+		{
+			if ( entry.getValue() instanceof VirtualFilteredInterestPoints && label.equals( ( (VirtualFilteredInterestPoints)entry.getValue() ).getBaseLabel() ) && !dependants.contains( entry.getKey() ) && !entry.getKey().equals( label ) )
 			{
-				IOFunctions.println( "ERROR: Cannot limit detections to " + maxDetections + ", wrong instance." );
-				return list;
+				dependants.add( entry.getKey() );
+				collectDependentLabels( vipl, entry.getKey(), dependants );
 			}
-			else
-			{
-				if ( !DoGImgLib2.silent )
-					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Limiting detections to " + maxDetections + ", type = " + limitDetectionChoice[ maxDetectionsTypeIndex ] );
+		}
+	}
 
-				Collections.sort( list, new Comparator< InterestPoint >()
-				{
+	/**
+	 * Sets the intensity of every point to the value of the image at its position (getL, linearly interpolated), in the
+	 * units of the image: the (raw) image the points were detected in, at the resolution of the detection
+	 *
+	 * @param image - the image, extended beyond its interval by the caller (a refined position can lie outside)
+	 * @param points - the points, with positions in the coordinates of the image
+	 */
+	public static < T extends RealType< T > > void readIntensities( final RandomAccessible< T > image, final Collection< ? extends InterestPoint > points )
+	{
+		final RealRandomAccess< T > ra = Views.interpolate( image, new NLinearInterpolatorFactory<>() ).realRandomAccess();
 
-					@Override
-					public int compare( final InterestPoint o1, final InterestPoint o2 )
-					{
-						final double v1 = Math.abs( ((InterestPointValue)o1).getIntensity() );
-						final double v2 = Math.abs( ((InterestPointValue)o2).getIntensity() );
-
-						if ( v1 < v2 )
-							return 1;
-						else if ( v1 == v2 )
-							return 0;
-						else
-							return -1;
-					}
-				} );
-
-				final ArrayList< InterestPoint > listNew = new ArrayList< InterestPoint >();
-
-				if ( maxDetectionsTypeIndex == 0 )
-				{
-					// max
-					for ( int i = 0; i < maxDetections; ++i )
-						listNew.add( list.get( i ) );
-				}
-				else if ( maxDetectionsTypeIndex == 2 )
-				{
-					// min
-					for ( int i = 0; i < maxDetections; ++i )
-						listNew.add( list.get( list.size() - 1 - i ) );
-				}
-				else
-				{
-					// median
-					final int median = list.size() / 2;
-					
-					if ( !DoGImgLib2.silent )
-						IOFunctions.println( "Medium intensity: " + Math.abs( ((InterestPointValue)list.get( median )).getIntensity() ) );
-					
-					final int from = median - maxDetections/2;
-					final int to = median + maxDetections/2;
-
-					for ( int i = from; i <= to; ++i )
-						listNew.add( list.get( list.size() - 1 - i ) );
-				}
-				return listNew;
-			}
+		for ( final InterestPoint ip : points )
+		{
+			ra.setPosition( ip.getL() );
+			ip.setIntensity( ra.get().getRealFloat() );
 		}
 	}
 

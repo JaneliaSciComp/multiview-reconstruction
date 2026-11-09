@@ -64,6 +64,7 @@ import net.preibisch.mvrecon.fiji.ImgLib2Temp.Pair;
 import net.preibisch.mvrecon.fiji.ImgLib2Temp.ValuePair;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorer;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointTableModel.LabelAttributes;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
@@ -82,6 +83,9 @@ public class InterestPointExplorerPanel extends JPanel
 	// when save is called save those files and delete the other ones
 	//protected ArrayList< Pair< InterestPointList, ViewId > > save;
 	protected ArrayList< Pair< InterestPoints, ViewId > > delete;
+
+	// the open interactive filter window (one at a time, its preview lives in the table model)
+	protected InteractiveInterestPointFilter filterWindow = null;
 
 	public InterestPointExplorerPanel( final ViewInterestPoints viewInterestPoints, final FilteredAndGroupedExplorer< ? > viewSetupExplorer )
 	{
@@ -410,15 +414,16 @@ public class InterestPointExplorerPanel extends JPanel
 		table.getColumnModel().getColumn( 2 ).setPreferredWidth( 20 );
 		table.getColumnModel().getColumn( 3 ).setPreferredWidth( 25 );
 		table.getColumnModel().getColumn( 4 ).setPreferredWidth( 30 );
-		table.getColumnModel().getColumn( 5 ).setPreferredWidth( 400 );
+		table.getColumnModel().getColumn( InterestPointTableModel.ATTRIBUTES_COLUMN ).setPreferredWidth( 120 );
+		table.getColumnModel().getColumn( InterestPointTableModel.PARAMETERS_COLUMN ).setPreferredWidth( 350 );
 
 		table.addMouseListener( new MouseListener()
 		{
 			@Override
-			public void mouseReleased(MouseEvent e) {}
+			public void mouseReleased(MouseEvent e) { selectRowForPopup( e ); }
 			
 			@Override
-			public void mousePressed(MouseEvent e) {}
+			public void mousePressed(MouseEvent e) { selectRowForPopup( e ); }
 			
 			@Override
 			public void mouseExited(MouseEvent e) {}
@@ -493,13 +498,39 @@ public class InterestPointExplorerPanel extends JPanel
 	{
 		private static final long serialVersionUID = 1L;
 
+		/** the text of the attributes cell of an old label (its points lack DoG response, intensity or sigma) */
+		static final Color oldLabelColor = new Color( 180, 0, 0 );
+
 		Color backgroundColor = getBackground();
 
 		@Override
 		public Component getTableCellRendererComponent( JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column )
 		{
+			// DefaultTableCellRenderer.setForeground keeps the color for every unselected cell to come (unselectedForeground), so the mark of an old label (below) is forgotten before each cell
+			setForeground( null );
+
 			final Component c = super.getTableCellRendererComponent( table, value, isSelected, hasFocus, row, column );
 			final InterestPointTableModel model = (InterestPointTableModel) table.getModel();
+
+			// a virtual label (filters its base label on the fly, no points of its own) is marked: the row in italics, "(virtual)" after the label, base and filter as the tooltip
+			final String virtual = model.virtualTooltip( row );
+			c.setFont( c.getFont().deriveFont( virtual == null ? Font.PLAIN : Font.ITALIC ) );
+			setToolTipText( virtual );
+
+			// an old label (its points store none or only some of DoG response, intensity and sigma, or the views differ) or an incomplete per-point array (embeddings) is marked in its attributes cell: dark red text, the tooltip says what is missing
+			if ( table.convertColumnIndexToModel( column ) == InterestPointTableModel.ATTRIBUTES_COLUMN )
+			{
+				final LabelAttributes attributes = model.attributes( row );
+
+				if ( attributes != null )
+				{
+					if ( attributes.tooltip != null )
+						setToolTipText( "<html><body style='width: 380px'>" + attributes.tooltip + "</body></html>" );
+
+					if ( !attributes.complete && !isSelected )
+						c.setForeground( oldLabelColor );
+				}
+			}
 
 			final int state = model.getState( row, column );
 
@@ -541,30 +572,45 @@ public class InterestPointExplorerPanel extends JPanel
 			{
 				final int row = selectedRows[ rowIndex ];
 	
-				final String label = InterestPointTableModel.label( labels, row );
-	
-				IOFunctions.println( "Removing label '" + label + "' for timepoint_id " + vd.getTimePointId() + " viewsetup_id " + vd.getViewSetupId() );
+				final String selectedLabel = InterestPointTableModel.label( labels, row );
 
-				// Remove symmetric correspondences from other views (multithreaded)
-				final int removed = CorrespondenceTools.removeCorrespondencesForViewLabel(
-						vip, vd, label, Runtime.getRuntime().availableProcessors() );
-				IOFunctions.println( "Removed " + removed + " corresponding entries from other views." );
+				// the filtered labels of this label (VirtualFilteredInterestPoints) cannot exist without it, they are removed, too
+				final List< String > toRemove = new ArrayList<>();
+				toRemove.add( selectedLabel );
+				toRemove.addAll( InterestPointTools.dependentLabels( vip.getViewInterestPointLists( vd ), selectedLabel ) );
 
-				// remember to delete the files
-				this.delete.add( new ValuePair< InterestPoints, ViewId >(
-						vip.getViewInterestPointLists( vd ).getInterestPointList( label ),
-						vd ) );
-	
-				vip.getViewInterestPointLists( vd ).getHashMap().remove( label );
+				if ( toRemove.size() > 1 )
+					IOFunctions.println( "Label '" + selectedLabel + "' is the base of the filtered label(s) " + toRemove.subList( 1, toRemove.size() ) + ", removing them as well." );
 
-				// drop matching action-history entries so the history reflects current data state
-				try
+				for ( final String label : toRemove )
 				{
-					final SpimData2 sd = viewSetupExplorer.getSpimData();
-					if ( sd != null && sd.getActionHistory() != null )
-						sd.getActionHistory().removeByResultRef( "interestpoints:" + label );
+					// already removed as a dependant of another selected label
+					if ( !vip.getViewInterestPointLists( vd ).contains( label ) )
+						continue;
+
+					IOFunctions.println( "Removing label '" + label + "' for timepoint_id " + vd.getTimePointId() + " viewsetup_id " + vd.getViewSetupId() );
+
+					// Remove symmetric correspondences from other views (multithreaded)
+					final int removed = CorrespondenceTools.removeCorrespondencesForViewLabel(
+							vip, vd, label, Runtime.getRuntime().availableProcessors() );
+					IOFunctions.println( "Removed " + removed + " corresponding entries from other views." );
+
+					// remember to delete the files
+					this.delete.add( new ValuePair< InterestPoints, ViewId >(
+							vip.getViewInterestPointLists( vd ).getInterestPointList( label ),
+							vd ) );
+
+					vip.getViewInterestPointLists( vd ).getHashMap().remove( label );
+
+					// drop matching action-history entries so the history reflects current data state
+					try
+					{
+						final SpimData2 sd = viewSetupExplorer.getSpimData();
+						if ( sd != null && sd.getActionHistory() != null )
+							sd.getActionHistory().removeByResultRef( "interestpoints:" + label );
+					}
+					catch ( final Throwable ignore ) {}
 				}
-				catch ( final Throwable ignore ) {}
 			}
 		}
 
@@ -575,10 +621,105 @@ public class InterestPointExplorerPanel extends JPanel
 		tableModel.fireTableDataChanged();
 	}
 
+	/**
+	 * A right-click selects the row under the mouse (if it is not selected yet), so that the popup menu acts on it
+	 */
+	protected void selectRowForPopup( final MouseEvent e )
+	{
+		if ( !e.isPopupTrigger() )
+			return;
+
+		final int row = table.rowAtPoint( e.getPoint() );
+
+		if ( row >= 0 && !table.isRowSelected( row ) )
+			table.setRowSelectionInterval( row, row );
+	}
+
+	/**
+	 * Opens the interactive filter (histograms of |response|, intensity and sigma with range sliders) of the label of the
+	 * selected row for the selected views; all points of the label are shown in BigDataViewer (if it runs) and follow the filter
+	 */
+	protected void filterInteractively()
+	{
+		filterInteractively( table.getSelectedRow() );
+	}
+
+	/**
+	 * Opens the interactive filter for a label of the table, as if its row were selected and "Filter interactively ..." chosen
+	 * (the shortcut "Filter interest points (interactively)" of the ViewSetup Explorer's menu, RemoveDetectionsPopup)
+	 *
+	 * @return false if the selected views have no such label
+	 */
+	public boolean filterInteractively( final String label )
+	{
+		final List< BasicViewDescription< ? > > vds = tableModel.getCurrentViewDescriptions();
+		// the rows are the labels in the order of label( labels, row )
+		final int row = vds == null ? -1 : InterestPointTools.sortLabels( InterestPointTools.getAllInterestPointMap( tableModel.getViewInterestPoints(), vds ).keySet() ).indexOf( label );
+
+		if ( row < 0 )
+		{
+			IOFunctions.println( "The selected views have no interest points '" + label + "', cannot filter them interactively." );
+			return false;
+		}
+
+		table.setRowSelectionInterval( row, row );
+		filterInteractively( row );
+
+		return true;
+	}
+
+	protected void filterInteractively( final int row )
+	{
+		final List< BasicViewDescription< ? > > vds = tableModel.getCurrentViewDescriptions();
+
+		if ( row < 0 || vds == null || vds.size() == 0 )
+		{
+			JOptionPane.showMessageDialog( table, "Nothing selected." );
+			return;
+		}
+
+		final String selectedLabel = InterestPointTableModel.label( InterestPointTools.getAllInterestPointMap( tableModel.getViewInterestPoints(), vds ), row );
+
+		if ( selectedLabel == null )
+		{
+			JOptionPane.showMessageDialog( table, "No interest points in this row." );
+			return;
+		}
+
+		// show all points of the label (column 1) in BigDataViewer, the preview filters them
+		if ( tableModel.getSelectedRow() != row || tableModel.getSelectedCol() != 1 )
+		{
+			tableModel.setSelected( row, 1 );
+			tableModel.fireTableDataChanged();
+			table.setRowSelectionInterval( row, row );
+		}
+
+		closeFilterWindow();
+
+		filterWindow = new InteractiveInterestPointFilter( this, selectedLabel, vds );
+		filterWindow.setLocationRelativeTo( this );
+		filterWindow.setVisible( true );
+	}
+
+	/**
+	 * Closes the interactive filter window if one is open, which also ends its preview in BigDataViewer
+	 */
+	public void closeFilterWindow()
+	{
+		if ( filterWindow != null )
+		{
+			filterWindow.dispose();
+			filterWindow = null;
+		}
+	}
+
 	protected void addPopupMenu( final JTable table )
 	{
 		final JPopupMenu popupMenu = new JPopupMenu();
+		final JMenuItem filterItem = new JMenuItem( "Filter interactively ..." );
 		final JMenuItem deleteItem = new JMenuItem( "Delete" );
+
+		filterItem.addActionListener( e -> filterInteractively() );
 
 		deleteItem.addActionListener(new ActionListener()
 		{
@@ -590,6 +731,7 @@ public class InterestPointExplorerPanel extends JPanel
 			}
 		});
 
+		popupMenu.add( filterItem );
 		popupMenu.add( deleteItem );
 
 		table.setComponentPopupMenu( popupMenu );

@@ -38,6 +38,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGaussianGUI;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.ScaleSpaceGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.InterestPointDetectionGUI;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
@@ -47,6 +48,7 @@ import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AbstractImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections.FilterParameters;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 
 /**
@@ -61,11 +63,16 @@ import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 public class Interest_Point_Detection implements PlugIn
 {
 	public static ArrayList< InterestPointDetectionGUI > staticAlgorithms = new ArrayList< InterestPointDetectionGUI >();
-	public static int defaultAlgorithm = 1;
-	public static boolean defaultDefineAnisotropy = false;
+	public static int defaultAlgorithm = 0;
 	public static boolean defaultSetMinMax = false;
-	public static boolean defaultLimitDetections = false;
 	public static String defaultLabel = "beads";
+
+	/**
+	 * The label the next dialog suggests as it is, even if the views have it (StoredDetectionParameters.preset for a
+	 * re-detection, which replaces the label); used once. Otherwise the dialog suggests a label that none of the selected
+	 * views has yet (suggestLabel from defaultLabel).
+	 */
+	public static String presetLabel = null;
 
 	public static boolean defaultGroupTiles = true;
 	public static boolean defaultGroupIllums = true;
@@ -75,6 +82,7 @@ public class Interest_Point_Detection implements PlugIn
 	{
 		IOFunctions.printIJLog = true;
 		staticAlgorithms.add( new DifferenceOfGaussianGUI( null, null ) );
+		staticAlgorithms.add( new ScaleSpaceGUI( null, null ) );
 	}
 	
 	@Override
@@ -100,6 +108,34 @@ public class Interest_Point_Detection implements PlugIn
 	 * @param viewIds
 	 * @return
 	 */
+	/**
+	 * @param label - the label to suggest
+	 * @param existing - the labels the views have
+	 * @return the label itself if none of the existing ones equals it, otherwise the first free one with a higher number
+	 *         at the end ("beads" -&gt; "beads2" -&gt; "beads3", "nuclei_1" -&gt; "nuclei_2")
+	 */
+	public static String suggestLabel( final String label, final Collection< String > existing )
+	{
+		if ( label == null || label.isEmpty() || !existing.contains( label ) )
+			return label;
+
+		int end = label.length();
+		while ( end > 0 && Character.isDigit( label.charAt( end - 1 ) ) )
+			--end;
+
+		// a trailing number is increased (at most 18 digits, more is a name); otherwise a number is appended
+		final boolean numbered = end < label.length() && label.length() - end <= 18;
+		final String base = numbered ? label.substring( 0, end ) : label;
+		long number = numbered ? Long.parseLong( label.substring( end ) ) : 1;
+
+		String candidate;
+		do
+			candidate = base + ( ++number );
+		while ( existing.contains( candidate ) );
+
+		return candidate;
+	}
+
 	public boolean detectInterestPoints(
 			final SpimData2 data,
 			final Collection< ? extends ViewId > viewCollection )
@@ -129,14 +165,19 @@ public class Interest_Point_Detection implements PlugIn
 		if ( defaultAlgorithm >= descriptions.length )
 			defaultAlgorithm = 0;
 		
+		// the suggested label: the preset one (a re-detection replaces it), otherwise one that none of the views has yet
+		final String suggestedLabel = presetLabel != null ? presetLabel : suggestLabel( defaultLabel, InterestPointTools.getAllInterestPointMap( data.getViewInterestPoints(), viewIds ).keySet() );
+		presetLabel = null;
+
 		final GenericDialog gd = new GenericDialog( "Detect Interest Points" );
 		
 		gd.addChoice( "Type_of_interest_point_detection", descriptions, descriptions[ defaultAlgorithm ] );
-		gd.addStringField( "Label_interest_points", defaultLabel );
+		gd.addStringField( "Label_interest_points", suggestedLabel );
 
-		gd.addCheckbox( "Define_anisotropy for segmentation", defaultDefineAnisotropy );
 		gd.addCheckbox( "Set_minimal_and_maximal_intensity", defaultSetMinMax );
-		gd.addCheckbox( "Limit_amount_of_detections" , defaultLimitDetections );
+
+		gd.addMessage( "To keep only some of the detections (by thresholds or a fixed number per view) choose a filter in the next dialog;\n" +
+				"the interest point explorer offers the same for any label ('Filter/Manage Interest Points'), no re-detection needed.", GUIHelper.smallStatusFont );
 
 		gd.addMessage( "" );
 
@@ -174,9 +215,7 @@ public class Interest_Point_Detection implements PlugIn
 
 		// how are the detections called (e.g. beads, nuclei, ...)
 		final String label = defaultLabel = gd.getNextString();
-		final boolean defineAnisotropy = defaultDefineAnisotropy = gd.getNextBoolean();
 		final boolean setMinMax = defaultSetMinMax = gd.getNextBoolean();
-		final boolean limitDetections = defaultLimitDetections = gd.getNextBoolean();
 
 		boolean groupTiles = false;
 		if ( tiles.size() > 1 )
@@ -191,32 +230,51 @@ public class Interest_Point_Detection implements PlugIn
 				viewIds );
 
 		// the interest point detection should query its parameters
-		if ( !ipd.queryParameters( defineAnisotropy, setMinMax, limitDetections, groupTiles, groupIllums ) )
+		if ( !ipd.queryParameters( label, setMinMax, groupTiles, groupIllums ) )
 			return false;
 
 		// if grouped, we need to get the min/max intensity for all groups
 		ipd.preprocess();
 
-		// record action history before processing — params reflect the GUI choices that drive ipd
+		// the filters chosen in the dialog: filtered labels (VirtualFilteredInterestPoints) or plain copies of the detections, none by default
+		final List< FilterParameters > filters = ipd.getFilters();
+
+		// the labels that exist already are overwritten: the correspondences of other views that point to them and their
+		// history records go first (as when a filter dialog overwrites a label), their dependants follow the new points
+		final ArrayList< String > overwritten = new ArrayList<>();
+		overwritten.add( label );
+		filters.forEach( f -> overwritten.add( f.newLabel ) );
+
+		for ( final String l : overwritten )
 		{
-			final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
-			ActionHistoryRecorder.put( params, "label", label );
-			ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
-			ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
-			// which views this ran on -- record() below adds parsimonious --angleId/--tileId/
-			// --illuminationId/--channelId/--timepointId filters over spelling out every view id
-			// (see ActionHistoryRecorder.putViewSelection)
-			// individual detection params (sigma, threshold, type, localization, intensities,
-			// downsampling) so the BigStitcher-Spark translator can emit them as CLI flags
-			ActionHistoryRecorder.merge( params, ipd.describeParameters() );
-			ActionHistoryRecorder.record(
-					data,
-					"detect-interestpoints",
-					Interest_Point_Detection.class.getName(),
-					params,
-					viewIds,
-					"interestpoints:" + label );
+			final List< ViewId > existing = InterestPointTools.viewsWithLabel( data, l, viewIds );
+
+			if ( !existing.isEmpty() )
+				InterestPointTools.removeReferences( data, l, existing );
 		}
+
+		// record action history before processing — params reflect the GUI choices that drive ipd
+		final LinkedHashMap<String,String> params = ActionHistoryRecorder.params();
+		ActionHistoryRecorder.put( params, "label", label );
+		ActionHistoryRecorder.put( params, "groupTiles", groupTiles );
+		ActionHistoryRecorder.put( params, "groupIllums", groupIllums );
+		// which views this ran on -- record() below adds parsimonious --angleId/--tileId/
+		// --illuminationId/--channelId/--timepointId filters over spelling out every view id
+		// (see ActionHistoryRecorder.putViewSelection)
+		// individual detection params (sigma, threshold, type, localization, intensities,
+		// downsampling) so the BigStitcher-Spark translator can emit them as CLI flags
+		ActionHistoryRecorder.merge( params, ipd.describeParameters() );
+		ActionHistoryRecorder.record(
+				data,
+				"detect-interestpoints",
+				Interest_Point_Detection.class.getName(),
+				params,
+				viewIds,
+				"interestpoints:" + label );
+
+		// one record per filtered label, so that removing a label removes its record
+		for ( final FilterParameters filter : filters )
+			Filter_Detections.recordFilterAction( data, filter.newLabel, label, filter.filter, filter.copy, viewIds );
 
 		// now extract all the detections
 		for ( final TimePoint tp : SpimData2.getAllTimePointsSorted( data, viewIds ) )
@@ -224,6 +282,17 @@ public class Interest_Point_Detection implements PlugIn
 			final HashMap< ViewId, List< InterestPoint > > points = ipd.findInterestPoints( tp );
 
 			InterestPointTools.addInterestPoints( data, label, points, ipd.getParameters() );
+
+			// the filtered labels have no points of their own, they filter the label on the fly (or are plain copies of the points that pass)
+			for ( final FilterParameters filter : filters )
+			{
+				if ( filter.copy )
+					InterestPointTools.addFilteredInterestPointsCopy( data, filter.newLabel, label, filter.filter, points.keySet() );
+				else
+					InterestPointTools.addFilteredInterestPoints( data, filter.newLabel, label, filter.filter, points.keySet() );
+
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Stored the interest points of timepoint " + tp.getName() + " as '" + label + "' and the " + ( filter.copy ? "label" : "filtered label" ) + " '" + filter.newLabel + "'." );
+			}
 
 			// update metadata if necessary
 			if ( data.getSequenceDescription().getImgLoader() instanceof AbstractImgLoader )

@@ -25,7 +25,6 @@ package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -45,7 +44,6 @@ import net.preibisch.mvrecon.process.cuda.CUDADevice;
 import net.preibisch.mvrecon.process.cuda.CUDASeparableConvolution;
 import net.preibisch.mvrecon.process.cuda.CUDATools;
 import net.preibisch.mvrecon.process.cuda.NativeLibraryTools;
-import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoG;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGParameters;
@@ -66,10 +64,9 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		"GPU accurate (Nvidia CUDA via JNA)" };
 	public static int defaultComputationChoiceIndex = 0;
 
-	double sigma;
-	double threshold;
-	boolean findMin;
-	boolean findMax;
+	protected double sigma;
+	protected boolean findMin;
+	protected boolean findMax;
 
 	double percentGPUMem = defaultUseGPUMem;
 
@@ -110,47 +107,26 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 			p.put( "minIntensity", Double.toString( minIntensity ) );
 		if ( !Double.isNaN( maxIntensity ) )
 			p.put( "maxIntensity", Double.toString( maxIntensity ) );
-		// downsampleXYIndex holds the actual factor (1,2,4,...) for fixed choices, or 0/-1 for the
-		// "match Z resolution" auto modes, which compute a factor per view from voxel calibration
-		// (DownsampleTools.downsampleFactor) rather than a single fixed number. Resolve it here from
-		// the actual views being processed so the recorded command carries the real number instead
-		// of silently omitting -dsxy, which would leave Spark's own --downsampleXY default (2) in
-		// effect -- likely wrong. If views disagree (mixed calibration), a single whole-job flag
-		// can't represent it; record the distinct values and let the render-time warning surface it.
-		if ( downsampleXYIndex >= 1 )
-			p.put( "downsampleXY", Integer.toString( downsampleXYIndex ) );
+		// Spark knows one factor for x and y (-dsxy); a resolution level with different factors is recorded as is, ActionToSparkCli warns
+		if ( downsampling[ 0 ] == downsampling[ 1 ] )
+			p.put( "downsampleXY", Long.toString( downsampling[ 0 ] ) );
 		else
 		{
-			final LinkedHashSet<Integer> resolved = new LinkedHashSet<>();
-			for ( final ViewId v : viewIdsToProcess )
-			{
-				final ViewDescription vd = spimData.getSequenceDescription().getViewDescription( v.getTimePointId(), v.getViewSetupId() );
-				if ( vd.isPresent() )
-					resolved.add( DownsampleTools.downsampleFactor( downsampleXYIndex, downsampleZ, vd.getViewSetup().getVoxelSize() ) );
-			}
-			if ( resolved.size() == 1 )
-				p.put( "downsampleXY", Integer.toString( resolved.iterator().next() ) );
-			else if ( resolved.size() > 1 )
-				p.put( "downsampleXYVaries", resolved.toString() );
+			p.put( "downsampleX", Long.toString( downsampling[ 0 ] ) );
+			p.put( "downsampleY", Long.toString( downsampling[ 1 ] ) );
 		}
-		p.put( "downsampleZ", Integer.toString( downsampleZ ) );
-		// mvrecon's "Limit amount of detections" offers three modes (brightest / around median /
-		// weakest); Spark's --maxSpots only supports "brightest N per view", so only that mode
-		// translates to a flag. Record the mode + count regardless, so a non-brightest limit that
-		// silently can't be translated is still visible in the params dump / XML rather than
-		// vanishing without a trace (see ActionToSparkCli's warning comment for the CLI-side half
-		// of this).
-		if ( limitDetections )
+		p.put( "downsampleZ", Long.toString( downsampling[ 2 ] ) );
+		// z voxel / xy voxel at full resolution, the Gaussians are isotropic in physical units; BigStitcher-Spark has no such
+		// option yet (its DoG is isotropic in pixels), ActionToSparkCli warns and renders the command without it
+		p.put( "anisotropy", Double.toString( anisotropyZ ) );
+		// only in the regions overlapping other volumes: BigStitcher-Spark's --overlappingOnly, with --onlyCompareOverlapTiles for
+		// the GUI's partner rule (other tiles or angles of the same timepoint)
+		if ( overlappingOnly )
 		{
-			final String mode;
-			if ( maxDetectionsTypeIndex == 0 ) mode = "BRIGHTEST";
-			else if ( maxDetectionsTypeIndex == 1 ) mode = "AROUND_MEDIAN";
-			else mode = "WEAKEST";
-			p.put( "limitDetectionsMode", mode );
-			p.put( "maxDetections", Integer.toString( maxDetections ) );
-			if ( maxDetectionsTypeIndex == 0 )
-				p.put( "maxSpots", Integer.toString( maxDetections ) );
+			p.put( "overlappingOnly", "true" );
+			p.put( "onlyCompareOverlapTiles", "true" );
 		}
+		// no "Limit amount of detections" any more (2026-10-20): a count limit is a filtered label (filter-interestpoints record, InterestPointFilter.Limit)
 		return p;
 	}
 
@@ -160,8 +136,10 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		return new DifferenceOfGaussianGUI( spimData, viewIdsToProcess );
 	}
 
-	@Override
-	public HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint t )
+	/**
+	 * @return the parameters of the detection as set in the dialogs (the views are set per view by the caller)
+	 */
+	protected DoGParameters detectionParameters()
 	{
 		final DoGParameters dog = new DoGParameters();
 
@@ -169,10 +147,9 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		dog.toProcess = new ArrayList< ViewDescription >();
 
 		dog.localization = this.localization;
-		dog.downsampleZ = this.downsampleZ;
-		dog.imageSigmaX = this.imageSigmaX;
-		dog.imageSigmaY = this.imageSigmaY;
-		dog.imageSigmaZ = this.imageSigmaZ;
+		dog.downsampleXY = (int)downsampling[ 0 ];
+		dog.downsampleZ = (int)downsampling[ 2 ];
+		dog.anisotropyZ = this.anisotropyZ;
 
 		dog.minIntensity = this.minIntensity;
 		dog.maxIntensity = this.maxIntensity;
@@ -187,11 +164,20 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		dog.accurateCUDA = this.accurateCUDA;
 		dog.percentGPUMem = this.percentGPUMem;
 
-		dog.limitDetections = this.limitDetections;
-		dog.maxDetections = this.maxDetections;
-		dog.maxDetectionsTypeIndex = this.maxDetectionsTypeIndex;
+		// the regions of the views that overlap other volumes, if the detection is restricted to them
+		dog.regions = regions();
 
+		return dog;
+	}
+
+	@Override
+	public HashMap< ViewId, List< InterestPoint > > findInterestPoints( final TimePoint t )
+	{
+		final DoGParameters dog = detectionParameters();
 		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap< ViewId, List< InterestPoint > >();
+
+		if ( downsampling[ 0 ] != downsampling[ 1 ] )
+			IOFunctions.println( "WARNING: The Difference-of-Gaussian opens the views with one factor for x and y, using the x factor " + downsampling[ 0 ] + " for y (" + downsampling[ 1 ] + ") too." );
 
 		for ( final ViewDescription vd : SpimData2.getAllViewIdsForTimePointSorted( spimData, viewIdsToProcess, t ) )
 		{
@@ -203,13 +189,6 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 
 				dog.toProcess.clear();
 				dog.toProcess.add( vd );
-
-				// downsampleXY == 0 : a bit less then z-resolution
-				// downsampleXY == -1 : a bit more then z-resolution
-				if ( downsampleXYIndex < 1 )
-					dog.downsampleXY = DownsampleTools.downsampleFactor( downsampleXYIndex, downsampleZ, vd.getViewSetup().getVoxelSize() );
-				else
-					dog.downsampleXY = downsampleXYIndex;
 
 				DoG.addInterestPoints( interestPoints, dog );
 			}
@@ -250,8 +229,10 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	{
 		final GenericDialog gd = new GenericDialog( "Advanced values" );
 
-		gd.addNumericField( "Sigma", defaultSigma, 5 );
-		gd.addNumericField( "Threshold", defaultThreshold, 5 );
+		gd.addNumericField( "Sigma", defaultSigma, 5, 12, null ); // twice the default width
+		gd.addChoice( "Threshold_type", thresholdChoices, thresholdChoices[ defaultThresholdChoice ] );
+		gd.addNumericField( "Threshold", defaultThreshold, 5, 12, null );
+		gd.addNumericField( "Noise_factor", defaultNoiseFactor, 2 );
 		gd.addCheckbox( "Find_minima", defaultFindMin );
 		gd.addCheckbox( "Find_maxima", defaultFindMax );
 
@@ -261,10 +242,22 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 			return false;
 
 		this.sigma = defaultSigma = gd.getNextNumber();
+		final int thresholdChoice = defaultThresholdChoice = gd.getNextChoiceIndex();
 		this.threshold = defaultThreshold = gd.getNextNumber();
+		this.noiseFactor = defaultNoiseFactor = gd.getNextNumber();
 		this.findMin = defaultFindMin = gd.getNextBoolean();
 		this.findMax = defaultFindMax = gd.getNextBoolean();
-		
+		this.thresholdFromNoiseFloor = thresholdChoice == 1;
+
+		// the threshold from the noise floor of all views at this sigma: estimated now, logged and remembered as the default threshold
+		if ( thresholdChoice == 1 )
+		{
+			if ( !thresholdFromNoiseFloor( sigma, 4 ) )
+				return false;
+
+			defaultThreshold = threshold;
+		}
+
 		return true;
 	}
 
@@ -291,14 +284,16 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		params.threshold = (float)defaultThreshold;
 		params.findMaxima = defaultFindMax;
 		params.findMinima = defaultFindMin;
+		params.anisotropy = previewAnisotropy; // of the opened image (set by getImagePlusForInteractive / getGroupedImagePlusForInteractive)
 
-		// the user's intensity range, otherwise the exact one of this image (what the detection computes for every view)
+		// the user's intensity range, otherwise the exact one of this image (what the detection computes for every view);
+		// the "Estimate noise floor" button estimates the floor of all views to process
 		final InteractiveDoG idog;
 
 		if ( Double.isNaN( minIntensity ) || Double.isNaN( maxIntensity ) )
-			idog = new InteractiveDoG( imp, params );
+			idog = new InteractiveDoG( imp, params, noiseEstimator() );
 		else
-			idog = new InteractiveDoG( imp, params, minIntensity, maxIntensity );
+			idog = new InteractiveDoG( imp, params, minIntensity, maxIntensity, noiseEstimator() );
 		do
 		{
 			try
@@ -321,12 +316,14 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		return true;
 	}
 
+	/**
+	 * @return the parameter string stored with a label (StoredDetectionParameters reads it): the method and its values, then
+	 *         what both methods share (DifferenceOfGUI.commonParameters)
+	 */
 	@Override
 	public String getParameters()
 	{
-		return "DOG s=" + sigma + " t=" + threshold + " min=" + findMin + " max=" + findMax +
-				" imageSigmaX=" + imageSigmaX + " imageSigmaY=" + imageSigmaY + " imageSigmaZ=" + imageSigmaZ + " downsampleXYIndex=" + downsampleXYIndex +
-				" downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
+		return "DOG s=" + sigma + " t=" + threshold + " min=" + findMin + " max=" + findMax + commonParameters();
 	}
 
 	@Override

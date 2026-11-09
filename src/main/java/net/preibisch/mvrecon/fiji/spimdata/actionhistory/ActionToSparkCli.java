@@ -35,6 +35,8 @@ import java.util.regex.Pattern;
 
 import mpicbg.spim.data.sequence.ViewId;
 
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+
 /**
  * Renders an {@link ActionRecord} as one or more BigStitcher-Spark CLI command lines.
  *
@@ -253,12 +255,52 @@ public class ActionToSparkCli
 				new String[]{ "maxIntensity", "-i1" },
 				new String[]{ "downsampleXY", "-dsxy" },
 				new String[]{ "downsampleZ", "-dsz" },
+				// z voxel / x voxel at full resolution (the Gaussians isotropic in physical units); "NaN" = none is dropped in render()
+				new String[]{ "anisotropy", "--anisotropy" },
+				// the scale space (ScaleSpaceGUI): the method, its steps per octave, octaves (-1 = all) and whether the finest
+				// level keeps all its spatial extrema; finestLevel=false is rendered as the negated flag (see render())
+				new String[]{ "detectionMethod", "--method" },
+				new String[]{ "steps", "--steps" },
+				new String[]{ "octaves", "--octaves" },
+				new String[]{ "noFinestLevel", "--no-finestLevel" },
 				new String[]{ "overlappingOnly", "--overlappingOnly" },
+				// the GUI's partner rule for the regions (other tiles or angles of the same timepoint), recorded with overlappingOnly
+				new String[]{ "onlyCompareOverlapTiles", "--onlyCompareOverlapTiles" },
 				new String[]{ "blockSize", "--blockSize" },
 				new String[]{ "medianFilter", "--medianFilter" },
 				new String[]{ "maxSpots", "--maxSpots" }
 		);
 		r.put( "detect-interestpoints", Collections.singletonList( detectRecipe ) );
+
+		// a filtered label (Filter_Detections, Limit_Detections, the interactive filter): the base label is the label the
+		// command works on (-l), the recorded label is the new one; a count limit is recorded as axis:mode:count under
+		// InterestPointFilter.limitKey and split into three flags in render()
+		final Recipe filterRecipe = new Recipe(
+				"filter-interestpoints", true,
+				new FlagGroup[]{ SELECTABLE_VIEWS },
+				new String[]{ "base", "-l" },
+				new String[]{ "label", "--newLabel" },
+				new String[]{ "response", "--response" },
+				new String[]{ "intensity", "--intensity" },
+				new String[]{ "sigma", "--sigma" },
+				new String[]{ "keepPoints", "--keepPoints" },
+				new String[]{ "keepBy", "--keepBy" },
+				new String[]{ "keepMode", "--keepMode" },
+				new String[]{ "copy", "--copy" }
+		);
+		r.put( "filter-interestpoints", Collections.singletonList( filterRecipe ) );
+
+		// the embeddings of a label (Embed_Interest_Points): the model file and the array the rows go to; a filtered label is
+		// embedded through its base, which the command resolves itself
+		final Recipe embedRecipe = new Recipe(
+				"embed-interestpoints", true,
+				new FlagGroup[]{ SELECTABLE_VIEWS },
+				new String[]{ "label", "-l" },
+				new String[]{ "model", "--model" },
+				new String[]{ "arrayName", "--arrayName" },
+				new String[]{ "blockSize", "--blockSize" }
+		);
+		r.put( "embed-interestpoints", Collections.singletonList( embedRecipe ) );
 
 		// registration in the mvrecon GUI is two Spark stages: descriptor matching + global solve.
 		// Either can run without the other: LoadCorrespondencesGUI reuses existing correspondences
@@ -282,6 +324,9 @@ public class ActionToSparkCli
 				new String[]{ "significance", "-s" },
 				new String[]{ "numNeighbors", "-n" },
 				new String[]{ "searchRadius", "-sr" },
+				new String[]{ "descriptorRatio", "--descriptorRatio" },
+				new String[]{ "minSimilarity", "--minSimilarity" },
+				new String[]{ "arrayName", "--arrayName" },
 				new String[]{ "overlapType", "-vr" },
 				new String[]{ "interestpointsForReg", "-ipfr" },
 				new String[]{ "matchAcrossLabels", "--matchAcrossLabels" },
@@ -478,6 +523,40 @@ public class ActionToSparkCli
 					+ "factors across the processed views " + dsxyVaries + " — BigStitcher-Spark's -dsxy takes "
 					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
 					+ "before running the command below." );
+
+		// the anisotropy (z voxel / x voxel at full resolution, the Gaussians isotropic in physical units) is an option of
+		// detect-interestpoints; NaN = none (the Difference-of-Gaussian then blurs isotropically in pixels) is omitted
+		if ( "NaN".equals( params.get( "anisotropy" ) ) )
+			params.remove( "anisotropy" );
+
+		// the scale space records finestLevel=true|false; the Spark flag is negatable (the default --finestLevel is
+		// omitted, --no-finestLevel turns it off)
+		if ( "false".equalsIgnoreCase( params.get( "finestLevel" ) ) )
+			params.put( "noFinestLevel", "true" );
+		params.remove( "finestLevel" );
+
+		// the count limit of a filtered label, recorded as axis:mode:count, is three flags of filter-interestpoints
+		if ( "filter-interestpoints".equals( record.getActionId() ) && params.containsKey( InterestPointFilter.limitKey ) )
+		{
+			final String[] parts = params.remove( InterestPointFilter.limitKey ).split( ":" );
+
+			if ( parts.length == 3 )
+			{
+				params.put( "keepBy", parts[ 0 ] );
+				params.put( "keepMode", parts[ 1 ] );
+				params.put( "keepPoints", parts[ 2 ] );
+			}
+			else
+				warnUntranslated( out, "WARNING: malformed count limit '" + String.join( ":", parts ) + "' (expected axis:mode:count), it is omitted below." );
+		}
+
+		// -dsxy takes one factor for x and y; a resolution level with different x and y factors is rendered with the x factor
+		if ( !params.containsKey( "downsampleXY" ) && params.containsKey( "downsampleX" ) )
+		{
+			warnUntranslated( out, "WARNING: mvrecon downsampled x by " + params.get( "downsampleX" ) + " and y by " + params.get( "downsampleY" )
+					+ " — BigStitcher-Spark's -dsxy takes one factor for both, the x factor is used below." );
+			params.put( "downsampleXY", params.get( "downsampleX" ) );
+		}
 
 		// mvrecon only records regularizationModel/lambda when the user actually regularized (see
 		// PairwiseGUI.putModelParams), but BigStitcher-Spark's -rm defaults to RIGID with --lambda 0.1

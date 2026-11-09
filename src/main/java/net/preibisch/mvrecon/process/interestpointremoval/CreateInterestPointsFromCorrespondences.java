@@ -72,7 +72,7 @@ public class CreateInterestPointsFromCorrespondences
 				{
 					existingPoints.add( oldId );
 					final InterestPoint ip = oldIPs.get( oldId );
-					newIPs.add( new InterestPoint( id++, ip.getL() ) );
+					newIPs.add( ip.derive( id++, ip.getL() ) );
 				}
 			}
 
