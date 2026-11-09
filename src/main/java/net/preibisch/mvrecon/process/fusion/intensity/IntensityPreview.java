@@ -356,7 +356,7 @@ public class IntensityPreview
 			// each voxel by the earlier views first
 			final Coefficients coefficients = stored == null
 					? IntensityCorrectionViewer.IDENTITY
-					: stored.withBleaching( Bleaching.of( spimData, new ViewId( timepointId, setupId ), sourceToGlobal, stored.bleachFactor() ) );
+					: stored.withBleaching( Bleaching.of( spimData, new ViewId( timepointId, setupId ), sourceToGlobal, stored.bleachFactor(), stored.bleachOnce() ) );
 			final ClosestViewSource.Geometry geometry = layout.geometry( t );
 			final int index = setupIndex.get( setupId );
 

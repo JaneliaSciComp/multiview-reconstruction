@@ -51,9 +51,16 @@ public interface UnbleachFunction {
 	 * @param bleachFactor in [0, 1), 0 = no bleaching
 	 */
 	static UnbleachFunction bleachFactor(final double bleachFactor) {
+		return bleachFactor(bleachFactor, false);
+	}
+
+	/**
+	 * @param once a voxel imaged before is unbleached once, {@code v / (1 - bleachFactor)}, however often it was imaged
+	 */
+	static UnbleachFunction bleachFactor(final double bleachFactor, final boolean once) {
 		if (!(bleachFactor >= 0 && bleachFactor < 1))
 			throw new IllegalArgumentException("bleachFactor must be in [0, 1), but was " + bleachFactor);
 		final double retained = 1 - bleachFactor;
-		return (v, n) -> n == 0 ? v : v / Math.pow(retained, n);
+		return (v, n) -> n == 0 ? v : v / Math.pow(retained, once ? Math.min(n, 1) : n);
 	}
 }

@@ -86,6 +86,7 @@ public class Intensity_Adjustment implements PlugIn
 	public static double defaultMinSignal = DEFAULTS.minSignal;
 	public static double defaultBackgroundWeight = DEFAULTS.backgroundWeight;
 	public static double defaultBleachFactor = DEFAULTS.bleachFactor;
+	public static boolean defaultBleachOnce = DEFAULTS.bleachOnce;
 
 	private static final String[] thresholdChoices = { "Fixed minimum intensity", "LI (per view)", "OTSU (per view)" };
 
@@ -186,6 +187,7 @@ public class Intensity_Adjustment implements PlugIn
 		gd.addNumericField( "Minimal_number_of_overlapping_pixels", defaultMinNumCandidates, 0 );
 		gd.addNumericField( "Maximum_intensity (0 = no limit)", defaultMaxIntensity, 1 );
 		gd.addNumericField( "Bleach_factor (intensity lost per earlier exposure, views acquired in setup id order; 0 = off)", defaultBleachFactor, 3 );
+		gd.addCheckbox( "Only_unbleach_once", defaultBleachOnce );
 
 		gd.addMessage( "" );
 		final int m = medianModelShown[ 0 ] ? defaultMedianModel : defaultModel;
@@ -301,6 +303,7 @@ public class Intensity_Adjustment implements PlugIn
 		defaultMaxIntensity = gd.getNextNumber();
 		p.maxIntensity = defaultMaxIntensity > 0 ? defaultMaxIntensity : Double.NaN;
 		p.bleachFactor = defaultBleachFactor = gd.getNextNumber();
+		p.bleachOnce = defaultBleachOnce = gd.getNextBoolean();
 		final int modelIndex = gd.getNextChoiceIndex();
 		if ( p.method == Method.MEDIAN )
 			defaultMedianModel = modelIndex;
