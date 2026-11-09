@@ -197,11 +197,11 @@ public class LegacyFileMapImgLoaderLOCI extends AbstractImgFactoryImgLoader
 		{
 			final FileStitcher fs = new FileStitcher(true);
 			fs.setCanChangePattern( false );
-			reader = new Memoizer( fs , Memoizer.DEFAULT_MINIMUM_ELAPSED, tempDir);
+			reader = new Memoizer( fs , Memoizer.DEFAULT_MINIMUM_ELAPSED, BioformatsReaderUtils.memoizerDirectory( tempDir ));
 		}
 		else
 		{
-			reader = new Memoizer( BioformatsReaderUtils.createImageReaderWithSetupHooks(), Memoizer.DEFAULT_MINIMUM_ELAPSED, tempDir );
+			reader = new Memoizer( BioformatsReaderUtils.createImageReaderWithSetupHooks(), Memoizer.DEFAULT_MINIMUM_ELAPSED, BioformatsReaderUtils.memoizerDirectory( tempDir ) );
 		}
 
 		reader.setId( fileForVId.getAbsolutePath() );
