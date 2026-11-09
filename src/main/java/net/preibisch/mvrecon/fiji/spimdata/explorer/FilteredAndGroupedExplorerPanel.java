@@ -58,6 +58,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.XMLSaveAs;
 import net.preibisch.mvrecon.fiji.spimdata.GroupedViews;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.SpimDataTools;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVFlyThrough;
@@ -590,6 +591,42 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 					}
 					IntensityAdjustmentPopup.applyPreview( FilteredAndGroupedExplorerPanel.this, data );
 				} ).start();
+			}
+		} );
+	}
+
+	/**
+	 * Key 'f' toggles the dataset's flatfield correction (right-click &gt; Flatfield Correction), the same switch as the
+	 * dialog's set_active: what BigDataViewer shows is what fusion and intensity correction use. BigDataViewer shows it
+	 * through the preview (only a repaint), if it was opened on the images below the flatfield correction.
+	 */
+	protected void addFlatfieldPreviewShortcut()
+	{
+		table.addKeyListener( new KeyAdapter()
+		{
+			@Override
+			public void keyPressed( final KeyEvent arg0 )
+			{
+				if ( arg0.getKeyChar() != 'f' && arg0.getKeyChar() != 'F' )
+					return;
+
+				final BasicBDVPopup p = runningBdvPopup();
+				final boolean bdv = p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible();
+				if ( !( data.getSequenceDescription().getImgLoader() instanceof FlatfieldCorrectionWrappedImgLoader ) )
+				{
+					IOFunctions.println( "No flatfield correction to toggle: right-click > Flatfield Correction ... first." );
+					if ( bdv )
+						p.getBDV().getViewer().showMessage( "No flatfield correction (see log)" );
+					return;
+				}
+				final FlatfieldCorrectionWrappedImgLoader< ? > ff = ( FlatfieldCorrectionWrappedImgLoader< ? > ) data.getSequenceDescription().getImgLoader();
+				ff.setActive( !ff.isActive() );
+				IOFunctions.println( "Flatfield correction " + ( ff.isActive() ? "on" : "off" ) + " (press 'f' to toggle)." );
+				if ( bdv )
+				{
+					p.getBDV().getViewer().showMessage( "Flatfield correction " + ( ff.isActive() ? "on" : "off" ) );
+					p.getBDV().getViewer().requestRepaint();
+				}
 			}
 		} );
 	}

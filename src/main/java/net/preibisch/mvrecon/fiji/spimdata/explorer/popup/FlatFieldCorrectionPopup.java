@@ -42,6 +42,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.process.flatfield.Basic;
 import net.preibisch.mvrecon.process.flatfield.FlatfieldEstimation;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.Illumination;
 import mpicbg.spim.data.sequence.ImgLoader;
@@ -204,7 +205,7 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 				data.getSequenceDescription().setImgLoader( ffIL );
 				gdp.dispose();
 
-				reopenBDV();
+				showInBDV( data );
 				panel.updateContent();
 
 			} ).start();
@@ -289,9 +290,22 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 
 		final FlatfieldCorrectionWrappedImgLoader< ? > ffIL = (FlatfieldCorrectionWrappedImgLoader< ? >) data.getSequenceDescription().getImgLoader();
 		ffIL.setActive( true );
-		IOFunctions.println( "Flatfield correction is active; save the XML to keep it." );
-		reopenBDV();
+		IOFunctions.println( "Flatfield correction is active (press 'f' in the explorer to toggle it); save the XML to keep it." );
+		showInBDV( data );
 		panel.updateContent();
+	}
+
+	/** shows the changed flatfield: a repaint if the open BigDataViewer can show it through the preview, else reopen it */
+	private void showInBDV( final SpimData2 data )
+	{
+		if ( IntensityPreview.flatfieldChanged( data ) )
+		{
+			final BasicBDVPopup p = panel.bdvPopup();
+			if ( p != null && p.bdvRunning() )
+				p.getBDV().getViewer().requestRepaint();
+		}
+		else
+			reopenBDV();
 	}
 
 	private void reopenBDV()

@@ -182,14 +182,14 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		return imageLoader.getDarkImg(vId);
 	}
 
-	protected RandomAccessibleInterval<FloatType> getOrCreateBrightImgDownsampled(
+	public RandomAccessibleInterval<FloatType> getOrCreateBrightImgDownsampled(
 			final ViewId vId,
 			final int[] downsamplingFactors
 	) {
 		return getOrCreateDownsampledImg(vId, downsamplingFactors, Pair::getA, this::getBrightImg);
 	}
 
-	protected RandomAccessibleInterval<FloatType> getOrCreateDarkImgDownsampled(
+	public RandomAccessibleInterval<FloatType> getOrCreateDarkImgDownsampled(
 			final ViewId vId,
 			final int[] downsamplingFactors
 	) {

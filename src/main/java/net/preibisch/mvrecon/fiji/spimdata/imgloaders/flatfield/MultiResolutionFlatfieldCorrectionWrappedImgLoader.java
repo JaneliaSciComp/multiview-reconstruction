@@ -89,11 +89,11 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		dsRaiMap = new HashMap<>();
 	}
 
-	protected RandomAccessibleInterval< FloatType > getOrCreateBrightImgDownsampled(ViewId vId, int[] downsamplingFactors) {
+	public RandomAccessibleInterval< FloatType > getOrCreateBrightImgDownsampled(ViewId vId, int[] downsamplingFactors) {
 		return getOrCreateDownsampledImg(vId, downsamplingFactors, Pair::getA, this::getBrightImg);
 	}
 
-	protected RandomAccessibleInterval< FloatType > getOrCreateDarkImgDownsampled(ViewId vId, int[] downsamplingFactors) {
+	public RandomAccessibleInterval< FloatType > getOrCreateDarkImgDownsampled(ViewId vId, int[] downsamplingFactors) {
 		return getOrCreateDownsampledImg(vId, downsamplingFactors, Pair::getB, this::getDarkImg);
 	}
 

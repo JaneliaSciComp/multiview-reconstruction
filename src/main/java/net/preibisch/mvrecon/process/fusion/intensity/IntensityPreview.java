@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.process.fusion.intensity;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -72,8 +73,13 @@ import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.NumericType;
+import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatFieldCorrectedRandomAccessibleIntervals;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.MultiResolutionFlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.ViewerFlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 
 /**
@@ -87,6 +93,10 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
  * {@code --preserveAnisotropy}). The sources
  * themselves stay what the explorer expects, so coloring, selection and overlays keep working, and toggling only
  * needs a repaint. One preview per dataset.
+ * <p>
+ * The dataset's flatfield correction is part of it: BigDataViewer is built from the raw images below the flatfield loader,
+ * and they are flatfield corrected while the flatfield correction is active ({@link FlatfieldCorrectionWrappedImgLoader#setActive},
+ * key 'f' in the explorer), before the intensity correction.
  */
 public class IntensityPreview
 {
@@ -113,8 +123,11 @@ public class IntensityPreview
 	{
 		final AbstractSequenceDescription< ?, ?, ? > seq = spimData.getSequenceDescription();
 		final BasicImgLoader original = seq.getImgLoader();
-		if ( original instanceof ViewerImgLoader && !( original instanceof PreviewImgLoader ) )
-			seq.setImgLoader( Cast.unchecked( of( spimData ).wrapper( ( ViewerImgLoader ) original ) ) );
+		final IntensityPreview preview = of( spimData );
+		// a flatfield correction is applied by the preview, on the raw images below it, so that it can be toggled
+		final BasicImgLoader raw = preview.useFlatfield( original ) ? ( ( FlatfieldCorrectionWrappedImgLoader< ? > ) original ).getWrappedImgLoder() : original;
+		if ( raw instanceof ViewerImgLoader && !( raw instanceof PreviewImgLoader ) )
+			seq.setImgLoader( Cast.unchecked( preview.wrapper( ( ViewerImgLoader ) raw ) ) );
 		return original;
 	}
 
@@ -129,6 +142,37 @@ public class IntensityPreview
 	private SharedQueue queue;
 
 	private volatile Config config; // null if there is nothing to show
+
+	/** the dataset's flatfield correction, applied while it is active; null if there is none */
+	private volatile FlatfieldCorrectionWrappedImgLoader< ? > flatfield;
+
+	/** corrected images by (setup, timepoint, level, volatile, closest, flatfield, config) */
+	private final Map< List< Object >, RandomAccessibleInterval< ? > > images = new ConcurrentHashMap<>();
+
+	private synchronized boolean useFlatfield( final BasicImgLoader loader )
+	{
+		final boolean ff = loader instanceof FlatfieldCorrectionWrappedImgLoader
+				&& ( loader instanceof MultiResolutionFlatfieldCorrectionWrappedImgLoader || loader instanceof ViewerFlatfieldCorrectionWrappedImgLoader )
+				&& ( ( FlatfieldCorrectionWrappedImgLoader< ? > ) loader ).getWrappedImgLoder() instanceof ViewerImgLoader;
+		flatfield = ff ? ( FlatfieldCorrectionWrappedImgLoader< ? > ) loader : null;
+		images.clear();
+		return ff;
+	}
+
+	/**
+	 * The dataset's flatfield correction changed (new fields, or one was set up): the preview shows it without reopening
+	 * BigDataViewer if BigDataViewer was built on the same raw images.
+	 *
+	 * @return whether the open viewer shows it; if not, BigDataViewer has to be reopened
+	 */
+	public static boolean flatfieldChanged( final AbstractSpimData< ? > spimData )
+	{
+		final IntensityPreview preview = get( spimData );
+		if ( preview == null || preview.wrapper == null )
+			return false;
+		final BasicImgLoader loader = spimData.getSequenceDescription().getImgLoader();
+		return preview.useFlatfield( loader ) && ( ( FlatfieldCorrectionWrappedImgLoader< ? > ) loader ).getWrappedImgLoder() == preview.wrapper.delegate;
+	}
 
 	private volatile boolean enabled;
 
@@ -205,6 +249,7 @@ public class IntensityPreview
 		{
 			preview.config = coefficients.isEmpty() ? null : new Config( spimData, coefficients );
 			preview.enabled = preview.config != null;
+			preview.images.clear();
 			return preview.enabled;
 		}
 	}
@@ -219,22 +264,53 @@ public class IntensityPreview
 		enabled = false;
 	}
 
-	/** null when the preview is off */
+	/** null when neither the flatfield nor the intensity correction is on */
 	private RandomAccessibleInterval< ? > corrected( final int setupId, final int timepointId, final int level, final boolean isVolatile, final ViewerSetupImgLoader< ?, ? > raw )
 	{
-		final Config c = config;
-		if ( !enabled || c == null )
+		final Config c = enabled ? config : null;
+		final FlatfieldCorrectionWrappedImgLoader< ? > ff = flatfield != null && flatfield.isActive() ? flatfield : null;
+		if ( c == null && ff == null )
 			return null;
 		final boolean closest = closestWins;
-		final RandomAccessibleInterval< ? > img = c.images.computeIfAbsent( List.of( setupId, timepointId, level, false, closest ),
-				k -> c.correct( setupId, timepointId, level, Cast.unchecked( raw ), closest ) );
+		final RandomAccessibleInterval< ? > img = images.computeIfAbsent( Arrays.asList( setupId, timepointId, level, false, closest, ff, c ), k -> {
+			final RandomAccessibleInterval< ? > base = ff == null ? raw.getImage( timepointId, level ) : flatfieldCorrected( ff, setupId, timepointId, level, Cast.unchecked( raw ) );
+			return c == null ? base : c.correct( setupId, timepointId, level, Cast.unchecked( raw ), Cast.unchecked( base ), closest );
+		} );
 		if ( !isVolatile )
 			return img;
-		return c.images.computeIfAbsent( List.of( setupId, timepointId, level, true, closest ), k -> {
+		return images.computeIfAbsent( Arrays.asList( setupId, timepointId, level, true, closest, ff, c ), k -> {
 			final SharedQueue q = queue();
 			q.ensureNumPriorities( raw.numMipmapLevels() );
 			return VolatileViews.wrapAsVolatile( img, q, new CacheHints( LoadingStrategy.BUDGETED, raw.numMipmapLevels() - 1 - level, false ) );
 		} );
+	}
+
+	/** the raw image of one level, flatfield corrected as the flatfield loader does it (fields downsampled in x, y) */
+	@SuppressWarnings( { "rawtypes", "unchecked" } )
+	private static RandomAccessibleInterval< ? > flatfieldCorrected(
+			final FlatfieldCorrectionWrappedImgLoader< ? > ff, final int setupId, final int timepointId, final int level, final ViewerSetupImgLoader< ?, ? > raw )
+	{
+		final RandomAccessibleInterval image = raw.getImage( timepointId, level );
+		final double[] res = raw.getMipmapResolutions()[ level ];
+		final int[] ds = new int[ image.numDimensions() ];
+		for ( int d = 0; d < ds.length; ++d )
+			ds[ d ] = d < res.length ? ( int ) res[ d ] : 1;
+		ds[ ds.length - 1 ] = 1;
+		final ViewId v = new ViewId( timepointId, setupId );
+		final RandomAccessibleInterval< FloatType > bright, dark;
+		if ( ff instanceof MultiResolutionFlatfieldCorrectionWrappedImgLoader )
+		{
+			bright = ( ( MultiResolutionFlatfieldCorrectionWrappedImgLoader ) ff ).getOrCreateBrightImgDownsampled( v, ds );
+			dark = ( ( MultiResolutionFlatfieldCorrectionWrappedImgLoader ) ff ).getOrCreateDarkImgDownsampled( v, ds );
+		}
+		else
+		{
+			bright = ( ( ViewerFlatfieldCorrectionWrappedImgLoader ) ff ).getOrCreateBrightImgDownsampled( v, ds );
+			dark = ( ( ViewerFlatfieldCorrectionWrappedImgLoader ) ff ).getOrCreateDarkImgDownsampled( v, ds );
+		}
+		if ( bright == null && dark == null )
+			return image;
+		return FlatFieldCorrectedRandomAccessibleIntervals.create( image, bright, dark, ( net.imglib2.type.numeric.RealType ) ( ( NativeType ) image.getType() ).createVariable() );
 	}
 
 	/** What the preview shows: coefficients, where the views are, and the corrected images built from them. */
@@ -245,7 +321,6 @@ public class IntensityPreview
 		final Map< Integer, Integer > setupIndex = new HashMap<>();
 		final Map< ViewId, Coefficients > coefficients;
 		final ClosestViewSource.Layout layout;
-		final Map< List< Object >, RandomAccessibleInterval< ? > > images = new ConcurrentHashMap<>();
 
 		Config( final SpimData2 spimData, final Map< ViewId, Coefficients > coefficients )
 		{
@@ -268,9 +343,8 @@ public class IntensityPreview
 		 * rendered position (as ClosestViewSource does with masks) needs source-level wrapping.
 		 */
 		< T extends NativeType< T > & NumericType< T > > RandomAccessibleInterval< T > correct( final int setupId, final int timepointId, final int level, final ViewerSetupImgLoader< T, ? > raw,
-				final boolean closest )
+				final RandomAccessibleInterval< T > image, final boolean closest )
 		{
-			final RandomAccessibleInterval< T > image = raw.getImage( timepointId, level );
 			final int t = timepointIds.indexOf( timepointId );
 			final Coefficients stored = this.coefficients.get( new ViewId( timepointId, setupId ) );
 			final ViewRegistration reg = spimData.getViewRegistrations().getViewRegistration( new ViewId( timepointId, setupId ) );
