@@ -110,7 +110,7 @@ public class FlatfieldImageLoader {
 	 * @param info the flatfield image info containing URI, format, and dataset path
 	 * @return the loaded image as FloatType
 	 */
-	public RandomAccessibleInterval<FloatType> loadImageIfNecessary(FlatfieldImageInfo info) {
+	public synchronized RandomAccessibleInterval<FloatType> loadImageIfNecessary(FlatfieldImageInfo info) {
 		if (!raiMap.containsKey(info)) {
 			RandomAccessibleInterval<FloatType> img;
 

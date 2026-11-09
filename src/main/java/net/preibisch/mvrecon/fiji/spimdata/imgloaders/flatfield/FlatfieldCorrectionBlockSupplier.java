@@ -25,6 +25,13 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 import static net.imglib2.type.PrimitiveType.FLOAT;
 import static net.imglib2.util.Util.safeInt;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
+
 import bdv.util.ConstantRandomAccessible;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
@@ -164,13 +171,33 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 					createInterval(sourceImg, darkImg.numDimensions()));
 		}
 
-		final double meanBrightCorrected = FlatFieldCorrectedRandomAccessibleInterval.getMeanCorrected(bright, dark);
+		final double meanBrightCorrected = meanCorrected(brightImg, darkImg, bright, dark);
 
 		return new FlatfieldCorrectionBlockSupplier(
 				source,
 				BlockSupplier.of(bright),
 				BlockSupplier.of(dark),
 				meanBrightCorrected);
+	}
+
+	/**
+	 * mean(bright - dark) per field pair and extent. Every view of a camera shares its (downsampled) fields, and
+	 * iterating them for each view and level took ~50 ms each: minutes on BDV's render thread for thousands of
+	 * views, and again for every view a fusion block opens. Weak keys, so the fields go with their loader; the
+	 * value must not reference its key, so it holds only the other field.
+	 */
+	private static final Map<Object, Map<List<Object>, Double>> MEANS = Collections.synchronizedMap(new WeakHashMap<>());
+
+	private static double meanCorrected(
+			final RandomAccessibleInterval<?> brightImg,
+			final RandomAccessibleInterval<?> darkImg,
+			final RandomAccessibleInterval<FloatType> bright,
+			final RandomAccessibleInterval<FloatType> dark) {
+		final Object owner = brightImg != null ? brightImg : darkImg;
+		final List<Object> key = Arrays.asList(brightImg != null ? darkImg : null,
+				Arrays.toString(bright.minAsLongArray()), Arrays.toString(bright.maxAsLongArray()));
+		final Map<List<Object>, Double> means = MEANS.computeIfAbsent(owner, k -> new ConcurrentHashMap<>());
+		return means.computeIfAbsent(key, k -> FlatFieldCorrectedRandomAccessibleInterval.getMeanCorrected(bright, dark));
 	}
 
 	/**

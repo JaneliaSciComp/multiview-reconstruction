@@ -23,10 +23,18 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.blocks.BlockAlgoUtils;
+import net.imglib2.Volatile;
 import net.imglib2.algorithm.blocks.BlockSupplier;
+import net.imglib2.algorithm.blocks.ClampType;
+import net.imglib2.algorithm.blocks.convert.Convert;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
+
 import net.imglib2.cache.img.CachedCellImg;
-import net.imglib2.converter.RealTypeConverters;
+import net.imglib2.cache.img.CellLoader;
+import net.imglib2.cache.img.ReadOnlyCachedCellImgFactory;
+import net.imglib2.cache.img.ReadOnlyCachedCellImgOptions;
+import net.imglib2.converter.Converters;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -80,16 +88,23 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 			final RandomAccessibleInterval<T> darkImg,
 			final O outputType)
 	{
-		// Create block-based corrected image (always FloatType internally)
-		final RandomAccessibleInterval<FloatType> correctedFloat = createBlockBased(
-				sourceImg, brightImg, darkImg, DEFAULT_CELL_SIZE);
+		final Supplier<BlockSupplier<FloatType>> correctedFloat = () -> correctedBlocks(sourceImg, brightImg, darkImg);
 
 		// If output type is FloatType, return directly
 		if (outputType instanceof FloatType)
-			return (RandomAccessibleInterval<O>) correctedFloat;
+			return (RandomAccessibleInterval<O>) wrapWithOffset(correctedFloat, new FloatType(), sourceImg, DEFAULT_CELL_SIZE);
 
-		// Otherwise, convert to the requested output type
-		return RealTypeConverters.convert(correctedFloat, outputType);
+		// Otherwise convert to the requested output type, clamped to its range: an integer type
+		// would wrap where raw < dark (e.g. -3 -> 65533 for uint16). Converted blockwise, so the
+		// result is still a CachedCellImg (prefetching and BlockSupplier.of() need cells).
+		if (outputType instanceof NativeType && !(outputType instanceof Volatile))
+			return (RandomAccessibleInterval<O>) wrapWithOffset(
+					() -> correctedFloat.get().andThen(Convert.convert((NativeType) outputType, ClampType.CLAMP)),
+					(NativeType) ((NativeType) outputType).createVariable(), sourceImg, DEFAULT_CELL_SIZE);
+
+		final double min = outputType.getMinValue(), max = outputType.getMaxValue();
+		return Converters.convert(wrapWithOffset(correctedFloat, new FloatType(), sourceImg, DEFAULT_CELL_SIZE),
+				(i, o) -> o.setReal(Math.min(Math.max(i.getRealDouble(), min), max)), outputType);
 	}
 
 	/**
@@ -127,35 +142,55 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 			final RandomAccessibleInterval<T> darkImg,
 			final int[] cellSize)
 	{
+		return wrapWithOffset(() -> correctedBlocks(sourceImg, brightImg, darkImg), new FloatType(), sourceImg, cellSize);
+	}
+
+	private static <R extends RealType<R> & NativeType<R>, S extends RealType<S>, T extends RealType<T>>
+	BlockSupplier<FloatType> correctedBlocks(
+			final RandomAccessibleInterval<R> sourceImg,
+			final RandomAccessibleInterval<S> brightImg,
+			final RandomAccessibleInterval<T> darkImg)
+	{
 		// Handle null bright/dark - if both null, just convert source to float
 		if (brightImg == null && darkImg == null)
-		{
-			final BlockSupplier<FloatType> blocks = BlockSupplier
+			return BlockSupplier
 					.of(Views.extendBorder(sourceImg))
-					.andThen(net.imglib2.algorithm.blocks.convert.Convert.convert(new FloatType()));
-			return wrapWithOffset(blocks, sourceImg, cellSize);
-		}
+					.andThen(Convert.convert(new FloatType()));
 
 		// Create the block supplier with flatfield correction
-		final BlockSupplier<FloatType> blocks = FlatfieldCorrectionBlockSupplier.of(
-				sourceImg, brightImg, darkImg);
-
-		return wrapWithOffset(blocks, sourceImg, cellSize);
+		return FlatfieldCorrectionBlockSupplier.of(sourceImg, brightImg, darkImg);
 	}
 
 	/**
 	 * Wrap a BlockSupplier in a CachedCellImg and translate to match source interval.
+	 * The BlockSupplier is created when the first cell is loaded: creating it reads the source's first
+	 * block (PrimitiveBlocks.of asks the cell img for its access type), which BDV would otherwise do on
+	 * its render thread for every level of every view when it opens a dataset.
 	 */
-	private static <R extends RealType<R>> RandomAccessibleInterval<FloatType> wrapWithOffset(
-			final BlockSupplier<FloatType> blocks,
+	private static <O extends NativeType<O>, R extends RealType<R>> RandomAccessibleInterval<O> wrapWithOffset(
+			final Supplier<BlockSupplier<O>> createBlocks,
+			final O type,
 			final RandomAccessibleInterval<R> sourceImg,
 			final int[] cellSize)
 	{
-		// Create CachedCellImg (zero-min)
-		final CachedCellImg<FloatType, ?> cellImg = BlockAlgoUtils.cellImg(
-				blocks.threadSafe(),
+		final AtomicReference<BlockSupplier<O>> blocks = new AtomicReference<>();
+		final CellLoader<O> loader = cell -> {
+			BlockSupplier<O> b = blocks.get();
+			if (b == null) {
+				b = createBlocks.get().threadSafe();
+				if (!blocks.compareAndSet(null, b))
+					b = blocks.get();
+			}
+			b.copy(cell, cell.getStorageArray());
+		};
+
+		// Create CachedCellImg (zero-min); volatile accesses so that BDV can wrap it with
+		// VolatileViews.wrapAsVolatile (see ViewerFlatfieldCorrectionWrappedImgLoader)
+		final CachedCellImg<O, ?> cellImg = new ReadOnlyCachedCellImgFactory().create(
 				sourceImg.dimensionsAsLongArray(),
-				cellSize);
+				type,
+				loader,
+				ReadOnlyCachedCellImgOptions.options().cellDimensions(cellSize).volatileAccesses(true));
 
 		// Translate to match source interval if not zero-min
 		if (Views.isZeroMin(sourceImg))

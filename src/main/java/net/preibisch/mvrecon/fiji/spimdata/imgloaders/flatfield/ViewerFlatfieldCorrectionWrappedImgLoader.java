@@ -32,6 +32,8 @@ import java.util.stream.Collectors;
 import bdv.ViewerImgLoader;
 import bdv.ViewerSetupImgLoader;
 import bdv.cache.CacheControl;
+import bdv.cache.SharedQueue;
+import bdv.util.volatiles.VolatileViews;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHints;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
@@ -41,6 +43,8 @@ import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.Volatile;
+import net.imglib2.cache.volatiles.CacheHints;
+import net.imglib2.cache.volatiles.LoadingStrategy;
 import net.imglib2.converter.RealTypeConverters;
 import net.imglib2.img.Img;
 import net.imglib2.img.ImgFactory;
@@ -79,6 +83,10 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 	/** Helper for loading flatfield images */
 	private final FlatfieldImageLoader imageLoader;
+
+	/** Fetches the corrected cells for getVolatileImage(); created on first use */
+	private volatile SharedQueue queue;
+	private int numFetcherThreads = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
 
 	/** Downsampled bright/dark images for each mipmap level */
 	private final Map<Pair<FlatfieldImageInfo, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
@@ -142,12 +150,26 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 	@Override
 	public CacheControl getCacheControl() {
-		return wrappedImgLoader.getCacheControl();
+		final CacheControl wrapped = wrappedImgLoader.getCacheControl();
+		return () -> {
+			wrapped.prepareNextFrame();
+			if (queue != null)
+				queue.prepareNextFrame();
+		};
 	}
 
 	@Override
 	public void setNumFetcherThreads(final int n) {
 		wrappedImgLoader.setNumFetcherThreads(n);
+		numFetcherThreads = n;
+	}
+
+	private synchronized SharedQueue queue(final int numLevels) {
+		if (queue == null)
+			queue = new SharedQueue(numFetcherThreads, numLevels);
+		else
+			queue.ensureNumPriorities(numLevels);
+		return queue;
 	}
 
 	// ========== Image loading helpers ==========
@@ -178,7 +200,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 	 * Generic method to get a downsampled image or do downsampling on the fly. The bright image
 	 * is stored in the A element of the pair, the dark image in B.
 	 */
-	private RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
+	private synchronized RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
 			ViewId vId,
 			int[] downsamplingFactors,
 			Function<Pair<FlatfieldImageInfo, FlatfieldImageInfo>, FlatfieldImageInfo> infoSelector,
@@ -298,29 +320,15 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 		@Override
 		public RandomAccessibleInterval<V> getVolatileImage(final int timepointId, final int level, final ImgLoaderHint... hints) {
-			final ViewerSetupImgLoader<T, V> viewerSetupIL = getUnderlyingViewerSetupImgLoader();
-			final MultiResolutionSetupImgLoader<T> multiResSetupIL = getUnderlyingMultiResSetupImgLoader();
-
 			if (!active)
-				return viewerSetupIL.getVolatileImage(timepointId, level, hints);
+				return getUnderlyingViewerSetupImgLoader().getVolatileImage(timepointId, level, hints);
 
-			final int n = multiResSetupIL.getImageSize(timepointId).numDimensions();
-
-			// Calculate downsampling factors for this mipmap level
-			final int[] dsFactors = new int[n];
-			final double[] dsD = viewerSetupIL.getMipmapResolutions()[level];
-			for (int d = 0; d < n; d++)
-				dsFactors[d] = (int) dsD[d];
-			dsFactors[n - 1] = 1;
-
-			// Apply correction to volatile image
-			// Note: The volatile validity flag propagation may not be perfect,
-			// but BDV will re-request invalid pixels automatically
-            return FlatFieldCorrectedRandomAccessibleIntervals.create(
-                    viewerSetupIL.getVolatileImage(timepointId, level, hints),
-                    getOrCreateBrightImgDownsampled(new ViewId(timepointId, setupId), dsFactors),
-                    getOrCreateDarkImgDownsampled(new ViewId(timepointId, setupId), dsFactors),
-                    getVolatileImageType());
+			// The correction can't be computed from volatile cells (they may not be loaded yet,
+			// and the block algorithms don't support volatile types), so BDV gets the corrected
+			// non-volatile image, computed on this loader's fetcher threads.
+			final int maxLevel = numMipmapLevels() - 1;
+			final CacheHints cacheHints = new CacheHints(LoadingStrategy.BUDGETED, maxLevel - level, false);
+			return VolatileViews.wrapAsVolatile(getImage(timepointId, level), queue(maxLevel + 1), cacheHints);
 		}
 
 		// ========== Float image access ==========
