@@ -446,7 +446,23 @@ public class IntensityCorrection {
 			final int iterations,
 			final Model<?> model
 	){
+		return solve(coefficientsSize, pairwiseMatches, iterations, model, 0, null);
+	}
+
+	/**
+	 * @param equilibration weight of the pull toward a common level, 0 = off, see {@link IntensitySolver#setEquilibration}
+	 * @param foregroundMedians per-view foreground medians for it (null = no equilibration)
+	 */
+	public static Map<ViewId, Coefficients> solve(
+			final int[] coefficientsSize,
+			final Collection<ViewPairCoefficientMatches> pairwiseMatches,
+			final int iterations,
+			final Model<?> model,
+			final double equilibration,
+			final Map<ViewId, Double> foregroundMedians
+	){
 		final IntensitySolver solver = new IntensitySolver(coefficientsSize, model);
+		solver.setEquilibration(foregroundMedians, equilibration);
 		pairwiseMatches.forEach(solver::connect);
 		solver.solveForGlobalCoefficients(iterations);
 		final Map<ViewId, IntensityTile> intensityTiles = solver.getIntensityTiles();

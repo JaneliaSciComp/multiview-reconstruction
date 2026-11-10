@@ -80,10 +80,39 @@ public final class Bleaching {
 				continue;
 			if (Intervals.isEmpty(Intervals.intersect(bounds, globalBounds(spimData, vd))))
 				continue;
-			final AffineTransform3D t = model(spimData, vd).inverse();
+			// inverse() is the registration's cached inverse, recomputed in place whenever its model is updated: copy it
+			final AffineTransform3D t = model(spimData, vd).inverse().copy();
 			t.concatenate(imageToGlobal);
 			toEarlier.add(t);
 			earlierDimensions.add(vd.getViewSetup().getSize());
+		}
+		return toEarlier.isEmpty() ? null : new Bleaching(bleachFactor, toEarlier, earlierDimensions);
+	}
+
+	/**
+	 * As {@link #of(AbstractSpimData, ViewId, AffineTransform3D, double)}, from the registrations and sizes a fusion
+	 * holds: the earlier views are those of {@code views} (the views being fused; an earlier view that is not among
+	 * them is not counted).
+	 */
+	public static Bleaching of(final ViewId view, final AffineTransform3D imageToGlobal, final double bleachFactor,
+			final java.util.Collection<? extends ViewId> views,
+			final java.util.Map<ViewId, ? extends AffineTransform3D> registrations,
+			final java.util.Map<ViewId, ? extends Dimensions> dimensions) {
+		if (bleachFactor == 0)
+			return null;
+
+		final RealInterval bounds = globalBounds(registrations.get(view), dimensions.get(view));
+		final List<AffineTransform3D> toEarlier = new ArrayList<>();
+		final List<Dimensions> earlierDimensions = new ArrayList<>();
+		for (final ViewId v : views) {
+			if (v.getTimePointId() != view.getTimePointId() || v.getViewSetupId() >= view.getViewSetupId())
+				continue;
+			if (Intervals.isEmpty(Intervals.intersect(bounds, globalBounds(registrations.get(v), dimensions.get(v)))))
+				continue;
+			final AffineTransform3D t = registrations.get(v).inverse().copy(); // inverse() may be a cached object: copy it
+			t.concatenate(imageToGlobal);
+			toEarlier.add(t);
+			earlierDimensions.add(dimensions.get(v));
 		}
 		return toEarlier.isEmpty() ? null : new Bleaching(bleachFactor, toEarlier, earlierDimensions);
 	}
@@ -95,10 +124,13 @@ public final class Bleaching {
 	}
 
 	private static RealInterval globalBounds(final AbstractSpimData<?> spimData, final ViewId view) {
-		final Dimensions dims = spimData.getSequenceDescription().getViewDescriptions().get(view).getViewSetup().getSize();
+		return globalBounds(model(spimData, view), spimData.getSequenceDescription().getViewDescriptions().get(view).getViewSetup().getSize());
+	}
+
+	private static RealInterval globalBounds(final AffineTransform3D model, final Dimensions dims) {
 		final double[] min = { -0.5, -0.5, -0.5 };
 		final double[] max = { dims.dimension(0) - 0.5, dims.dimension(1) - 0.5, dims.dimension(2) - 0.5 };
-		return model(spimData, view).estimateBounds(new FinalRealInterval(min, max));
+		return model.estimateBounds(new FinalRealInterval(min, max));
 	}
 
 	/** @return the number of earlier views */

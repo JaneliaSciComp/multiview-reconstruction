@@ -61,18 +61,18 @@ public class Intensity_Adjustment implements PlugIn
 {
 	private static final Parameters DEFAULTS = new Parameters();
 
-	public static int defaultMethod = DEFAULTS.method.ordinal();
-	public static String defaultNumCoefficients = "1,1,1";
+	public static int defaultMethod = Method.MEDIAN.ordinal();
+	public static String defaultNumCoefficients = "2,2,2";
 	public static double defaultRenderScale = DEFAULTS.renderScale;
 	public static int defaultThreshold = Threshold.LI.ordinal();
 	public static double defaultMinIntensity = DEFAULTS.minIntensity;
-	public static int defaultModel = DEFAULTS.model.ordinal();
+	public static int defaultModel = TransformationModel.SCALE.ordinal();
 	/** MEDIAN matches are pure gains: they are solved with SCALE unless asked otherwise */
 	public static int defaultMedianModel = TransformationModel.SCALE.ordinal();
-	public static int defaultRegularization1 = DEFAULTS.regularization1.ordinal();
+	public static int defaultRegularization1 = RegularizationModel.NONE.ordinal();
 	public static double defaultLambda1 = DEFAULTS.lambda1;
-	public static int defaultRegularization2 = DEFAULTS.regularization2.ordinal();
-	public static double defaultLambda2 = DEFAULTS.lambda2;
+	public static int defaultRegularization2 = RegularizationModel.IDENTITY.ordinal();
+	public static double defaultLambda2 = 0.01;
 
 	public static double defaultMaxIntensity = 0;
 	public static int defaultMinNumCandidates = DEFAULTS.minNumCandidates;
@@ -86,6 +86,7 @@ public class Intensity_Adjustment implements PlugIn
 	public static double defaultMinSignal = DEFAULTS.minSignal;
 	public static double defaultBackgroundWeight = DEFAULTS.backgroundWeight;
 	public static double defaultBleachFactor = DEFAULTS.bleachFactor;
+	public static double defaultEquilibration = 0.3;
 
 	private static final String[] thresholdChoices = { "Fixed minimum intensity", "LI (per view)", "OTSU (per view)" };
 
@@ -194,6 +195,7 @@ public class Intensity_Adjustment implements PlugIn
 		gd.addNumericField( "Lambda_1 [0..1]", defaultLambda1, 3 );
 		gd.addChoice( "Regularization_2", names( RegularizationModel.values() ), RegularizationModel.values()[ defaultRegularization2 ].name() );
 		gd.addNumericField( "Lambda_2 [0..1]", defaultLambda2, 3 );
+		gd.addNumericField( "Equilibrate_views (pull toward a common level, stronger for weakly connected views; 0 = off)", defaultEquilibration, 2 );
 		gd.addMessage( "MEDIAN: ratio of the medians of the voxels both views see (a pure gain per pair); HISTOGRAM: matched\n"
 				+ "intensity quantiles; RANSAC: robust fit to voxel pairs. The model is used by RANSAC / HISTOGRAM matching\n"
 				+ "and by the solve." );
@@ -311,6 +313,7 @@ public class Intensity_Adjustment implements PlugIn
 		p.lambda1 = defaultLambda1 = gd.getNextNumber();
 		p.regularization2 = RegularizationModel.values()[ defaultRegularization2 = gd.getNextChoiceIndex() ];
 		p.lambda2 = defaultLambda2 = gd.getNextNumber();
+		p.equilibration = defaultEquilibration = gd.getNextNumber();
 
 		// what the choices do not use stays at its default, whatever the hidden field holds
 		if ( p.threshold == Threshold.FIXED )
