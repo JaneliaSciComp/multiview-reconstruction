@@ -78,6 +78,13 @@ public class BoundingBoxBigDataViewer implements BoundingBoxEstimation
 		final BoundingBox maxBB = new BoundingBoxMaximal( views, spimData ).estimate( "Maximum bounding box used for initalization" );
 		IOFunctions.println( maxBB );
 
+		for ( int d = 0; d < maxBB.numDimensions(); ++d )
+			if ( maxBB.getMin()[ d ] > maxBB.getMax()[ d ] )
+			{
+				IOFunctions.println( "Maximal bounding box is empty in dimension " + d + " (no views with data selected?), cannot define a bounding box." );
+				return null;
+			}
+
 		final Pair< BigDataViewer, Boolean > bdvPair = getBDV( spimData, views );
 		
 		if ( bdvPair == null || bdvPair.getA() == null )
@@ -101,16 +108,16 @@ public class BoundingBoxBigDataViewer implements BoundingBoxEstimation
 			max = maxBB.getMax().clone();
 		}
 
+		// the sliders refuse values outside the range: clamp both ends into it (defaults may come from another dataset or selection)
 		for ( int d = 0; d < min.length; ++d )
 		{
+			final int lo = maxBB.getMin()[ d ], hi = maxBB.getMax()[ d ];
+
+			min[ d ] = Math.max( lo, Math.min( hi, min[ d ] ) );
+			max[ d ] = Math.max( lo, Math.min( hi, max[ d ] ) );
+
 			if ( min[ d ] > max[ d ] )
 				min[ d ] = max[ d ];
-	
-			if ( min[ d ] < maxBB.getMin()[ d ] )
-				min[ d ] = maxBB.getMin()[ d ];
-	
-			if ( max[ d ] > maxBB.getMax()[ d ] )
-				max[ d ] = maxBB.getMax()[ d ];
 		}
 
 		final int boxSetupId = 9999; // some non-existing setup id
