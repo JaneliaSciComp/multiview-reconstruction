@@ -47,7 +47,7 @@ import util.URITools;
 public class ParametersResaveN5Api
 {
 	public static int defaultBlockSize = 64;
-	public static int defaultBlockSizeXY = 128;
+	public static int defaultBlockSizeXY = 64;
 
 	public static boolean defaultUseSharding = true;
 	public static boolean defaultPreloadComputeBlocks = true;

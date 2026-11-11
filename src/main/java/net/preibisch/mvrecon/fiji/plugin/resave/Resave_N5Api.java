@@ -22,6 +22,9 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.resave;
 
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapImgLoaderLOCI2;
+import bdv.ViewerImgLoader;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import java.io.File;
 import java.net.URI;
 import java.awt.GraphicsEnvironment;
@@ -98,6 +101,50 @@ public class Resave_N5Api implements PlugIn
 		resaveN5( xml.getData(), vidsToProcess, n5params, true, xml.getXMLURI() );
 	}
 
+
+	/**
+	 * The views in the order given, cut into batches that are re-saved together (their compute blocks share the
+	 * threads): as many views as it takes to have at least as many compute blocks as threads, since a view with fewer
+	 * blocks than threads leaves threads idle (48 views of one block each on 16 threads: 16.4 s one view at a time,
+	 * 2.2 s in batches; 16 views of 4 blocks: 22.0 s against 8.9 s). If the image loader may hold whole views in
+	 * memory ({@code wholeViewsInMemory}; it does once one block of a view is read), the views of a batch also have to
+	 * stay below half of the heap that the preloaded compute blocks leave. A batch has at least one view.
+	 */
+	static List< List< ViewId > > viewBatches(
+			final Map< ViewId, List< long[][] > > gridByView,
+			final Map< Integer, long[] > dimensions,
+			final Map< Integer, DataType > dataTypes,
+			final ParametersResaveN5Api n5Params,
+			final long maxComputeBlockBytes,
+			final boolean wholeViewsInMemory )
+	{
+		final int threads = Math.max( 1, n5Params.numCellCreatorThreads );
+		final long budget = wholeViewsInMemory
+				? Runtime.getRuntime().maxMemory() / 2 - ( n5Params.preloadComputeBlocks ? threads * maxComputeBlockBytes : 0 )
+				: Long.MAX_VALUE;
+
+		final List< List< ViewId > > batches = new ArrayList<>();
+		List< ViewId > batch = new ArrayList<>();
+		long bytes = 0;
+		int blocks = 0;
+		for ( final ViewId v : gridByView.keySet() )
+		{
+			final long viewBytes = Arrays.stream( dimensions.get( v.getViewSetupId() ) ).reduce( 1, ( a, b ) -> a * b ) * N5ApiTools.bytesPerPixel( dataTypes.get( v.getViewSetupId() ) );
+			if ( !batch.isEmpty() && ( blocks >= threads || bytes > budget - viewBytes ) )
+			{
+				batches.add( batch );
+				batch = new ArrayList<>();
+				bytes = 0;
+				blocks = 0;
+			}
+			batch.add( v );
+			bytes += viewBytes;
+			blocks += gridByView.get( v ).size();
+		}
+		if ( !batch.isEmpty() )
+			batches.add( batch );
+		return batches;
+	}
 
 	public static SpimData2 resaveN5(
 			final SpimData2 data,
@@ -305,14 +352,24 @@ public class Resave_N5Api implements PlugIn
 
 			time = System.currentTimeMillis();
 
-			// Process one view at a time so only one large image is in memory at once
-			for ( final Map.Entry<ViewId, List<long[][]>> viewEntry : gridS0ByView.entrySet() )
-			{
-				final RetryTracker<long[][]> retryTracker = RetryTracker.forGridBlocks(
-						"s0 resaving tp=" + viewEntry.getKey().getTimePointId() + " setup=" + viewEntry.getKey().getViewSetupId(),
-						viewEntry.getValue().size() );
+			// Process a few views at a time: as many as it takes to keep all threads busy (a view with fewer compute
+			// blocks than threads would leave threads idle), but no more than fit into memory should the image loader
+			// hold whole views (the reason for going view by view in the first place)
+			// the Bio-Formats file list and the cached multi-resolution loaders (N5, Zarr, HDF5) read what is asked for;
+			// any other loader may open a whole view
+			final BasicImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
+			final boolean wholeViewsInMemory = !( imgLoader instanceof FileMapImgLoaderLOCI2 || imgLoader instanceof ViewerImgLoader );
+			final List< List< ViewId > > batches = viewBatches( gridS0ByView, dimensions, dataTypes, n5Params, maxComputeBlockBytes, wholeViewsInMemory );
+			IOFunctions.println( "Re-saving up to " + batches.stream().mapToInt( List::size ).max().orElse( 1 ) + " view(s) at a time (" + batches.size() + " batches for " + gridS0ByView.size() + " views)"
+					+ ( wholeViewsInMemory ? ", limited by memory in case the image loader opens whole views." : "." ) );
 
-				List<long[][]> viewBlocks = viewEntry.getValue();
+			for ( final List< ViewId > batch : batches )
+			{
+				List<long[][]> viewBlocks = batch.stream().flatMap( v -> gridS0ByView.get( v ).stream() ).collect( Collectors.toList() );
+
+				final RetryTracker<long[][]> retryTracker = RetryTracker.forGridBlocks(
+						"s0 resaving tp=" + batch.get( 0 ).getTimePointId() + " setup=" + batch.get( 0 ).getViewSetupId() + ( batch.size() > 1 ? " and " + ( batch.size() - 1 ) + " more views" : "" ),
+						viewBlocks.size() );
 
 				do
 				{
