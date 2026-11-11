@@ -22,6 +22,7 @@
  */
 package net.preibisch.mvrecon.fiji.plugin.interestpointdetection;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -116,28 +117,8 @@ public record StoredDetectionParameters(
 			return null;
 
 		final boolean scaleSpace = tokens[ 0 ].equals( SCALE_SPACE );
-		final HashMap< String, String > values = new HashMap<>();
-
-		for ( int i = 1; i < tokens.length; ++i )
-		{
-			final int eq = tokens[ i ].indexOf( '=' );
-
-			if ( eq > 0 )
-				values.put( tokens[ i ].substring( 0, eq ), tokens[ i ].substring( eq + 1 ) );
-		}
-
-		// the current strings have the three factors; master's DoG had downsampleXYIndex (the factor, or 0/-1 for "match z"), the
-		// first scale-space strings downsampleXY next to it
-		final long x = longValue( values, "downsampleX", -1 ), y = longValue( values, "downsampleY", -1 ), z = longValue( values, "downsampleZ", -1 );
-		final long xy = longValue( values, "downsampleXY", longValue( values, "downsampleXYIndex", -1 ) );
-
-		final long[] downsampling;
-		if ( x >= 1 && y >= 1 && z >= 1 )
-			downsampling = new long[] { x, y, z };
-		else if ( xy >= 1 && z >= 1 )
-			downsampling = new long[] { xy, xy, z };
-		else
-			downsampling = null;
+		final HashMap< String, String > values = values( tokens );
+		final long[] downsampling = downsampling( values );
 
 		return new StoredDetectionParameters(
 				scaleSpace,
@@ -158,6 +139,93 @@ public record StoredDetectionParameters(
 				values.containsKey( "thresholdType" ) ? Boolean.valueOf( "noisefloor".equals( values.get( "thresholdType" ) ) ) : null,
 				doubleValue( values, "noiseFactor" ),
 				values.containsKey( "overlappingOnly" ) ? Boolean.valueOf( values.get( "overlappingOnly" ) ) : null );
+	}
+
+	/** the key=value tokens of a parameters string (the first token is the method; tokens without '=' such as "(Spark)" are skipped) */
+	private static HashMap< String, String > values( final String[] tokens )
+	{
+		final HashMap< String, String > values = new HashMap<>();
+
+		for ( int i = 1; i < tokens.length; ++i )
+		{
+			final int eq = tokens[ i ].indexOf( '=' );
+
+			if ( eq > 0 )
+				values.put( tokens[ i ].substring( 0, eq ), tokens[ i ].substring( eq + 1 ) );
+		}
+
+		return values;
+	}
+
+	/**
+	 * the x, y, z factors of a string, null if it has none: the current strings have the three factors; master's DoG had
+	 * downsampleXYIndex (the factor, or 0/-1 for "match z"), the first scale-space strings downsampleXY next to it
+	 */
+	private static long[] downsampling( final Map< String, String > values )
+	{
+		final long x = longValue( values, "downsampleX", -1 ), y = longValue( values, "downsampleY", -1 ), z = longValue( values, "downsampleZ", -1 );
+		final long xy = longValue( values, "downsampleXY", longValue( values, "downsampleXYIndex", -1 ) );
+
+		if ( x >= 1 && y >= 1 && z >= 1 )
+			return new long[] { x, y, z };
+		else if ( xy >= 1 && z >= 1 )
+			return new long[] { xy, xy, z };
+		else
+			return null;
+	}
+
+	/**
+	 * What a detection string does not say of what the dialogs write today ({@link DifferenceOfGaussianGUI#getParameters()},
+	 * {@link ScaleSpaceGUI#getParameters()}, DifferenceOfGUI.commonParameters), for the log of "Set detection parameters as
+	 * defaults": one line per gap that names the key and what {@link #preset} does about it. A value that does not parse
+	 * counts as missing; an intensity range of NaN is a stored "no range", not a gap.
+	 *
+	 * @return the lines, empty for a complete string and for a string that is no detection string ({@link #parse} null)
+	 */
+	public static List< String > missing( final String parameters )
+	{
+		final ArrayList< String > missing = new ArrayList<>();
+		final StoredDetectionParameters p = parse( parameters );
+
+		if ( p == null )
+			return missing;
+
+		final HashMap< String, String > values = values( parameters.trim().split( "\\s+" ) );
+
+		if ( Double.isNaN( p.sigma ) )
+			missing.add( "s (sigma): the default is unchanged" );
+		if ( Double.isNaN( p.threshold ) )
+			missing.add( "t (threshold): the default is unchanged" );
+		if ( !values.containsKey( "min" ) || !values.containsKey( "max" ) )
+			missing.add( "min / max (find minima, maxima): set to minima " + p.findMin + ", maxima " + p.findMax );
+		if ( p.scaleSpace )
+		{
+			if ( p.steps < 1 )
+				missing.add( "steps (per octave): the default is unchanged" );
+			if ( p.octaves == Integer.MIN_VALUE )
+				missing.add( "octaves: the default is unchanged" );
+			if ( p.finestLevel == null )
+				missing.add( "finestLevel (finest structures): the default is unchanged" );
+		}
+		if ( p.downsampling == null )
+			missing.add( "downsampling (downsampleX/Y/Z; older strings said 'match z' or nothing): the resolution default is unchanged" );
+		if ( Double.isNaN( p.anisotropy ) )
+			missing.add( "anisotropy: set to what such a detection used, " + ( p.scaleSpace ? "the ratio of the calibration" :
+				p.downsampling == null ? "1 (downsampling unknown)" : "downsampleXY / downsampleZ = " + p.effectiveAnisotropy( 1.0 ) ) );
+		if ( !values.containsKey( "minIntensity" ) || !values.containsKey( "maxIntensity" ) )
+			missing.add( "minIntensity / maxIntensity: no intensity range is set (each view's own range)" );
+		if ( p.localization < 0 )
+			missing.add( "localization (subpixel): the default is unchanged" );
+		if ( !p.hasGrouping() )
+			missing.add( "groupTiles / groupIllums: the defaults are unchanged" );
+		if ( p.overlappingOnly == null )
+			missing.add( "overlappingOnly (only in regions overlapping other views): the default is unchanged" );
+		if ( p.thresholdFromNoiseFloor == null )
+			missing.add( "thresholdType: set to a fixed threshold" );
+		else if ( p.thresholdFromNoiseFloor && Double.isNaN( p.noiseFactor ) )
+			missing.add( "noiseFactor (of the noise-floor threshold): the default is unchanged" );
+
+		return missing;
 	}
 
 	/** @return whether the string says how tiles and illuminations were grouped (then that wins over the explorer's grouping when the label is detected again) */
@@ -186,7 +254,7 @@ public record StoredDetectionParameters(
 	 * anisotropy ({@link #effectiveAnisotropy}, with the first view's calibration, which the dialog compares before it
 	 * estimates a default of its own), the intensity range if one is stored, the subpixel localization, the grouping of
 	 * tiles and illuminations, whether only the regions overlapping other views are detected in (if the string says), the
-	 * threshold type with its noise factor (fixed if the string has none), no filter, and the method's "Advanced" specification with its sigma, threshold, minima/maxima and, for the scale space, steps, octaves
+	 * threshold type with its noise factor (fixed if the string has none), no filter, no common intensity range computed over the views, and the method's "Advanced" specification with its sigma, threshold, minima/maxima and, for the scale space, steps, octaves
 	 * and finest level.
 	 *
 	 * @param data - the dataset
@@ -201,6 +269,8 @@ public record StoredDetectionParameters(
 
 		final boolean minMax = !Double.isNaN( minIntensity ) && !Double.isNaN( maxIntensity );
 		Interest_Point_Detection.defaultSetMinMax = minMax;
+		// not in any string: a common range that was computed is the stored range; without a range each view had its own
+		DifferenceOfGUI.defaultSameMinMax = false;
 
 		if ( minMax )
 		{
@@ -283,6 +353,49 @@ public record StoredDetectionParameters(
 			DifferenceOfGaussianGUI.defaultFindMax = findMax;
 			DifferenceOfGUI.defaultBrightness = ADVANCED_BRIGHTNESS;
 		}
+	}
+
+	/**
+	 * "Set detection parameters as defaults" of the Interest Point Explorer: as {@link #preset}, so that the next "Detect
+	 * Interest Points" gives the same detections, but for a new label: the label default stays as it is and the dialog
+	 * suggests a name none of the views has. A threshold that was estimated from the noise floor is preset as the fixed
+	 * threshold it came out as (the estimate draws random blocks, a second one differs slightly).
+	 *
+	 * @param data - the dataset
+	 * @param views - the views that have the label (the first gives the resolution choices and the calibration), may be empty
+	 * @param parameters - the string these parameters were parsed from, for {@link #missing}
+	 * @return what the log should say: the gaps of the string ({@link #missing}) and what was preset differently from how it
+	 *         was detected; empty if the string held everything
+	 */
+	public List< String > presetAsDefaults( final SpimData2 data, final List< ? extends ViewId > views, final String parameters )
+	{
+		final ArrayList< String > notes = new ArrayList<>( missing( parameters ) );
+		final String label = Interest_Point_Detection.defaultLabel;
+
+		preset( data, views, label );
+
+		Interest_Point_Detection.defaultLabel = label;
+		Interest_Point_Detection.presetLabel = null;
+
+		if ( views == null || views.isEmpty() )
+			notes.add( "no view to look up the resolution levels and the calibration: resolution and anisotropy defaults are unchanged" );
+		else if ( downsampling != null && DifferenceOfGUI.defaultManual )
+			notes.add( "downsampling " + Arrays.toString( downsampling ) + " is not a resolution level of the first view: preset as a manual downsampling" );
+
+		if ( thresholdFromNoiseFloor != null && thresholdFromNoiseFloor )
+		{
+			if ( Double.isNaN( threshold ) )
+			{
+				notes.add( "the threshold was estimated from the noise floor and is not stored: it will be estimated again and may differ slightly" );
+			}
+			else
+			{
+				DifferenceOfGUI.defaultThresholdChoice = 0;
+				notes.add( "the threshold t=" + threshold + " was estimated from the noise floor (factor " + noiseFactor + "): preset as a fixed threshold, which gives the same detections" );
+			}
+		}
+
+		return notes;
 	}
 
 	public static double doubleValue( final Map< String, String > values, final String key )

@@ -69,7 +69,7 @@ public class TestStoredDetectionParameters
 	// the statics preset writes, saved before and restored after each test (they are shared by all tests of the JVM)
 	String label, preset;
 	int algorithm, resolutionIndex, brightness, thresholdChoice, filterChoice, ssSteps, ssOctaves, ssSpecification, localization;
-	boolean setMinMax, manual, dogMin, dogMax, ssMin, ssMax, groupTiles, groupIllums, overlappingOnly;
+	boolean setMinMax, sameMinMax, manual, dogMin, dogMax, ssMin, ssMax, groupTiles, groupIllums, overlappingOnly;
 	long[] manualDownsampling;
 	double anisotropyZ, anisotropyCalibration, minIntensity, maxIntensity, dogSigma, dogThreshold, ssSigma, ssThreshold, noiseFactor;
 	Boolean finest;
@@ -81,6 +81,7 @@ public class TestStoredDetectionParameters
 		preset = Interest_Point_Detection.presetLabel;
 		algorithm = Interest_Point_Detection.defaultAlgorithm;
 		setMinMax = Interest_Point_Detection.defaultSetMinMax;
+		sameMinMax = DifferenceOfGUI.defaultSameMinMax;
 		groupTiles = Interest_Point_Detection.defaultGroupTiles;
 		groupIllums = Interest_Point_Detection.defaultGroupIllums;
 		localization = DifferenceOfGUI.defaultLocalization;
@@ -117,6 +118,7 @@ public class TestStoredDetectionParameters
 		Interest_Point_Detection.presetLabel = preset;
 		Interest_Point_Detection.defaultAlgorithm = algorithm;
 		Interest_Point_Detection.defaultSetMinMax = setMinMax;
+		DifferenceOfGUI.defaultSameMinMax = sameMinMax;
 		Interest_Point_Detection.defaultGroupTiles = groupTiles;
 		Interest_Point_Detection.defaultGroupIllums = groupIllums;
 		DifferenceOfGUI.defaultLocalization = localization;
@@ -272,7 +274,9 @@ public class TestStoredDetectionParameters
 		assertTrue( fullResolution >= 0, "the full resolution is one of the choices: " + Arrays.toString( resolutions ) );
 
 		// scale space, full resolution, no intensity range
+		DifferenceOfGUI.defaultSameMinMax = true;
 		StoredDetectionParameters.parse( SS ).preset( data, views, "old" );
+		assertFalse( DifferenceOfGUI.defaultSameMinMax, "no common range computed: a stored range is replayed, without one each view had its own" );
 		assertEquals( "old", Interest_Point_Detection.defaultLabel );
 		assertEquals( "old", Interest_Point_Detection.presetLabel, "suggested as it is although it exists" );
 		assertEquals( 1, Interest_Point_Detection.defaultAlgorithm );
@@ -341,5 +345,90 @@ public class TestStoredDetectionParameters
 		// the early scale space: the calibration ratio of the view
 		StoredDetectionParameters.parse( EARLY_SS ).preset( data, views, "early" );
 		assertEquals( DifferenceOfGUI.calibrationAnisotropy( data.getSequenceDescription().getViewDescription( views.get( 0 ) ) ), DifferenceOfGUI.defaultAnisotropyZ, 0.0 );
+	}
+
+	/** what a string lacks of what the dialogs write today, for the log of "Set detection parameters as defaults" */
+	@Test
+	public void testMissing()
+	{
+		assertTrue( StoredDetectionParameters.missing( DOG ).isEmpty(), StoredDetectionParameters.missing( DOG ).toString() );
+		assertTrue( StoredDetectionParameters.missing( SS ).isEmpty(), StoredDetectionParameters.missing( SS ).toString() );
+		assertTrue( StoredDetectionParameters.missing( "filtered something" ).isEmpty(), "not a detection string" );
+		assertTrue( StoredDetectionParameters.missing( null ).isEmpty() );
+
+		// before 2026-10-27: localization, grouping, overlappingOnly, threshold type
+		assertEquals( Arrays.asList( "localization", "groupTiles", "overlappingOnly", "thresholdType" ), keys( StoredDetectionParameters.missing( DOG_2026_10 ) ) );
+		// Spark: has overlappingOnly, no anisotropy (derived: 4 / 2)
+		final List< String > spark = StoredDetectionParameters.missing( SPARK_DOG );
+		assertEquals( Arrays.asList( "anisotropy", "localization", "groupTiles", "thresholdType" ), keys( spark ) );
+		assertTrue( spark.get( 0 ).contains( "2.0" ), spark.get( 0 ) );
+		assertEquals( Arrays.asList( "anisotropy", "localization", "groupTiles", "overlappingOnly", "thresholdType" ), keys( StoredDetectionParameters.missing( MASTER_DOG ) ) );
+		// "match z": no factors
+		assertEquals( Arrays.asList( "downsampling", "anisotropy", "localization", "groupTiles", "overlappingOnly", "thresholdType" ), keys( StoredDetectionParameters.missing( MASTER_DOG_MATCH_Z ) ) );
+		assertEquals( Arrays.asList( "anisotropy", "localization", "groupTiles", "overlappingOnly", "thresholdType" ), keys( StoredDetectionParameters.missing( EARLY_SS ) ) );
+		// values that do not parse, nothing else there; a noise floor without its factor
+		assertEquals( Arrays.asList( "s", "min", "downsampling", "anisotropy", "minIntensity", "localization", "groupTiles", "overlappingOnly", "noiseFactor" ),
+				keys( StoredDetectionParameters.missing( "DOG s=abc t=0.5 downsampleX=x downsampleY=2 downsampleZ=1 thresholdType=noisefloor" ) ) );
+		assertEquals( Arrays.asList( "s", "t", "min", "steps", "octaves", "finestLevel", "downsampling", "anisotropy", "minIntensity", "localization", "groupTiles", "overlappingOnly", "thresholdType" ),
+				keys( StoredDetectionParameters.missing( "DOG-SS" ) ) );
+	}
+
+	/** the first word of each line: the key it is about */
+	static List< String > keys( final List< String > lines )
+	{
+		final ArrayList< String > keys = new ArrayList<>();
+		for ( final String line : lines )
+			keys.add( line.split( "[ :]" )[ 0 ] );
+		return keys;
+	}
+
+	/** "Set detection parameters as defaults": as preset, but for a new label and with a noise-floor threshold as the fixed one */
+	@Test
+	public void testPresetAsDefaults()
+	{
+		final SpimData2 data = SimulateUtil.setUp();
+		final List< ViewId > views = new ArrayList<>( data.getSequenceDescription().getViewDescriptions().keySet() );
+		Collections.sort( views );
+
+		Interest_Point_Detection.defaultLabel = "mine";
+		Interest_Point_Detection.presetLabel = "stale";
+		DifferenceOfGUI.defaultSameMinMax = true;
+		DifferenceOfGUI.defaultThresholdChoice = 1;
+
+		// complete, fixed threshold, a level of the data: nothing to say
+		List< String > notes = StoredDetectionParameters.parse( SS ).presetAsDefaults( data, views, SS );
+		assertTrue( notes.isEmpty(), notes.toString() );
+		assertEquals( "mine", Interest_Point_Detection.defaultLabel, "the label default is not touched" );
+		assertNull( Interest_Point_Detection.presetLabel, "the dialog suggests a new label" );
+		assertEquals( 1, Interest_Point_Detection.defaultAlgorithm );
+		assertEquals( 1.6, ScaleSpaceGUI.defaultSigma, 0.0 );
+		assertEquals( 0, DifferenceOfGUI.defaultThresholdChoice );
+		assertFalse( DifferenceOfGUI.defaultSameMinMax );
+
+		// noise floor: the stored t as a fixed threshold; a downsampling that is no level: manual
+		final String manualDog = DOG.replace( "downsampleX=2 downsampleY=2 downsampleZ=1", "downsampleX=64 downsampleY=64 downsampleZ=64" );
+		notes = StoredDetectionParameters.parse( manualDog ).presetAsDefaults( data, views, manualDog );
+		assertEquals( 2, notes.size(), notes.toString() );
+		assertTrue( notes.get( 0 ).contains( "manual" ), notes.get( 0 ) );
+		assertTrue( notes.get( 1 ).contains( "noise floor" ) && notes.get( 1 ).contains( "0.008" ) && notes.get( 1 ).contains( "3.0" ), notes.get( 1 ) );
+		assertEquals( 0, DifferenceOfGUI.defaultThresholdChoice, "fixed" );
+		assertEquals( 0.008, DifferenceOfGaussianGUI.defaultThreshold, 0.0 );
+		assertEquals( 3.0, DifferenceOfGUI.defaultNoiseFactor, 0.0 );
+		assertTrue( DifferenceOfGUI.defaultManual );
+		assertEquals( "mine", Interest_Point_Detection.defaultLabel );
+		assertNull( Interest_Point_Detection.presetLabel );
+
+		// a noise floor whose threshold is not there: estimated again
+		final String noT = DOG.replace( " t=0.008", "" );
+		notes = StoredDetectionParameters.parse( noT ).presetAsDefaults( data, views, noT );
+		assertEquals( 1, DifferenceOfGUI.defaultThresholdChoice );
+		assertEquals( Arrays.asList( "t", "downsampling", "the" ), keys( notes ), "2, 2, 1 is no level of the simulated data either" );
+
+		// an old string: its gaps; no views: resolution and anisotropy stay
+		final double anisotropy = DifferenceOfGUI.defaultAnisotropyZ;
+		notes = StoredDetectionParameters.parse( MASTER_DOG ).presetAsDefaults( data, new ArrayList<>(), MASTER_DOG );
+		assertEquals( Arrays.asList( "anisotropy", "localization", "groupTiles", "overlappingOnly", "thresholdType", "no" ), keys( notes ) );
+		assertEquals( anisotropy, DifferenceOfGUI.defaultAnisotropyZ, 0.0 );
+		assertTrue( DifferenceOfGaussianGUI.defaultFindMin );
 	}
 }

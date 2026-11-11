@@ -68,6 +68,11 @@ All interest points of a dataset live in `interestpoints.zarr` next to the XML, 
   parameters string sets the static defaults of the detection dialog, label included via `presetLabel`, and the detection
   replaces the label; otherwise the dialog suggests a label none of the selected views has, `Interest_Point_Detection.suggestLabel`:
   beads, beads2, beads3, a trailing number increased; Stephan, 2026-10-27).
+  The Interest Point Explorer's right-click "Set detection parameters as defaults" (2026-11-11, `InterestPointExplorerPanel.setDetectionDefaults`
+  → `StoredDetectionParameters.presetAsDefaults`) is the same preset without a detection: the label default is left alone (the dialog
+  suggests a new label, Stephan), a noise-floor threshold is preset as the fixed stored `t` (same detections, Stephan), a filtered label
+  uses its base's string, and the log lists what the string lacked (`StoredDetectionParameters.missing`) and what was preset differently.
+  `preset` also sets `DifferenceOfGUI.defaultSameMinMax = false` (never stored; a computed common range is the stored range).
   Since 2026-10-27 the strings also record `localization=`, `groupTiles=`, `groupIllums=`, `thresholdType=` (+ `noiseFactor=`),
   built in `DifferenceOfGUI.commonParameters()`; a stored grouping wins over the explorer's when a label is detected again. A
   string without `anisotropy=` is preset with what its detection used (`effectiveAnisotropy`: downsampleXY / downsampleZ for the
