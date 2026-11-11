@@ -492,6 +492,26 @@ References:
 - [`ViewerState`](https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ViewerState.java)
 - [`ConverterSetups`](https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ConverterSetups.java)
 
+## Brightness Settings in the XML (`DisplaySettings`, 2026-11-11)
+
+`fiji.spimdata.displaysettings.DisplaySettings` on `SpimData2` (`getDisplaySettings()`, never null): per view setup the displayed
+range (min, max) and the limits of the brightness sliders (rangeMin, rangeMax) as last adjusted in BigDataViewer. No colors
+(Stephan: the explorer colors the sources itself); nothing per timepoint (BDV has one converter per setup). XML
+(`XmlIoDisplaySettings`, written only when not empty): one element per distinct range, setups as runs,
+`<DisplaySettings><DisplayRange min= max= rangeMin= rangeMax= setups="0-99,104"/></DisplaySettings>`.
+- **Save**: `FilteredAndGroupedExplorerPanel.saveXML` → `captureDisplaySettings()` → `explorer.bdv.BDVDisplaySettings.capture`
+  from the running BDV's `SetupAssignments` (range from the `ConverterSetup`, limits from its `MinMaxGroup`); only with the
+  explicit Save, setups BDV does not show keep what they have, no BDV = unchanged. An explorer that overrides `saveXML`
+  without calling super (check BigStitcher's) must call `captureDisplaySettings()` itself.
+- **Open** (`BDVPopup.createBDV`): after `tryLoadSettings` / `initBrightness`, `BDVDisplaySettings.apply`: the stored ranges win
+  over the estimate and over the ranges of a `settings.xml` sidecar (its transform and bookmarks stay); the setups of one
+  range get a brightness group of their own (moved only when they are not in one already), setups without an entry stay estimated.
+- **Lazy BDV** (`LazyBDVPopup.syncSources`, one group and one range by design): the stored range of a setup is used when
+  nothing is on screen and no range was carried forward (before the histogram sample), with its limits; the ranges of
+  deselected sources are put into the `DisplaySettings` so that the next Save has them.
+- `SpimData2Tools.reduceSpimData2` carries the settings along. Test `TestDisplaySettings` (XML round trip, capture/apply on a
+  `SetupAssignments` without a viewer); Stephan tried it in the explorer on 2026-11-11: works.
+
 ## N5 / Zarr Export
 
 ### Two Workflows

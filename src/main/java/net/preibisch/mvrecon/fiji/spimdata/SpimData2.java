@@ -49,6 +49,7 @@ import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
+import net.preibisch.mvrecon.fiji.spimdata.displaysettings.DisplaySettings;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
@@ -70,6 +71,7 @@ public class SpimData2 extends SpimData
 	private StitchingResults stitchingResults;
 	private IntensityAdjustments intensityAdjustments;
 	private ActionHistory actionHistory = new ActionHistory();
+	private DisplaySettings displaySettings = new DisplaySettings();
 	public boolean gridMoveRequested = false;
 
 	/*
@@ -115,6 +117,9 @@ public class SpimData2 extends SpimData
 	public StitchingResults getStitchingResults() { return stitchingResults; }
 	public  IntensityAdjustments getIntensityAdjustments() { return intensityAdjustments; }
 	public ActionHistory getActionHistory() { return actionHistory; }
+	/** the brightness settings last saved from BigDataViewer (per view setup), never null */
+	public DisplaySettings getDisplaySettings() { return displaySettings; }
+	public void setDisplaySettings( final DisplaySettings displaySettings ) { this.displaySettings = displaySettings == null ? new DisplaySettings() : displaySettings; }
 
 	protected void setViewsInterestPoints( final ViewInterestPoints viewsInterestPoints )
 	{

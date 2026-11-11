@@ -655,6 +655,7 @@ public class SpimData2Tools
 				oldSpimData.getIntensityAdjustments() );
 		// preserve the action history across the resave-reduce so the new XML keeps the provenance
 		newSpimData.setActionHistory( oldSpimData.getActionHistory() );
+		newSpimData.setDisplaySettings( oldSpimData.getDisplaySettings() );
 
 		return newSpimData;
 	}

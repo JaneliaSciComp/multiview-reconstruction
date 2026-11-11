@@ -23,6 +23,10 @@
 package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.displaysettings.DisplaySettings.DisplayRange;
+import net.preibisch.mvrecon.fiji.spimdata.displaysettings.DisplaySettings;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVDisplaySettings;
+import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 
 import java.awt.event.ActionEvent;
@@ -383,7 +387,10 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 		//       adjustment so newly added views match what's already on screen.
 		//   (2) sharedRange — the carried-forward default (set when sources were
 		//       last removed, or sampled on the very first add).
-		//   (3) null → sample a histogram from the first source we add.
+		//   (3) the range saved with the XML for the setup (DisplaySettings), with its slider limits
+		//   (4) null → sample a histogram from the first source we add.
+		final DisplaySettings displaySettings = spimData instanceof SpimData2 ? ( (SpimData2) spimData ).getDisplaySettings() : null;
+		DisplayRange storedRange = null;
 		double[] addRange = null;
 		if ( !setupBySetupId.isEmpty() )
 		{
@@ -402,6 +409,15 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 			final ConverterSetup csR = setupBySetupId.get( toRemoveOrHide.get( 0 ) );
 			if ( csR != null )
 				sharedRange = new double[]{ csR.getDisplayRangeMin(), csR.getDisplayRangeMax() };
+
+			// and remember each one's range for the next XML save, which sees only the sources that are shown then
+			if ( displaySettings != null )
+				for ( final Integer id : toRemoveOrHide )
+				{
+					final ConverterSetup cs = setupBySetupId.get( id );
+					if ( cs != null )
+						displaySettings.set( id, BDVDisplaySettings.range( cs, bdv.getSetupAssignments() ) );
+				}
 		}
 
 		// ADD: build SourceAndConverter + ConverterSetup, set brightness, register.
@@ -423,7 +439,13 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 			}
 			final ConverterSetup cs = BigDataViewer.createConverterSetup( soc, id );
 
-			// First-ever add with no prior brightness → sample histogram now.
+			// First-ever add with no prior brightness → the range saved with the XML, else sample histogram now.
+			if ( addRange == null && displaySettings != null && displaySettings.get( id ) != null )
+			{
+				storedRange = displaySettings.get( id ).valid();
+				sharedRange = new double[]{ storedRange.min(), storedRange.max() };
+				addRange = sharedRange;
+			}
 			if ( addRange == null )
 			{
 				sharedRange = sampleAndComputeRange( soc.getSpimSource(), sampleTimepoint );
@@ -445,6 +467,13 @@ public class LazyBDVPopup extends JMenuItem implements ExplorerWindowSetable, Ba
 				final List< MinMaxGroup > groups = bdv.getSetupAssignments().getMinMaxGroups();
 				if ( groups.size() > 1 )
 					bdv.getSetupAssignments().moveSetupToGroup( cs, groups.get( 0 ) );
+
+				// the saved slider limits come with the saved range
+				if ( storedRange != null )
+				{
+					BDVDisplaySettings.set( bdv.getSetupAssignments().getMinMaxGroups().get( 0 ), storedRange );
+					storedRange = null;
+				}
 			}
 			addList.add( soc );
 			activeBySetupId.put( id, soc );
