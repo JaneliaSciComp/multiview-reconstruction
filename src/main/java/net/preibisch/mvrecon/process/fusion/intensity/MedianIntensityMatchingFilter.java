@@ -36,8 +36,7 @@ import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.ScaleModel1D;
  * A pure gain from the voxels both views see: {@code s = median(q) / median(p)} over the candidates (which the matcher
  * has already gated at the threshold in BOTH views, so the two medians describe one population), reduced to two
  * matches on {@code q = s p} at the smallest and largest {@code p}, like {@link HistogramIntensityMatchingFilter}.
- * spotlight's "intersection" gain estimator; robust to the bright tail that dominates a scale fit to all voxels or
- * quantiles. Use with a SCALE solve.
+ * Robust to the bright tail that dominates a scale fit to all voxels or quantiles. Use with a SCALE solve.
  */
 class MedianIntensityMatchingFilter implements IntensityMatchingFilter {
 

@@ -60,7 +60,7 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 
 	private final MultiResolutionImgLoader wrappedImgLoader;
 	private boolean active;
-	/** kept for the XML attribute only: the corrected image caches its blocks itself */
+	/** unused: read from old XMLs only */
 	private boolean cacheResult;
 
 	/* downsampled bright/dark images */

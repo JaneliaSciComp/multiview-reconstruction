@@ -73,7 +73,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 	private final ViewerImgLoader wrappedImgLoader;
 	private boolean active;
-	/** kept for the XML attribute only: the corrected image caches its blocks itself */
+	/** unused: read from old XMLs only */
 	private boolean cacheResult;
 
 	/** Helper for loading flatfield images */
@@ -262,7 +262,6 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		private <O extends RealType<O> & NativeType<O>> RandomAccessibleInterval<O> corrected(
 				final int timepointId, final int level, final O type, final boolean normalize, final ImgLoaderHint... hints) {
 			final ViewerSetupImgLoader<T, V> viewerSetupIL = getUnderlyingViewerSetupImgLoader();
-			// the 2D correction images are downsampled as the level is in x and y
 			final int[] dsFactors = FlatFieldCorrectedRandomAccessibleIntervals.fieldDownsampling(
 					viewerSetupIL.getMipmapResolutions()[level],
 					getUnderlyingMultiResSetupImgLoader().getImageSize(timepointId).numDimensions());
@@ -278,11 +277,9 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 		@Override
 		public RandomAccessibleInterval<V> getVolatileImage(final int timepointId, final int level, final ImgLoaderHint... hints) {
-			// The correction can't be computed from volatile cells (they may not be loaded yet,
-			// and the block algorithms don't support volatile types), so BDV gets the corrected
-			// non-volatile image, computed on this loader's fetcher threads.
-			// The image follows setActive() whenever an accessor is created, so that BigDataViewer, which keeps
-			// the image, shows a toggle after a repaint (also below a split img loader).
+			// The correction can't run on volatile cells, so BDV gets the corrected non-volatile image, computed
+			// on this loader's fetcher threads. The image follows setActive() on every access: BDV keeps it,
+			// so a toggle needs only a repaint.
 			final Supplier<RandomAccessibleInterval<V>> corrected = new Supplier<RandomAccessibleInterval<V>>() {
 				private RandomAccessibleInterval<V> img;
 

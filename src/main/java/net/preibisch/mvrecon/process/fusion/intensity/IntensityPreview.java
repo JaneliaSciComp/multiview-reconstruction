@@ -79,7 +79,6 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatFieldCorrectedRandomAccessibleIntervals;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.MultiResolutionFlatfieldCorrectionWrappedImgLoader;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.ViewerFlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 
 /**
@@ -144,17 +143,16 @@ public class IntensityPreview
 	private volatile Config config; // null if there is nothing to show
 
 	/** the dataset's flatfield correction, applied while it is active; null if there is none */
-	private volatile FlatfieldCorrectionWrappedImgLoader< ? > flatfield;
+	private volatile MultiResolutionFlatfieldCorrectionWrappedImgLoader flatfield;
 
 	/** corrected images by (setup, timepoint, level, volatile, closest, flatfield, config) */
 	private final Map< List< Object >, RandomAccessibleInterval< ? > > images = new ConcurrentHashMap<>();
 
 	private synchronized boolean useFlatfield( final BasicImgLoader loader )
 	{
-		final boolean ff = loader instanceof FlatfieldCorrectionWrappedImgLoader
-				&& ( loader instanceof MultiResolutionFlatfieldCorrectionWrappedImgLoader || loader instanceof ViewerFlatfieldCorrectionWrappedImgLoader )
-				&& ( ( FlatfieldCorrectionWrappedImgLoader< ? > ) loader ).getWrappedImgLoder() instanceof ViewerImgLoader;
-		flatfield = ff ? ( FlatfieldCorrectionWrappedImgLoader< ? > ) loader : null;
+		final boolean ff = loader instanceof MultiResolutionFlatfieldCorrectionWrappedImgLoader
+				&& ( ( MultiResolutionFlatfieldCorrectionWrappedImgLoader ) loader ).getWrappedImgLoder() instanceof ViewerImgLoader;
+		flatfield = ff ? ( MultiResolutionFlatfieldCorrectionWrappedImgLoader ) loader : null;
 		images.clear();
 		return ff;
 	}
@@ -268,7 +266,7 @@ public class IntensityPreview
 	private RandomAccessibleInterval< ? > corrected( final int setupId, final int timepointId, final int level, final boolean isVolatile, final ViewerSetupImgLoader< ?, ? > raw )
 	{
 		final Config c = enabled ? config : null;
-		final FlatfieldCorrectionWrappedImgLoader< ? > ff = flatfield != null && flatfield.isActive() ? flatfield : null;
+		final MultiResolutionFlatfieldCorrectionWrappedImgLoader ff = flatfield != null && flatfield.isActive() ? flatfield : null;
 		if ( c == null && ff == null )
 			return null;
 		final boolean closest = closestWins;
@@ -285,29 +283,16 @@ public class IntensityPreview
 		} );
 	}
 
-	/** the raw image of one level, flatfield corrected as the flatfield loader does it (fields downsampled in x, y) */
+	/** the raw image of one level, flatfield corrected as the flatfield loader does it */
 	@SuppressWarnings( { "rawtypes", "unchecked" } )
 	private static RandomAccessibleInterval< ? > flatfieldCorrected(
-			final FlatfieldCorrectionWrappedImgLoader< ? > ff, final int setupId, final int timepointId, final int level, final ViewerSetupImgLoader< ?, ? > raw )
+			final MultiResolutionFlatfieldCorrectionWrappedImgLoader ff, final int setupId, final int timepointId, final int level, final ViewerSetupImgLoader< ?, ? > raw )
 	{
 		final RandomAccessibleInterval image = raw.getImage( timepointId, level );
-		final double[] res = raw.getMipmapResolutions()[ level ];
-		final int[] ds = new int[ image.numDimensions() ];
-		for ( int d = 0; d < ds.length; ++d )
-			ds[ d ] = d < res.length ? ( int ) res[ d ] : 1;
-		ds[ ds.length - 1 ] = 1;
+		final int[] ds = FlatFieldCorrectedRandomAccessibleIntervals.fieldDownsampling( raw.getMipmapResolutions()[ level ], image.numDimensions() );
 		final ViewId v = new ViewId( timepointId, setupId );
-		final RandomAccessibleInterval< FloatType > bright, dark;
-		if ( ff instanceof MultiResolutionFlatfieldCorrectionWrappedImgLoader )
-		{
-			bright = ( ( MultiResolutionFlatfieldCorrectionWrappedImgLoader ) ff ).getOrCreateBrightImgDownsampled( v, ds );
-			dark = ( ( MultiResolutionFlatfieldCorrectionWrappedImgLoader ) ff ).getOrCreateDarkImgDownsampled( v, ds );
-		}
-		else
-		{
-			bright = ( ( ViewerFlatfieldCorrectionWrappedImgLoader ) ff ).getOrCreateBrightImgDownsampled( v, ds );
-			dark = ( ( ViewerFlatfieldCorrectionWrappedImgLoader ) ff ).getOrCreateDarkImgDownsampled( v, ds );
-		}
+		final RandomAccessibleInterval< FloatType > bright = ff.getOrCreateBrightImgDownsampled( v, ds );
+		final RandomAccessibleInterval< FloatType > dark = ff.getOrCreateDarkImgDownsampled( v, ds );
 		if ( bright == null && dark == null )
 			return image;
 		return FlatFieldCorrectedRandomAccessibleIntervals.create( image, bright, dark, ( net.imglib2.type.numeric.RealType ) ( ( NativeType ) image.getType() ).createVariable() );

@@ -45,7 +45,7 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 {
 	private final ImgLoader wrappedImgLoader;
 	private boolean active;
-	/** kept for the XML attribute only: the corrected image caches its blocks itself */
+	/** unused: read from old XMLs only */
 	private boolean cacheResult;
 
 	public DefaultFlatfieldCorrectionWrappedImgLoader(ImgLoader wrappedImgLoader)

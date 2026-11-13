@@ -28,32 +28,31 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.stream.Collectors;
 
 import javax.swing.JComponent;
 import javax.swing.JMenuItem;
 
 import fiji.util.gui.GenericDialogPlus;
 import ij.gui.GenericDialog;
-import mpicbg.spim.data.sequence.ViewId;
-import net.preibisch.legacy.io.IOFunctions;
-import net.preibisch.mvrecon.process.flatfield.Basic;
-import net.preibisch.mvrecon.process.flatfield.FlatfieldEstimation;
-import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.Illumination;
 import mpicbg.spim.data.sequence.ImgLoader;
-import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
+import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.DefaultFlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldImageInfo;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.LazyLoadingFlatFieldCorrectionMap;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.MultiResolutionFlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.process.flatfield.Basic;
+import net.preibisch.mvrecon.process.flatfield.FlatfieldEstimation;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 
 public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindowSetable
 {
@@ -159,15 +158,7 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 
 				final boolean activate = gdp.getNextBoolean();
 
-				final FlatfieldCorrectionWrappedImgLoader< ? extends ImgLoader > ffIL;
-				if ( alreadyFF )
-					ffIL = (FlatfieldCorrectionWrappedImgLoader< ImgLoader >) data.getSequenceDescription()
-							.getImgLoader();
-				else if ( data.getSequenceDescription().getImgLoader() instanceof MultiResolutionImgLoader )
-					ffIL = new MultiResolutionFlatfieldCorrectionWrappedImgLoader(
-							(MultiResolutionImgLoader) data.getSequenceDescription().getImgLoader() );
-				else
-					ffIL = new DefaultFlatfieldCorrectionWrappedImgLoader( data.getSequenceDescription().getImgLoader() );
+				final FlatfieldCorrectionWrappedImgLoader< ? > ffIL = FlatfieldEstimation.flatfieldLoader( data );
 
 				for ( Channel c : channels )
 					for ( Illumination ill : illums )
@@ -193,7 +184,7 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 
 				ffIL.setActive( activate );
 
-				data.getSequenceDescription().setImgLoader( ffIL );
+				data.getSequenceDescription().setImgLoader( ( ImgLoader ) ffIL );
 				gdp.dispose();
 
 				showInBDV( data );
@@ -225,14 +216,14 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 			return;
 		}
 
-		// the pyramid levels all selected views have; the default is the level closest to the last downsampling
+		// default: the common level closest to the last downsampling used
 		final List< long[] > levels = FlatfieldEstimation.commonLevels( data, views );
 		final String[] levelNames = new String[ levels.size() ];
 		int defaultLevel = 0;
 		for ( int l = 0; l < levels.size(); ++l )
 		{
 			final long[] f = levels.get( l );
-			levelNames[ l ] = java.util.Arrays.stream( f ).mapToObj( Long::toString ).collect( java.util.stream.Collectors.joining( "," ) );
+			levelNames[ l ] = Arrays.stream( f ).mapToObj( Long::toString ).collect( Collectors.joining( "," ) );
 			if ( Math.abs( Math.log( FlatfieldEstimation.maxFactor( f ) ) - Math.log( defaultDownsampling ) )
 					< Math.abs( Math.log( FlatfieldEstimation.maxFactor( levels.get( defaultLevel ) ) ) - Math.log( defaultDownsampling ) ) )
 				defaultLevel = l;
@@ -283,7 +274,7 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 		panel.updateContent();
 	}
 
-	/** shows the changed flatfield: a repaint if the open BigDataViewer can show it through the preview, else reopen it */
+	/** repaints BigDataViewer if its preview can show the changed flatfield, reopens it otherwise */
 	private void showInBDV( final SpimData2 data )
 	{
 		if ( IntensityPreview.flatfieldChanged( data ) )

@@ -64,7 +64,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
  */
 public class IntensityCorrectionPipeline
 {
-	/** MEDIAN: the ratio of the medians of the voxels both views see (a pure gain, spotlight's "intersection"; for a SCALE solve) */
+	/** MEDIAN: the ratio of the medians of the voxels both views see (a pure gain; for a SCALE solve) */
 	public enum Method { RANSAC, HISTOGRAM, MEDIAN }
 
 	public enum TransformationModel { AFFINE, TRANSLATION, SCALE, IDENTITY }

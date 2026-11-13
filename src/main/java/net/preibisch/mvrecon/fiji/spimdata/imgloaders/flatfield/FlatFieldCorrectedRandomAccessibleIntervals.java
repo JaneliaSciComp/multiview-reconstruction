@@ -23,32 +23,31 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHints;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.converter.RealTypeConverters;
-import net.imglib2.img.Img;
-import net.imglib2.img.ImgFactory;
-import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.img.cell.CellImgFactory;
-import net.imglib2.util.Intervals;
 import net.imglib2.Volatile;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.ClampType;
 import net.imglib2.algorithm.blocks.convert.Convert;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
-
 import net.imglib2.cache.img.CachedCellImg;
 import net.imglib2.cache.img.CellLoader;
 import net.imglib2.cache.img.ReadOnlyCachedCellImgFactory;
 import net.imglib2.cache.img.ReadOnlyCachedCellImgOptions;
 import net.imglib2.converter.Converters;
+import net.imglib2.converter.RealTypeConverters;
+import net.imglib2.img.Img;
+import net.imglib2.img.ImgFactory;
+import net.imglib2.img.array.ArrayImgFactory;
+import net.imglib2.img.cell.CellImgFactory;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Intervals;
 import net.imglib2.view.Views;
 
 /**
@@ -63,8 +62,8 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 	private static final int[] DEFAULT_CELL_SIZE = new int[] {64, 64, 64};
 
 	/**
-	 * What the flatfield img loaders hand out: the corrected image as {@code outputType}, normalized if requested
-	 * (float only), and copied into memory if {@link ImgLoaderHints#LOAD_COMPLETELY} is among the hints.
+	 * The corrected image as {@code outputType}; normalized if requested (float only) and copied into memory on
+	 * {@link ImgLoaderHints#LOAD_COMPLETELY}.
 	 */
 	public static <O extends RealType<O> & NativeType<O>, R extends RealType<R> & NativeType<R>, S extends RealType<S>, T extends RealType<T>>
 	RandomAccessibleInterval<O> create(
@@ -88,7 +87,7 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 		return loaded;
 	}
 
-	/** the downsampling of the (2D) flatfield images for a mipmap level: the level's in x and y, none in z */
+	/** downsampling of the 2D fields for a mipmap level: the level's in x and y, none in z */
 	public static int[] fieldDownsampling(final double[] mipmapResolution, final int numDimensions)
 	{
 		final int[] ds = new int[numDimensions];
@@ -141,16 +140,15 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 		if (outputType instanceof FloatType)
 			return (RandomAccessibleInterval<O>) wrapWithOffset(correctedFloat, new FloatType(), sourceImg, DEFAULT_CELL_SIZE);
 
-		// Otherwise convert to the requested output type, clamped to its range: an integer type
-		// would wrap where raw < dark (e.g. -3 -> 65533 for uint16). Converted blockwise, so the
-		// result is still a CachedCellImg (prefetching and BlockSupplier.of() need cells).
-		// 16 bit in, 16 bit out: one pass over the block (FlatfieldCorrectionBlockSupplier.ofUnsignedShort)
+		// 16 bit in and out: one pass over the block
 		if (outputType instanceof UnsignedShortType && sourceImg.getType() instanceof UnsignedShortType
 				&& (brightImg != null || darkImg != null))
 			return (RandomAccessibleInterval<O>) wrapWithOffset(
 					() -> FlatfieldCorrectionBlockSupplier.ofUnsignedShort((RandomAccessibleInterval) sourceImg, brightImg, darkImg),
 					new UnsignedShortType(), sourceImg, DEFAULT_CELL_SIZE);
 
+		// other types: converted per block (the result stays a cell image) and clamped, since an integer type
+		// would wrap where raw < dark
 		if (outputType instanceof NativeType && !(outputType instanceof Volatile))
 			return (RandomAccessibleInterval<O>) wrapWithOffset(
 					() -> correctedFloat.get().andThen(Convert.convert((NativeType) outputType, ClampType.CLAMP)),
@@ -217,9 +215,8 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 
 	/**
 	 * Wrap a BlockSupplier in a CachedCellImg and translate to match source interval.
-	 * The BlockSupplier is created when the first cell is loaded: creating it reads the source's first
-	 * block (PrimitiveBlocks.of asks the cell img for its access type), which BDV would otherwise do on
-	 * its render thread for every level of every view when it opens a dataset.
+	 * The BlockSupplier is created with the first cell: creating it reads a source block, which would
+	 * otherwise happen on BDV's render thread for every level of every view.
 	 */
 	private static <O extends NativeType<O>, R extends RealType<R>> RandomAccessibleInterval<O> wrapWithOffset(
 			final Supplier<BlockSupplier<O>> createBlocks,
@@ -238,8 +235,7 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 			b.copy(cell, cell.getStorageArray());
 		};
 
-		// Create CachedCellImg (zero-min); volatile accesses so that BDV can wrap it with
-		// VolatileViews.wrapAsVolatile (see ViewerFlatfieldCorrectionWrappedImgLoader)
+		// zero-min; volatile accesses for VolatileViews.wrapAsVolatile
 		final CachedCellImg<O, ?> cellImg = new ReadOnlyCachedCellImgFactory().create(
 				sourceImg.dimensionsAsLongArray(),
 				type,

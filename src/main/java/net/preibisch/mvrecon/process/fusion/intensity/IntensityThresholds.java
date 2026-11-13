@@ -63,7 +63,7 @@ public class IntensityThresholds
 
 	/**
 	 * Percentile of the background a view's background level is taken at. Low rather than the median because
-	 * tissue only ever pulls the estimate up (spotlight's emptiness stage uses the same).
+	 * tissue only ever pulls the estimate up.
 	 */
 	public static final double BACKGROUND_PERCENTILE = 5;
 

@@ -599,9 +599,8 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 	}
 
 	/**
-	 * Key 'f' toggles the dataset's flatfield correction (right-click &gt; Flatfield Correction), the same switch as the
-	 * dialog's set_active: what BigDataViewer shows is what fusion and intensity correction use. BigDataViewer shows it
-	 * through the preview (only a repaint), if it was opened on the images below the flatfield correction.
+	 * Key 'f' toggles the dataset's flatfield correction, like the dialog's set_active; fusion and intensity
+	 * correction use what is shown. An open BigDataViewer needs only a repaint.
 	 */
 	protected void addFlatfieldPreviewShortcut()
 	{
@@ -616,14 +615,14 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 				final BasicBDVPopup p = runningBdvPopup();
 				final boolean bdv = p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible();
 				BasicImgLoader il = data.getSequenceDescription().getImgLoader();
-				while ( il instanceof SplitViewerImgLoader ) // a split dataset keeps the flatfield correction below
+				while ( il instanceof SplitViewerImgLoader ) // the flatfield correction is below the split loader
 					il = ( ( SplitViewerImgLoader ) il ).getUnderlyingImgLoader();
 				final boolean on;
 				if ( il instanceof ViewerFlatfieldCorrectionWrappedImgLoader )
 				{
 					final ViewerFlatfieldCorrectionWrappedImgLoader ff = ( ViewerFlatfieldCorrectionWrappedImgLoader ) il;
 					ff.setActive( on = !ff.isActive() );
-					IntensityPreview.flatfieldChanged( data ); // drops corrected images built on the other state
+					IntensityPreview.flatfieldChanged( data ); // drops the preview's cached images
 				}
 				else if ( il instanceof FlatfieldCorrectionWrappedImgLoader && il == data.getSequenceDescription().getImgLoader() )
 				{

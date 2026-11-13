@@ -174,8 +174,8 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 
 		final double meanBrightCorrected = meanCorrected(brightImg, darkImg, bright, dark);
 
-		// a missing field is a constant, filled in copy(): BlockSupplier.of() cannot analyze a
-		// ConstantRandomAccessible and would copy every block pixel by pixel (PrimitiveBlocks fall-back)
+		// a missing field stays null and is filled as a constant: BlockSupplier.of() would copy a
+		// ConstantRandomAccessible pixel by pixel
 		return new FlatfieldCorrectionBlockSupplier(
 				source,
 				brightImg == null ? null : BlockSupplier.of(bright),
@@ -184,10 +184,8 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 	}
 
 	/**
-	 * mean(bright - dark) per field pair and extent. Every view of a camera shares its (downsampled) fields, and
-	 * iterating them for each view and level took ~50 ms each: minutes on BDV's render thread for thousands of
-	 * views, and again for every view a fusion block opens. Weak keys, so the fields go with their loader; the
-	 * value must not reference its key, so it holds only the other field.
+	 * mean(bright - dark) per field pair and extent, cached: the views of a camera share their fields, and
+	 * computing it per view and level took ~50 ms each. Weak keys, so the value must not reference its key.
 	 */
 	private static final Map<Object, Map<List<Object>, Double>> MEANS = Collections.synchronizedMap(new WeakHashMap<>());
 
@@ -255,8 +253,8 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 	}
 
 	/**
-	 * The correction of the block's xy extent as {gain, dark}, valid until the next call:
-	 * corrected = (source - dark) * gain, with gain = meanBrightCorrected / (bright - dark), 0 where bright == dark.
+	 * {gain, dark} for the block's xy extent, valid until the next call:
+	 * gain = meanBrightCorrected / (bright - dark), 0 where bright == dark.
 	 */
 	private float[][] gainAndDark(final Interval interval, final int xyLen) {
 		final float[] brightArray = brightTemp.get(xyLen);
@@ -291,10 +289,8 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 	}
 
 	/**
-	 * The correction of {@link #of(RandomAccessibleInterval, RandomAccessibleInterval, RandomAccessibleInterval)} for
-	 * 16-bit data, as 16 bit, computed in one pass over the 16-bit block instead of three (to float, correct, to 16 bit):
-	 * the values of {@code of(...).andThen(Convert.convert(new UnsignedShortType(), ClampType.CLAMP))}.
-	 * At least one of the fields must be given.
+	 * {@link #of(RandomAccessibleInterval, RandomAccessibleInterval, RandomAccessibleInterval)} for 16-bit data,
+	 * rounded and clamped to 16 bit in one pass over the block. At least one field must be given.
 	 */
 	public static <S extends RealType<S>, R extends RealType<R>> BlockSupplier<UnsignedShortType> ofUnsignedShort(
 			final RandomAccessibleInterval<UnsignedShortType> sourceImg,
@@ -327,12 +323,12 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 			final float[][] f = fields.gainAndDark(interval, xyLen);
 			final float[] gain = f[0], darkArray = f[1];
 
-			// the float loop, rounded and clamped in place; (int)(v + 0.5f) is cheaper than Math.round()
+			// (int)(v + 0.5f) is cheaper than Math.round()
 			for (int z = 0; z < zSize; z++) {
 				final int zOffset = z * xyLen;
 				for (int i = 0; i < xyLen; i++) {
-					final int q = (int) (((d[zOffset + i] & 0xffff) - darkArray[i]) * gain[i] + 0.5f);
-					d[zOffset + i] = (short) (q < 0 ? 0 : q > 0xffff ? 0xffff : q);
+					final float v = (UnsignedShortType.getUnsignedShort(d[zOffset + i]) - darkArray[i]) * gain[i];
+					d[zOffset + i] = UnsignedShortType.getCodedSignedShortChecked((int) (v + 0.5f));
 				}
 			}
 		}

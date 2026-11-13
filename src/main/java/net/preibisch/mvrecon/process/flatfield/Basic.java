@@ -1,3 +1,25 @@
+/*-
+ * #%L
+ * Software for the reconstruction of multi-view microscopic acquisitions
+ * like Selective Plane Illumination Microscopy (SPIM) Data.
+ * %%
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
 package net.preibisch.mvrecon.process.flatfield;
 
 import java.util.ArrayList;
@@ -5,18 +27,18 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.DoubleUnaryOperator;
 
 import Jama.Matrix;
 import edu.emory.mathcs.jtransforms.dct.FloatDCT_2D;
+import net.preibisch.legacy.io.IOFunctions;
 
 /**
- * BaSiC flat-field / dark-field estimation (Peng et al., Nature Communications 2017), a line-by-line port of
- * spotlight's {@code basic.py} (itself a port of BigFlatFieldIlluminator.jl), so that both give the same fields on
- * the same stack. Frames are row-major (y, x) planes of {@code h x w}; the fit is the reweighted inexact ALM of the
- * paper with spotlight's defaults, the lambdas from the L1 norm of the mean image's DCT, and spotlight's autotune.
+ * BaSiC flat-field / dark-field estimation (Peng et al., Nature Communications 2017), following
+ * BigFlatFieldIlluminator.jl: the reweighted inexact ALM of the paper, lambdas from the L1 norm of the mean image's
+ * DCT, and BaSiCPy's autotune. Frames are row-major (y, x) planes of {@code h x w}.
  *
- * The fields come back as {@code flat} (mean 1, multiplicative) and {@code dark} (additive, in the counts of the
- * input), to be applied as {@code (raw - dark) / flat}.
+ * Apply the result as {@code (raw - dark) / flat}: {@code flat} has mean 1, {@code dark} is in input counts.
  */
 public class Basic
 {
@@ -27,7 +49,7 @@ public class Basic
 		/** 0 = automatic (l1(DCT(mean)) / 2000) */
 		public double lambdaDarkfield = 0;
 		public boolean estimateDarkfield = true;
-		/** search lambda around the automatic value when {@link #lambda} is 0 (spotlight's default) */
+		/** search around the automatic lambda when {@link #lambda} is 0 */
 		public boolean autotune = true;
 		public int maxIterations = 500;
 		public double optimizationTol = 1e-6;
@@ -69,7 +91,7 @@ public class Basic
 	public static final int LAMBDA_CAL_SIZE = 128;
 
 	/**
-	 * spotlight's {@code run_basic_camera}: autotune lambda if asked and none was given, then fit.
+	 * Autotunes lambda if asked and none was given, then fits.
 	 *
 	 * @param images frames (raw counts), each row-major {@code h x w}
 	 * @param outH output frame (e.g. level 0), the fields are resized once from the working grid
@@ -81,7 +103,7 @@ public class Basic
 		{
 			final double[] lm = autotuneLambda( images, h, w, p );
 			lambda = lm[ 0 ];
-			System.out.println( String.format( "BaSiC: autotuned lambda = %.5g (%gx the l1/800 default)", lm[ 0 ], lm[ 1 ] ) );
+			IOFunctions.println( String.format( "BaSiC: autotuned lambda = %.5g (%gx the l1/800 default)", lm[ 0 ], lm[ 1 ] ) );
 		}
 		final Parameters q = p.copy();
 		q.lambda = lambda;
@@ -142,12 +164,12 @@ public class Basic
 		}
 	}
 
-	/** bilinear resize of a row-major {@code h x w} plane to {@code outH x outW}, in double as spotlight */
+	/** bilinear resize of a row-major {@code h x w} plane to {@code outH x outW} */
 	public static float[] imresize( final float[] a, final int h, final int w, final int outH, final int outW )
 	{
 		if ( h == outH && w == outW )
 			return a.clone();
-		// axis 0 (rows) first, then axis 1, as spotlight
+		// rows first, then columns
 		double[] rows = new double[ outH * w ];
 		{
 			final int[] lo = new int[ outH ], hi = new int[ outH ];
@@ -195,9 +217,7 @@ public class Basic
 		return ( float ) s;
 	}
 
-	/**
-	 * The fit (spotlight's {@code basic_estimate}) for one fixed lambda (0 = l1/800).
-	 */
+	/** The fit for one fixed lambda (0 = l1/800). */
 	public static Fields basicEstimate( float[][] images, int h, int w, final Parameters p, final int outH, final int outW )
 	{
 		final int n = images.length;
@@ -600,7 +620,7 @@ public class Basic
 				wk[ i ] *= scale;
 	}
 
-	// ─── Autotune (BaSiCPy's solver-free lambda selection, as spotlight) ─────────
+	// ─── Autotune (BaSiCPy's solver-free lambda selection) ─────────────────────
 
 	static final double[] AUTOTUNE_COARSE = { 0.01, 0.1, 0.5, 2.0, 8.0, 10.0 };
 	static final double[] AUTOTUNE_FINE = { 0.01, 0.1, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0 };
@@ -684,8 +704,9 @@ public class Basic
 	}
 
 	/**
-	 * spotlight's {@code autotune_lambda}: grid search over multiples of the l1/800 default, fitted at
-	 * {@link #LAMBDA_CAL_SIZE}. Returns {lambda, multiplier}.
+	 * Grid search over multiples of the l1/800 default, fitted at {@link #LAMBDA_CAL_SIZE}.
+	 *
+	 * @return {lambda, multiplier}
 	 */
 	public static double[] autotuneLambda( final float[][] images, final int h, final int w, final Parameters p )
 	{
@@ -718,7 +739,7 @@ public class Basic
 		final double vRange = ( vmaxRef - vminRef * VMIN_FACTOR ) * VRANGE_FACTOR;
 		costs.put( 1.0, cost( refCorrected, ref, vRange ) );
 
-		final java.util.function.DoubleUnaryOperator costOf = mult -> costs.computeIfAbsent( mult, m -> {
+		final DoubleUnaryOperator costOf = mult -> costs.computeIfAbsent( mult, m -> {
 			fit.lambda = m * lamDefault;
 			final Fields fl = basicEstimate( small, c, c, fit, c, c );
 			return cost( corrected( small, fl ), fl, vRange );
@@ -747,7 +768,7 @@ public class Basic
 			if ( e.getValue() < costs.get( bestMult ) )
 				bestMult = e.getKey();
 		if ( bestMult == AUTOTUNE_FINE[ 0 ] || bestMult == AUTOTUNE_FINE[ AUTOTUNE_FINE.length - 1 ] )
-			System.out.println( "warning: BaSiC autotune chose " + bestMult + "x, the edge of its grid, so the best lambda may lie outside it." );
+			IOFunctions.println( "warning: BaSiC autotune chose " + bestMult + "x, the edge of its grid, so the best lambda may lie outside it." );
 		return new double[] { bestMult * lamDefault, bestMult };
 	}
 }

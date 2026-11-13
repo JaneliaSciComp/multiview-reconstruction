@@ -1,14 +1,39 @@
+/*-
+ * #%L
+ * Software for the reconstruction of multi-view microscopic acquisitions
+ * like Selective Plane Illumination Microscopy (SPIM) Data.
+ * %%
+ * Copyright (C) 2012 - 2025 Multiview Reconstruction developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
 package net.preibisch.mvrecon.process.flatfield;
 
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.RawCompression;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
@@ -22,6 +47,7 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Cast;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.DefaultFlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
@@ -30,12 +56,9 @@ import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.MultiResolutionF
 import util.URITools;
 
 /**
- * Estimates flatfields from the data itself and hands them to the flatfield-corrected image loader, so everything
- * downstream (BDV, intensity correction, fusion) sees the corrected images. A camera is one channel x illumination:
- * the views that share one sensor frame. The estimator is BaSiC: flat- and darkfield from per-pixel statistics over
- * many tiles ({@link Basic}). (Gain fields, a log-linear ramp per camera fitted from the tile overlaps or from the
- * tiles' interiors, were removed in 2026-11: on the two datasets they were tried on, neither improved on an intensity
- * correction with 2,2,2 coefficients, and the overlap fit took bleaching for a ramp.)
+ * Estimates flat- and darkfields from the data ({@link Basic}) and hands them to the flatfield-corrected image
+ * loader, so that BDV, intensity correction and fusion see the corrected images. A camera is one channel x
+ * illumination: the views that share a sensor frame.
  */
 public class FlatfieldEstimation
 {
@@ -64,10 +87,8 @@ public class FlatfieldEstimation
 	}
 
 	/**
-	 * The pyramid levels every one of {@code views} has, finest first, as the first view's (rounded) downsampling
-	 * factors; a level counts if its largest factor is the largest factor of a level of every view (the estimators
-	 * take that largest factor and pick each view's coarsest level within it). A dataset without a pyramid has one,
-	 * {1, 1, 1}.
+	 * The pyramid levels all {@code views} have, finest first, as the first view's rounded downsampling factors.
+	 * Levels are compared by their largest factor; without a pyramid the only level is {1, 1, 1}.
 	 */
 	public static List< long[] > commonLevels( final SpimData2 data, final Collection< ? extends ViewId > views )
 	{
@@ -79,10 +100,10 @@ public class FlatfieldEstimation
 			return levels;
 		}
 		final MultiResolutionImgLoader mr = ( MultiResolutionImgLoader ) il;
-		java.util.Set< Long > common = null;
+		Set< Long > common = null;
 		for ( final ViewId v : views )
 		{
-			final java.util.Set< Long > mine = new java.util.HashSet<>();
+			final Set< Long > mine = new HashSet<>();
 			for ( final double[] r : mr.getSetupImgLoader( v.getViewSetupId() ).getMipmapResolutions() )
 				mine.add( maxFactor( r ) );
 			if ( common == null )
@@ -107,7 +128,6 @@ public class FlatfieldEstimation
 		return f;
 	}
 
-	/** the largest (rounded) downsampling factor of a level */
 	public static long maxFactor( final long[] factors )
 	{
 		return Arrays.stream( factors ).max().orElse( 1 );
@@ -151,23 +171,20 @@ public class FlatfieldEstimation
 	{
 		if ( w.exists( dataset ) )
 			w.remove( dataset ); // a new estimate replaces the old one
-		N5Utils.save( ArrayImgs.floats( plane, sx, sy ), w, dataset, new int[] { ( int ) sx, ( int ) sy }, new org.janelia.saalfeldlab.n5.RawCompression() );
+		N5Utils.save( ArrayImgs.floats( plane, sx, sy ), w, dataset, new int[] { ( int ) sx, ( int ) sy }, new RawCompression() );
 		return new FlatfieldImageInfo( container, StorageFormat.ZARR, dataset );
 	}
 
 	// ─── BaSiC ────────────────────────────────────────────────────────────────
 
-	/** the number of quantile planes BaSiC is fitted to (q000 .. q100 in steps of 5, as spotlight) */
+	/** the number of quantile planes BaSiC is fitted to (0% .. 100% in steps of 5) */
 	public static final int NUM_QUANTILES = 21;
 
 	/**
 	 * Estimates flat- and darkfield per camera with BaSiC and links them to the views (bright = flat + dark, so that
 	 * the loader's {@code (raw - dark) * mean(bright - dark) / (bright - dark)} is BaSiC's {@code (raw - dark) / flat}).
 	 *
-	 * The stack BaSiC is fitted to is spotlight's qstack: per pixel of the statistics level, each tile's z column
-	 * sorted (in blocks of {@code p = 21 floor((Z - 1) / 21)}, averaged, the trailing slices dropped), the sorted
-	 * columns averaged over the camera's tiles, and 21 R-7 quantiles of that, rounded to uint16. With fewer than 21
-	 * slices, every slice of every tile is a frame instead.
+	 * BaSiC is fitted to the quantile stack of each camera, see {@link #qstack}.
 	 */
 	public static FlatfieldCorrectionWrappedImgLoader< ? > estimateBasic( final SpimData2 data, final Collection< ? extends ViewId > views,
 			final long maxDownsampling, final Basic.Parameters params )
@@ -194,7 +211,7 @@ public class FlatfieldEstimation
 						throw new IllegalArgumentException( "BaSiC: the views of " + e.getKey() + " differ in xy size (one camera is one sensor frame)" );
 
 				final float[][] stack = qstack( tiles );
-				System.out.println( "BaSiC: " + e.getKey() + ": " + tiles.size() + " views, stack of " + stack.length + " frames of " + d0[ 0 ] + "x" + d0[ 1 ] );
+				IOFunctions.println( "BaSiC: " + e.getKey() + ": " + tiles.size() + " views, stack of " + stack.length + " frames of " + d0[ 0 ] + "x" + d0[ 1 ] );
 				final Basic.Fields f = Basic.estimate( stack, ( int ) d0[ 1 ], ( int ) d0[ 0 ], params, ( int ) size0[ 1 ], ( int ) size0[ 0 ] );
 
 				final float[] bright = new float[ f.flat.length ];
@@ -206,7 +223,7 @@ public class FlatfieldEstimation
 					flatMax = Math.max( flatMax, f.flat[ i ] );
 					darkMean += f.dark[ i ] / bright.length;
 				}
-				System.out.println( String.format( "BaSiC: %s: lambda %.4g, flatfield %.3f .. %.3f, darkfield mean %.1f", e.getKey(), f.lambda, flatMin, flatMax, darkMean ) );
+				IOFunctions.println( String.format( "BaSiC: %s: lambda %.4g, flatfield %.3f .. %.3f, darkfield mean %.1f", e.getKey(), f.lambda, flatMin, flatMax, darkMean ) );
 
 				final String prefix = e.getKey() + "/basic_" + size0[ 0 ] + "x" + size0[ 1 ];
 				final FlatfieldImageInfo bi = save( w, container, prefix + "/bright", bright, size0[ 0 ], size0[ 1 ] );
@@ -224,7 +241,12 @@ public class FlatfieldEstimation
 		return ffIL;
 	}
 
-	/** spotlight's qstack of one camera's tiles (all of one xy size): frames as row-major (y, x) planes */
+	/**
+	 * The frames BaSiC is fitted to, as row-major (y, x) planes, for one camera's tiles (all of one xy size): per
+	 * pixel, each tile's z column sorted in blocks of {@code p = 21 floor((Z - 1) / 21)} slices (blocks averaged,
+	 * trailing slices dropped), the sorted columns averaged over the tiles, and 21 quantiles of that, rounded to
+	 * uint16. With fewer than 21 slices every slice of every tile is a frame.
+	 */
 	static float[][] qstack( final List< Tile > tiles )
 	{
 		final int sx = ( int ) tiles.get( 0 ).dims[ 0 ], sy = ( int ) tiles.get( 0 ).dims[ 1 ];
@@ -242,12 +264,16 @@ public class FlatfieldEstimation
 				{
 					final float[] f = new float[ sx * sy ];
 					final RandomAccess< ? extends RealType< ? > > ra = t.img.randomAccess();
+					ra.setPosition( z, 2 );
 					for ( int y = 0; y < sy; ++y )
+					{
+						ra.setPosition( y, 1 );
 						for ( int x = 0; x < sx; ++x )
 						{
-							ra.setPosition( new long[] { x, y, z } );
+							ra.setPosition( x, 0 );
 							f[ y * sx + x ] = ra.get().getRealFloat();
 						}
+					}
 					frames[ k++ ] = f;
 				}
 			return frames;
@@ -298,7 +324,7 @@ public class FlatfieldEstimation
 		return planes;
 	}
 
-	/** R-7 quantile of a sorted vector, as spotlight's orderstats */
+	/** R-7 (linear) quantile of a sorted vector */
 	static double r7( final double[] v, final double q )
 	{
 		final int n = v.length;
@@ -316,7 +342,7 @@ public class FlatfieldEstimation
 		if ( il instanceof FlatfieldCorrectionWrappedImgLoader )
 			return ( FlatfieldCorrectionWrappedImgLoader< ? > ) il;
 		if ( il instanceof MultiResolutionImgLoader )
-			return new MultiResolutionFlatfieldCorrectionWrappedImgLoader( ( MultiResolutionImgLoader ) il, true );
-		return new DefaultFlatfieldCorrectionWrappedImgLoader( ( ImgLoader ) il, true );
+			return new MultiResolutionFlatfieldCorrectionWrappedImgLoader( ( MultiResolutionImgLoader ) il );
+		return new DefaultFlatfieldCorrectionWrappedImgLoader( ( ImgLoader ) il );
 	}
 }
