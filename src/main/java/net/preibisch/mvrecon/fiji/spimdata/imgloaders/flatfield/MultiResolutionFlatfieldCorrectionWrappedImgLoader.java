@@ -32,7 +32,6 @@ import java.util.stream.Collectors;
 
 import ij.ImageJ;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
-import mpicbg.spim.data.generic.sequence.ImgLoaderHints;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionSetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
@@ -42,13 +41,8 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.downsample.Downsample;
-import net.imglib2.converter.RealTypeConverters;
-import net.imglib2.img.Img;
-import net.imglib2.img.ImgFactory;
-import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.cell.AbstractCellImg;
 import net.imglib2.img.cell.CellGrid;
-import net.imglib2.img.cell.CellImgFactory;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
@@ -56,7 +50,6 @@ import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 
@@ -167,150 +160,42 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		@Override
 		public RandomAccessibleInterval< T > getImage(int timepointId, int level, ImgLoaderHint... hints)
 		{
-			/*
-			 * TODO: should we care about the MipmapTransform here? are there
-			 * other MultiresolutionImgLoaders that do pyramid differently?
-			 */
+			if ( !active )
+				return wrapped().getImage( timepointId, level, hints );
+			return corrected( timepointId, level, getImageType(), false, hints );
+		}
 
-			final MultiResolutionSetupImgLoader< ? > wrpSetupIL = wrappedImgLoader.getSetupImgLoader( setupId );
+		@SuppressWarnings("unchecked")
+		private MultiResolutionSetupImgLoader< T > wrapped()
+		{
+			return (MultiResolutionSetupImgLoader< T >) wrappedImgLoader.getSetupImgLoader( setupId );
+		}
 
-			if(!active) {
-				@SuppressWarnings("unchecked")
-				RandomAccessibleInterval<T> image = (RandomAccessibleInterval<T>) wrpSetupIL.getImage(timepointId, level, hints);
-				return image;
-			}
-
-			final int n = wrpSetupIL.getImageSize( timepointId ).numDimensions();
-
-			final int[] dsFactors = new int[n];
-			final double[] dsD = wrpSetupIL.getMipmapResolutions()[level];
-			for ( int d = 0; d < n; d++ )
-				// NB: we might need to round here -> test!
-				dsFactors[d] = (int) dsD[d];
-			// we should not need the last dimension
-			dsFactors[n - 1] = 1;
-
-			@SuppressWarnings("unchecked")
-			RandomAccessibleInterval< T > rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
-					(RandomAccessibleInterval< T >) wrpSetupIL.getImage( timepointId, level, hints ),
-					getOrCreateBrightImgDownsampled( new ViewId( timepointId, setupId ), dsFactors ),
-					getOrCreateDarkImgDownsampled( new ViewId( timepointId, setupId ), dsFactors ) );
-
-			boolean loadCompletelyRequested = false;
-			for (ImgLoaderHint hint : hints) {
-				if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
-					loadCompletelyRequested = true;
-					break;
-				}
-			}
-
-			if (loadCompletelyRequested)
-			{
-				long numPx = 1;
-				for (int d = 0; d < rai.numDimensions(); d++)
-					numPx *= rai.dimension( d );
-
-				final ImgFactory< T > imgFactory;
-				if (Math.log(numPx) / Math.log(2) < 31) {
-					imgFactory = new ArrayImgFactory<>(getImageType());
-				} else {
-					imgFactory = new CellImgFactory<>(getImageType());
-				}
-
-				Img<T> loadedImg = imgFactory.create(rai);
-				RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
-
-				rai = loadedImg;
-			}
-			return rai;
+		/*
+		 * TODO: should we care about the MipmapTransform here? are there
+		 * other MultiresolutionImgLoaders that do pyramid differently?
+		 */
+		private < O extends RealType< O > & NativeType< O > > RandomAccessibleInterval< O > corrected(
+				int timepointId, int level, O type, boolean normalize, ImgLoaderHint... hints)
+		{
+			final MultiResolutionSetupImgLoader< T > wrpSetupIL = wrapped();
+			final int[] dsFactors = FlatFieldCorrectedRandomAccessibleIntervals.fieldDownsampling(
+					wrpSetupIL.getMipmapResolutions()[level], wrpSetupIL.getImageSize( timepointId ).numDimensions() );
+			final ViewId view = new ViewId( timepointId, setupId );
+			return FlatFieldCorrectedRandomAccessibleIntervals.create(
+					wrpSetupIL.getImage( timepointId, level, hints ),
+					getOrCreateBrightImgDownsampled( view, dsFactors ),
+					getOrCreateDarkImgDownsampled( view, dsFactors ),
+					type, normalize, hints );
 		}
 
 		@Override
 		public RandomAccessibleInterval< FloatType > getFloatImage(int timepointId, int level, boolean normalize,
 				ImgLoaderHint... hints)
 		{
-			final MultiResolutionSetupImgLoader< ? > wrpSetupIL = wrappedImgLoader.getSetupImgLoader( setupId );
-
-			if(!active)
-				return wrpSetupIL.getFloatImage( timepointId, level, normalize, hints );
-
-			final int n = wrpSetupIL.getImageSize( timepointId ).numDimensions();
-
-			final int[] dsFactors = new int[n];
-			final double[] dsD = wrpSetupIL.getMipmapResolutions()[level];
-			for ( int d = 0; d < n; d++ )
-				// NB: we might need to round here -> test!
-				dsFactors[d] = (int) dsD[d];
-			// we should not need the last dimension
-			dsFactors[n - 1] = 1;
-
-			@SuppressWarnings("unchecked")
-			RandomAccessibleInterval< FloatType > rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
-					(RandomAccessibleInterval< T >) wrpSetupIL.getImage( timepointId, level, hints ),
-					getOrCreateBrightImgDownsampled( new ViewId( timepointId, setupId ), dsFactors ),
-					getOrCreateDarkImgDownsampled( new ViewId( timepointId, setupId ), dsFactors ), new FloatType() );
-
-			if ( normalize )
-			{
-				RandomAccessibleInterval< FloatType > raiNormalized = new VirtuallyNormalizedRandomAccessibleInterval<>(
-						rai );
-				boolean loadCompletelyRequested = false;
-				for (ImgLoaderHint hint : hints) {
-					if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
-						loadCompletelyRequested = true;
-						break;
-					}
-				}
-
-				if (loadCompletelyRequested)
-				{
-					long numPx = 1;
-					for (int d = 0; d < raiNormalized.numDimensions(); d++)
-						numPx *= raiNormalized.dimension( d );
-
-					final ImgFactory< FloatType > imgFactory;
-					if (Math.log(numPx) / Math.log(2) < 31) {
-						imgFactory = new ArrayImgFactory<>(new FloatType());
-					} else {
-						imgFactory = new CellImgFactory<>(new FloatType());
-					}
-
-					Img<FloatType> loadedImg = imgFactory.create(raiNormalized);
-					RealTypeConverters.copyFromTo(Views.extendZero(raiNormalized), loadedImg);
-
-					raiNormalized = loadedImg;
-				}
-				rai = raiNormalized;
-			}
-			else {
-				boolean loadCompletelyRequested = false;
-				for (ImgLoaderHint hint : hints) {
-					if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
-						loadCompletelyRequested = true;
-						break;
-					}
-				}
-
-				if (loadCompletelyRequested)
-				{
-					long numPx = 1;
-					for (int d = 0; d < rai.numDimensions(); d++)
-						numPx *= rai.dimension( d );
-
-					final ImgFactory< FloatType > imgFactory;
-					if (Math.log(numPx) / Math.log( 2 ) < 31)
-						imgFactory = new ArrayImgFactory<>(new FloatType());
-					else
-						imgFactory = new CellImgFactory<>(new FloatType());
-
-					Img<FloatType> loadedImg = imgFactory.create(rai);
-					RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
-
-					rai = loadedImg;
-				}
-
-			}
-			return rai;
+			if ( !active )
+				return wrapped().getFloatImage( timepointId, level, normalize, hints );
+			return corrected( timepointId, level, new FloatType(), normalize, hints );
 		}
 
 		@Override

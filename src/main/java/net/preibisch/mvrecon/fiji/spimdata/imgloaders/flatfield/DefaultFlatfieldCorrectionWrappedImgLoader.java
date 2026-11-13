@@ -26,23 +26,16 @@ import java.io.File;
 
 import ij.ImageJ;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
-import mpicbg.spim.data.generic.sequence.ImgLoaderHints;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.SetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.converter.RealTypeConverters;
-import net.imglib2.img.Img;
-import net.imglib2.img.ImgFactory;
-import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.img.cell.CellImgFactory;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 
@@ -104,48 +97,23 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 
 		@Override
 		public RandomAccessibleInterval< T > getImage(int timepointId, ImgLoaderHint... hints) {
-			if (!active) {
-				@SuppressWarnings("unchecked") final RandomAccessibleInterval<T> img =
-						(RandomAccessibleInterval<T>) wrappedImgLoader.getSetupImgLoader(setupId).getImage(timepointId, hints);
-				return img;
-			}
+			if (!active)
+				return wrapped().getImage(timepointId, hints);
+			return corrected(timepointId, getImageType(), false, hints);
+		}
 
-			@SuppressWarnings("unchecked")
-			RandomAccessibleInterval<T> rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
-					(RandomAccessibleInterval<T>) wrappedImgLoader.getSetupImgLoader(setupId).getImage(timepointId,
-																									   hints),
-					getBrightImg(new ViewId(timepointId, setupId)),
-					getDarkImg(new ViewId(timepointId, setupId)));
+		@SuppressWarnings("unchecked")
+		private SetupImgLoader< T > wrapped()
+		{
+			return (SetupImgLoader< T >) wrappedImgLoader.getSetupImgLoader(setupId);
+		}
 
-			boolean loadCompletelyRequested = false;
-			for (ImgLoaderHint hint : hints) {
-				if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
-					loadCompletelyRequested = true;
-					break;
-				}
-			}
-
-			if (loadCompletelyRequested)
-			{
-				long numPx = 1;
-				for (int d = 0; d < rai.numDimensions(); d++)
-					numPx *= rai.dimension( d );
-
-				final ImgFactory< T > imgFactory;
-				if (Math.log(numPx) / Math.log(2) < 31) {
-					imgFactory = new ArrayImgFactory<>(getImageType());
-				} else {
-					imgFactory = new CellImgFactory<>(getImageType());
-				}
-
-				Img<T> loadedImg = imgFactory.create(rai);
-				RealTypeConverters.copyFromTo( Views.extendZero( rai ), loadedImg );
-
-				rai = loadedImg;
-			}
-
-			return rai;
-
+		private < O extends RealType< O > & NativeType< O > > RandomAccessibleInterval< O > corrected(
+				int timepointId, O type, boolean normalize, ImgLoaderHint... hints)
+		{
+			final ViewId view = new ViewId(timepointId, setupId);
+			return FlatFieldCorrectedRandomAccessibleIntervals.create(
+					wrapped().getImage(timepointId, hints), getBrightImg(view), getDarkImg(view), type, normalize, hints);
 		}
 
 		@Override
@@ -153,78 +121,8 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 				ImgLoaderHint... hints)
 		{
 			if (!active)
-				return wrappedImgLoader.getSetupImgLoader(setupId).getFloatImage(timepointId, false, hints);
-
-			@SuppressWarnings("unchecked")
-			RandomAccessibleInterval< FloatType > rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
-					(RandomAccessibleInterval< T >) wrappedImgLoader.getSetupImgLoader( setupId ).getImage( timepointId,
-							hints ),
-					getBrightImg( new ViewId( timepointId, setupId ) ),
-					getDarkImg( new ViewId( timepointId, setupId ) ), new FloatType() );
-
-			if ( normalize )
-			{
-				RandomAccessibleInterval< FloatType > raiNormalized = new VirtuallyNormalizedRandomAccessibleInterval<>(
-						rai );
-				boolean loadCompletelyRequested = false;
-				for (ImgLoaderHint hint : hints) {
-					if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
-						loadCompletelyRequested = true;
-						break;
-					}
-				}
-
-				if (loadCompletelyRequested)
-				{
-					long numPx = 1;
-					for (int d = 0; d < raiNormalized.numDimensions(); d++)
-						numPx *= raiNormalized.dimension( d );
-
-					final ImgFactory< FloatType > imgFactory;
-					if (Math.log(numPx) / Math.log(2) < 31) {
-						imgFactory = new ArrayImgFactory<>(new FloatType());
-					} else {
-						imgFactory = new CellImgFactory<>(new FloatType());
-					}
-
-					Img<FloatType> loadedImg = imgFactory.create(raiNormalized);
-					RealTypeConverters.copyFromTo(Views.extendZero(raiNormalized), loadedImg);
-
-					raiNormalized = loadedImg;
-				}
-				rai = raiNormalized;
-			}
-			else
-			{
-				boolean loadCompletelyRequested = false;
-				for (ImgLoaderHint hint : hints) {
-					if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
-						loadCompletelyRequested = true;
-						break;
-					}
-				}
-
-				if (loadCompletelyRequested)
-				{
-					long numPx = 1;
-					for (int d = 0; d < rai.numDimensions(); d++)
-						numPx *= rai.dimension( d );
-
-					final ImgFactory< FloatType > imgFactory;
-					if (Math.log(numPx) / Math.log(2) < 31) {
-						imgFactory = new ArrayImgFactory<>(new FloatType());
-					} else {
-						imgFactory = new CellImgFactory<>(new FloatType());
-					}
-
-					Img< FloatType > loadedImg = imgFactory.create(rai);
-					RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
-
-					rai = loadedImg;
-				}
-
-			}
-			return rai;
+				return wrapped().getFloatImage(timepointId, false, hints);
+			return corrected(timepointId, new FloatType(), normalize, hints);
 		}
 
 		@Override

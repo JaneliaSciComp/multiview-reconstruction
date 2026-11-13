@@ -36,7 +36,6 @@ import bdv.cache.CacheControl;
 import bdv.cache.SharedQueue;
 import bdv.util.volatiles.VolatileViews;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
-import mpicbg.spim.data.generic.sequence.ImgLoaderHints;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionSetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
@@ -46,18 +45,12 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.Volatile;
 import net.imglib2.cache.volatiles.CacheHints;
 import net.imglib2.cache.volatiles.LoadingStrategy;
-import net.imglib2.converter.RealTypeConverters;
-import net.imglib2.img.Img;
-import net.imglib2.img.ImgFactory;
-import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.img.cell.CellImgFactory;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.imglib2.view.Views;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 
 /**
@@ -263,55 +256,22 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		public RandomAccessibleInterval<T> getImage(final int timepointId, final int level, final ImgLoaderHint... hints) {
 			if (!active)
 				return getUnderlyingViewerSetupImgLoader().getImage(timepointId, level, hints);
-			return correctedImage(timepointId, level, hints);
+			return corrected(timepointId, level, getImageType(), false, hints);
 		}
 
-		private RandomAccessibleInterval<T> correctedImage(final int timepointId, final int level, final ImgLoaderHint... hints) {
+		private <O extends RealType<O> & NativeType<O>> RandomAccessibleInterval<O> corrected(
+				final int timepointId, final int level, final O type, final boolean normalize, final ImgLoaderHint... hints) {
 			final ViewerSetupImgLoader<T, V> viewerSetupIL = getUnderlyingViewerSetupImgLoader();
-			final MultiResolutionSetupImgLoader<T> multiResSetupIL = getUnderlyingMultiResSetupImgLoader();
-
-			final int n = multiResSetupIL.getImageSize(timepointId).numDimensions();
-
-			// Calculate downsampling factors for this mipmap level
-			final int[] dsFactors = new int[n];
-			final double[] dsD = viewerSetupIL.getMipmapResolutions()[level];
-			for (int d = 0; d < n; d++)
-				dsFactors[d] = (int) dsD[d];
-			// Don't downsample z for 2D correction images
-			dsFactors[n - 1] = 1;
-
-			RandomAccessibleInterval<T> rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
+			// the 2D correction images are downsampled as the level is in x and y
+			final int[] dsFactors = FlatFieldCorrectedRandomAccessibleIntervals.fieldDownsampling(
+					viewerSetupIL.getMipmapResolutions()[level],
+					getUnderlyingMultiResSetupImgLoader().getImageSize(timepointId).numDimensions());
+			final ViewId view = new ViewId(timepointId, setupId);
+			return FlatFieldCorrectedRandomAccessibleIntervals.create(
 					viewerSetupIL.getImage(timepointId, level, hints),
-					getOrCreateBrightImgDownsampled(new ViewId(timepointId, setupId), dsFactors),
-					getOrCreateDarkImgDownsampled(new ViewId(timepointId, setupId), dsFactors));
-
-			// Handle LOAD_COMPLETELY hint
-			boolean loadCompletelyRequested = false;
-			for (final ImgLoaderHint hint : hints)
-                if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
-                    loadCompletelyRequested = true;
-                    break;
-                }
-
-			if (loadCompletelyRequested) {
-				long numPx = 1;
-				for (int d = 0; d < rai.numDimensions(); d++)
-					numPx *= rai.dimension(d);
-
-				final ImgFactory<T> imgFactory;
-				if (Math.log(numPx) / Math.log(2) < 31) {
-					imgFactory = new ArrayImgFactory<>(getImageType());
-				} else {
-					imgFactory = new CellImgFactory<>(getImageType());
-				}
-
-				final Img<T> loadedImg = imgFactory.create(rai);
-				RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
-
-				rai = loadedImg;
-			}
-
-			return rai;
+					getOrCreateBrightImgDownsampled(view, dsFactors),
+					getOrCreateDarkImgDownsampled(view, dsFactors),
+					type, normalize, hints);
 		}
 
 		// ========== Volatile image access ==========
@@ -333,7 +293,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 					if (img == null) {
 						final int maxLevel = numMipmapLevels() - 1;
 						final CacheHints cacheHints = new CacheHints(LoadingStrategy.BUDGETED, maxLevel - level, false);
-						img = VolatileViews.wrapAsVolatile(correctedImage(timepointId, level), queue(maxLevel + 1), cacheHints);
+						img = VolatileViews.wrapAsVolatile(corrected(timepointId, level, getImageType(), false), queue(maxLevel + 1), cacheHints);
 					}
 					return img;
 				}
@@ -351,56 +311,9 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 		@Override
 		public RandomAccessibleInterval<FloatType> getFloatImage(final int timepointId, final int level, final boolean normalize, final ImgLoaderHint... hints) {
-			final ViewerSetupImgLoader<T, V> viewerSetupIL = getUnderlyingViewerSetupImgLoader();
-			final MultiResolutionSetupImgLoader<T> multiResSetupIL = getUnderlyingMultiResSetupImgLoader();
-
 			if (!active)
-				return multiResSetupIL.getFloatImage(timepointId, level, normalize, hints);
-
-			final int n = multiResSetupIL.getImageSize(timepointId).numDimensions();
-
-			final int[] dsFactors = new int[n];
-			final double[] dsD = viewerSetupIL.getMipmapResolutions()[level];
-			for (int d = 0; d < n; d++)
-				dsFactors[d] = (int) dsD[d];
-			dsFactors[n - 1] = 1;
-
-			RandomAccessibleInterval<FloatType> rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
-					viewerSetupIL.getImage(timepointId, level, hints),
-					getOrCreateBrightImgDownsampled(new ViewId(timepointId, setupId), dsFactors),
-					getOrCreateDarkImgDownsampled(new ViewId(timepointId, setupId), dsFactors),
-					new FloatType());
-
-			if (normalize) {
-				rai = new VirtuallyNormalizedRandomAccessibleInterval<>(rai);
-			}
-
-			// Handle caching/loading
-			boolean loadCompletelyRequested = false;
-			for (final ImgLoaderHint hint : hints)
-                if (hint == ImgLoaderHints.LOAD_COMPLETELY) {
-                    loadCompletelyRequested = true;
-                    break;
-                }
-
-			if (loadCompletelyRequested) {
-				long numPx = 1;
-				for (int d = 0; d < rai.numDimensions(); d++)
-					numPx *= rai.dimension(d);
-
-				final ImgFactory<FloatType> imgFactory;
-				if (Math.log(numPx) / Math.log(2) < 31)
-					imgFactory = new ArrayImgFactory<>(new FloatType());
-				else
-					imgFactory = new CellImgFactory<>(new FloatType());
-
-				final Img<FloatType> loadedImg = imgFactory.create(rai);
-				RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
-
-				rai = loadedImg;
-			}
-
-			return rai;
+				return getUnderlyingMultiResSetupImgLoader().getFloatImage(timepointId, level, normalize, hints);
+			return corrected(timepointId, level, new FloatType(), normalize, hints);
 		}
 
 		// ========== Metadata delegation ==========

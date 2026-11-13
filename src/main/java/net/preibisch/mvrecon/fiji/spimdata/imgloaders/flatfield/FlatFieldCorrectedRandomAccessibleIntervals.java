@@ -22,7 +22,17 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
+import java.util.Arrays;
+
+import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
+import mpicbg.spim.data.generic.sequence.ImgLoaderHints;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.converter.RealTypeConverters;
+import net.imglib2.img.Img;
+import net.imglib2.img.ImgFactory;
+import net.imglib2.img.array.ArrayImgFactory;
+import net.imglib2.img.cell.CellImgFactory;
+import net.imglib2.util.Intervals;
 import net.imglib2.Volatile;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.ClampType;
@@ -51,6 +61,42 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 {
 	/** Default cell size for block-based flatfield correction */
 	private static final int[] DEFAULT_CELL_SIZE = new int[] {64, 64, 64};
+
+	/**
+	 * What the flatfield img loaders hand out: the corrected image as {@code outputType}, normalized if requested
+	 * (float only), and copied into memory if {@link ImgLoaderHints#LOAD_COMPLETELY} is among the hints.
+	 */
+	public static <O extends RealType<O> & NativeType<O>, R extends RealType<R> & NativeType<R>, S extends RealType<S>, T extends RealType<T>>
+	RandomAccessibleInterval<O> create(
+			final RandomAccessibleInterval<R> sourceImg,
+			final RandomAccessibleInterval<S> brightImg,
+			final RandomAccessibleInterval<T> darkImg,
+			final O outputType,
+			final boolean normalize,
+			final ImgLoaderHint... hints)
+	{
+		RandomAccessibleInterval<O> rai = create(sourceImg, brightImg, darkImg, outputType);
+		if (normalize)
+			rai = new VirtuallyNormalizedRandomAccessibleInterval<>(rai);
+		if (!Arrays.asList(hints).contains(ImgLoaderHints.LOAD_COMPLETELY))
+			return rai;
+
+		// an ArrayImg holds at most 2^31 pixels
+		final ImgFactory<O> factory = Intervals.numElements(rai) < (1L << 31) ? new ArrayImgFactory<>(outputType) : new CellImgFactory<>(outputType);
+		final Img<O> loaded = factory.create(rai);
+		RealTypeConverters.copyFromTo(Views.extendZero(rai), loaded);
+		return loaded;
+	}
+
+	/** the downsampling of the (2D) flatfield images for a mipmap level: the level's in x and y, none in z */
+	public static int[] fieldDownsampling(final double[] mipmapResolution, final int numDimensions)
+	{
+		final int[] ds = new int[numDimensions];
+		for (int d = 0; d < numDimensions - 1; d++)
+			ds[d] = (int) mipmapResolution[d];
+		ds[numDimensions - 1] = 1;
+		return ds;
+	}
 
 	/**
 	 * Create a flatfield-corrected image with the same type as the source.
