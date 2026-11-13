@@ -58,10 +58,13 @@ import net.preibisch.mvrecon.process.interestpointembedding.ModelHub.HubModel;
  * and stores them as the per-point array of the label in {@code interestpoints.zarr}, what {@code pcmatch embed} does:
  * one unit vector per point of the (base) label, which "Embeddings" of "Register using Interest Points" matches on. The blocks of
  * all selected views run on one pool of {@link Threads#numThreads()} threads, {@code defaultViewsInFlight} views at a time
- * ({@link InterestPointEmbedding#embedViews}). Two entries ({@link Source}): "Translation invariant (Hugging Face)" lists the
+ * ({@link InterestPointEmbedding#embedViews}). Three entries ({@link Source}): "Translation invariant (Hugging Face)" lists the
  * translation-invariant models of the hub ({@link ModelHub}: the repositories of the known namespaces tagged {@code bigstitcher}
  * and {@code translation-invariant}, downloaded once into the cache and pinned to their commit, recorded as
- * {@code hf://<namespace>/<name>@<revision>/<file>}; the array is {@code translation-invariant} by default), "Local model" takes a
+ * {@code hf://<namespace>/<name>@<revision>/<file>}; the array is {@code translation-invariant} by default), "Rotation invariant
+ * (Hugging Face)" the rotation- and mirror-invariant ones in the same way (tagged {@code rotation-invariant}, array
+ * {@code rotation-invariant} by default; for views rotated or mirrored against each other, the cubes are sampled as for the
+ * translation-invariant models), "Local model" takes a
  * file (array {@code local-embedding} by default). Reachable from the ViewSetup Explorer ("Compute Interest Point Embeddings", below
  * "Detect Interest Points"; its entries save the dataset first, EmbedInterestPointsPopup: the arrays live in the store next to the
  * points and fresh detections are only in memory until saved) and as plugins; BigStitcher-Spark's {@code embed-interestpoints} does
@@ -77,8 +80,6 @@ public class Embed_Interest_Points implements PlugIn
 	public static String defaultBaseLabel = null;
 	/** the local file chosen last ("Local model") */
 	public static String defaultModel = "";
-	/** the hub model chosen last ("Translation invariant (Hugging Face)"): its {@code hf://} URI */
-	public static String defaultModelChoice = null;
 	public static int defaultBlockSize = InterestPointEmbedding.defaultBlockSize;
 	/** views whose blocks are in the pool at a time: as many as threads keeps them busy with single-block views; it bounds the memory (the points and opened images of that many views) */
 	public static int defaultViewsInFlight = Threads.numThreads();
@@ -89,11 +90,15 @@ public class Embed_Interest_Points implements PlugIn
 	/** the action id of the history records (ActionToSparkCli renders them as {@code embed-interestpoints}) */
 	public static final String ACTION_ID = "embed-interestpoints";
 
-	/** the entries of "Compute Interest Point Embeddings": the hub's models of one kind, or a local file; each remembers its own array name */
+	/** the entries of "Compute Interest Point Embeddings": the hub's models of one kind, or a local file; each remembers its own array name and hub model */
 	public enum Source
 	{
-		TRANSLATION_INVARIANT( "Translation invariant (Hugging Face)", ModelHub.TRANSLATION_INVARIANT, "translation-invariant" ),
-		LOCAL( "Local model", null, "local-embedding" );
+		TRANSLATION_INVARIANT( "Translation invariant (Hugging Face)", ModelHub.TRANSLATION_INVARIANT, "translation-invariant",
+				"For tiles and views of the same orientation; views rotated or mirrored against each other need a rotation-invariant model." ),
+		ROTATION_INVARIANT( "Rotation invariant (Hugging Face)", ModelHub.ROTATION_INVARIANT, "rotation-invariant",
+				"For views rotated or mirrored against each other (multi-view); register them with a rigid or affine model. For tiles and views of the\n"
+				+ "same orientation a translation-invariant model is more descriptive." ),
+		LOCAL( "Local model", null, "local-embedding", null );
 
 		/** the menu entry (without " ...") */
 		public final String title;
@@ -101,12 +106,17 @@ public class Embed_Interest_Points implements PlugIn
 		public final String tag;
 		/** the array name chosen last for this source (its default until then) */
 		public String defaultArrayName;
+		/** what the dialog says about the data this kind of model is for; null = nothing */
+		public final String hint;
+		/** the hub model chosen last for this source: its {@code hf://} URI */
+		public String defaultModelChoice = null;
 
-		Source( final String title, final String tag, final String defaultArrayName )
+		Source( final String title, final String tag, final String defaultArrayName, final String hint )
 		{
 			this.title = title;
 			this.tag = tag;
 			this.defaultArrayName = defaultArrayName;
+			this.hint = hint;
 		}
 	}
 
@@ -118,11 +128,12 @@ public class Embed_Interest_Points implements PlugIn
 		public int blockSize, viewsInFlight;
 	}
 
-	/** @param arg "local" for a local model (plugins.config), anything else for the translation-invariant models of the hub */
+	/** @param arg "local" for a local model, "rotation" for the rotation-invariant models of the hub (plugins.config), anything else for its translation-invariant models */
 	@Override
 	public void run( final String arg )
 	{
-		final Source source = arg != null && arg.trim().equalsIgnoreCase( "local" ) ? Source.LOCAL : Source.TRANSLATION_INVARIANT;
+		final String kind = arg == null ? "" : arg.trim();
+		final Source source = kind.equalsIgnoreCase( "local" ) ? Source.LOCAL : kind.equalsIgnoreCase( "rotation" ) ? Source.ROTATION_INVARIANT : Source.TRANSLATION_INVARIANT;
 
 		final LoadParseQueryXML xml = new LoadParseQueryXML();
 
@@ -215,7 +226,7 @@ public class Embed_Interest_Points implements PlugIn
 				for ( int j = 0; j < models.size(); ++j )
 					sameRepo |= j != i && models.get( j ).repo().equals( m.repo() );
 				modelChoices[ i ] = m.name() + " (" + m.namespace() + ( sameRepo && i >= available.listed() ? ", " + m.shortRevision() : "" ) + ")";
-				if ( m.uri().equals( defaultModelChoice ) )
+				if ( m.uri().equals( source.defaultModelChoice ) )
 					defaultChoice = i;
 			}
 			gd.addChoice( "Model", modelChoices, modelChoices[ defaultChoice ] );
@@ -230,9 +241,10 @@ public class Embed_Interest_Points implements PlugIn
 		gd.addMessage(
 				( savesFirst ? "The dataset is saved first (XML and interest points, as the 'Save' button does): the vectors are stored next to the saved points.\n" : "" )
 				+ ( available != null
-						? "Computes one vector per interest point with a translation-invariant model of the Hugging Face Hub (downloaded once into\n" + ModelHub.defaultCacheDir() + " and pinned to its commit)"
+						? "Computes one vector per interest point with a " + source.tag + " model of the Hugging Face Hub (downloaded once into\n" + ModelHub.defaultCacheDir() + " and pinned to its commit)"
 						: "Computes one vector per interest point with a local model (pcmatch's 'export-onnx' file with its '.onnx.json' sidecar next to it)" )
 				+ " and stores the vectors with the points\n(interestpoints.zarr, <label>/tp<T>/arrays/<array name>); 'Embedding Cosine Similarity' of 'Register using Interest Points' matches on them.\n"
+				+ ( source.hint != null ? source.hint + "\n" : "" )
 				+ "A filtered label is embedded through its base label (all its points). An array of another model under the same name is replaced.\n"
 				+ "The blocks of 'Views in parallel' views share the " + Threads.numThreads() + " threads; the points and the opened images of that many views are\n"
 				+ "in memory at once (lower it for image loaders that read whole stacks).",
@@ -249,7 +261,7 @@ public class Embed_Interest_Points implements PlugIn
 		p.label = defaultBaseLabel = InterestPointTools.getSelectedLabel( labels, defaultLabel = gd.getNextChoiceIndex() );
 		if ( available != null )
 		{
-			p.model = defaultModelChoice = available.models().get( gd.getNextChoiceIndex() ).uri();
+			p.model = source.defaultModelChoice = available.models().get( gd.getNextChoiceIndex() ).uri();
 		}
 		else
 		{
@@ -290,7 +302,7 @@ public class Embed_Interest_Points implements PlugIn
 	public record Available( List< HubModel > models, int listed ) {}
 
 	/**
-	 * @param tag the kind of model ({@link ModelHub#TRANSLATION_INVARIANT})
+	 * @param tag the kind of model ({@link ModelHub#TRANSLATION_INVARIANT}, {@link ModelHub#ROTATION_INVARIANT})
 	 * @return the models with that tag on the hub ({@link ModelHub#defaultNamespaces}; a note when it cannot be reached) and in the cache
 	 */
 	public static Available availableModels( final String tag )

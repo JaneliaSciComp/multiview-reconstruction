@@ -227,15 +227,26 @@ GUI (Stephan 2026-10-31 late): the explorer's "Compute Interest Point Embeddings
 Face) ..." (the hub's models tagged `translation-invariant`, `HubModel.tags` from the model card and kept in `hub.json`, plus such
 cached models the hub no longer lists; a "Model" choice whose text is "name (namespace)" and nothing else, since macros record it: no
 "cached", no commit, only an older cached revision next to the hub's current one carries its commit; a hyperlink to the organisation's
-page; default array name `translation-invariant`) and "Local model ..." (file field, default array `local-embedding`); each entry
-remembers its own array name (`Embed_Interest_Points.Source`), plugins.config has both under Interest Points > Tools (plugin arg
-"translation"/"local"); no model of the kind on the hub or in the cache = a log line, no dialog; `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
+page; default array name `translation-invariant`), "Rotation invariant (Hugging Face) ..." (2026-11-13: the same for the tag
+`rotation-invariant`, `ModelHub.ROTATION_INVARIANT`, default array `rotation-invariant`; the first such model is
+`JaneliaSciComp/bigstitcher-embedding-rotinv-stack64`, rotation and mirror invariant, fingerprint `861ed356...`, for views rotated or
+mirrored against each other, matched with a rigid or affine model; it has the tensor contract, the operators and the sampling of the
+translation model -- the standardisation masks a sphere inside the graph, the cubes are sampled along the view's own axes -- so the
+entry is all MVR needed) and "Local model ..." (file field, default array `local-embedding`); each entry
+remembers its own array name and hub model and says in one line which data its kind of model is for (`Embed_Interest_Points.Source`,
+`hint`), plugins.config has the three under Interest Points > Tools (plugin arg
+"translation"/"rotation"/"local"); no model of the kind on the hub or in the cache = a log line, no dialog; `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
 viewsInFlight )` downloads on demand. BigStitcher-Spark: `--model hf://...` is pinned on the driver, every executor downloads once into
 `--modelCache` (default as above; nodes without internet get a path). Tests `TestModelHub` (a loopback `FakeHub` serving the three API
 answers and the redirecting downloads: URIs, listing by tag and sidecar, pinned resolve, cache hits without requests, a damaged cached
-file re-downloaded, wrong bytes refused by sha256, the plugin with a hub model; and Stephan's repository on the real hub when
-reachable), BigStitcher-Spark `TestInterestPointEmbedding` (an `hf://` run against the fake hub). Verified 2026-10-30 on ds1: the rows
-from the hub model are bit-identical to those from the local file.
+file re-downloaded, wrong bytes refused by sha256, the plugin with a hub model, the listing by kind with a fake model of each; and
+the two repositories on the real hub when reachable, with the fingerprints of their current models), `TestOnnxEvaluator` (pcmatch's
+ds1 fixtures of the first translation model and of the rotation-invariant one, when on the machine), BigStitcher-Spark
+`TestInterestPointEmbedding` (an `hf://` run against the fake hub). Verified 2026-10-30 on ds1: the rows
+from the hub model are bit-identical to those from the local file. On 2026-11-13 the translation repository's model was replaced by
+the one trained with the multi-view data (`..._mv911_...`, fingerprint `05c9b9bf...`; the first upload, `6844e0e3...`, stays offered
+from the cache where it was downloaded, told apart by its commit `d90228e`), and rows stored under the old fingerprint are rows of
+another model.
 
 Design and the staging format follow PR 108 (Lila, 2026-09); its global append-only arrays with compaction were replaced by
 per-(label, timepoint) groups (Stephan, 2026-10-23: fewer moving parts; whole-label changes dominate; a few test views go into

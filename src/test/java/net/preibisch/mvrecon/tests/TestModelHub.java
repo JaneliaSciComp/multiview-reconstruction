@@ -68,8 +68,9 @@ import net.preibisch.mvrecon.process.interestpointembedding.ModelHub.Spec;
 /**
  * The models on the hub and the cache: {@code hf://} URIs, the listing (tagged repositories with a sidecar only), the pinned
  * resolve, the verified download into the cache (a wrong hash is refused, a cached model costs no request, a pinned URI is
- * answered from the cache), the plugin with a hub model, all against a {@link FakeHub}; and, when the real hub is reachable,
- * the repository under JaneliaSciComp, whose old name under Stephan's account redirects.
+ * answered from the cache), the plugin with a hub model, the listing by kind (translation / rotation invariant), all against a
+ * {@link FakeHub}; and, when the real hub is reachable, the repositories under JaneliaSciComp (the translation-invariant one's old
+ * name under Stephan's account redirects).
  */
 public class TestModelHub
 {
@@ -212,23 +213,35 @@ public class TestModelHub
 			assertTrue( !Embed_Interest_Points.embed( data, views, TestInterestPointEmbedding.LABEL, "hf://lab/nothing", "other", 50, 2 ) );
 			assertNull( InterestPointArrays.attributes( data.getBasePathURI(), TestInterestPointEmbedding.LABEL, 0, "other" ) );
 
-			// the dialog's listing of one kind of model: the fake model carries the tag (listed by the hub, kept in the cache's record)
+			// the dialog's listing of one kind of model: a fake model carries the tag of its kind (listed by the hub, kept in the cache's record)
+			fake.addModel( "lab/rotinv-tiny", "4123456789abcdef0123456789abcdef01234567", "tiny.onnx", true, ModelHub.ROTATION_INVARIANT, tempDir, 22 );
 			namespaces = ModelHub.defaultNamespaces;
 			ModelHub.defaultNamespaces = new String[] { "lab" };
 			final Embed_Interest_Points.Available available = Embed_Interest_Points.availableModels( ModelHub.TRANSLATION_INVARIANT );
 			assertEquals( 1, available.models().size() );
 			assertEquals( 1, available.listed() );
 			assertEquals( "hf://lab/stack-tiny@0123456789abcdef0123456789abcdef01234567/tiny.onnx", available.models().get( 0 ).uri() );
-			assertTrue( Embed_Interest_Points.availableModels( "rotation-invariant" ).models().isEmpty() );
+			final Embed_Interest_Points.Available rotation = Embed_Interest_Points.availableModels( ModelHub.ROTATION_INVARIANT );
+			assertEquals( 1, rotation.models().size() );
+			assertEquals( 1, rotation.listed() );
+			assertEquals( "hf://lab/rotinv-tiny@4123456789abcdef0123456789abcdef01234567/tiny.onnx", rotation.models().get( 0 ).uri() );
+			assertEquals( ModelHub.TRANSLATION_INVARIANT, Embed_Interest_Points.Source.TRANSLATION_INVARIANT.tag );
+			assertEquals( ModelHub.ROTATION_INVARIANT, Embed_Interest_Points.Source.ROTATION_INVARIANT.tag );
+			assertTrue( Embed_Interest_Points.availableModels( "no-such-kind" ).models().isEmpty() );
 			ModelHub.hub = "http://127.0.0.1:9"; // the hub unreachable: the cached model is still offered, by the tags of its record
 			final Embed_Interest_Points.Available offline = Embed_Interest_Points.availableModels( ModelHub.TRANSLATION_INVARIANT );
 			assertEquals( 1, offline.models().size() );
 			assertEquals( 0, offline.listed() );
 			assertEquals( available.models().get( 0 ), offline.models().get( 0 ) );
+			assertTrue( Embed_Interest_Points.availableModels( ModelHub.ROTATION_INVARIANT ).models().isEmpty() ); // never downloaded, and the cached model is of the other kind
 		}
 	}
 
-	/** The repository on the real hub, when it is reachable: listed under JaneliaSciComp, downloaded, loadable, the fingerprint of pcmatch's stack64 export; its old name under Stephan's account redirects. */
+	/**
+	 * The repositories on the real hub, when it is reachable: listed under JaneliaSciComp, downloaded, loadable, the fingerprints of
+	 * pcmatch's exports (the translation-invariant stack64, whose old name under Stephan's account redirects, and the rotation- and
+	 * mirror-invariant rotinv-stack64), each listed by the tag of its kind.
+	 */
 	@Test
 	public void repositoryOnTheHub() throws Exception
 	{
@@ -243,23 +256,43 @@ public class TestModelHub
 			assumeTrue( false, "the hub is not reachable: " + e.getMessage() );
 			return;
 		}
-		HubModel stack64 = null;
+		HubModel stack64 = null, rotinv = null;
 		for ( final HubModel m : models )
+		{
 			if ( m.repo().equals( "JaneliaSciComp/bigstitcher-embedding-translation-stack64" ) )
 				stack64 = m;
+			if ( m.repo().equals( "JaneliaSciComp/bigstitcher-embedding-rotinv-stack64" ) )
+				rotinv = m;
+		}
 		assertNotNull( stack64, "the repository is listed: " + models );
 		assertNotNull( stack64.sha256() );
 		assertEquals( 40, stack64.revision().length() );
+		assertTrue( stack64.hasTag( ModelHub.TRANSLATION_INVARIANT ) && !stack64.hasTag( ModelHub.ROTATION_INVARIANT ), stack64.tags().toString() );
 
 		final Path onnx = ModelHub.download( stack64, tempDir.resolve( "cache" ), timeout );
 		final EmbeddingModel model = EmbeddingModel.load( onnx );
 		assertEquals( 64, model.contract().outputs() );
 		assertEquals( 5, model.contract().channels() );
-		assertEquals( "6844e0e3f80c8eb2217a2021ab0c3215cddc49e11cd78269e47c47fc2ff0cb75", model.contract().fingerprint() );
+		// the model trained with the multi-view data (mv911), which replaced the first upload (6844e0e3...) on 2026-11-13
+		assertEquals( "05c9b9bffc8d93d23fcab7eda3c47d3e42a7adb2e9d32c8bcffc77577be90bb9", model.contract().fingerprint() );
 		assertEquals( stack64, ModelHub.resolve( stack64.uri(), tempDir.resolve( "cache" ), timeout ) );
 
 		// the repository was under Stephan's account until 2026-10-31: the hub redirects the old name, the model carries the new one
 		assertEquals( stack64, ModelHub.resolve( "hf://StephanPreibisch/bigstitcher-embedding-translation-stack64@" + stack64.revision() + "/" + stack64.file(), null, timeout ) );
+
+		// the rotation- and mirror-invariant model (uploaded 2026-11-13): listed by its own tag, the same tensor contract, and the
+		// Java evaluator has the operators of its graph; the URI of its model card names the repository only
+		assertNotNull( rotinv, "the repository is listed: " + models );
+		assertNotNull( rotinv.sha256() );
+		assertTrue( rotinv.hasTag( ModelHub.ROTATION_INVARIANT ) && !rotinv.hasTag( ModelHub.TRANSLATION_INVARIANT ), rotinv.tags().toString() );
+
+		final EmbeddingModel rotinvModel = EmbeddingModel.load( ModelHub.download( rotinv, tempDir.resolve( "cache" ), timeout ) );
+		assertEquals( 64, rotinvModel.contract().outputs() );
+		assertEquals( 5, rotinvModel.contract().channels() );
+		assertEquals( 16, rotinvModel.contract().patch() );
+		assertEquals( "861ed356e946ace5e099b1b9362d6c0c0560e9149a9c697f9cba96fa66622850", rotinvModel.contract().fingerprint() );
+		assertTrue( rotinvModel.contract().config().get( "rotation_invariant" ).getAsBoolean() );
+		assertEquals( rotinv, ModelHub.resolve( "hf://JaneliaSciComp/bigstitcher-embedding-rotinv-stack64", null, timeout ) );
 	}
 
 	/**
@@ -268,8 +301,18 @@ public class TestModelHub
 	 */
 	public static class FakeHub implements AutoCloseable
 	{
-		/** @param files file name -> bytes; a .onnx is reported as an LFS file with its sha256 */
-		public record Repo( String id, String sha, boolean tagged, Map< String, byte[] > files ) {}
+		/**
+		 * @param kind the tag of the kind of model a tagged repository carries ({@link ModelHub#TRANSLATION_INVARIANT}, {@link ModelHub#ROTATION_INVARIANT})
+		 * @param files file name -> bytes; a .onnx is reported as an LFS file with its sha256
+		 */
+		public record Repo( String id, String sha, boolean tagged, String kind, Map< String, byte[] > files )
+		{
+			/** a repository whose model, if tagged, is a translation-invariant one */
+			public Repo( final String id, final String sha, final boolean tagged, final Map< String, byte[] > files )
+			{
+				this( id, sha, tagged, ModelHub.TRANSLATION_INVARIANT, files );
+			}
+		}
 
 		final HttpServer server;
 		final Map< String, Repo > repos = new LinkedHashMap<>();
@@ -288,8 +331,14 @@ public class TestModelHub
 
 		public void add( final Repo repo ) { repos.put( repo.id(), repo ); }
 
-		/** adds a repository with a tiny model (written by {@link TestOnnxModels} into {@code dir/<id with / as _>}) and its sidecar */
+		/** {@link #addModel(String, String, String, boolean, String, Path, long)} with a translation-invariant model */
 		public TestOnnxModels.Tiny addModel( final String id, final String sha, final String file, final boolean tagged, final Path dir, final long seed ) throws IOException
+		{
+			return addModel( id, sha, file, tagged, ModelHub.TRANSLATION_INVARIANT, dir, seed );
+		}
+
+		/** adds a repository with a tiny model (written by {@link TestOnnxModels} into {@code dir/<id with / as _>}) and its sidecar; if tagged, it carries the tag of its kind too */
+		public TestOnnxModels.Tiny addModel( final String id, final String sha, final String file, final boolean tagged, final String kind, final Path dir, final long seed ) throws IOException
 		{
 			final Path onnx = dir.resolve( id.replace( '/', '_' ) ).resolve( file );
 			Files.createDirectories( onnx.getParent() );
@@ -298,7 +347,7 @@ public class TestModelHub
 			files.put( "README.md", "---\ntags:\n  - bigstitcher\n---\n".getBytes( StandardCharsets.UTF_8 ) );
 			files.put( file, Files.readAllBytes( onnx ) );
 			files.put( file + EmbeddingModel.SIDECAR_SUFFIX, Files.readAllBytes( EmbeddingModel.sidecar( onnx ) ) );
-			add( new Repo( id, sha, tagged, files ) );
+			add( new Repo( id, sha, tagged, kind, files ) );
 			return tiny;
 		}
 
@@ -416,7 +465,7 @@ public class TestModelHub
 			if ( r.tagged() )
 			{
 				tags.add( ModelHub.TAG );
-				tags.add( ModelHub.TRANSLATION_INVARIANT ); // every tagged fake model is a translation-invariant one
+				tags.add( r.kind() ); // the kind of invariance, as pcmatch's model cards tag it
 			}
 			return tags;
 		}

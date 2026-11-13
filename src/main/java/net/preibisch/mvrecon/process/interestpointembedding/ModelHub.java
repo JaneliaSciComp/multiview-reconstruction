@@ -85,6 +85,9 @@ public class ModelHub
 	/** the tag of the translation-invariant models (pcmatch's model cards tag the kind of invariance), what "Translation invariant (Hugging Face)" lists */
 	public static final String TRANSLATION_INVARIANT = "translation-invariant";
 
+	/** the tag of the rotation- and mirror-invariant models (views of different orientation; same tensor contract and sampling as the translation-invariant ones), what "Rotation invariant (Hugging Face)" lists */
+	public static final String ROTATION_INVARIANT = "rotation-invariant";
+
 	/** the scheme of a hub model: {@code hf://<namespace>/<name>[@<revision>][/<file>]} */
 	public static final String SCHEME = "hf://";
 
