@@ -69,6 +69,13 @@ public class FlatfieldCorrectionBlockSupplier<T extends NativeType<T>> implement
 	private final BlockSupplier<FloatType> dark;
 	private final double meanBrightCorrected;
 	private final int numDimensions;
+	/** the correction loop for {@link #type} */
+	private final Loop loop;
+
+	private interface Loop {
+		/** corrects one block into {@code dest}, an array of the output type */
+		void correct(Interval interval, Object dest, float[] gain, float[] dark, int xyLen, int zSize);
+	}
 
 	// Temp arrays for block data
 	private final TempArray<float[]> srcTemp = TempArray.forPrimitiveType(FLOAT);
@@ -88,7 +95,11 @@ public class FlatfieldCorrectionBlockSupplier<T extends NativeType<T>> implement
 			final double meanBrightCorrected)
 	{
 		this.type = source.getType();
-		if (!(type instanceof FloatType || type instanceof UnsignedShortType))
+		if (type instanceof FloatType)
+			this.loop = this::correctFloat;
+		else if (type instanceof UnsignedShortType)
+			this.loop = this::correctUnsignedShort;
+		else
 			throw new IllegalArgumentException("unsupported type: " + type.getClass().getSimpleName());
 		this.source = source;
 		this.bright = bright;
@@ -242,27 +253,29 @@ public class FlatfieldCorrectionBlockSupplier<T extends NativeType<T>> implement
 		final int xyLen = numDimensions >= 3 ? size[0] * size[1] : len;
 		final int zSize = numDimensions >= 3 ? size[2] : 1;
 		final float[][] fields = gainAndDark(interval, xyLen);
-		final float[] gain = fields[0], darkArray = fields[1];
+		loop.correct(interval, dest, fields[0], fields[1], xyLen, zSize);
+	}
 
-		if (type instanceof UnsignedShortType) {
-			// in place; (int)(v + 0.5f) is cheaper than Math.round()
-			final short[] d = Cast.unchecked(dest);
-			source.copy(interval, d);
-			for (int z = 0; z < zSize; z++) {
-				final int zOffset = z * xyLen;
-				for (int i = 0; i < xyLen; i++) {
-					final float v = (UnsignedShortType.getUnsignedShort(d[zOffset + i]) - darkArray[i]) * gain[i];
-					d[zOffset + i] = UnsignedShortType.getCodedSignedShortChecked((int) (v + 0.5f));
-				}
-			}
-		} else {
-			final float[] srcArray = srcTemp.get(len);
-			source.copy(interval, srcArray);
-			final float[] d = Cast.unchecked(dest);
-			for (int z = 0; z < zSize; z++) {
-				final int zOffset = z * xyLen;
-				for (int i = 0; i < xyLen; i++)
-					d[zOffset + i] = (srcArray[zOffset + i] - darkArray[i]) * gain[i];
+	private void correctFloat(final Interval interval, final Object dest, final float[] gain, final float[] dark, final int xyLen, final int zSize) {
+		final float[] src = srcTemp.get(xyLen * zSize);
+		source.copy(interval, src);
+		final float[] d = Cast.unchecked(dest);
+		for (int z = 0; z < zSize; z++) {
+			final int zOffset = z * xyLen;
+			for (int i = 0; i < xyLen; i++)
+				d[zOffset + i] = (src[zOffset + i] - dark[i]) * gain[i];
+		}
+	}
+
+	/** in place, rounded and clamped; (int)(v + 0.5f) is cheaper than Math.round() */
+	private void correctUnsignedShort(final Interval interval, final Object dest, final float[] gain, final float[] dark, final int xyLen, final int zSize) {
+		final short[] d = Cast.unchecked(dest);
+		source.copy(interval, d);
+		for (int z = 0; z < zSize; z++) {
+			final int zOffset = z * xyLen;
+			for (int i = 0; i < xyLen; i++) {
+				final float v = (UnsignedShortType.getUnsignedShort(d[zOffset + i]) - dark[i]) * gain[i];
+				d[zOffset + i] = UnsignedShortType.getCodedSignedShortChecked((int) (v + 0.5f));
 			}
 		}
 	}
