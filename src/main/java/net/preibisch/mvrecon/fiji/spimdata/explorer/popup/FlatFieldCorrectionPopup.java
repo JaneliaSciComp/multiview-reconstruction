@@ -39,8 +39,6 @@ import fiji.util.gui.GenericDialogPlus;
 import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
-import net.preibisch.mvrecon.Threads;
-import net.preibisch.mvrecon.fiji.plugin.Intensity_Adjustment;
 import net.preibisch.mvrecon.process.flatfield.Basic;
 import net.preibisch.mvrecon.process.flatfield.FlatfieldEstimation;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
@@ -101,9 +99,8 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 
 				final GenericDialog gd0 = new GenericDialog( "Flatfield Correction" );
 				gd0.addChoice( "Flatfield", SOURCES, SOURCES[ defaultSource ] );
-				gd0.addMessage( "Gain field: a log-linear ramp per camera (channel x illumination) fitted from the tile\n"
-						+ "overlaps, for sparse data with few tiles. BaSiC: flat- and darkfield from per-pixel statistics\n"
-						+ "over many tiles, for dense data. Both use the selected views and write the fields to\n"
+				gd0.addMessage( "BaSiC: flat- and darkfield per camera (channel x illumination) from per-pixel statistics over\n"
+						+ "many tiles, for dense data. It uses the selected views and writes the fields to\n"
 						+ FlatfieldEstimation.CONTAINER + " next to the XML; the images themselves are corrected on the fly.\n"
 						+ "Run Adjust Intensities afterwards for the remaining per-tile gains." );
 				gd0.showDialog();
@@ -113,7 +110,7 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 
 				if ( defaultSource != 0 )
 				{
-					estimate( data, defaultSource == 1 );
+					estimate( data );
 					return;
 				}
 
@@ -216,7 +213,7 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 		}
 	}
 
-	static final String[] SOURCES = { "Load bright / dark images from files", "Estimate gain field (sparse data: few tiles)", "Estimate with BaSiC (dense data: many tiles)" };
+	static final String[] SOURCES = { "Load bright / dark images from files", "Estimate with BaSiC (dense data: many tiles)" };
 	static final String[] DARKFIELD = { "Estimate", "None", "Fixed value" };
 	public static int defaultSource = 0;
 	public static long defaultDownsampling = 4;
@@ -225,9 +222,8 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 	public static double defaultLambda = 0;
 	public static boolean defaultAutotune = true;
 	public static int defaultWorkingSize = 0;
-	public static boolean defaultModelBleaching = true;
 
-	private void estimate( final SpimData2 data, final boolean gainField )
+	private void estimate( final SpimData2 data )
 	{
 		final List< ViewId > views = ApplyTransformationPopup.getSelectedViews( panel, true );
 		if ( views.isEmpty() )
@@ -236,69 +232,49 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 			return;
 		}
 
-		final GenericDialog gd = new GenericDialog( gainField ? "Estimate Gain Field" : "Estimate Flatfield (BaSiC)" );
-		gd.addNumericField( "Downsampling_for_statistics", defaultDownsampling, 0 );
-		gd.addMessage( "the coarsest pyramid level that is downsampled no more than this (in every dimension)" );
-		if ( gainField )
+		// the pyramid levels all selected views have; the default is the level closest to the last downsampling
+		final List< long[] > levels = FlatfieldEstimation.commonLevels( data, views );
+		final String[] levelNames = new String[ levels.size() ];
+		int defaultLevel = 0;
+		for ( int l = 0; l < levels.size(); ++l )
 		{
-			gd.addCheckbox( "Model_bleaching (one factor per earlier exposure, acquisition order = setup id)", defaultModelBleaching );
-			gd.addMessage( "Regions imaged a second time are dimmer; without this the field takes that for a ramp.\n"
-					+ "The factor is not applied here: it is pre-filled as the bleach factor of Adjust Intensities." );
+			final long[] f = levels.get( l );
+			levelNames[ l ] = java.util.Arrays.stream( f ).mapToObj( Long::toString ).collect( java.util.stream.Collectors.joining( "," ) );
+			if ( Math.abs( Math.log( FlatfieldEstimation.maxFactor( f ) ) - Math.log( defaultDownsampling ) )
+					< Math.abs( Math.log( FlatfieldEstimation.maxFactor( levels.get( defaultLevel ) ) ) - Math.log( defaultDownsampling ) ) )
+				defaultLevel = l;
 		}
-		else
-		{
-			gd.addChoice( "Darkfield", DARKFIELD, DARKFIELD[ defaultDarkfield ] );
-			gd.addNumericField( "Fixed_darkfield (counts)", defaultDarkfieldValue, 1 );
-			gd.addNumericField( "Lambda (0 = automatic)", defaultLambda, 4 );
-			gd.addCheckbox( "Autotune_lambda (if automatic)", defaultAutotune );
-			gd.addNumericField( "Working_size (0 = statistics frame)", defaultWorkingSize, 0 );
-		}
+
+		final GenericDialog gd = new GenericDialog( "Estimate Flatfield (BaSiC)" );
+		gd.addChoice( "Statistics_level (downsampling x, y, z)", levelNames, levelNames[ defaultLevel ] );
+		gd.addChoice( "Darkfield", DARKFIELD, DARKFIELD[ defaultDarkfield ] );
+		gd.addNumericField( "Fixed_darkfield (counts)", defaultDarkfieldValue, 1 );
+		gd.addNumericField( "Lambda (0 = automatic)", defaultLambda, 4 );
+		gd.addCheckbox( "Autotune_lambda (if automatic)", defaultAutotune );
+		gd.addNumericField( "Working_size (0 = statistics frame)", defaultWorkingSize, 0 );
 		gd.addMessage( views.size() + " selected views." );
 		gd.showDialog();
 		if ( gd.wasCanceled() )
 			return;
 
-		defaultDownsampling = Math.max( 1, Math.round( gd.getNextNumber() ) );
+		final long downsampling = FlatfieldEstimation.maxFactor( levels.get( gd.getNextChoiceIndex() ) );
+		defaultDownsampling = downsampling;
 		final Basic.Parameters p = new Basic.Parameters();
-		if ( gainField )
-			defaultModelBleaching = gd.getNextBoolean();
-		else
-		{
-			defaultDarkfield = gd.getNextChoiceIndex();
-			defaultDarkfieldValue = gd.getNextNumber();
-			defaultLambda = gd.getNextNumber();
-			defaultAutotune = gd.getNextBoolean();
-			defaultWorkingSize = ( int ) Math.max( 0, Math.round( gd.getNextNumber() ) );
-			p.estimateDarkfield = defaultDarkfield == 0;
-			p.darkfieldOverride = defaultDarkfield == 2 ? defaultDarkfieldValue : null;
-			p.lambda = defaultLambda;
-			p.autotune = defaultAutotune;
-			p.workingSize = defaultWorkingSize;
-		}
+		defaultDarkfield = gd.getNextChoiceIndex();
+		defaultDarkfieldValue = gd.getNextNumber();
+		defaultLambda = gd.getNextNumber();
+		defaultAutotune = gd.getNextBoolean();
+		defaultWorkingSize = ( int ) Math.max( 0, Math.round( gd.getNextNumber() ) );
+		p.estimateDarkfield = defaultDarkfield == 0;
+		p.darkfieldOverride = defaultDarkfield == 2 ? defaultDarkfieldValue : null;
+		p.lambda = defaultLambda;
+		p.autotune = defaultAutotune;
+		p.workingSize = defaultWorkingSize;
 
 		try
 		{
-			if ( gainField )
-			{
-				IOFunctions.println( "Estimating the gain field of " + views.size() + " views ..." );
-				final FlatfieldEstimation.GainFieldResult r = FlatfieldEstimation.fitGainField( data, views, defaultDownsampling, defaultModelBleaching, Threads.numThreads() );
-				FlatfieldEstimation.writeGainFields( data, views, r.fields );
-				r.fields.forEach( ( c, f ) -> IOFunctions.println( "Gain field " + c + ": " + f ) );
-				if ( defaultModelBleaching )
-				{
-					IOFunctions.println( String.format( "Bleach factor per earlier exposure: k = %.3f +- %.3f (%s)", r.fit.bleachFactor, r.fit.bleachSigma, r.fit.bleachStatus ) );
-					if ( r.fit.bleachFactor > 0 )
-					{
-						Intensity_Adjustment.defaultBleachFactor = Math.round( r.fit.bleachFactor * 1000 ) / 1000.0;
-						IOFunctions.println( "Adjust Intensities will suggest Bleach_factor = " + Intensity_Adjustment.defaultBleachFactor + "." );
-					}
-				}
-			}
-			else
-			{
-				IOFunctions.println( "Estimating flat- and darkfields (BaSiC) of " + views.size() + " views ..." );
-				FlatfieldEstimation.estimateBasic( data, views, defaultDownsampling, p );
-			}
+			IOFunctions.println( "Estimating flat- and darkfields (BaSiC) of " + views.size() + " views ..." );
+			FlatfieldEstimation.estimateBasic( data, views, downsampling, p );
 		}
 		catch ( final Exception e )
 		{

@@ -97,9 +97,6 @@ public class IntensityCorrectionPipeline
 		 */
 		public double bleachFactor = 0;
 
-		/** a voxel imaged before is unbleached once, v / (1 - bleachFactor), however often it was imaged (n capped at 1) */
-		public boolean bleachOnce = false;
-
 		public TransformationModel model = TransformationModel.AFFINE;
 		public RegularizationModel regularization1 = RegularizationModel.TRANSLATION;
 		public double lambda1 = 0.01;
@@ -175,13 +172,7 @@ public class IntensityCorrectionPipeline
 			return "method=" + method + " numCoefficients=" + Arrays.toString( numCoefficients ) + " renderScale=" + renderScale
 					+ " minThreshold=" + ( threshold == Threshold.FIXED ? minIntensity : threshold ) + " maxThreshold=" + maxIntensity
 					+ " model=" + model + "+" + regularization1 + "(" + lambda1 + ")+" + regularization2 + "(" + lambda2 + ")"
-					+ " bleachFactor=" + bleachFactor + ( bleachOnce ? " bleachOnce=true" : "" );
-		}
-
-		/** @return whether {@link #toString()} recorded {@link #bleachOnce} */
-		public static boolean bleachOnce( final String recorded )
-		{
-			return recorded.contains( "bleachOnce=true" );
+					+ " bleachFactor=" + bleachFactor;
 		}
 
 		/** @return the bleach factor recorded by {@link #toString()}, 0 if there is none */
@@ -283,7 +274,7 @@ public class IntensityCorrectionPipeline
 		{
 			final Map< ViewId, List< ViewId > > b = bleachers == null ? Collections.emptyMap() : bleachers;
 			return IntensityCorrection.matchMedians( data, view1, b.getOrDefault( view1, Collections.emptyList() ), view2,
-					b.getOrDefault( view2, Collections.emptyList() ), UnbleachFunction.bleachFactor( p.bleachFactor, p.bleachOnce ), p.renderScale,
+					b.getOrDefault( view2, Collections.emptyList() ), UnbleachFunction.bleachFactor( p.bleachFactor ), p.renderScale,
 					p.numCoefficients, minIntensity, p.maxIntensity, p.minNumCandidates );
 		}
 
@@ -291,7 +282,7 @@ public class IntensityCorrectionPipeline
 		{
 			final List< ViewId > b1 = bleachers.getOrDefault( view1, Collections.emptyList() );
 			final List< ViewId > b2 = bleachers.getOrDefault( view2, Collections.emptyList() );
-			final UnbleachFunction unbleach = UnbleachFunction.bleachFactor( p.bleachFactor, p.bleachOnce );
+			final UnbleachFunction unbleach = UnbleachFunction.bleachFactor( p.bleachFactor );
 			return p.method == Method.RANSAC
 					? IntensityCorrection.matchRansac( data, view1, b1, view2, b2, unbleach, p.renderScale, p.numCoefficients,
 							minIntensity, p.maxIntensity, p.minNumCandidates, p.createModel(), p.ransacIterations, p.maxEpsilon, p.minInlierRatio, p.minNumInliers, p.maxTrust )
@@ -338,7 +329,7 @@ public class IntensityCorrectionPipeline
 
 		coefficients.replaceAll( ( v, c ) -> {
 			Coefficients r = thresholds != null && thresholds.containsKey( v ) ? c.withThreshold( thresholds.get( v ) ) : c;
-			return p.bleachFactor > 0 ? r.withBleachFactor( p.bleachFactor ).withBleachOnce( p.bleachOnce ) : r;
+			return p.bleachFactor > 0 ? r.withBleachFactor( p.bleachFactor ) : r;
 		} );
 		return coefficients;
 	}

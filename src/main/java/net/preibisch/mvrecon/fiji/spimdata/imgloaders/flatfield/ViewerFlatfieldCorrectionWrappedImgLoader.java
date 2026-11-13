@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import bdv.ViewerImgLoader;
@@ -58,6 +59,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 
 /**
  * Flatfield correction wrapper for ViewerImgLoader.
@@ -259,11 +261,14 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 		@Override
 		public RandomAccessibleInterval<T> getImage(final int timepointId, final int level, final ImgLoaderHint... hints) {
+			if (!active)
+				return getUnderlyingViewerSetupImgLoader().getImage(timepointId, level, hints);
+			return correctedImage(timepointId, level, hints);
+		}
+
+		private RandomAccessibleInterval<T> correctedImage(final int timepointId, final int level, final ImgLoaderHint... hints) {
 			final ViewerSetupImgLoader<T, V> viewerSetupIL = getUnderlyingViewerSetupImgLoader();
 			final MultiResolutionSetupImgLoader<T> multiResSetupIL = getUnderlyingMultiResSetupImgLoader();
-
-			if (!active)
-				return viewerSetupIL.getImage(timepointId, level, hints);
 
 			final int n = multiResSetupIL.getImageSize(timepointId).numDimensions();
 
@@ -320,15 +325,28 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 		@Override
 		public RandomAccessibleInterval<V> getVolatileImage(final int timepointId, final int level, final ImgLoaderHint... hints) {
-			if (!active)
-				return getUnderlyingViewerSetupImgLoader().getVolatileImage(timepointId, level, hints);
-
 			// The correction can't be computed from volatile cells (they may not be loaded yet,
 			// and the block algorithms don't support volatile types), so BDV gets the corrected
 			// non-volatile image, computed on this loader's fetcher threads.
-			final int maxLevel = numMipmapLevels() - 1;
-			final CacheHints cacheHints = new CacheHints(LoadingStrategy.BUDGETED, maxLevel - level, false);
-			return VolatileViews.wrapAsVolatile(getImage(timepointId, level), queue(maxLevel + 1), cacheHints);
+			// The image follows setActive() whenever an accessor is created, so that BigDataViewer, which keeps
+			// the image, shows a toggle after a repaint (also below a split img loader).
+			final Supplier<RandomAccessibleInterval<V>> corrected = new Supplier<RandomAccessibleInterval<V>>() {
+				private RandomAccessibleInterval<V> img;
+
+				@Override
+				public synchronized RandomAccessibleInterval<V> get() {
+					if (!active)
+						return null;
+					if (img == null) {
+						final int maxLevel = numMipmapLevels() - 1;
+						final CacheHints cacheHints = new CacheHints(LoadingStrategy.BUDGETED, maxLevel - level, false);
+						img = VolatileViews.wrapAsVolatile(correctedImage(timepointId, level), queue(maxLevel + 1), cacheHints);
+					}
+					return img;
+				}
+			};
+			return new IntensityPreview.SwitchingImage<>(
+					getUnderlyingViewerSetupImgLoader().getVolatileImage(timepointId, level, hints), corrected);
 		}
 
 		// ========== Float image access ==========

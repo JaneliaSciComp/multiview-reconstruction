@@ -44,8 +44,6 @@ import net.imglib2.util.Intervals;
 public final class Bleaching {
 
 	private final double retained;
-	/** a region imaged before is dimmed once, however often it was imaged ({@code n} capped at 1) */
-	private final boolean once;
 
 	/** image coordinates of the view (at the level given to {@link #of}) to full-resolution pixels of each earlier view */
 	private final AffineTransform3D[] toEarlier;
@@ -54,14 +52,9 @@ public final class Bleaching {
 	private final double[][] max;
 
 	Bleaching(final double bleachFactor, final List<AffineTransform3D> toEarlier, final List<Dimensions> earlierDimensions) {
-		this(bleachFactor, false, toEarlier, earlierDimensions);
-	}
-
-	Bleaching(final double bleachFactor, final boolean once, final List<AffineTransform3D> toEarlier, final List<Dimensions> earlierDimensions) {
 		if (!(bleachFactor > 0 && bleachFactor < 1))
 			throw new IllegalArgumentException("bleachFactor must be in (0, 1), but was " + bleachFactor);
 		this.retained = 1 - bleachFactor;
-		this.once = once;
 		this.toEarlier = toEarlier.toArray(new AffineTransform3D[0]);
 		this.max = earlierDimensions.stream()
 				.map(dims -> new double[] { dims.dimension(0) - 0.5, dims.dimension(1) - 0.5, dims.dimension(2) - 0.5 })
@@ -76,30 +69,9 @@ public final class Bleaching {
 	 */
 	public static Bleaching of(final AbstractSpimData<?> spimData, final ViewId view, final AffineTransform3D imageToGlobal,
 			final double bleachFactor) {
-		return of(spimData, view, imageToGlobal, bleachFactor, false);
-	}
-
-	/**
-	 * @param once
-	 *            a voxel imaged before is unbleached once, {@code v / (1 - bleachFactor)}, however often it was imaged
-	 */
-	public static Bleaching of(final AbstractSpimData<?> spimData, final ViewId view, final AffineTransform3D imageToGlobal,
-			final double bleachFactor, final boolean once) {
 		if (bleachFactor == 0)
 			return null;
-		return build(spimData, view, imageToGlobal, bleachFactor, once);
-	}
 
-	/**
-	 * The earlier views covering {@code view}, for counting exposures only ({@link #countLine}), e.g. to estimate a
-	 * bleach factor; null if no earlier view overlaps it.
-	 */
-	public static Bleaching footprints(final AbstractSpimData<?> spimData, final ViewId view, final AffineTransform3D imageToGlobal) {
-		return build(spimData, view, imageToGlobal, 0.5, false); // the factor only matters for gain(), unused when counting
-	}
-
-	private static Bleaching build(final AbstractSpimData<?> spimData, final ViewId view, final AffineTransform3D imageToGlobal,
-			final double bleachFactor, final boolean once) {
 		final RealInterval bounds = globalBounds(spimData, view);
 		final List<AffineTransform3D> toEarlier = new ArrayList<>();
 		final List<Dimensions> earlierDimensions = new ArrayList<>();
@@ -108,13 +80,12 @@ public final class Bleaching {
 				continue;
 			if (Intervals.isEmpty(Intervals.intersect(bounds, globalBounds(spimData, vd))))
 				continue;
-			// inverse() is the registration's cached inverse, recomputed in place whenever its model is updated: copy it
-			final AffineTransform3D t = model(spimData, vd).inverse().copy();
+			final AffineTransform3D t = model(spimData, vd).inverse();
 			t.concatenate(imageToGlobal);
 			toEarlier.add(t);
 			earlierDimensions.add(vd.getViewSetup().getSize());
 		}
-		return toEarlier.isEmpty() ? null : new Bleaching(bleachFactor, once, toEarlier, earlierDimensions);
+		return toEarlier.isEmpty() ? null : new Bleaching(bleachFactor, toEarlier, earlierDimensions);
 	}
 
 	private static AffineTransform3D model(final AbstractSpimData<?> spimData, final ViewId view) {
@@ -137,14 +108,14 @@ public final class Bleaching {
 
 	/** @return the factor that unbleaches a voxel imaged {@code n} times before */
 	double gain(final int n) {
-		return Math.pow(retained, -(once ? Math.min(n, 1) : n));
+		return Math.pow(retained, -n);
 	}
 
 	/**
 	 * Sets {@code count[i]} to the number of earlier views covering image voxel {@code start + (i, 0, 0)},
 	 * {@code 0 <= i < len}. A footprint intersects a line in one interval, so this costs one solve per earlier view.
 	 */
-	public void countLine(final long[] start, final int len, final int[] count) {
+	void countLine(final long[] start, final int len, final int[] count) {
 		java.util.Arrays.fill(count, 0, len, 0);
 		for (int j = 0; j < toEarlier.length; ++j) {
 			final AffineTransform3D t = toEarlier[j];

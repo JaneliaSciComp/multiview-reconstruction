@@ -112,17 +112,15 @@ public class BleachingAndMedianTest {
 	public void bleachFactorSurvivesN5RoundTrip(@TempDir final Path tmp) {
 		final String path = tmp.resolve("c.n5").toString();
 		try (N5FSWriter w = new N5FSWriter(path)) {
-			CoefficientsIO.save(identity().withThreshold(7).withBleachFactor(0.25).withBleachOnce(true), w, "c");
+			CoefficientsIO.save(identity().withThreshold(7).withBleachFactor(0.25), w, "c");
 			CoefficientsIO.save(identity(), w, "plain");
 		}
 		try (N5FSReader r = new N5FSReader(path)) {
 			final Coefficients c = CoefficientsIO.load(r, "c");
 			assertEquals(7, c.threshold());
 			assertEquals(0.25, c.bleachFactor());
-			assertEquals(true, c.bleachOnce());
 			final Coefficients plain = CoefficientsIO.load(r, "plain");
 			assertEquals(0, plain.bleachFactor());
-			assertEquals(false, plain.bleachOnce());
 		}
 	}
 
@@ -132,18 +130,6 @@ public class BleachingAndMedianTest {
 		final Bleaching b = new Bleaching(0.2, List.of(), List.of());
 		assertEquals(100, f.unbleach(100, 0));
 		assertEquals(100 * b.gain(2), f.unbleach(100, 2), 1e-9);
-	}
-
-	/** bleach once: a voxel imaged twice before is unbleached like one imaged once, in matching and in the apply */
-	@Test
-	public void bleachOnceCapsTheCount() {
-		final UnbleachFunction f = UnbleachFunction.bleachFactor(0.2, true);
-		final Bleaching b = new Bleaching(0.2, true, List.of(), List.of());
-		assertEquals(100, f.unbleach(100, 0));
-		assertEquals(100 / 0.8, f.unbleach(100, 1), 1e-9);
-		assertEquals(100 / 0.8, f.unbleach(100, 3), 1e-9);
-		assertEquals(1 / 0.8, b.gain(3), 1e-9);
-		assertEquals(true, identity().withBleachFactor(0.2).withBleachOnce(true).withThreshold(5).bleachOnce());
 	}
 
 	@Test

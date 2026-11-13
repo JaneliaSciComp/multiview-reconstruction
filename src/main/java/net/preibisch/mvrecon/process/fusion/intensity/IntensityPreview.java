@@ -356,7 +356,7 @@ public class IntensityPreview
 			// each voxel by the earlier views first
 			final Coefficients coefficients = stored == null
 					? IntensityCorrectionViewer.IDENTITY
-					: stored.withBleaching( Bleaching.of( spimData, new ViewId( timepointId, setupId ), sourceToGlobal, stored.bleachFactor(), stored.bleachOnce() ) );
+					: stored.withBleaching( Bleaching.of( spimData, new ViewId( timepointId, setupId ), sourceToGlobal, stored.bleachFactor() ) );
 			final ClosestViewSource.Geometry geometry = layout.geometry( t );
 			final int index = setupIndex.get( setupId );
 
@@ -484,13 +484,13 @@ public class IntensityPreview
 	 * The raw image, or the corrected one while the preview is on, decided whenever an accessor is created
 	 * (BigDataViewer creates new ones for every frame, so a toggle needs only a repaint).
 	 */
-	private static final class SwitchingImage< T > extends AbstractInterval implements RandomAccessibleInterval< T >
+	public static final class SwitchingImage< T > extends AbstractInterval implements RandomAccessibleInterval< T >
 	{
 		private final RandomAccessibleInterval< T > raw;
 
 		private final Supplier< RandomAccessibleInterval< T > > corrected;
 
-		SwitchingImage( final RandomAccessibleInterval< T > raw, final Supplier< RandomAccessibleInterval< T > > corrected )
+		public SwitchingImage( final RandomAccessibleInterval< T > raw, final Supplier< RandomAccessibleInterval< T > > corrected )
 		{
 			super( raw );
 			this.raw = raw;

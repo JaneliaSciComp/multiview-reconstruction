@@ -58,7 +58,10 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.XMLSaveAs;
 import net.preibisch.mvrecon.fiji.spimdata.GroupedViews;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.ViewerFlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.SpimDataTools;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVFlyThrough;
@@ -612,19 +615,32 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 
 				final BasicBDVPopup p = runningBdvPopup();
 				final boolean bdv = p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible();
-				if ( !( data.getSequenceDescription().getImgLoader() instanceof FlatfieldCorrectionWrappedImgLoader ) )
+				BasicImgLoader il = data.getSequenceDescription().getImgLoader();
+				while ( il instanceof SplitViewerImgLoader ) // a split dataset keeps the flatfield correction below
+					il = ( ( SplitViewerImgLoader ) il ).getUnderlyingImgLoader();
+				final boolean on;
+				if ( il instanceof ViewerFlatfieldCorrectionWrappedImgLoader )
+				{
+					final ViewerFlatfieldCorrectionWrappedImgLoader ff = ( ViewerFlatfieldCorrectionWrappedImgLoader ) il;
+					ff.setActive( on = !ff.isActive() );
+					IntensityPreview.flatfieldChanged( data ); // drops corrected images built on the other state
+				}
+				else if ( il instanceof FlatfieldCorrectionWrappedImgLoader && il == data.getSequenceDescription().getImgLoader() )
+				{
+					final FlatfieldCorrectionWrappedImgLoader< ? > ff = ( FlatfieldCorrectionWrappedImgLoader< ? > ) il;
+					ff.setActive( on = !ff.isActive() );
+				}
+				else
 				{
 					IOFunctions.println( "No flatfield correction to toggle: right-click > Flatfield Correction ... first." );
 					if ( bdv )
 						p.getBDV().getViewer().showMessage( "No flatfield correction (see log)" );
 					return;
 				}
-				final FlatfieldCorrectionWrappedImgLoader< ? > ff = ( FlatfieldCorrectionWrappedImgLoader< ? > ) data.getSequenceDescription().getImgLoader();
-				ff.setActive( !ff.isActive() );
-				IOFunctions.println( "Flatfield correction " + ( ff.isActive() ? "on" : "off" ) + " (press 'f' to toggle)." );
+				IOFunctions.println( "Flatfield correction " + ( on ? "on" : "off" ) + " (press 'f' to toggle)." );
 				if ( bdv )
 				{
-					p.getBDV().getViewer().showMessage( "Flatfield correction " + ( ff.isActive() ? "on" : "off" ) );
+					p.getBDV().getViewer().showMessage( "Flatfield correction " + ( on ? "on" : "off" ) );
 					p.getBDV().getViewer().requestRepaint();
 				}
 			}

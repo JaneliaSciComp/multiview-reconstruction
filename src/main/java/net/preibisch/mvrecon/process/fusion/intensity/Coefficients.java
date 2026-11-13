@@ -55,9 +55,6 @@ public class Coefficients implements Serializable {
 	 */
 	private final double bleachFactor;
 
-	/** the bleaching counts a region imaged before once, however often it was imaged ({@code n} capped at 1) */
-	private final boolean bleachOnce;
-
 	/** Where the voxels of the view were imaged before; set per image by the caller, never stored. */
 	private final transient Bleaching bleaching;
 
@@ -83,18 +80,16 @@ public class Coefficients implements Serializable {
 		Arrays.setAll(flattenedCoefficients, i -> coefficients[i].clone());
 		threshold = Double.NaN;
 		bleachFactor = 0;
-		bleachOnce = false;
 		bleaching = null;
 	}
 
-	private Coefficients(final Coefficients other, final double threshold, final double bleachFactor, final boolean bleachOnce,
+	private Coefficients(final Coefficients other, final double threshold, final double bleachFactor,
 			final Bleaching bleaching) {
 		this.size = other.size;
 		this.strides = other.strides;
 		this.flattenedCoefficients = other.flattenedCoefficients;
 		this.threshold = threshold;
 		this.bleachFactor = bleachFactor;
-		this.bleachOnce = bleachOnce;
 		this.bleaching = bleaching;
 	}
 
@@ -111,7 +106,7 @@ public class Coefficients implements Serializable {
 	 *         (pass {@link Double#NaN} to correct every voxel)
 	 */
 	public Coefficients withThreshold(final double threshold) {
-		return new Coefficients(this, threshold, bleachFactor, bleachOnce, bleaching);
+		return new Coefficients(this, threshold, bleachFactor, bleaching);
 	}
 
 	/**
@@ -128,17 +123,7 @@ public class Coefficients implements Serializable {
 	public Coefficients withBleachFactor(final double bleachFactor) {
 		if (!(bleachFactor >= 0 && bleachFactor < 1))
 			throw new IllegalArgumentException("bleachFactor must be in [0, 1), but was " + bleachFactor);
-		return new Coefficients(this, threshold, bleachFactor, bleachOnce, bleaching);
-	}
-
-	/** @return whether the bleaching counted a region imaged before once, however often ({@code n} capped at 1) */
-	public boolean bleachOnce() {
-		return bleachOnce;
-	}
-
-	/** @return a view of these coefficients whose bleaching counts a region imaged before once ({@code n} capped at 1) */
-	public Coefficients withBleachOnce(final boolean bleachOnce) {
-		return new Coefficients(this, threshold, bleachFactor, bleachOnce, bleaching);
+		return new Coefficients(this, threshold, bleachFactor, bleaching);
 	}
 
 	/** @return where the voxels of the image were imaged before, or null (not stored) */
@@ -152,7 +137,7 @@ public class Coefficients implements Serializable {
 	 *         {@link #bleachFactor()} is the factor the bleaching was built with.
 	 */
 	public Coefficients withBleaching(final Bleaching bleaching) {
-		return new Coefficients(this, threshold, bleachFactor, bleachOnce, bleaching);
+		return new Coefficients(this, threshold, bleachFactor, bleaching);
 	}
 
 	int size(final int d) {
