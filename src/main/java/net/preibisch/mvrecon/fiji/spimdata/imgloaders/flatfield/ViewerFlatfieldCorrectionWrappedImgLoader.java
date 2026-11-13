@@ -58,7 +58,6 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
-import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 
 /**
@@ -81,6 +80,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 	private final ViewerImgLoader wrappedImgLoader;
 	private boolean active;
+	/** kept for the XML attribute only: the corrected image caches its blocks itself */
 	private boolean cacheResult;
 
 	/** Helper for loading flatfield images */
@@ -309,13 +309,6 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 				RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
 
 				rai = loadedImg;
-			} else if (cacheResult) {
-				final int[] cellSize = new int[rai.numDimensions()];
-				Arrays.fill(cellSize, 1);
-				for (int d = 0; d < rai.numDimensions() - 1; d++)
-					cellSize[d] = (int) rai.dimension(d);
-				rai = FusionTools.cacheRandomAccessibleInterval(
-						rai, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
 			}
 
 			return rai;
@@ -405,13 +398,6 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 				RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
 
 				rai = loadedImg;
-			} else if (cacheResult) {
-				final int[] cellSize = new int[rai.numDimensions()];
-				Arrays.fill(cellSize, 1);
-				for (int d = 0; d < rai.numDimensions() - 1; d++)
-					cellSize[d] = (int) rai.dimension(d);
-				rai = FusionTools.cacheRandomAccessibleInterval(rai, Long.MAX_VALUE,
-						new FloatType(), cellSize);
 			}
 
 			return rai;

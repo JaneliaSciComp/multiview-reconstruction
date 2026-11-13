@@ -139,7 +139,6 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 		final Element wrappedIL = new Element(WRAPPED_IMGLOADER_TAG);
 
 		wholeElem.setAttribute(ACTIVE_TAG, Boolean.toString(imgLoader.isActive()));
-		wholeElem.setAttribute(CACHED_TAG, Boolean.toString(imgLoader.isCached()));
 
 		try {
 			@SuppressWarnings({"rawtypes"})

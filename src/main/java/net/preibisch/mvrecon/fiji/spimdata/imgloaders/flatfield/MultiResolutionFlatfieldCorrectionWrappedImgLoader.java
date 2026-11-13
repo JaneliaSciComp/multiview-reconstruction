@@ -59,7 +59,6 @@ import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.process.fusion.FusionTools;
 
 
 public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
@@ -68,6 +67,7 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 
 	private final MultiResolutionImgLoader wrappedImgLoader;
 	private boolean active;
+	/** kept for the XML attribute only: the corrected image caches its blocks itself */
 	private boolean cacheResult;
 
 	/* downsampled bright/dark images */
@@ -222,15 +222,6 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 
 				rai = loadedImg;
 			}
-			else if ( cacheResult )
-			{
-				final int[] cellSize = new int[rai.numDimensions()];
-				Arrays.fill( cellSize, 1 );
-				for ( int d = 0; d < rai.numDimensions() - 1; d++ )
-					cellSize[d] = (int) rai.dimension( d );
-				rai =  FusionTools.cacheRandomAccessibleInterval(
-						rai, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
-			}
 			return rai;
 		}
 
@@ -289,15 +280,6 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 
 					raiNormalized = loadedImg;
 				}
-				else if ( cacheResult )
-				{
-					final int[] cellSize = new int[raiNormalized.numDimensions()];
-					Arrays.fill( cellSize, 1 );
-					for ( int d = 0; d < raiNormalized.numDimensions() - 1; d++ )
-						cellSize[d] = (int) raiNormalized.dimension( d );
-					rai =  FusionTools.cacheRandomAccessibleInterval(
-							raiNormalized, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
-				}
 				rai = raiNormalized;
 			}
 			else {
@@ -325,15 +307,6 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 					RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
 
 					rai = loadedImg;
-				}
-				else if ( cacheResult )
-				{
-					final int[] cellSize = new int[rai.numDimensions()];
-					Arrays.fill( cellSize, 1 );
-					for ( int d = 0; d < rai.numDimensions() - 1; d++ )
-						cellSize[d] = (int) rai.dimension( d );
-					rai = FusionTools.cacheRandomAccessibleInterval(
-							rai, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
 				}
 
 			}

@@ -23,7 +23,6 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
-import java.util.Arrays;
 
 import ij.ImageJ;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
@@ -46,7 +45,6 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.process.fusion.FusionTools;
 
 
 public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatFieldCorrectionMap< ImgLoader >
@@ -54,6 +52,7 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 {
 	private final ImgLoader wrappedImgLoader;
 	private boolean active;
+	/** kept for the XML attribute only: the corrected image caches its blocks itself */
 	private boolean cacheResult;
 
 	public DefaultFlatfieldCorrectionWrappedImgLoader(ImgLoader wrappedImgLoader)
@@ -145,16 +144,6 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 				rai = loadedImg;
 			}
 
-			else if ( cacheResult )
-			{
-				final int[] cellSize = new int[rai.numDimensions()];
-				Arrays.fill( cellSize, 1 );
-				for ( int d = 0; d < rai.numDimensions() - 1; d++ )
-					cellSize[d] = (int) rai.dimension( d );
-				rai = FusionTools.cacheRandomAccessibleInterval(
-						rai, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
-			}
-
 			return rai;
 
 		}
@@ -203,15 +192,6 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 
 					raiNormalized = loadedImg;
 				}
-				else if ( cacheResult )
-				{
-					final int[] cellSize = new int[raiNormalized.numDimensions()];
-					Arrays.fill( cellSize, 1 );
-					for ( int d = 0; d < raiNormalized.numDimensions() - 1; d++ )
-						cellSize[d] = (int) raiNormalized.dimension( d );
-					raiNormalized = FusionTools.cacheRandomAccessibleInterval(
-							raiNormalized, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
-				}
 				rai = raiNormalized;
 			}
 			else
@@ -241,15 +221,6 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 					RealTypeConverters.copyFromTo(Views.extendZero(rai), loadedImg);
 
 					rai = loadedImg;
-				}
-				else if ( cacheResult )
-				{
-					final int[] cellSize = new int[rai.numDimensions()];
-					Arrays.fill( cellSize, 1 );
-					for ( int d = 0; d < rai.numDimensions() - 1; d++ )
-						cellSize[d] = (int) rai.dimension( d );
-					rai = FusionTools.cacheRandomAccessibleInterval(
-							rai, Long.MAX_VALUE, rai.firstElement().createVariable(), cellSize);
 				}
 
 			}

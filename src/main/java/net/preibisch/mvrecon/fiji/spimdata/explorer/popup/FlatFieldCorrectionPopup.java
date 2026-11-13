@@ -120,10 +120,6 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 						? ( (FlatfieldCorrectionWrappedImgLoader< ? >) data.getSequenceDescription().getImgLoader() )
 								.isActive()
 						: true );
-				gdp.addCheckbox( "cache_corrected_images", alreadyFF
-						? ( (FlatfieldCorrectionWrappedImgLoader< ? >) data.getSequenceDescription().getImgLoader() )
-								.isCached()
-						: true );
 
 				Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> infoMap = null;
 				if ( alreadyFF )
@@ -162,7 +158,6 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 					return;
 
 				final boolean activate = gdp.getNextBoolean();
-				final boolean cache = gdp.getNextBoolean();
 
 				final FlatfieldCorrectionWrappedImgLoader< ? extends ImgLoader > ffIL;
 				if ( alreadyFF )
@@ -170,10 +165,9 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 							.getImgLoader();
 				else if ( data.getSequenceDescription().getImgLoader() instanceof MultiResolutionImgLoader )
 					ffIL = new MultiResolutionFlatfieldCorrectionWrappedImgLoader(
-							(MultiResolutionImgLoader) data.getSequenceDescription().getImgLoader(), cache );
+							(MultiResolutionImgLoader) data.getSequenceDescription().getImgLoader() );
 				else
-					ffIL = new DefaultFlatfieldCorrectionWrappedImgLoader( data.getSequenceDescription().getImgLoader(),
-							cache );
+					ffIL = new DefaultFlatfieldCorrectionWrappedImgLoader( data.getSequenceDescription().getImgLoader() );
 
 				for ( Channel c : channels )
 					for ( Illumination ill : illums )
@@ -198,7 +192,6 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 					}
 
 				ffIL.setActive( activate );
-				ffIL.setCached( cache );
 
 				data.getSequenceDescription().setImgLoader( ffIL );
 				gdp.dispose();
