@@ -37,6 +37,7 @@ import net.imglib2.cache.img.ReadOnlyCachedCellImgOptions;
 import net.imglib2.converter.Converters;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
+import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
 
@@ -97,6 +98,13 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 		// Otherwise convert to the requested output type, clamped to its range: an integer type
 		// would wrap where raw < dark (e.g. -3 -> 65533 for uint16). Converted blockwise, so the
 		// result is still a CachedCellImg (prefetching and BlockSupplier.of() need cells).
+		// 16 bit in, 16 bit out: one pass over the block (FlatfieldCorrectionBlockSupplier.ofUnsignedShort)
+		if (outputType instanceof UnsignedShortType && sourceImg.getType() instanceof UnsignedShortType
+				&& (brightImg != null || darkImg != null))
+			return (RandomAccessibleInterval<O>) wrapWithOffset(
+					() -> FlatfieldCorrectionBlockSupplier.ofUnsignedShort((RandomAccessibleInterval) sourceImg, brightImg, darkImg),
+					new UnsignedShortType(), sourceImg, DEFAULT_CELL_SIZE);
+
 		if (outputType instanceof NativeType && !(outputType instanceof Volatile))
 			return (RandomAccessibleInterval<O>) wrapWithOffset(
 					() -> correctedFloat.get().andThen(Convert.convert((NativeType) outputType, ClampType.CLAMP)),

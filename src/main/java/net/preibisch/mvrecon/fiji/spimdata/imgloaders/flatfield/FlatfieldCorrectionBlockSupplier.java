@@ -42,6 +42,7 @@ import net.imglib2.blocks.BlockInterval;
 import net.imglib2.blocks.TempArray;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
+import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
@@ -240,17 +241,34 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 		// Copy source block (full 3D or 2D)
 		source.copy(interval, srcArray);
 
-		// Determine XY size for bright/dark
-		final int xyLen;
-		final int zSize;
-		if (numDimensions >= 3) {
-			xyLen = size[0] * size[1];
-			zSize = size[2];
-		} else {
-			xyLen = len;
-			zSize = 1;
-		}
+		final int xyLen = numDimensions >= 3 ? size[0] * size[1] : len;
+		final int zSize = numDimensions >= 3 ? size[2] : 1;
+		final float[][] fields = fields(interval, xyLen);
+		final float[] brightArray = fields[0], darkArray = fields[1];
 
+		// Apply correction
+		final float[] fdest = Cast.unchecked(dest);
+		final float meanBC = (float) meanBrightCorrected;
+
+		for (int z = 0; z < zSize; z++) {
+			final int zOffset = z * xyLen;
+			for (int i = 0; i < xyLen; i++) {
+				final float darkVal = darkArray[i];
+				final float corrBright = brightArray[i] - darkVal;
+				final float srcVal = srcArray[zOffset + i];
+				final float corrImg = srcVal - darkVal;
+
+				if (corrBright == 0) {
+					fdest[zOffset + i] = 0;
+				} else {
+					fdest[zOffset + i] = corrImg * meanBC / corrBright;
+				}
+			}
+		}
+	}
+
+	/** the bright and dark field of the block's xy extent: {bright, dark}, valid until the next call */
+	private float[][] fields(final Interval interval, final int xyLen) {
 		final float[] brightArray = brightTemp.get(xyLen);
 		final float[] darkArray = darkTemp.get(xyLen);
 
@@ -273,25 +291,81 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 			Arrays.fill(darkArray, 0, xyLen, 0f);
 		else
 			dark.copy(interval2D, darkArray);
+		return new float[][] { brightArray, darkArray };
+	}
 
-		// Apply correction
-		final float[] fdest = Cast.unchecked(dest);
-		final float meanBC = (float) meanBrightCorrected;
+	/**
+	 * The correction of {@link #of(RandomAccessibleInterval, RandomAccessibleInterval, RandomAccessibleInterval)} for
+	 * 16-bit data, as 16 bit, computed in one pass over the 16-bit block instead of three (to float, correct, to 16 bit).
+	 * The values are those of {@code of(...).andThen(Convert.convert(new UnsignedShortType(), ClampType.CLAMP))}, except
+	 * that one may differ by one count where the exact result is next to a .5 boundary: the gain is multiplied instead
+	 * of divided by, which rounds differently in the last bit. At least one of the fields must be given.
+	 */
+	public static <S extends RealType<S>, R extends RealType<R>> BlockSupplier<UnsignedShortType> ofUnsignedShort(
+			final RandomAccessibleInterval<UnsignedShortType> sourceImg,
+			final RandomAccessibleInterval<S> brightImg,
+			final RandomAccessibleInterval<R> darkImg)
+	{
+		return new UnsignedShort(
+				(FlatfieldCorrectionBlockSupplier) of(sourceImg, brightImg, darkImg),
+				BlockSupplier.of(Views.extendBorder(sourceImg)));
+	}
 
-		for (int z = 0; z < zSize; z++) {
-			final int zOffset = z * xyLen;
+	private static final class UnsignedShort implements BlockSupplier<UnsignedShortType> {
+		private final FlatfieldCorrectionBlockSupplier fields;
+		private final BlockSupplier<UnsignedShortType> source;
+
+		UnsignedShort(final FlatfieldCorrectionBlockSupplier fields, final BlockSupplier<UnsignedShortType> source) {
+			this.fields = fields;
+			this.source = source;
+		}
+
+		@Override
+		public void copy(final Interval interval, final Object dest) {
+			final int[] size = BlockInterval.asBlockInterval(interval).size();
+			final int len = safeInt(Intervals.numElements(size));
+			final int xyLen = fields.numDimensions >= 3 ? size[0] * size[1] : len;
+			final int zSize = fields.numDimensions >= 3 ? size[2] : 1;
+
+			final short[] d = Cast.unchecked(dest);
+			source.copy(interval, d);
+			final float[][] f = fields.fields(interval, xyLen);
+			final float[] brightArray = f[0], darkArray = f[1];
+			final float meanBC = (float) fields.meanBrightCorrected;
+
+			// gain = mean / (bright - dark), once per block; (int)(v + 0.5f) is cheaper than Math.round()
+			final float[] gain = brightArray; // the bright field is not needed after this
 			for (int i = 0; i < xyLen; i++) {
-				final float darkVal = darkArray[i];
-				final float corrBright = brightArray[i] - darkVal;
-				final float srcVal = srcArray[zOffset + i];
-				final float corrImg = srcVal - darkVal;
-
-				if (corrBright == 0) {
-					fdest[zOffset + i] = 0;
-				} else {
-					fdest[zOffset + i] = corrImg * meanBC / corrBright;
+				final float corrBright = brightArray[i] - darkArray[i];
+				gain[i] = corrBright == 0 ? 0 : meanBC / corrBright;
+			}
+			for (int z = 0; z < zSize; z++) {
+				final int zOffset = z * xyLen;
+				for (int i = 0; i < xyLen; i++) {
+					final int q = (int) (((d[zOffset + i] & 0xffff) - darkArray[i]) * gain[i] + 0.5f);
+					d[zOffset + i] = (short) (q < 0 ? 0 : q > 0xffff ? 0xffff : q);
 				}
 			}
+		}
+
+		@Override
+		public BlockSupplier<UnsignedShortType> independentCopy() {
+			return new UnsignedShort(new FlatfieldCorrectionBlockSupplier(fields), source.independentCopy());
+		}
+
+		@Override
+		public BlockSupplier<UnsignedShortType> threadSafe() {
+			return new UnsignedShort((FlatfieldCorrectionBlockSupplier) fields.threadSafe(), source.threadSafe());
+		}
+
+		@Override
+		public int numDimensions() {
+			return fields.numDimensions;
+		}
+
+		@Override
+		public UnsignedShortType getType() {
+			return new UnsignedShortType();
 		}
 	}
 
