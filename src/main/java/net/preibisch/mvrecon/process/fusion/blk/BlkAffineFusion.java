@@ -200,7 +200,13 @@ public class BlkAffineFusion
 
 			final AffineTransform3D transform = concatenateBoundingBoxOffset( model, fusionInterval );
 
-			final Coefficients coefficients = intensityAdjustmentCoefficients == null ? null : intensityAdjustmentCoefficients.get( viewId );
+			final Coefficients stored = intensityAdjustmentCoefficients == null ? null : intensityAdjustmentCoefficients.get( viewId );
+
+			// coefficients matched on unbleached intensities apply to unbleached intensities (as the preview does it):
+			// model maps the opened (downsampled) image to global
+			final Coefficients coefficients = stored == null || stored.bleachFactor() == 0 ? stored
+					: stored.withBleaching( net.preibisch.mvrecon.process.fusion.intensity.Bleaching.of( viewId, model,
+							stored.bleachFactor(), sortedViewIds, viewRegistrations, viewDimensions ) );
 
 			final BlockSupplier< FloatType > viewBlocks = transformedBlocks(
 					Cast.unchecked( inputImg ),

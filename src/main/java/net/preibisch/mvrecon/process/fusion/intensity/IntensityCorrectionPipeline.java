@@ -97,6 +97,13 @@ public class IntensityCorrectionPipeline
 		 */
 		public double bleachFactor = 0;
 
+		/**
+		 * weight of the pull of every view toward a common level (the median of the views' foreground medians), scaled
+		 * by (median partners / partners)^2 so that weakly connected views follow it, 0 = off (solve only; see
+		 * {@link IntensitySolver#setEquilibration})
+		 */
+		public double equilibration = 0;
+
 		public TransformationModel model = TransformationModel.AFFINE;
 		public RegularizationModel regularization1 = RegularizationModel.TRANSLATION;
 		public double lambda1 = 0.01;
@@ -249,9 +256,11 @@ public class IntensityCorrectionPipeline
 		final double t = AutoThreshold.compute( method, Cast.unchecked( img.getA() ) );
 		if ( Double.isNaN( t ) )
 			IOFunctions.println( "WARNING: " + Group.pvid( view ) + " is constant at this scale, " + method + " threshold undefined, using 1." );
+		final double threshold = Double.isNaN( t ) ? 1.0 : t;
 		return new double[] {
-				Double.isNaN( t ) ? 1.0 : t,
-				IntensityThresholds.percentile( Cast.unchecked( img.getA() ), IntensityThresholds.BACKGROUND_PERCENTILE ) };
+				threshold,
+				IntensityThresholds.percentile( Cast.unchecked( img.getA() ), IntensityThresholds.BACKGROUND_PERCENTILE ),
+				IntensityThresholds.medianAbove( Cast.unchecked( img.getA() ), threshold ) };
 	}
 
 	/**
@@ -311,6 +320,21 @@ public class IntensityCorrectionPipeline
 			final Map< ViewId, Double > backgrounds,
 			final Parameters p )
 	{
+		return solve( matches, thresholds, backgrounds, null, p );
+	}
+
+	/**
+	 * @param foregroundMedians per-view median above the threshold, needed for {@link Parameters#equilibration} (null = none)
+	 */
+	public static Map< ViewId, Coefficients > solve(
+			final List< ViewPairCoefficientMatches > matches,
+			final Map< ViewId, Double > thresholds,
+			final Map< ViewId, Double > backgrounds,
+			final Map< ViewId, Double > foregroundMedians,
+			final Parameters p )
+	{
+		if ( p.equilibration > 0 && ( foregroundMedians == null || foregroundMedians.isEmpty() ) )
+			IOFunctions.println( "WARNING: equilibration needs the views' foreground medians, which are not available here; solving without it." );
 		List< ViewPairCoefficientMatches > toSolve = matches;
 		if ( p.minSignal > 0 )
 		{
@@ -325,7 +349,8 @@ public class IntensityCorrectionPipeline
 			toSolve = IntensityCorrection.addBackgroundMatches( toSolve, backgrounds, p.backgroundWeight );
 		}
 
-		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( p.numCoefficients, toSolve, p.solverIterations, p.createModel() );
+		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( p.numCoefficients, toSolve, p.solverIterations, p.createModel(),
+				p.equilibration, p.equilibration > 0 ? foregroundMedians : null );
 
 		coefficients.replaceAll( ( v, c ) -> {
 			Coefficients r = thresholds != null && thresholds.containsKey( v ) ? c.withThreshold( thresholds.get( v ) ) : c;
@@ -356,9 +381,20 @@ public class IntensityCorrectionPipeline
 		try
 		{
 			final Map< ViewId, Double > thresholds, backgrounds;
+			final Map< ViewId, Double > medians = new ConcurrentHashMap<>();
 			if ( p.threshold == Threshold.FIXED )
 			{
 				thresholds = backgrounds = null;
+				if ( p.equilibration > 0 )
+				{
+					final long downsampling = Math.max( 1, Math.round( 1.0 / p.renderScale ) );
+					pool.submit( () -> pairs.stream().flatMap( Stream::of ).distinct().collect( Collectors.toList() ).parallelStream().forEach( v -> {
+						final double m = IntensityThresholds.medianAbove( Cast.unchecked( AutoThreshold.openForHistogram(
+								data.getSequenceDescription().getImgLoader(), v, downsampling ).getA() ), p.minIntensity );
+						if ( Double.isFinite( m ) )
+							medians.put( v, m );
+					} ) ).get();
+				}
 			}
 			else
 			{
@@ -370,6 +406,8 @@ public class IntensityCorrectionPipeline
 					final double[] levels = viewLevels( data.getSequenceDescription().getImgLoader(), v, p );
 					thresholds.put( v, levels[ 0 ] );
 					backgrounds.put( v, levels[ 1 ] );
+					if ( Double.isFinite( levels[ 2 ] ) )
+						medians.put( v, levels[ 2 ] );
 				} ) ).get();
 				final double[] sorted = thresholds.values().stream().mapToDouble( Double::doubleValue ).sorted().toArray();
 				IOFunctions.println( String.format( "Per-view thresholds: min %.2f, median %.2f, max %.2f", sorted[ 0 ], sorted[ sorted.length / 2 ], sorted[ sorted.length - 1 ] ) );
@@ -386,7 +424,7 @@ public class IntensityCorrectionPipeline
 			} ) ).get();
 
 			IOFunctions.println( new Date() + ": solving ..." );
-			final Map< ViewId, Coefficients > coefficients = solve( matches, thresholds, backgrounds, p );
+			final Map< ViewId, Coefficients > coefficients = solve( matches, thresholds, backgrounds, medians, p );
 			IOFunctions.println( new Date() + ": intensity correction computed for " + coefficients.size() + " views." );
 			return coefficients;
 		}

@@ -35,11 +35,18 @@ import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.ScaleModel1D;
 /**
  * A pure gain from the voxels both views see: {@code s = median(q) / median(p)} over the candidates (which the matcher
  * has already gated at the threshold in BOTH views, so the two medians describe one population), reduced to two
- * matches on {@code q = s p} at the smallest and largest {@code p}, like {@link HistogramIntensityMatchingFilter}.
+ * matches on {@code q = s p} at a low and a high quantile of {@code p} ({@link #LOW_QUANTILE}, {@link #HIGH_QUANTILE}).
  * spotlight's "intersection" gain estimator; robust to the bright tail that dominates a scale fit to all voxels or
  * quantiles. Use with a SCALE solve.
  */
 class MedianIntensityMatchingFilter implements IntensityMatchingFilter {
+
+	/**
+	 * Where the two matches of a pair are placed: quantiles of the first view's intensities in the overlap. Not its
+	 * minimum and maximum: with the maximum, a few outlier voxels decided how much a pair counts (on a chain of 8 tiles
+	 * with outliers up to 58,000 the seams were 13% instead of 8%, as bad as without a hand-set maximum intensity).
+	 */
+	static final double LOW_QUANTILE = 0.05, HIGH_QUANTILE = 0.95;
 
 	private final Model<?> model = new ScaleModel1D();
 
@@ -62,8 +69,13 @@ class MedianIntensityMatchingFilter implements IntensityMatchingFilter {
 		if (!(mp > 0 && mq > 0 && p[n - 1] > p[0]))
 			return;
 		final double s = mq / mp;
-		reducedMatches.add(new PointMatch1D(new Point1D(p[0]), new Point1D(s * p[0]), 1.0));
-		reducedMatches.add(new PointMatch1D(new Point1D(p[n - 1]), new Point1D(s * p[n - 1]), 1.0));
+		// the ratio at two intensities of the overlap; the solver weights a match by its intensity squared, so not at the
+		// extremes: a few outlier voxels would set how much this pair counts against the others
+		final double lo = p[(int) (LOW_QUANTILE * (n - 1))], hi = p[(int) (HIGH_QUANTILE * (n - 1))];
+		if (!(hi > lo))
+			return;
+		reducedMatches.add(new PointMatch1D(new Point1D(lo), new Point1D(s * lo), 1.0));
+		reducedMatches.add(new PointMatch1D(new Point1D(hi), new Point1D(s * hi), 1.0));
 	}
 
 	private static double median(final double[] sorted) {

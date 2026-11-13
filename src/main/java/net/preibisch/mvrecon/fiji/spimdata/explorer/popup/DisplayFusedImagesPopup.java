@@ -214,6 +214,14 @@ public class DisplayFusedImagesPopup extends JMenu implements ExplorerWindowSeta
 									Double.NaN,
 									downsampling );
 
+					// the intensity correction of the dataset, if it has one for these views: as the BigDataViewer preview
+					// shows it (only above each view's threshold)
+					final java.util.Map< ViewId, net.preibisch.mvrecon.process.fusion.intensity.Coefficients > intensity =
+							spimData instanceof SpimData2 && ( ( SpimData2 ) spimData ).getIntensityAdjustments().containsAny( views )
+									? ( ( SpimData2 ) spimData ).getIntensityAdjustments().getCoefficients( true ) : null;
+					IOFunctions.println( intensity == null ? "No intensity correction stored for these views; fusing the images as they are."
+							: "Applying the stored intensity correction (Adjust Intensities)." );
+
 					// same block-based fusion as Image Fusion (overlap is pre-filtered once, not per block)
 					final BlockSupplier<FloatType> fused = BlkAffineFusion.init(
 							null,
@@ -224,7 +232,7 @@ public class DisplayFusedImagesPopup extends JMenu implements ExplorerWindowSeta
 							defaultFusionType, // blending
 							Double.NaN,
 							defaultInterpolation, // linear interpolatio
-							null,
+							intensity,
 							bbDS,
 							new FloatType(),
 							new DisplayImage().blocksize() );
