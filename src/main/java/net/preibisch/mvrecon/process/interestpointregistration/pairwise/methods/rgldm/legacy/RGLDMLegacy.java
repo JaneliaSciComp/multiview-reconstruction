@@ -34,6 +34,10 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.AbstractPointDes
  * {@link AbstractPointDescriptor#descriptorDistance}. Kept as the reference implementation, {@code RGLDMMatcherTest}
  * checks that the fast paths in {@code SubsetVectorMatching} return exactly its candidates. Selected by
  * {@code DescriptorSearch.LEGACY}.
+ * <p>
+ * With a search radius, an A descriptor with a single B descriptor inside the radius has no second-best for the ratio
+ * test: that B descriptor is a candidate, the radius has disambiguated it (2026-11-13, such A descriptors were dropped
+ * before; see {@code SubsetVectorMatching}).
  */
 public class RGLDMLegacy
 {
@@ -56,10 +60,14 @@ public class RGLDMLegacy
 			D bestMatch = null;
 			D secondBestMatch = null;
 
+			int numCompared = 0; // the B descriptors inside the search radius, all of them without a radius
+
 			for ( final D descriptorB : descriptorsB )
 			{
 				if ( limitSearchRadius && Point.distance( descriptorA.getBasisPoint(), descriptorB.getBasisPoint() ) > searchRadius )
 						continue;
+
+				++numCompared;
 
 				final double difference = descriptorA.descriptorDistance( descriptorB );
 
@@ -82,7 +90,11 @@ public class RGLDMLegacy
 				}
 			}
 
-			if ( bestDifference < differenceThreshold && bestDifference * nTimesBetter < secondBestDifference && secondBestDifference != Double.MAX_VALUE ) // there must be a second one (make sure 2nd best is set)
+			// the only B descriptor inside the search radius: a candidate without the ratio test, there is no second-best
+			final boolean lone = limitSearchRadius && numCompared == 1;
+
+			if ( bestMatch != null && bestDifference < differenceThreshold &&
+				( lone || ( bestDifference * nTimesBetter < secondBestDifference && secondBestDifference != Double.MAX_VALUE ) ) ) // otherwise there must be a second one (make sure 2nd best is set)
 			{
 				// add correspondence for the two basis points of the descriptor
 				I detectionA = descriptorA.getBasisPoint();

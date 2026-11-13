@@ -421,6 +421,20 @@ and reference views), `InterestPointMatchCreator`, `PairwiseResult`, `Transforma
 - Layout: `RGLDMMatcher` builds the descriptors and dispatches; the old loop is `rgldm.legacy.RGLDMLegacy` (reference
   implementation for the test), the fast paths are `rgldm.subsetvector` (`SubsetVectorMatching` public, the strategies
   `FlatTreeSearch` / `BruteForceSearch` and `BestMatches` package-private).
+- Search radius and the ratio test (2026-11-13): the radius never cut the descriptors' neighbors (the descriptors are built
+  from the whole lists before the radius is looked at; it only limits which B points an A point is compared with), but the
+  second-best of the ratio test also came from inside the radius and an A point with a single B point in the radius was
+  dropped. A radius below about twice the spacing of the points therefore lost nearly all candidates, the true partners
+  first (synthetic cloud, 46 px spacing, 3 px shift, 1,560 shared points: 9 candidates at radius 10, 79 at 20, 1,331 at 100,
+  1,278 without a radius). Now the only B point in the radius is a candidate without the ratio test (as `EmbeddingsMatcher`;
+  1,561 candidates / 1,559 correct at radius 10), in `SubsetVectorMatching` (`minSubsetDistance`; the searchers are only
+  asked for two or more B points) and `RGLDMLegacy` alike. No absolute threshold guards it, `differenceThreshold` stays
+  `Float.MAX_VALUE` (Stephan, 2026-11-13: no intuition for a number): the distance is in px², its scale is the localization
+  noise² for a true pair with an intact neighborhood (about 1 px² at 0.5 px jitter, 25 at 2 px) and the point spacing² for
+  a wrong one, and a true pair whose neighborhood lost or gained a detection is as far as a wrong one (14-78 % of the true
+  lone pairs above 100 px² in the simulation), so any threshold removes what the rule recovers; RANSAC removes the wrong
+  lone pairs (0.3-30 % of the lone ones). Test `RGLDMMatcherTest.onlyPointInRadiusIsCandidate`. BigStitcher-Spark inherits
+  it (`--searchRadius` of PRECISE_TRANSLATION) once built against this.
 - Geometric hashing (2026-10-10): `GeometricHasher` takes the second-best from a *different* B point. With redundancy r
   every point has C = (3+r choose 3) descriptors in one tree, and the C+1 nearest descriptors of a query always contain
   one of another point, so the per-descriptor ratio test is no longer vetoed by another descriptor of the nearest point

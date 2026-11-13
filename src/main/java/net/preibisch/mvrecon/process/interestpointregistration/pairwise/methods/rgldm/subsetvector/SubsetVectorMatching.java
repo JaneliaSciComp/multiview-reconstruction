@@ -42,6 +42,12 @@ import net.preibisch.mvrecon.process.pointcloud.pointdescriptor.matcher.SubsetMa
  * only pays off while it prunes, so brute force takes over for many neighbors (high dimension) or a radius that admits few
  * points; {@link #preferTree} holds the measured thresholds. Candidate sets equal the legacy loop, see
  * {@code RGLDMMatcherTest}.
+ * <p>
+ * A candidate is the best B descriptor if it is {@code ratioOfDistance} times better than the second-best. With a search
+ * radius both come from inside the radius, and an A descriptor with a single B descriptor inside it has no second-best:
+ * that B descriptor is a candidate without the ratio test, the radius has disambiguated it (as {@code EmbeddingsMatcher}
+ * does). {@code differenceThreshold} still applies to it. Until 2026-11-13 such an A descriptor was dropped, so a radius
+ * smaller than the spacing of the points lost nearly all candidates, the true partners first.
  */
 public class SubsetVectorMatching
 {
@@ -71,7 +77,8 @@ public class SubsetVectorMatching
 			final boolean limitSearchRadius, final double searchRadius, final DescriptorSearch search )
 	{
 		final ArrayList< PointMatchGeneric< I > > candidates = new ArrayList<>();
-		if ( descsA.isEmpty() || descsB.size() < 2 )
+		// without a radius a candidate needs a second-best, so two B descriptors; with a radius a single one inside it suffices
+		if ( descsA.isEmpty() || descsB.isEmpty() || ( !limitSearchRadius && descsB.size() < 2 ) )
 			return candidates;
 
 		final int numSubsets = subsets.length;
@@ -100,14 +107,22 @@ public class SubsetVectorMatching
 			final RadiusNeighborSearchOnKDTree< Integer > radiusSearch = new RadiusNeighborSearchOnKDTree<>( new KDTree<>( indicesB, basisPointsB ) );
 
 			final double inRadiusFraction = ( search == DescriptorSearch.AUTO ) ? sampleInRadiusFraction( descsA, descsB.size(), radiusSearch, searchRadius ) : 1.0;
-			final SubsetSearch searcher = createSearch( search, numNeighbors, inRadiusFraction, vecsA, vecsB, numSubsets );
+			// only asked for two or more B descriptors inside the radius
+			final SubsetSearch searcher = descsB.size() < 2 ? null : createSearch( search, numNeighbors, inRadiusFraction, vecsA, vecsB, numSubsets );
 			final int[] ownersB = new int[ descsB.size() ];
 			for ( int indexA = 0; indexA < descsA.size(); ++indexA )
 			{
 				radiusSearch.search( descsA.get( indexA ).getBasisPoint(), searchRadius, false );
 				final int numInRadius = radiusSearch.numNeighbors();
-				if ( numInRadius < 2 ) // no second-best possible, same as the legacy loop
+				if ( numInRadius == 0 )
 					continue;
+				if ( numInRadius == 1 )
+				{
+					// the only B descriptor inside the radius: best without a second-best, see the candidate test below
+					final int ownerB = radiusSearch.getSampler( 0 ).get();
+					bestMatches.fold( indexA, ownerB, minSubsetDistance( vecsA, vecsB, indexA, ownerB, numSubsets ) );
+					continue;
+				}
 				for ( int neighbor = 0; neighbor < numInRadius; ++neighbor )
 					ownersB[ neighbor ] = radiusSearch.getSampler( neighbor ).get();
 				searcher.searchWithin( indexA, ownersB, numInRadius, bestMatches );
@@ -116,13 +131,42 @@ public class SubsetVectorMatching
 
 		for ( int indexA = 0; indexA < descsA.size(); ++indexA )
 		{
+			if ( bestMatches.bestOwner[ indexA ] < 0 )
+				continue;
+
 			final double bestDist = bestMatches.bestDist[ indexA ] / numDims;
 			final double secondDist = bestMatches.secondDist[ indexA ] / numDims;
-			if ( bestMatches.bestOwner[ indexA ] >= 0 && bestMatches.secondDist[ indexA ] < Double.MAX_VALUE
-					&& bestDist < differenceThreshold && bestDist * ratioOfDistance < secondDist )
+
+			// no second-best = the only B descriptor inside the search radius: a candidate without the ratio test
+			final boolean lone = limitSearchRadius && bestMatches.secondDist[ indexA ] == Double.MAX_VALUE;
+
+			if ( bestDist < differenceThreshold && ( lone || ( bestMatches.secondDist[ indexA ] < Double.MAX_VALUE && bestDist * ratioOfDistance < secondDist ) ) )
 				candidates.add( new PointMatchGeneric< I >( descsA.get( indexA ).getBasisPoint(), descsB.get( bestMatches.bestOwner[ indexA ] ).getBasisPoint() ) );
 		}
 		return candidates;
+	}
+
+	/** the RGLDM distance of one A to one B descriptor before the division by the dimensions: the minimum over all pairs of their subset vectors */
+	private static double minSubsetDistance( final float[][] vecsA, final float[][] vecsB, final int indexA, final int ownerB, final int numSubsets )
+	{
+		double min = Double.MAX_VALUE;
+		for ( int subsetA = 0; subsetA < numSubsets; ++subsetA )
+		{
+			final float[] vecA = vecsA[ indexA * numSubsets + subsetA ];
+			for ( int subsetB = 0; subsetB < numSubsets; ++subsetB )
+			{
+				final float[] vecB = vecsB[ ownerB * numSubsets + subsetB ];
+				double dist = 0;
+				for ( int i = 0; i < vecA.length; ++i )
+				{
+					final double diff = vecA[ i ] - vecB[ i ];
+					dist += diff * diff;
+				}
+				if ( dist < min )
+					min = dist;
+			}
+		}
+		return min;
 	}
 
 	private static SubsetSearch createSearch( final DescriptorSearch search, final int numNeighbors, final double inRadiusFraction,
