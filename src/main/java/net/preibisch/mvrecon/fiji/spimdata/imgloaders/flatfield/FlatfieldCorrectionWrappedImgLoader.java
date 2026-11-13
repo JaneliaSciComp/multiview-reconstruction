@@ -30,8 +30,6 @@ public interface FlatfieldCorrectionWrappedImgLoader<IL extends ImgLoader> exten
 	IL getWrappedImgLoder();
 	void setActive(boolean active);
 	boolean isActive();
-	void setCached(boolean cached);
-	boolean isCached();
 
 	/**
 	 * Set the bright (flatfield) image for a view.

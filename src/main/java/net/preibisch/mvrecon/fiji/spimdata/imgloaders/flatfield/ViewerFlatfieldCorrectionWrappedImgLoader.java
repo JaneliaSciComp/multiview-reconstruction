@@ -73,8 +73,6 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 
 	private final ViewerImgLoader wrappedImgLoader;
 	private boolean active;
-	/** unused: read from old XMLs only */
-	private boolean cacheResult;
 
 	/** Helper for loading flatfield images */
 	private final FlatfieldImageLoader imageLoader;
@@ -87,13 +85,8 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 	private final Map<Pair<FlatfieldImageInfo, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
 
 	public ViewerFlatfieldCorrectionWrappedImgLoader(final ViewerImgLoader wrappedImgLoader) {
-		this(wrappedImgLoader, true);
-	}
-
-	public ViewerFlatfieldCorrectionWrappedImgLoader(final ViewerImgLoader wrappedImgLoader, final boolean cacheResult) {
 		this.wrappedImgLoader = wrappedImgLoader;
 		this.active = true;
-		this.cacheResult = cacheResult;
 		this.imageLoader = new FlatfieldImageLoader();
 		this.dsRaiMap = new HashMap<>();
 	}
@@ -112,13 +105,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		return active;
 	}
 
-	public boolean isCached() {
-		return cacheResult;
-	}
 
-	public void setCached(final boolean cached) {
-		this.cacheResult = cached;
-	}
 
 	public void setBrightImage(final ViewId vId, final FlatfieldImageInfo info) {
 		imageLoader.setBrightImage(vId, info);

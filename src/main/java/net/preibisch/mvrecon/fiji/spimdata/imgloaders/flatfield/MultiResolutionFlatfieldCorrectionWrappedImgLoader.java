@@ -60,24 +60,15 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 
 	private final MultiResolutionImgLoader wrappedImgLoader;
 	private boolean active;
-	/** unused: read from old XMLs only */
-	private boolean cacheResult;
 
 	/* downsampled bright/dark images */
 	private final Map<Pair<FlatfieldImageInfo, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
 
 	public MultiResolutionFlatfieldCorrectionWrappedImgLoader(MultiResolutionImgLoader wrappedImgLoader)
 	{
-		this( wrappedImgLoader, true );
-	}
-
-	public MultiResolutionFlatfieldCorrectionWrappedImgLoader(MultiResolutionImgLoader wrappedImgLoader,
-			boolean cacheResult)
-	{
 		super();
 		this.wrappedImgLoader = wrappedImgLoader;
 		this.active = true;
-		this.cacheResult = cacheResult;
 
 		dsRaiMap = new HashMap<>();
 	}
@@ -329,15 +320,5 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		ImageJFunctions.show( image );
 	}
 
-	@Override
-	public boolean isCached()
-	{
-		return cacheResult;
-	}
 
-	@Override
-	public void setCached(boolean cached)
-	{
-		cacheResult = cached;
-	}
 }

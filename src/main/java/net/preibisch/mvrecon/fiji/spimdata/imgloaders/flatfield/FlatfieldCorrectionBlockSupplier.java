@@ -36,6 +36,7 @@ import bdv.util.ConstantRandomAccessible;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.blocks.AbstractBlockSupplier;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.blocks.BlockInterval;
@@ -60,7 +61,7 @@ import net.imglib2.view.Views;
  *
  * The blocks are FloatType, or UnsignedShortType (rounded and clamped) for 16-bit data.
  */
-public class FlatfieldCorrectionBlockSupplier<T extends NativeType<T>> implements BlockSupplier<T> {
+public class FlatfieldCorrectionBlockSupplier<T extends NativeType<T>> extends AbstractBlockSupplier<T> {
 	/** FloatType or UnsignedShortType */
 	private final T type;
 	/** blocks of {@link #type}: the raw 16-bit data, or the data converted to float */
@@ -77,7 +78,7 @@ public class FlatfieldCorrectionBlockSupplier<T extends NativeType<T>> implement
 		void correct(Interval interval, Object dest, float[] gain, float[] dark, int xyLen, int zSize);
 	}
 
-	// Temp arrays for block data
+	// Temp arrays for block data; not thread-safe, threadSafe() (inherited) gives every thread its own copy
 	private final TempArray<float[]> srcTemp = TempArray.forPrimitiveType(FLOAT);
 	private final TempArray<float[]> brightTemp = TempArray.forPrimitiveType(FLOAT);
 	private final TempArray<float[]> darkTemp = TempArray.forPrimitiveType(FLOAT);
@@ -322,15 +323,6 @@ public class FlatfieldCorrectionBlockSupplier<T extends NativeType<T>> implement
 				source.independentCopy(),
 				bright == null ? null : bright.independentCopy(),
 				dark == null ? null : dark.independentCopy(),
-				meanBrightCorrected);
-	}
-
-	@Override
-	public BlockSupplier<T> threadSafe() {
-		return new FlatfieldCorrectionBlockSupplier<>(
-				source.threadSafe(),
-				bright == null ? null : bright.threadSafe(),
-				dark == null ? null : dark.threadSafe(),
 				meanBrightCorrected);
 	}
 

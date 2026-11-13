@@ -45,20 +45,12 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 {
 	private final ImgLoader wrappedImgLoader;
 	private boolean active;
-	/** unused: read from old XMLs only */
-	private boolean cacheResult;
 
 	public DefaultFlatfieldCorrectionWrappedImgLoader(ImgLoader wrappedImgLoader)
-	{
-		this( wrappedImgLoader, true );
-	}
-
-	public DefaultFlatfieldCorrectionWrappedImgLoader(ImgLoader wrappedImgLoader, boolean cacheResult)
 	{
 		super();
 		this.wrappedImgLoader = wrappedImgLoader;
 		this.active = true;
-		this.cacheResult = cacheResult;
 	}
 
 	@Override
@@ -169,16 +161,6 @@ public class DefaultFlatfieldCorrectionWrappedImgLoader extends LazyLoadingFlatF
 
 	}
 
-	@Override
-	public boolean isCached()
-	{
-		return cacheResult;
-	}
 
-	@Override
-	public void setCached(boolean cached)
-	{
-		cacheResult = cached;
-	}
 
 }

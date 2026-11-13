@@ -66,7 +66,6 @@ public class TestFlatfieldCorrection {
 			final FlatfieldCorrectionWrappedImgLoader<?> ffcLoader =
 				(FlatfieldCorrectionWrappedImgLoader<?>) correctedImgLoader;
 			System.out.println("  Correction active: " + ffcLoader.isActive());
-			System.out.println("  Caching enabled: " + ffcLoader.isCached());
 			System.out.println("  Wrapped loader: " + ffcLoader.getWrappedImgLoder().getClass().getSimpleName());
 		}
 

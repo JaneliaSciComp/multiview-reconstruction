@@ -61,7 +61,6 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 	public final static String BRIGHTIMG_TAG = "BrightImg";
 	public final static String DARKIMG_TAG = "DarkImg";
 	public final static String ACTIVE_TAG = "Active";
-	public final static String CACHED_TAG = "Cached";
 	public final static String FORMAT_ATTR = "format";
 	public final static String DATASET_ATTR = "dataset";
 
@@ -84,10 +83,9 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 			return null;
 		}
 
-		boolean cached = false;
+		// old XMLs also have a "Cached" attribute, which is ignored
 		boolean active = false;
 		try {
-			cached = elem.getAttribute(CACHED_TAG).getBooleanValue();
 			active = elem.getAttribute(ACTIVE_TAG).getBooleanValue();
 		} catch (DataConversionException e) {
 			e.printStackTrace();
@@ -103,7 +101,7 @@ public class XmlIoViewerFlatfieldCorrectionWrappedImgLoader
 		}
 
 		ViewerFlatfieldCorrectionWrappedImgLoader res =
-				new ViewerFlatfieldCorrectionWrappedImgLoader((ViewerImgLoader) wrappedImgLoader, cached);
+				new ViewerFlatfieldCorrectionWrappedImgLoader((ViewerImgLoader) wrappedImgLoader);
 
 		Element flatfields = elem.getChild(FLATFIELDS_TAG);
 		for (Element flatfield : flatfields.getChildren()) {

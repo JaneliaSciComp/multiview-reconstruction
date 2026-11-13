@@ -60,7 +60,6 @@ public class XmlIoFlatfieldCorrectedWrappedImgLoader
 	public final static String BRIGHTIMG_TAG = "BrightImg";
 	public final static String DARKIMG_TAG = "DarkImg";
 	public final static String ACTIVE_TAG = "Active";
-	public final static String CACHED_TAG = "Cached";
 
 	@Override
 	public FlatfieldCorrectionWrappedImgLoader<? extends ImgLoader> fromXml(Element elem, File basePath,
@@ -86,11 +85,10 @@ public class XmlIoFlatfieldCorrectedWrappedImgLoader
 			return null;
 		}
 
-		boolean cached = false;
+		// old XMLs also have a "Cached" attribute, which is ignored
 		boolean active = false;
 		try
 		{
-			cached = elem.getAttribute(CACHED_TAG).getBooleanValue();
 			active = elem.getAttribute(ACTIVE_TAG).getBooleanValue();
 		}
 		catch (DataConversionException e)
@@ -103,10 +101,9 @@ public class XmlIoFlatfieldCorrectedWrappedImgLoader
 		FlatfieldCorrectionWrappedImgLoader<? extends ImgLoader> res = null;
 
 		if (MultiResolutionImgLoader.class.isInstance(wrappedImgLoader))
-			res = new MultiResolutionFlatfieldCorrectionWrappedImgLoader((MultiResolutionImgLoader) wrappedImgLoader,
-					cached);
+			res = new MultiResolutionFlatfieldCorrectionWrappedImgLoader((MultiResolutionImgLoader) wrappedImgLoader);
 		else if (ImgLoader.class.isInstance(wrappedImgLoader))
-			res = new DefaultFlatfieldCorrectionWrappedImgLoader((ImgLoader) wrappedImgLoader, cached);
+			res = new DefaultFlatfieldCorrectionWrappedImgLoader((ImgLoader) wrappedImgLoader);
 		else
 			return null;
 

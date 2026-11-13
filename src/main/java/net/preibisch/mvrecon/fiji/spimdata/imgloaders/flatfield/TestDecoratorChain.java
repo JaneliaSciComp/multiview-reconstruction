@@ -91,7 +91,7 @@ public class TestDecoratorChain {
 		System.out.println("\n=== STEP 2: Wrapping with flatfield correction ===");
 
 		final MultiResolutionFlatfieldCorrectionWrappedImgLoader correctedLoader =
-			new MultiResolutionFlatfieldCorrectionWrappedImgLoader(baseLoader, true);
+			new MultiResolutionFlatfieldCorrectionWrappedImgLoader(baseLoader);
 
 		// Configure correction images for each view setup
 		for (int[] mapping : SETUP_TO_TILE) {

@@ -86,7 +86,6 @@ public class TestViewerFlatfieldCorrection {
 
 		System.out.println("Corrected loader type: " + correctedLoader.getClass().getSimpleName());
 		System.out.println("  Correction active: " + correctedLoader.isActive());
-		System.out.println("  Caching enabled: " + correctedLoader.isCached());
 		System.out.println("  Wrapped loader: " + correctedLoader.getWrappedImgLoader().getClass().getSimpleName());
 		System.out.println("  Implements ViewerImgLoader: " + (correctedLoader instanceof ViewerImgLoader ? "YES" : "NO"));
 
