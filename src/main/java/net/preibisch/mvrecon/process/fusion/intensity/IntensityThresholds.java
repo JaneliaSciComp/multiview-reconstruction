@@ -189,7 +189,7 @@ public class IntensityThresholds
 		long n = 0;
 		for ( final T t : Views.iterable( img ) )
 		{
-			++counts[ ( int ) Math.max( 0, Math.min( 65535, Math.round( t.getRealDouble() ) ) ) ];
+			++counts[ Math.clamp( Math.round( t.getRealDouble() ), 0, 65535 ) ];
 			++n;
 		}
 		final long rank = ( long ) Math.ceil( percentile / 100.0 * n );

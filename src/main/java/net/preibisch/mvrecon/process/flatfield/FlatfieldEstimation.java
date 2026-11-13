@@ -318,7 +318,7 @@ public class FlatfieldEstimation
 						final double[] m = merged[ y * cw + x ];
 						Arrays.sort( m );
 						for ( int q = 0; q < NUM_QUANTILES; ++q )
-							planes[ q ][ ( y0 + y ) * sx + x0 + x ] = ( float ) Math.min( Math.max( Math.rint( r7( m, q / ( double ) ( NUM_QUANTILES - 1 ) ) ), 0 ), 65535 );
+							planes[ q ][ ( y0 + y ) * sx + x0 + x ] = ( float ) Math.clamp( Math.rint( r7( m, q / ( double ) ( NUM_QUANTILES - 1 ) ) ), 0, 65535 );
 					}
 			}
 		return planes;
@@ -329,8 +329,8 @@ public class FlatfieldEstimation
 	{
 		final int n = v.length;
 		final double aleph = n * q + ( 1 - q );
-		final int j = ( int ) Math.min( Math.max( ( long ) aleph, 1 ), n - 1 );
-		final double g = Math.min( Math.max( aleph - j, 0 ), 1 );
+		final int j = Math.clamp( ( long ) aleph, 1, n - 1 );
+		final double g = Math.clamp( aleph - j, 0, 1 );
 		return ( 1 - g ) * v[ j - 1 ] + g * v[ j ];
 	}
 

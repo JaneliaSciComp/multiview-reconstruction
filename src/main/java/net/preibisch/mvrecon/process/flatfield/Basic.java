@@ -150,7 +150,7 @@ public class Basic
 		final double sf = ( double ) nIn / nOut;
 		for ( int i = 0; i < nOut; ++i )
 		{
-			final double c = Math.min( Math.max( sf * ( i + 0.5 ) - 0.5, 0.0 ), nIn - 1.0 );
+			final double c = Math.clamp( sf * ( i + 0.5 ) - 0.5, 0.0, nIn - 1.0 );
 			int l = ( int ) Math.floor( c );
 			if ( nIn > 1 )
 			{

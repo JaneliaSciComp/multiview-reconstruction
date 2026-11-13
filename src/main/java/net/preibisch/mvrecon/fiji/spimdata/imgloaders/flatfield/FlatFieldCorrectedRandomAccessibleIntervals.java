@@ -156,7 +156,7 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 
 		final double min = outputType.getMinValue(), max = outputType.getMaxValue();
 		return Converters.convert(wrapWithOffset(correctedFloat, new FloatType(), sourceImg, DEFAULT_CELL_SIZE),
-				(i, o) -> o.setReal(Math.min(Math.max(i.getRealDouble(), min), max)), outputType);
+				(i, o) -> o.setReal(Math.clamp(i.getRealDouble(), min, max)), outputType);
 	}
 
 	/**
