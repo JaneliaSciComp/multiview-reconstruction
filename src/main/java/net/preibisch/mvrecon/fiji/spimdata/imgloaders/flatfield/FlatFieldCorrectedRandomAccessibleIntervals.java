@@ -141,8 +141,7 @@ public class FlatFieldCorrectedRandomAccessibleIntervals
 			return (RandomAccessibleInterval<O>) wrapWithOffset(correctedFloat, new FloatType(), sourceImg, DEFAULT_CELL_SIZE);
 
 		// 16 bit in and out: one pass over the block
-		if (outputType instanceof UnsignedShortType && sourceImg.getType() instanceof UnsignedShortType
-				&& (brightImg != null || darkImg != null))
+		if (outputType instanceof UnsignedShortType && sourceImg.getType() instanceof UnsignedShortType)
 			return (RandomAccessibleInterval<O>) wrapWithOffset(
 					() -> FlatfieldCorrectionBlockSupplier.ofUnsignedShort((RandomAccessibleInterval) sourceImg, brightImg, darkImg),
 					new UnsignedShortType(), sourceImg, DEFAULT_CELL_SIZE);

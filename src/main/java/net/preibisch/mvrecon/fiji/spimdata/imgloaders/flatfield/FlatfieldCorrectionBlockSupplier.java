@@ -57,54 +57,44 @@ import net.imglib2.view.Views;
  * The bright and dark images are 2D (XY only), while the source may be 3D.
  * For 3D blocks, the same 2D bright/dark data is reused for all Z slices,
  * making this much more efficient than per-pixel RandomAccess.
+ *
+ * The blocks are FloatType, or UnsignedShortType (rounded and clamped) for 16-bit data.
  */
-public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType> {
-	private final BlockSupplier<FloatType> source;
+public class FlatfieldCorrectionBlockSupplier<T extends NativeType<T>> implements BlockSupplier<T> {
+	/** FloatType or UnsignedShortType */
+	private final T type;
+	/** blocks of {@link #type}: the raw 16-bit data, or the data converted to float */
+	private final BlockSupplier<T> source;
 	private final BlockSupplier<FloatType> bright;
 	private final BlockSupplier<FloatType> dark;
 	private final double meanBrightCorrected;
 	private final int numDimensions;
 
 	// Temp arrays for block data
-	private final TempArray<float[]> srcTemp;
-	private final TempArray<float[]> brightTemp;
-	private final TempArray<float[]> darkTemp;
+	private final TempArray<float[]> srcTemp = TempArray.forPrimitiveType(FLOAT);
+	private final TempArray<float[]> brightTemp = TempArray.forPrimitiveType(FLOAT);
+	private final TempArray<float[]> darkTemp = TempArray.forPrimitiveType(FLOAT);
 
 	/**
-	 * Create a flatfield correction BlockSupplier.
-	 *
-	 * @param source source image BlockSupplier (can be 2D or 3D)
+	 * @param source source blocks (2D or 3D) of the output type
 	 * @param bright bright (flatfield) image as BlockSupplier (2D), null = constant 1
 	 * @param dark dark image as BlockSupplier (2D), null = constant 0
 	 * @param meanBrightCorrected pre-computed mean of (bright - dark)
 	 */
-	public FlatfieldCorrectionBlockSupplier(
-			final BlockSupplier<FloatType> source,
+	private FlatfieldCorrectionBlockSupplier(
+			final BlockSupplier<T> source,
 			final BlockSupplier<FloatType> bright,
 			final BlockSupplier<FloatType> dark,
 			final double meanBrightCorrected)
 	{
+		this.type = source.getType();
+		if (!(type instanceof FloatType || type instanceof UnsignedShortType))
+			throw new IllegalArgumentException("unsupported type: " + type.getClass().getSimpleName());
 		this.source = source;
 		this.bright = bright;
 		this.dark = dark;
 		this.meanBrightCorrected = meanBrightCorrected;
 		this.numDimensions = source.numDimensions();
-
-		this.srcTemp = TempArray.forPrimitiveType(FLOAT);
-		this.brightTemp = TempArray.forPrimitiveType(FLOAT);
-		this.darkTemp = TempArray.forPrimitiveType(FLOAT);
-	}
-
-	private FlatfieldCorrectionBlockSupplier(final FlatfieldCorrectionBlockSupplier s) {
-		this.source = s.source.independentCopy();
-		this.bright = s.bright == null ? null : s.bright.independentCopy();
-		this.dark = s.dark == null ? null : s.dark.independentCopy();
-		this.meanBrightCorrected = s.meanBrightCorrected;
-		this.numDimensions = s.numDimensions;
-
-		this.srcTemp = TempArray.forPrimitiveType(FLOAT);
-		this.brightTemp = TempArray.forPrimitiveType(FLOAT);
-		this.darkTemp = TempArray.forPrimitiveType(FLOAT);
 	}
 
 	/**
@@ -116,7 +106,7 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 			final RandomAccessibleInterval<FloatType> dark,
 			final double meanBrightCorrected)
 	{
-		return new FlatfieldCorrectionBlockSupplier(
+		return new FlatfieldCorrectionBlockSupplier<>(
 				source,
 				BlockSupplier.of(bright),
 				BlockSupplier.of(dark),
@@ -139,11 +129,28 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 			final RandomAccessibleInterval<S> brightImg,
 			final RandomAccessibleInterval<R> darkImg)
 	{
-		// Create source BlockSupplier and convert to float
-		final BlockSupplier<FloatType> source = BlockSupplier
-				.of(Views.extendBorder(sourceImg))
-				.andThen(Convert.convert(new FloatType()));
+		return of(BlockSupplier.of(Views.extendBorder(sourceImg)).andThen(Convert.convert(new FloatType())),
+				sourceImg, brightImg, darkImg);
+	}
 
+	/**
+	 * {@link #of(RandomAccessibleInterval, RandomAccessibleInterval, RandomAccessibleInterval)} for 16-bit data,
+	 * rounded and clamped to 16 bit in one pass over the block.
+	 */
+	public static <S extends RealType<S>, R extends RealType<R>> BlockSupplier<UnsignedShortType> ofUnsignedShort(
+			final RandomAccessibleInterval<UnsignedShortType> sourceImg,
+			final RandomAccessibleInterval<S> brightImg,
+			final RandomAccessibleInterval<R> darkImg)
+	{
+		return of(BlockSupplier.of(Views.extendBorder(sourceImg)), sourceImg, brightImg, darkImg);
+	}
+
+	private static <T extends NativeType<T>, S extends RealType<S>, R extends RealType<R>> BlockSupplier<T> of(
+			final BlockSupplier<T> source,
+			final Interval sourceImg,
+			final RandomAccessibleInterval<S> brightImg,
+			final RandomAccessibleInterval<R> darkImg)
+	{
 		// Handle null bright/dark images
 		final RandomAccessibleInterval<FloatType> bright;
 		final RandomAccessibleInterval<FloatType> dark;
@@ -176,7 +183,7 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 
 		// a missing field stays null and is filled as a constant: BlockSupplier.of() would copy a
 		// ConstantRandomAccessible pixel by pixel
-		return new FlatfieldCorrectionBlockSupplier(
+		return new FlatfieldCorrectionBlockSupplier<>(
 				source,
 				brightImg == null ? null : BlockSupplier.of(bright),
 				darkImg == null ? null : BlockSupplier.of(dark),
@@ -230,25 +237,33 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 
 	@Override
 	public void copy(final Interval interval, final Object dest) {
-		final BlockInterval blockInterval = BlockInterval.asBlockInterval(interval);
-		final int[] size = blockInterval.size();
-
+		final int[] size = BlockInterval.asBlockInterval(interval).size();
 		final int len = safeInt(Intervals.numElements(size));
-		final float[] srcArray = srcTemp.get(len);
-
-		// Copy source block (full 3D or 2D)
-		source.copy(interval, srcArray);
-
 		final int xyLen = numDimensions >= 3 ? size[0] * size[1] : len;
 		final int zSize = numDimensions >= 3 ? size[2] : 1;
 		final float[][] fields = gainAndDark(interval, xyLen);
 		final float[] gain = fields[0], darkArray = fields[1];
 
-		final float[] fdest = Cast.unchecked(dest);
-		for (int z = 0; z < zSize; z++) {
-			final int zOffset = z * xyLen;
-			for (int i = 0; i < xyLen; i++)
-				fdest[zOffset + i] = (srcArray[zOffset + i] - darkArray[i]) * gain[i];
+		if (type instanceof UnsignedShortType) {
+			// in place; (int)(v + 0.5f) is cheaper than Math.round()
+			final short[] d = Cast.unchecked(dest);
+			source.copy(interval, d);
+			for (int z = 0; z < zSize; z++) {
+				final int zOffset = z * xyLen;
+				for (int i = 0; i < xyLen; i++) {
+					final float v = (UnsignedShortType.getUnsignedShort(d[zOffset + i]) - darkArray[i]) * gain[i];
+					d[zOffset + i] = UnsignedShortType.getCodedSignedShortChecked((int) (v + 0.5f));
+				}
+			}
+		} else {
+			final float[] srcArray = srcTemp.get(len);
+			source.copy(interval, srcArray);
+			final float[] d = Cast.unchecked(dest);
+			for (int z = 0; z < zSize; z++) {
+				final int zOffset = z * xyLen;
+				for (int i = 0; i < xyLen; i++)
+					d[zOffset + i] = (srcArray[zOffset + i] - darkArray[i]) * gain[i];
+			}
 		}
 	}
 
@@ -288,80 +303,18 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 		return new float[][] { brightArray, darkArray };
 	}
 
-	/**
-	 * {@link #of(RandomAccessibleInterval, RandomAccessibleInterval, RandomAccessibleInterval)} for 16-bit data,
-	 * rounded and clamped to 16 bit in one pass over the block. At least one field must be given.
-	 */
-	public static <S extends RealType<S>, R extends RealType<R>> BlockSupplier<UnsignedShortType> ofUnsignedShort(
-			final RandomAccessibleInterval<UnsignedShortType> sourceImg,
-			final RandomAccessibleInterval<S> brightImg,
-			final RandomAccessibleInterval<R> darkImg)
-	{
-		return new UnsignedShort(
-				(FlatfieldCorrectionBlockSupplier) of(sourceImg, brightImg, darkImg),
-				BlockSupplier.of(Views.extendBorder(sourceImg)));
-	}
-
-	private static final class UnsignedShort implements BlockSupplier<UnsignedShortType> {
-		private final FlatfieldCorrectionBlockSupplier fields;
-		private final BlockSupplier<UnsignedShortType> source;
-
-		UnsignedShort(final FlatfieldCorrectionBlockSupplier fields, final BlockSupplier<UnsignedShortType> source) {
-			this.fields = fields;
-			this.source = source;
-		}
-
-		@Override
-		public void copy(final Interval interval, final Object dest) {
-			final int[] size = BlockInterval.asBlockInterval(interval).size();
-			final int len = safeInt(Intervals.numElements(size));
-			final int xyLen = fields.numDimensions >= 3 ? size[0] * size[1] : len;
-			final int zSize = fields.numDimensions >= 3 ? size[2] : 1;
-
-			final short[] d = Cast.unchecked(dest);
-			source.copy(interval, d);
-			final float[][] f = fields.gainAndDark(interval, xyLen);
-			final float[] gain = f[0], darkArray = f[1];
-
-			// (int)(v + 0.5f) is cheaper than Math.round()
-			for (int z = 0; z < zSize; z++) {
-				final int zOffset = z * xyLen;
-				for (int i = 0; i < xyLen; i++) {
-					final float v = (UnsignedShortType.getUnsignedShort(d[zOffset + i]) - darkArray[i]) * gain[i];
-					d[zOffset + i] = UnsignedShortType.getCodedSignedShortChecked((int) (v + 0.5f));
-				}
-			}
-		}
-
-		@Override
-		public BlockSupplier<UnsignedShortType> independentCopy() {
-			return new UnsignedShort(new FlatfieldCorrectionBlockSupplier(fields), source.independentCopy());
-		}
-
-		@Override
-		public BlockSupplier<UnsignedShortType> threadSafe() {
-			return new UnsignedShort((FlatfieldCorrectionBlockSupplier) fields.threadSafe(), source.threadSafe());
-		}
-
-		@Override
-		public int numDimensions() {
-			return fields.numDimensions;
-		}
-
-		@Override
-		public UnsignedShortType getType() {
-			return new UnsignedShortType();
-		}
+	@Override
+	public BlockSupplier<T> independentCopy() {
+		return new FlatfieldCorrectionBlockSupplier<>(
+				source.independentCopy(),
+				bright == null ? null : bright.independentCopy(),
+				dark == null ? null : dark.independentCopy(),
+				meanBrightCorrected);
 	}
 
 	@Override
-	public BlockSupplier<FloatType> independentCopy() {
-		return new FlatfieldCorrectionBlockSupplier(this);
-	}
-
-	@Override
-	public BlockSupplier<FloatType> threadSafe() {
-		return new FlatfieldCorrectionBlockSupplier(
+	public BlockSupplier<T> threadSafe() {
+		return new FlatfieldCorrectionBlockSupplier<>(
 				source.threadSafe(),
 				bright == null ? null : bright.threadSafe(),
 				dark == null ? null : dark.threadSafe(),
@@ -373,10 +326,8 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 		return numDimensions;
 	}
 
-	private static final FloatType type = new FloatType();
-
 	@Override
-	public FloatType getType() {
+	public T getType() {
 		return type;
 	}
 }
