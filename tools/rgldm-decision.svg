@@ -1,0 +1,481 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="756" height="1132" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="12">
+<defs><linearGradient id="ratio" x1="0" x2="1" y1="0" y2="0">
+<stop offset="0.000" stop-color="#d03b3b"/>
+<stop offset="0.025" stop-color="#d14242"/>
+<stop offset="0.050" stop-color="#d24848"/>
+<stop offset="0.075" stop-color="#d44f4f"/>
+<stop offset="0.100" stop-color="#d55655"/>
+<stop offset="0.125" stop-color="#d65c5c"/>
+<stop offset="0.150" stop-color="#d76362"/>
+<stop offset="0.175" stop-color="#d86a69"/>
+<stop offset="0.200" stop-color="#d9706f"/>
+<stop offset="0.225" stop-color="#db7776"/>
+<stop offset="0.250" stop-color="#dc7e7d"/>
+<stop offset="0.275" stop-color="#dd8483"/>
+<stop offset="0.300" stop-color="#de8b8a"/>
+<stop offset="0.325" stop-color="#df9290"/>
+<stop offset="0.350" stop-color="#e19897"/>
+<stop offset="0.375" stop-color="#e29f9d"/>
+<stop offset="0.400" stop-color="#e3a6a4"/>
+<stop offset="0.425" stop-color="#e4acab"/>
+<stop offset="0.450" stop-color="#e5b3b1"/>
+<stop offset="0.475" stop-color="#e7bab8"/>
+<stop offset="0.500" stop-color="#e8c0be"/>
+<stop offset="0.525" stop-color="#e9c7c5"/>
+<stop offset="0.550" stop-color="#eacecb"/>
+<stop offset="0.575" stop-color="#ebd4d2"/>
+<stop offset="0.600" stop-color="#ecdbd8"/>
+<stop offset="0.625" stop-color="#eee2df"/>
+<stop offset="0.650" stop-color="#efe8e6"/>
+<stop offset="0.675" stop-color="#f0efec"/>
+<stop offset="0.700" stop-color="#e1e6ea"/>
+<stop offset="0.725" stop-color="#d1dde9"/>
+<stop offset="0.750" stop-color="#c2d3e7"/>
+<stop offset="0.775" stop-color="#b3cae5"/>
+<stop offset="0.800" stop-color="#a4c1e4"/>
+<stop offset="0.825" stop-color="#95b8e2"/>
+<stop offset="0.850" stop-color="#85afe0"/>
+<stop offset="0.875" stop-color="#76a6de"/>
+<stop offset="0.900" stop-color="#679ddd"/>
+<stop offset="0.925" stop-color="#5893db"/>
+<stop offset="0.950" stop-color="#488ad9"/>
+<stop offset="0.975" stop-color="#3981d8"/>
+<stop offset="1.000" stop-color="#2a78d6"/>
+</linearGradient></defs>
+<rect width="100%" height="100%" fill="#fcfcfb"/>
+<text x="120" y="28" font-size="15" font-weight="600" fill="#0b0b0b">Intel(R) Xeon(R) Platinum 8462Y+, 16 cores</text>
+<text x="120" y="48" fill="#52514e">parameters: 3 neighbors, 1 redundancy, 3 ratio</text>
+<text x="110" y="90" text-anchor="end" fill="#0b0b0b">50</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 50, avg B in radius 1
+brute force 5.8× faster
+flat KD-tree 47 ms, brute force 8 ms
+162 candidates, identical sets: true</title><rect x="121" y="65" width="94" height="42" rx="4" fill="#e6b9b7"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 50, avg B in radius 1
+brute force 10× faster
+flat KD-tree 125 ms, brute force 12 ms
+306 candidates, identical sets: true</title><rect x="217" y="65" width="94" height="42" rx="4" fill="#e3a7a5"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 50, avg B in radius 1
+brute force 25× faster
+flat KD-tree 849 ms, brute force 34 ms
+804 candidates, identical sets: true</title><rect x="313" y="65" width="94" height="42" rx="4" fill="#de8c8a"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 50, avg B in radius 1
+brute force 45× faster
+flat KD-tree 3082 ms, brute force 68 ms
+1616 candidates, identical sets: true</title><rect x="409" y="65" width="94" height="42" rx="4" fill="#db7978"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 50, avg B in radius 1
+brute force 92× faster
+flat KD-tree 13098 ms, brute force 142 ms
+3229 candidates, identical sets: true</title><rect x="505" y="65" width="94" height="42" rx="4" fill="#d76362"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 107× faster
+flat KD-tree 20578 ms, brute force 192 ms
+4174 candidates, identical sets: true</title><rect x="601" y="65" width="94" height="42" rx="4" fill="#d65e5e"/></g>
+<text x="110" y="134" text-anchor="end" fill="#0b0b0b">100</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 100, avg B in radius 5
+brute force 18× faster
+flat KD-tree 143 ms, brute force 8 ms
+647 candidates, identical sets: true</title><rect x="121" y="109" width="94" height="42" rx="4" fill="#e09695"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 100, avg B in radius 6
+brute force 34× faster
+flat KD-tree 537 ms, brute force 16 ms
+1282 candidates, identical sets: true</title><rect x="217" y="109" width="94" height="42" rx="4" fill="#dd8281"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 100, avg B in radius 6
+brute force 80× faster
+flat KD-tree 3618 ms, brute force 45 ms
+3411 candidates, identical sets: true</title><rect x="313" y="109" width="94" height="42" rx="4" fill="#d86767"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 100, avg B in radius 6
+brute force 148× faster
+flat KD-tree 13219 ms, brute force 89 ms
+6667 candidates, identical sets: true</title><rect x="409" y="109" width="94" height="42" rx="4" fill="#d55454"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 100, avg B in radius 6
+brute force 291× faster
+flat KD-tree 54585 ms, brute force 188 ms
+12954 candidates, identical sets: true</title><rect x="505" y="109" width="94" height="42" rx="4" fill="#d13f3f"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 336× faster
+flat KD-tree 84426 ms, brute force 251 ms
+16359 candidates, identical sets: true</title><rect x="601" y="109" width="94" height="42" rx="4" fill="#d03b3b"/></g>
+<text x="110" y="178" text-anchor="end" fill="#0b0b0b">250</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 250, avg B in radius 39
+brute force 7.9× faster
+flat KD-tree 106 ms, brute force 13 ms
+632 candidates, identical sets: true</title><rect x="121" y="153" width="94" height="42" rx="4" fill="#e5afad"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 250, avg B in radius 49
+brute force 14× faster
+flat KD-tree 371 ms, brute force 27 ms
+1242 candidates, identical sets: true</title><rect x="217" y="153" width="94" height="42" rx="4" fill="#e19d9c"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 250, avg B in radius 62
+brute force 23× faster
+flat KD-tree 2020 ms, brute force 87 ms
+3289 candidates, identical sets: true</title><rect x="313" y="153" width="94" height="42" rx="4" fill="#df8e8c"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 250, avg B in radius 69
+brute force 35× faster
+flat KD-tree 6448 ms, brute force 186 ms
+6419 candidates, identical sets: true</title><rect x="409" y="153" width="94" height="42" rx="4" fill="#dd8180"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 250, avg B in radius 74
+brute force 58× faster
+flat KD-tree 23909 ms, brute force 413 ms
+12449 candidates, identical sets: true</title><rect x="505" y="153" width="94" height="42" rx="4" fill="#da7170"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 66× faster
+flat KD-tree 36561 ms, brute force 553 ms
+15695 candidates, identical sets: true</title><rect x="601" y="153" width="94" height="42" rx="4" fill="#d96d6c"/></g>
+<text x="110" y="222" text-anchor="end" fill="#0b0b0b">500</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 500, avg B in radius 136
+brute force 2.8× faster
+flat KD-tree 79 ms, brute force 29 ms
+621 candidates, identical sets: true</title><rect x="121" y="197" width="94" height="42" rx="4" fill="#eacfcd"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 500, avg B in radius 181
+brute force 4.8× faster
+flat KD-tree 258 ms, brute force 54 ms
+1239 candidates, identical sets: true</title><rect x="217" y="197" width="94" height="42" rx="4" fill="#e7bfbd"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 500, avg B in radius 257
+brute force 6.4× faster
+flat KD-tree 1212 ms, brute force 190 ms
+3256 candidates, identical sets: true</title><rect x="313" y="197" width="94" height="42" rx="4" fill="#e6b6b4"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 500, avg B in radius 318
+brute force 7.6× faster
+flat KD-tree 3521 ms, brute force 461 ms
+6341 candidates, identical sets: true</title><rect x="409" y="197" width="94" height="42" rx="4" fill="#e5b0ae"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 500, avg B in radius 385
+brute force 9.8× faster
+flat KD-tree 11340 ms, brute force 1162 ms
+12261 candidates, identical sets: true</title><rect x="505" y="197" width="94" height="42" rx="4" fill="#e3a8a7"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 11× faster
+flat KD-tree 16883 ms, brute force 1602 ms
+15439 candidates, identical sets: true</title><rect x="601" y="197" width="94" height="42" rx="4" fill="#e3a6a4"/></g>
+<text x="110" y="266" text-anchor="end" fill="#0b0b0b">1000</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 1000, avg B in radius 342
+brute force 1.4× faster
+flat KD-tree 64 ms, brute force 45 ms
+610 candidates, identical sets: true</title><rect x="121" y="241" width="94" height="42" rx="4" fill="#eee4e1"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 1000, avg B in radius 524
+brute force 1.7× faster
+flat KD-tree 193 ms, brute force 115 ms
+1217 candidates, identical sets: true</title><rect x="217" y="241" width="94" height="42" rx="4" fill="#eddfdc"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 1000, avg B in radius 850
+brute force 1.7× faster
+flat KD-tree 826 ms, brute force 473 ms
+3226 candidates, identical sets: true</title><rect x="313" y="241" width="94" height="42" rx="4" fill="#eddedb"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 1000, avg B in radius 1129
+brute force 1.8× faster
+flat KD-tree 2309 ms, brute force 1255 ms
+6277 candidates, identical sets: true</title><rect x="409" y="241" width="94" height="42" rx="4" fill="#eddcd9"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 1000, avg B in radius 1473
+brute force 2.1× faster
+flat KD-tree 6888 ms, brute force 3344 ms
+12114 candidates, identical sets: true</title><rect x="505" y="241" width="94" height="42" rx="4" fill="#ecd9d6"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 2.1× faster
+flat KD-tree 10185 ms, brute force 4770 ms
+15217 candidates, identical sets: true</title><rect x="601" y="241" width="94" height="42" rx="4" fill="#ecd8d5"/></g>
+<text x="110" y="310" text-anchor="end" fill="#0b0b0b">2000</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 2000, avg B in radius 635
+flat KD-tree 1.1× faster
+flat KD-tree 58 ms, brute force 64 ms
+606 candidates, identical sets: true</title><rect x="121" y="285" width="94" height="42" rx="4" fill="#e9ebeb"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 2000, avg B in radius 1050
+flat KD-tree 1.2× faster
+flat KD-tree 171 ms, brute force 201 ms
+1218 candidates, identical sets: true</title><rect x="217" y="285" width="94" height="42" rx="4" fill="#e5e8eb"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 2000, avg B in radius 1982
+flat KD-tree 1.4× faster
+flat KD-tree 704 ms, brute force 971 ms
+3203 candidates, identical sets: true</title><rect x="313" y="285" width="94" height="42" rx="4" fill="#d9e1e9"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 2000, avg B in radius 3030
+flat KD-tree 1.6× faster
+flat KD-tree 1968 ms, brute force 3169 ms
+6216 candidates, identical sets: true</title><rect x="409" y="285" width="94" height="42" rx="4" fill="#cedbe8"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 2000, avg B in radius 4472
+flat KD-tree 1.8× faster
+flat KD-tree 5821 ms, brute force 10523 ms
+11990 candidates, identical sets: true</title><rect x="505" y="285" width="94" height="42" rx="4" fill="#c6d6e7"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 2000, avg B in radius 5062
+flat KD-tree 1.8× faster
+flat KD-tree 8941 ms, brute force 15777 ms
+15013 candidates, identical sets: true</title><rect x="601" y="285" width="94" height="42" rx="4" fill="#c8d7e8"/></g>
+<text x="110" y="354" text-anchor="end" fill="#0b0b0b">5000</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 5000, avg B in radius 972
+flat KD-tree 1.6× faster
+flat KD-tree 55 ms, brute force 90 ms
+609 candidates, identical sets: true</title><rect x="121" y="329" width="94" height="42" rx="4" fill="#cedae8"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 5000, avg B in radius 1868
+flat KD-tree 2.1× faster
+flat KD-tree 164 ms, brute force 345 ms
+1211 candidates, identical sets: true</title><rect x="217" y="329" width="94" height="42" rx="4" fill="#bcd0e6"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 5000, avg B in radius 4107
+flat KD-tree 3.0× faster
+flat KD-tree 711 ms, brute force 2133 ms
+3168 candidates, identical sets: true</title><rect x="313" y="329" width="94" height="42" rx="4" fill="#a2c0e3"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 5000, avg B in radius 6909
+flat KD-tree 3.6× faster
+flat KD-tree 2164 ms, brute force 7839 ms
+6154 candidates, identical sets: true</title><rect x="409" y="329" width="94" height="42" rx="4" fill="#95b8e2"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 5000, avg B in radius 11332
+flat KD-tree 3.8× faster
+flat KD-tree 7227 ms, brute force 27244 ms
+11815 candidates, identical sets: true</title><rect x="505" y="329" width="94" height="42" rx="4" fill="#92b7e2"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 5000, avg B in radius 13552
+flat KD-tree 3.8× faster
+flat KD-tree 11321 ms, brute force 42900 ms
+14781 candidates, identical sets: true</title><rect x="601" y="329" width="94" height="42" rx="4" fill="#92b6e2"/></g>
+<text x="110" y="408" text-anchor="end" fill="#0b0b0b">none</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius none, avg B in radius 972
+flat KD-tree 1.3× faster
+flat KD-tree 59 ms, brute force 77 ms
+609 candidates, identical sets: true</title><rect x="121" y="383" width="94" height="42" rx="4" fill="#dee4ea"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius none, avg B in radius 1934
+flat KD-tree 2.9× faster
+flat KD-tree 100 ms, brute force 290 ms
+1211 candidates, identical sets: true</title><rect x="217" y="383" width="94" height="42" rx="4" fill="#a5c2e4"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius none, avg B in radius 4873
+flat KD-tree 5.4× faster
+flat KD-tree 331 ms, brute force 1787 ms
+3164 candidates, identical sets: true</title><rect x="313" y="383" width="94" height="42" rx="4" fill="#79a7df"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius none, avg B in radius 9559
+flat KD-tree 8.3× faster
+flat KD-tree 762 ms, brute force 6331 ms
+6121 candidates, identical sets: true</title><rect x="409" y="383" width="94" height="42" rx="4" fill="#5b95db"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius none, avg B in radius 18848
+flat KD-tree 14× faster
+flat KD-tree 1889 ms, brute force 25832 ms
+11717 candidates, identical sets: true</title><rect x="505" y="383" width="94" height="42" rx="4" fill="#3780d7"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius none, avg B in radius 24438
+flat KD-tree 16× faster
+flat KD-tree 2620 ms, brute force 43087 ms
+14636 candidates, identical sets: true</title><rect x="601" y="383" width="94" height="42" rx="4" fill="#2a78d6"/></g>
+<polyline points="120.0,296.3 168.0,296.3 264.0,295.7 360.0,289.9 456.0,286.7 552.0,286.2 648.0,287.2 696.0,287.2" fill="none" stroke="#0b0b0b" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="7 4"/>
+<text x="702" y="291.2" fill="#0b0b0b" font-size="11" font-weight="600">tie</text>
+<text x="168" y="444" text-anchor="middle" fill="#0b0b0b">3,888</text>
+<text x="264" y="444" text-anchor="middle" fill="#0b0b0b">7,736</text>
+<text x="360" y="444" text-anchor="middle" fill="#0b0b0b">19,492</text>
+<text x="456" y="444" text-anchor="middle" fill="#0b0b0b">38,236</text>
+<text x="552" y="444" text-anchor="middle" fill="#0b0b0b">75,392</text>
+<text x="648" y="444" text-anchor="middle" fill="#0b0b0b">97,752</text>
+<text x="408" y="464" text-anchor="middle" fill="#52514e">number of descriptors per side</text>
+<text transform="translate(24,240) rotate(-90)" text-anchor="middle" fill="#52514e">search radius (world units)</text>
+<text x="120" y="534" font-size="15" font-weight="600" fill="#0b0b0b">Apple M4 Max, 16 cores</text>
+<text x="120" y="554" fill="#52514e">parameters: 3 neighbors, 1 redundancy, 3 ratio</text>
+<text x="110" y="596" text-anchor="end" fill="#0b0b0b">50</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 50, avg B in radius 1
+brute force 5.8× faster
+flat KD-tree 23 ms, brute force 4 ms
+162 candidates, identical sets: true</title><rect x="121" y="571" width="94" height="42" rx="4" fill="#e6b9b7"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 50, avg B in radius 1
+brute force 11× faster
+flat KD-tree 76 ms, brute force 7 ms
+306 candidates, identical sets: true</title><rect x="217" y="571" width="94" height="42" rx="4" fill="#e3a6a4"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 50, avg B in radius 1
+brute force 23× faster
+flat KD-tree 503 ms, brute force 22 ms
+804 candidates, identical sets: true</title><rect x="313" y="571" width="94" height="42" rx="4" fill="#df8e8d"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 50, avg B in radius 1
+brute force 50× faster
+flat KD-tree 2131 ms, brute force 43 ms
+1616 candidates, identical sets: true</title><rect x="409" y="571" width="94" height="42" rx="4" fill="#da7675"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 50, avg B in radius 1
+brute force 85× faster
+flat KD-tree 7733 ms, brute force 91 ms
+3229 candidates, identical sets: true</title><rect x="505" y="571" width="94" height="42" rx="4" fill="#d86565"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 98× faster
+flat KD-tree 12002 ms, brute force 122 ms
+4174 candidates, identical sets: true</title><rect x="601" y="571" width="94" height="42" rx="4" fill="#d76160"/></g>
+<text x="110" y="640" text-anchor="end" fill="#0b0b0b">100</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 100, avg B in radius 5
+brute force 19× faster
+flat KD-tree 90 ms, brute force 5 ms
+647 candidates, identical sets: true</title><rect x="121" y="615" width="94" height="42" rx="4" fill="#e09493"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 100, avg B in radius 6
+brute force 34× faster
+flat KD-tree 316 ms, brute force 9 ms
+1282 candidates, identical sets: true</title><rect x="217" y="615" width="94" height="42" rx="4" fill="#dd8281"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 100, avg B in radius 6
+brute force 74× faster
+flat KD-tree 2131 ms, brute force 29 ms
+3411 candidates, identical sets: true</title><rect x="313" y="615" width="94" height="42" rx="4" fill="#d86a69"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 100, avg B in radius 6
+brute force 150× faster
+flat KD-tree 8796 ms, brute force 59 ms
+6667 candidates, identical sets: true</title><rect x="409" y="615" width="94" height="42" rx="4" fill="#d45454"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 100, avg B in radius 6
+brute force 273× faster
+flat KD-tree 31509 ms, brute force 115 ms
+12954 candidates, identical sets: true</title><rect x="505" y="615" width="94" height="42" rx="4" fill="#d14141"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 300× faster
+flat KD-tree 47615 ms, brute force 159 ms
+16359 candidates, identical sets: true</title><rect x="601" y="615" width="94" height="42" rx="4" fill="#d13f3e"/></g>
+<text x="110" y="684" text-anchor="end" fill="#0b0b0b">250</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 250, avg B in radius 39
+brute force 7.6× faster
+flat KD-tree 63 ms, brute force 8 ms
+632 candidates, identical sets: true</title><rect x="121" y="659" width="94" height="42" rx="4" fill="#e5b0ae"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 250, avg B in radius 49
+brute force 13× faster
+flat KD-tree 205 ms, brute force 16 ms
+1242 candidates, identical sets: true</title><rect x="217" y="659" width="94" height="42" rx="4" fill="#e2a09e"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 250, avg B in radius 62
+brute force 22× faster
+flat KD-tree 1171 ms, brute force 52 ms
+3289 candidates, identical sets: true</title><rect x="313" y="659" width="94" height="42" rx="4" fill="#df8f8d"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 250, avg B in radius 69
+brute force 34× faster
+flat KD-tree 3945 ms, brute force 115 ms
+6419 candidates, identical sets: true</title><rect x="409" y="659" width="94" height="42" rx="4" fill="#dd8180"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 250, avg B in radius 74
+brute force 54× faster
+flat KD-tree 13488 ms, brute force 248 ms
+12449 candidates, identical sets: true</title><rect x="505" y="659" width="94" height="42" rx="4" fill="#da7372"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 58× faster
+flat KD-tree 19561 ms, brute force 336 ms
+15695 candidates, identical sets: true</title><rect x="601" y="659" width="94" height="42" rx="4" fill="#da7170"/></g>
+<text x="110" y="728" text-anchor="end" fill="#0b0b0b">500</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 500, avg B in radius 136
+brute force 3.0× faster
+flat KD-tree 46 ms, brute force 16 ms
+621 candidates, identical sets: true</title><rect x="121" y="703" width="94" height="42" rx="4" fill="#eacdcb"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 500, avg B in radius 181
+brute force 4.5× faster
+flat KD-tree 146 ms, brute force 32 ms
+1239 candidates, identical sets: true</title><rect x="217" y="703" width="94" height="42" rx="4" fill="#e8c0be"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 500, avg B in radius 257
+brute force 6.3× faster
+flat KD-tree 709 ms, brute force 112 ms
+3256 candidates, identical sets: true</title><rect x="313" y="703" width="94" height="42" rx="4" fill="#e6b6b4"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 500, avg B in radius 318
+brute force 8.0× faster
+flat KD-tree 2151 ms, brute force 267 ms
+6341 candidates, identical sets: true</title><rect x="409" y="703" width="94" height="42" rx="4" fill="#e5aead"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 500, avg B in radius 385
+brute force 9.9× faster
+flat KD-tree 6443 ms, brute force 651 ms
+12261 candidates, identical sets: true</title><rect x="505" y="703" width="94" height="42" rx="4" fill="#e3a8a6"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 10× faster
+flat KD-tree 9134 ms, brute force 890 ms
+15439 candidates, identical sets: true</title><rect x="601" y="703" width="94" height="42" rx="4" fill="#e3a7a5"/></g>
+<text x="110" y="772" text-anchor="end" fill="#0b0b0b">1000</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 1000, avg B in radius 342
+brute force 1.7× faster
+flat KD-tree 38 ms, brute force 22 ms
+610 candidates, identical sets: true</title><rect x="121" y="747" width="94" height="42" rx="4" fill="#eddfdc"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 1000, avg B in radius 524
+brute force 1.7× faster
+flat KD-tree 112 ms, brute force 66 ms
+1217 candidates, identical sets: true</title><rect x="217" y="747" width="94" height="42" rx="4" fill="#eddfdc"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 1000, avg B in radius 850
+brute force 1.8× faster
+flat KD-tree 486 ms, brute force 274 ms
+3226 candidates, identical sets: true</title><rect x="313" y="747" width="94" height="42" rx="4" fill="#edddda"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 1000, avg B in radius 1129
+brute force 1.9× faster
+flat KD-tree 1409 ms, brute force 725 ms
+6277 candidates, identical sets: true</title><rect x="409" y="747" width="94" height="42" rx="4" fill="#ecdad8"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 1000, avg B in radius 1473
+brute force 2.1× faster
+flat KD-tree 3913 ms, brute force 1906 ms
+12114 candidates, identical sets: true</title><rect x="505" y="747" width="94" height="42" rx="4" fill="#ecd9d6"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 2.1× faster
+flat KD-tree 5450 ms, brute force 2634 ms
+15217 candidates, identical sets: true</title><rect x="601" y="747" width="94" height="42" rx="4" fill="#ecd8d6"/></g>
+<text x="110" y="816" text-anchor="end" fill="#0b0b0b">2000</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 2000, avg B in radius 635
+flat KD-tree 1.1× faster
+flat KD-tree 35 ms, brute force 37 ms
+606 candidates, identical sets: true</title><rect x="121" y="791" width="94" height="42" rx="4" fill="#ececec"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 2000, avg B in radius 1050
+flat KD-tree 1.1× faster
+flat KD-tree 104 ms, brute force 118 ms
+1218 candidates, identical sets: true</title><rect x="217" y="791" width="94" height="42" rx="4" fill="#e7eaeb"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 2000, avg B in radius 1982
+flat KD-tree 1.3× faster
+flat KD-tree 432 ms, brute force 566 ms
+3203 candidates, identical sets: true</title><rect x="313" y="791" width="94" height="42" rx="4" fill="#dde4ea"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 2000, avg B in radius 3030
+flat KD-tree 1.5× faster
+flat KD-tree 1212 ms, brute force 1758 ms
+6216 candidates, identical sets: true</title><rect x="409" y="791" width="94" height="42" rx="4" fill="#d6dfe9"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 2000, avg B in radius 4472
+flat KD-tree 1.6× faster
+flat KD-tree 3336 ms, brute force 5338 ms
+11990 candidates, identical sets: true</title><rect x="505" y="791" width="94" height="42" rx="4" fill="#cfdbe8"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 2000, avg B in radius 5062
+flat KD-tree 1.6× faster
+flat KD-tree 4733 ms, brute force 7697 ms
+15013 candidates, identical sets: true</title><rect x="601" y="791" width="94" height="42" rx="4" fill="#cedae8"/></g>
+<text x="110" y="860" text-anchor="end" fill="#0b0b0b">5000</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius 5000, avg B in radius 972
+flat KD-tree 1.5× faster
+flat KD-tree 34 ms, brute force 52 ms
+609 candidates, identical sets: true</title><rect x="121" y="835" width="94" height="42" rx="4" fill="#d3dde9"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius 5000, avg B in radius 1868
+flat KD-tree 2.0× faster
+flat KD-tree 101 ms, brute force 203 ms
+1211 candidates, identical sets: true</title><rect x="217" y="835" width="94" height="42" rx="4" fill="#bfd1e7"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius 5000, avg B in radius 4107
+flat KD-tree 2.5× faster
+flat KD-tree 464 ms, brute force 1161 ms
+3168 candidates, identical sets: true</title><rect x="313" y="835" width="94" height="42" rx="4" fill="#afc8e5"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius 5000, avg B in radius 6909
+flat KD-tree 2.9× faster
+flat KD-tree 1398 ms, brute force 4038 ms
+6154 candidates, identical sets: true</title><rect x="409" y="835" width="94" height="42" rx="4" fill="#a5c2e4"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius 5000, avg B in radius 11332
+flat KD-tree 3.2× faster
+flat KD-tree 4103 ms, brute force 13016 ms
+11815 candidates, identical sets: true</title><rect x="505" y="835" width="94" height="42" rx="4" fill="#9fbee3"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius 5000, avg B in radius 13552
+flat KD-tree 3.3× faster
+flat KD-tree 6012 ms, brute force 19826 ms
+14781 candidates, identical sets: true</title><rect x="601" y="835" width="94" height="42" rx="4" fill="#9cbce3"/></g>
+<text x="110" y="914" text-anchor="end" fill="#0b0b0b">none</text>
+<g><title>descriptors B=3888 (points A=1000, B=972), radius none, avg B in radius 972
+flat KD-tree 1.7× faster
+flat KD-tree 28 ms, brute force 46 ms
+609 candidates, identical sets: true</title><rect x="121" y="889" width="94" height="42" rx="4" fill="#cddae8"/></g>
+<g><title>descriptors B=7736 (points A=2000, B=1934), radius none, avg B in radius 1934
+flat KD-tree 3.2× faster
+flat KD-tree 55 ms, brute force 179 ms
+1211 candidates, identical sets: true</title><rect x="217" y="889" width="94" height="42" rx="4" fill="#9dbde3"/></g>
+<g><title>descriptors B=19492 (points A=5000, B=4873), radius none, avg B in radius 4873
+flat KD-tree 5.9× faster
+flat KD-tree 196 ms, brute force 1156 ms
+3164 candidates, identical sets: true</title><rect x="313" y="889" width="94" height="42" rx="4" fill="#73a4de"/></g>
+<g><title>descriptors B=38236 (points A=10000, B=9559), radius none, avg B in radius 9559
+flat KD-tree 8.0× faster
+flat KD-tree 475 ms, brute force 3796 ms
+6121 candidates, identical sets: true</title><rect x="409" y="889" width="94" height="42" rx="4" fill="#5d97dc"/></g>
+<g><title>descriptors B=75392 (points A=20000, B=18848), radius none, avg B in radius 18848
+flat KD-tree 13× faster
+flat KD-tree 1136 ms, brute force 15145 ms
+11717 candidates, identical sets: true</title><rect x="505" y="889" width="94" height="42" rx="4" fill="#3981d8"/></g>
+<g><title>descriptors B=97752 (points A=25731, B=24438), radius none, avg B in radius 24438
+flat KD-tree 17× faster
+flat KD-tree 1516 ms, brute force 25054 ms
+14636 candidates, identical sets: true</title><rect x="601" y="889" width="94" height="42" rx="4" fill="#2a78d6"/></g>
+<polyline points="120.0,807.4 168.0,807.4 264.0,803.5 360.0,797.9 456.0,796.2 552.0,794.6 648.0,794.4 696.0,794.4" fill="none" stroke="#0b0b0b" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="7 4"/>
+<text x="702" y="798.4" fill="#0b0b0b" font-size="11" font-weight="600">tie</text>
+<text x="168" y="950" text-anchor="middle" fill="#0b0b0b">3,888</text>
+<text x="264" y="950" text-anchor="middle" fill="#0b0b0b">7,736</text>
+<text x="360" y="950" text-anchor="middle" fill="#0b0b0b">19,492</text>
+<text x="456" y="950" text-anchor="middle" fill="#0b0b0b">38,236</text>
+<text x="552" y="950" text-anchor="middle" fill="#0b0b0b">75,392</text>
+<text x="648" y="950" text-anchor="middle" fill="#0b0b0b">97,752</text>
+<text x="408" y="970" text-anchor="middle" fill="#52514e">number of descriptors per side</text>
+<text transform="translate(24,746) rotate(-90)" text-anchor="middle" fill="#52514e">search radius (world units)</text>
+<rect x="120" y="1072" width="480" height="14" rx="3" fill="url(#ratio)"/>
+<line x1="443.8" x2="443.8" y1="1086" y2="1091" stroke="#52514e"/>
+<text x="443.8" y="1104" text-anchor="middle" fill="#52514e" font-size="11">tie</text>
+<line x1="120.0" x2="120.0" y1="1086" y2="1091" stroke="#52514e"/>
+<text x="120.0" y="1104" text-anchor="middle" fill="#52514e" font-size="11">336×</text>
+<line x1="600.0" x2="600.0" y1="1086" y2="1091" stroke="#52514e"/>
+<text x="600.0" y="1104" text-anchor="middle" fill="#52514e" font-size="11">17×</text>
+<line x1="315.6" x2="315.6" y1="1086" y2="1091" stroke="#52514e"/>
+<text x="315.6" y="1104" text-anchor="middle" fill="#52514e" font-size="11">10×</text>
+<text x="120" y="1064" fill="#52514e" font-size="11">← brute force faster</text>
+<text x="600" y="1064" text-anchor="end" fill="#52514e" font-size="11">flat KD-tree faster →</text>
+</svg>

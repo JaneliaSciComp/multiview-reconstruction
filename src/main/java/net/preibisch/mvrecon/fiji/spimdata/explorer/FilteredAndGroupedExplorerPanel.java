@@ -59,6 +59,10 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.XMLSaveAs;
 import net.preibisch.mvrecon.fiji.spimdata.GroupedViews;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.ViewerFlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.SpimDataTools;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVFlyThrough;
@@ -618,6 +622,54 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 					}
 					IntensityAdjustmentPopup.applyPreview( FilteredAndGroupedExplorerPanel.this, data );
 				} ).start();
+			}
+		} );
+	}
+
+	/**
+	 * Key 'f' toggles the dataset's flatfield correction, like the dialog's set_active; fusion and intensity
+	 * correction use what is shown. An open BigDataViewer needs only a repaint.
+	 */
+	protected void addFlatfieldPreviewShortcut()
+	{
+		table.addKeyListener( new KeyAdapter()
+		{
+			@Override
+			public void keyPressed( final KeyEvent arg0 )
+			{
+				if ( arg0.getKeyChar() != 'f' && arg0.getKeyChar() != 'F' )
+					return;
+
+				final BasicBDVPopup p = runningBdvPopup();
+				final boolean bdv = p != null && p.getBDV() != null && p.getBDV().getViewerFrame().isVisible();
+				BasicImgLoader il = data.getSequenceDescription().getImgLoader();
+				while ( il instanceof SplitViewerImgLoader ) // the flatfield correction is below the split loader
+					il = ( ( SplitViewerImgLoader ) il ).getUnderlyingImgLoader();
+				final boolean on;
+				if ( il instanceof ViewerFlatfieldCorrectionWrappedImgLoader )
+				{
+					final ViewerFlatfieldCorrectionWrappedImgLoader ff = ( ViewerFlatfieldCorrectionWrappedImgLoader ) il;
+					ff.setActive( on = !ff.isActive() );
+					IntensityPreview.flatfieldChanged( data ); // drops the preview's cached images
+				}
+				else if ( il instanceof FlatfieldCorrectionWrappedImgLoader && il == data.getSequenceDescription().getImgLoader() )
+				{
+					final FlatfieldCorrectionWrappedImgLoader< ? > ff = ( FlatfieldCorrectionWrappedImgLoader< ? > ) il;
+					ff.setActive( on = !ff.isActive() );
+				}
+				else
+				{
+					IOFunctions.println( "No flatfield correction to toggle: right-click > Flatfield Correction ... first." );
+					if ( bdv )
+						p.getBDV().getViewer().showMessage( "No flatfield correction (see log)" );
+					return;
+				}
+				IOFunctions.println( "Flatfield correction " + ( on ? "on" : "off" ) + " (press 'f' to toggle)." );
+				if ( bdv )
+				{
+					p.getBDV().getViewer().showMessage( "Flatfield correction " + ( on ? "on" : "off" ) );
+					p.getBDV().getViewer().requestRepaint();
+				}
 			}
 		} );
 	}

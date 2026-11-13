@@ -28,25 +28,31 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.stream.Collectors;
 
 import javax.swing.JComponent;
 import javax.swing.JMenuItem;
 
 import fiji.util.gui.GenericDialogPlus;
+import ij.gui.GenericDialog;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.Illumination;
 import mpicbg.spim.data.sequence.ImgLoader;
-import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.DefaultFlatfieldCorrectionWrappedImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.FlatfieldImageInfo;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.LazyLoadingFlatFieldCorrectionMap;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield.MultiResolutionFlatfieldCorrectionWrappedImgLoader;
+import net.preibisch.mvrecon.process.flatfield.Basic;
+import net.preibisch.mvrecon.process.flatfield.FlatfieldEstimation;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 
 public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindowSetable
 {
@@ -90,21 +96,34 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 				final ArrayList< Channel > channels = SpimData2.getAllInstancesOfEntitySorted( data,
 						data.getSequenceDescription().getViewDescriptions().keySet(), Channel.class );
 
+				final GenericDialog gd0 = new GenericDialog( "Flatfield Correction" );
+				gd0.addChoice( "Flatfield", SOURCES, SOURCES[ defaultSource ] );
+				gd0.addMessage( "BaSiC: flat- and darkfield per camera (channel x illumination) from per-pixel statistics over\n"
+						+ "many tiles, for dense data. It uses the selected views and writes the fields to\n"
+						+ FlatfieldEstimation.CONTAINER + " next to the XML; the images themselves are corrected on the fly.\n"
+						+ "Run Adjust Intensities afterwards for the remaining per-tile gains." );
+				gd0.showDialog();
+				if ( gd0.wasCanceled() )
+					return;
+				defaultSource = gd0.getNextChoiceIndex();
+
+				if ( defaultSource != 0 )
+				{
+					estimate( data );
+					return;
+				}
+
 				final GenericDialogPlus gdp = new GenericDialogPlus( "Flatfield Correction" );
 
 				gdp.addCheckbox( "set_active", alreadyFF
 						? ( (FlatfieldCorrectionWrappedImgLoader< ? >) data.getSequenceDescription().getImgLoader() )
 								.isActive()
 						: true );
-				gdp.addCheckbox( "cache_corrected_images", alreadyFF
-						? ( (FlatfieldCorrectionWrappedImgLoader< ? >) data.getSequenceDescription().getImgLoader() )
-								.isCached()
-						: true );
 
-				Map< ViewId, Pair< File, File > > fileMap = null;
+				Map<ViewId, Pair<FlatfieldImageInfo, FlatfieldImageInfo>> infoMap = null;
 				if ( alreadyFF )
-					fileMap = ( (LazyLoadingFlatFieldCorrectionMap< ImgLoader >) data.getSequenceDescription()
-							.getImgLoader() ).getFileMap();
+					infoMap = ((LazyLoadingFlatFieldCorrectionMap<ImgLoader>) data.getSequenceDescription()
+							.getImgLoader()).getInfoMap();
 
 				for ( Channel c : channels )
 					for ( Illumination ill : illums )
@@ -120,13 +139,12 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 									} ).findAny().orElseGet( null );
 
 							if ( anyViewId != null )
-								if ( fileMap.containsKey( anyViewId ) )
-								{
-									Pair< File, File > files = fileMap.get( anyViewId );
-									if ( files.getA() != null )
-										bright = files.getA().getAbsolutePath();
-									if ( files.getB() != null )
-										dark = files.getB().getAbsolutePath();
+								if (infoMap.containsKey(anyViewId)) {
+									Pair<FlatfieldImageInfo, FlatfieldImageInfo> infos = infoMap.get(anyViewId);
+									if (infos.getA() != null)
+										bright = new File(infos.getA().getUri()).getAbsolutePath();
+									if (infos.getB() != null)
+										dark = new File(infos.getB().getUri()).getAbsolutePath();
 								}
 						}
 						gdp.addMessage( "Channel: " + c.getName() + ", Illumination: " + ill.getName() + ":" );
@@ -139,18 +157,8 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 					return;
 
 				final boolean activate = gdp.getNextBoolean();
-				final boolean cache = gdp.getNextBoolean();
 
-				final FlatfieldCorrectionWrappedImgLoader< ? extends ImgLoader > ffIL;
-				if ( alreadyFF )
-					ffIL = (FlatfieldCorrectionWrappedImgLoader< ImgLoader >) data.getSequenceDescription()
-							.getImgLoader();
-				else if ( data.getSequenceDescription().getImgLoader() instanceof MultiResolutionImgLoader )
-					ffIL = new MultiResolutionFlatfieldCorrectionWrappedImgLoader(
-							(MultiResolutionImgLoader) data.getSequenceDescription().getImgLoader(), cache );
-				else
-					ffIL = new DefaultFlatfieldCorrectionWrappedImgLoader( data.getSequenceDescription().getImgLoader(),
-							cache );
+				final FlatfieldCorrectionWrappedImgLoader< ? > ffIL = FlatfieldEstimation.flatfieldLoader( data );
 
 				for ( Channel c : channels )
 					for ( Illumination ill : illums )
@@ -160,71 +168,168 @@ public class FlatFieldCorrectionPopup extends JMenuItem implements ExplorerWindo
 						File lightFile = !lightPath.equals( "" ) ? new File( lightPath ) : null;
 						File darkFile = !darkPath.equals( "" ) ? new File( darkPath ) : null;
 
+						final File finalLightFile = lightFile;
+						final File finalDarkFile = darkFile;
 						data.getSequenceDescription().getViewDescriptions().entrySet().forEach( el -> {
 							if ( el.getValue().getViewSetup().getChannel() == c
 									&& el.getValue().getViewSetup().getIllumination() == ill )
 							{
-								ffIL.setBrightImage( el.getKey(), lightFile );
-								ffIL.setDarkImage( el.getKey(), darkFile );
+								if (finalLightFile != null)
+									ffIL.setBrightImage( el.getKey(), new FlatfieldImageInfo(finalLightFile.toURI(), null) );
+								if (finalDarkFile != null)
+									ffIL.setDarkImage( el.getKey(), new FlatfieldImageInfo(finalDarkFile.toURI(), null) );
 							}
 						} );
 					}
 
 				ffIL.setActive( activate );
-				ffIL.setCached( cache );
 
-				data.getSequenceDescription().setImgLoader( ffIL );
+				data.getSequenceDescription().setImgLoader( ( ImgLoader ) ffIL );
 				gdp.dispose();
 
-				final BDVPopup bdvPop = ( panel.bdvPopup() instanceof BDVPopup ) ? (BDVPopup) panel.bdvPopup() : null;
-				if ( bdvPop != null && bdvPop.bdvRunning() )
-				{
-					// we have to close and re-open BDV for the changed
-					// ImgLoader to be recognized
-					Dimension oldSize = bdvPop.getBDV().getViewerFrame().getSize();
-					final Point oldLoc = bdvPop.getBDV().getViewerFrame().getLocation();
-					final CountDownLatch latch = new CountDownLatch( 1 );
-
-					final Thread closeTask = new Thread( () -> {
-						bdvPop.closeBDV();
-						latch.countDown();
-					} );
-					closeTask.start();
-
-					try
-					{
-						latch.await();
-					}
-					catch ( InterruptedException e1 )
-					{
-						e1.printStackTrace();
-					}
-
-					final CountDownLatch latch2 = new CountDownLatch( 1 );
-					new Thread( () -> {
-						bdvPop.setBDV( BDVPopup.createBDV( panel ) );
-						latch2.countDown();
-					} ).start();
-
-					try
-					{
-						latch2.await();
-					}
-					catch ( InterruptedException e1 )
-					{
-						e1.printStackTrace();
-					}
-
-					bdvPop.getBDV().getViewerFrame().setSize( oldSize );
-					bdvPop.getBDV().getViewerFrame().setLocation( oldLoc );
-				}
-
+				showInBDV( data );
 				panel.updateContent();
 
 			} ).start();
 
 //			WrapBasicImgLoader.wrapImgLoaderIfNecessary( data );
 //			BigDataViewer.initSetups( data,bdv.getSetupAssignments().getConverterSetups(), (List< SourceAndConverter<?> >) (Object) bdv.getViewer().getState().getSources() );
+		}
+	}
+
+	static final String[] SOURCES = { "Load bright / dark images from files", "Estimate with BaSiC (dense data: many tiles)" };
+	static final String[] DARKFIELD = { "Estimate", "None", "Fixed value" };
+	public static int defaultSource = 0;
+	public static long defaultDownsampling = 4;
+	public static int defaultDarkfield = 0;
+	public static double defaultDarkfieldValue = 100;
+	public static double defaultLambda = 0;
+	public static boolean defaultAutotune = true;
+	public static int defaultWorkingSize = 0;
+
+	private void estimate( final SpimData2 data )
+	{
+		final List< ViewId > views = ApplyTransformationPopup.getSelectedViews( panel, true );
+		if ( views.isEmpty() )
+		{
+			IOFunctions.println( "Flatfield estimation: no views selected." );
+			return;
+		}
+
+		// default: the common level closest to the last downsampling used
+		final List< long[] > levels = FlatfieldEstimation.commonLevels( data, views );
+		final String[] levelNames = new String[ levels.size() ];
+		int defaultLevel = 0;
+		for ( int l = 0; l < levels.size(); ++l )
+		{
+			final long[] f = levels.get( l );
+			levelNames[ l ] = Arrays.stream( f ).mapToObj( Long::toString ).collect( Collectors.joining( "," ) );
+			if ( Math.abs( Math.log( FlatfieldEstimation.maxFactor( f ) ) - Math.log( defaultDownsampling ) )
+					< Math.abs( Math.log( FlatfieldEstimation.maxFactor( levels.get( defaultLevel ) ) ) - Math.log( defaultDownsampling ) ) )
+				defaultLevel = l;
+		}
+
+		final GenericDialog gd = new GenericDialog( "Estimate Flatfield (BaSiC)" );
+		gd.addChoice( "Statistics_level (downsampling x, y, z)", levelNames, levelNames[ defaultLevel ] );
+		gd.addChoice( "Darkfield", DARKFIELD, DARKFIELD[ defaultDarkfield ] );
+		gd.addNumericField( "Fixed_darkfield (counts)", defaultDarkfieldValue, 1 );
+		gd.addNumericField( "Lambda (0 = automatic)", defaultLambda, 4 );
+		gd.addCheckbox( "Autotune_lambda (if automatic)", defaultAutotune );
+		gd.addNumericField( "Working_size (0 = statistics frame)", defaultWorkingSize, 0 );
+		gd.addMessage( views.size() + " selected views." );
+		gd.showDialog();
+		if ( gd.wasCanceled() )
+			return;
+
+		final long downsampling = FlatfieldEstimation.maxFactor( levels.get( gd.getNextChoiceIndex() ) );
+		defaultDownsampling = downsampling;
+		final Basic.Parameters p = new Basic.Parameters();
+		defaultDarkfield = gd.getNextChoiceIndex();
+		defaultDarkfieldValue = gd.getNextNumber();
+		defaultLambda = gd.getNextNumber();
+		defaultAutotune = gd.getNextBoolean();
+		defaultWorkingSize = ( int ) Math.max( 0, Math.round( gd.getNextNumber() ) );
+		p.estimateDarkfield = defaultDarkfield == 0;
+		p.darkfieldOverride = defaultDarkfield == 2 ? defaultDarkfieldValue : null;
+		p.lambda = defaultLambda;
+		p.autotune = defaultAutotune;
+		p.workingSize = defaultWorkingSize;
+
+		try
+		{
+			IOFunctions.println( "Estimating flat- and darkfields (BaSiC) of " + views.size() + " views ..." );
+			FlatfieldEstimation.estimateBasic( data, views, downsampling, p );
+		}
+		catch ( final Exception e )
+		{
+			IOFunctions.println( "Flatfield estimation failed: " + e );
+			e.printStackTrace();
+			return;
+		}
+
+		final FlatfieldCorrectionWrappedImgLoader< ? > ffIL = (FlatfieldCorrectionWrappedImgLoader< ? >) data.getSequenceDescription().getImgLoader();
+		ffIL.setActive( true );
+		IOFunctions.println( "Flatfield correction is active (press 'f' in the explorer to toggle it); save the XML to keep it." );
+		showInBDV( data );
+		panel.updateContent();
+	}
+
+	/** repaints BigDataViewer if its preview can show the changed flatfield, reopens it otherwise */
+	private void showInBDV( final SpimData2 data )
+	{
+		if ( IntensityPreview.flatfieldChanged( data ) )
+		{
+			final BasicBDVPopup p = panel.bdvPopup();
+			if ( p != null && p.bdvRunning() )
+				p.getBDV().getViewer().requestRepaint();
+		}
+		else
+			reopenBDV();
+	}
+
+	private void reopenBDV()
+	{
+		final BDVPopup bdvPop = ( panel.bdvPopup() instanceof BDVPopup ) ? (BDVPopup) panel.bdvPopup() : null;
+		if ( bdvPop != null && bdvPop.bdvRunning() )
+		{
+			// we have to close and re-open BDV for the changed
+			// ImgLoader to be recognized
+			Dimension oldSize = bdvPop.getBDV().getViewerFrame().getSize();
+			final Point oldLoc = bdvPop.getBDV().getViewerFrame().getLocation();
+			final CountDownLatch latch = new CountDownLatch( 1 );
+
+			final Thread closeTask = new Thread( () -> {
+				bdvPop.closeBDV();
+				latch.countDown();
+			} );
+			closeTask.start();
+
+			try
+			{
+				latch.await();
+			}
+			catch ( InterruptedException e1 )
+			{
+				e1.printStackTrace();
+			}
+
+			final CountDownLatch latch2 = new CountDownLatch( 1 );
+			new Thread( () -> {
+				bdvPop.setBDV( BDVPopup.createBDV( panel ) );
+				latch2.countDown();
+			} ).start();
+
+			try
+			{
+				latch2.await();
+			}
+			catch ( InterruptedException e1 )
+			{
+				e1.printStackTrace();
+			}
+
+			bdvPop.getBDV().getViewerFrame().setSize( oldSize );
+			bdvPop.getBDV().getViewerFrame().setLocation( oldLoc );
 		}
 	}
 }

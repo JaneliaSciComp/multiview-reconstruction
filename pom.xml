@@ -346,6 +346,12 @@ like Selective Plane Illumination Microscopy (SPIM) Data.</description>
 			<groupId>gov.nist.math</groupId>
 			<artifactId>jama</artifactId>
 		</dependency>
+		<!-- 2D DCT for the BaSiC flatfield estimation; the version Fiji ships, not managed by pom-scijava -->
+		<dependency>
+			<groupId>edu.emory.mathcs</groupId>
+			<artifactId>jtransforms</artifactId>
+			<version>2.4</version>
+		</dependency>
 		<dependency>
 			<groupId>info.picocli</groupId>
 			<artifactId>picocli</artifactId>

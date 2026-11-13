@@ -23,31 +23,26 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
-import bdv.export.WriteSequenceToHdf5;
 import ij.ImageJ;
 import mpicbg.spim.data.generic.sequence.ImgLoaderHint;
-import mpicbg.spim.data.generic.sequence.ImgLoaderHints;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionSetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.VoxelDimensions;
-import net.imglib2.Cursor;
 import net.imglib2.Dimensions;
-import net.imglib2.FinalDimensions;
-import net.imglib2.RandomAccess;
-import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.converter.RealTypeConverters;
-import net.imglib2.img.Img;
-import net.imglib2.img.ImgFactory;
-import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.img.cell.CellImgFactory;
+import net.imglib2.algorithm.blocks.BlockAlgoUtils;
+import net.imglib2.algorithm.blocks.BlockSupplier;
+import net.imglib2.algorithm.blocks.downsample.Downsample;
+import net.imglib2.img.cell.AbstractCellImg;
+import net.imglib2.img.cell.CellGrid;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
@@ -55,99 +50,67 @@ import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapImgLoaderLOCI2;
-import net.preibisch.mvrecon.process.fusion.FusionTools;
 
 
 public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		extends LazyLoadingFlatFieldCorrectionMap< MultiResolutionImgLoader > implements MultiResolutionImgLoader
 {
 
-	private MultiResolutionImgLoader wrappedImgLoader;
+	private final MultiResolutionImgLoader wrappedImgLoader;
 	private boolean active;
-	private boolean cacheResult;
 
 	/* downsampled bright/dark images */
-	private final Map< Pair< File, List< Integer > >, RandomAccessibleInterval< FloatType > > dsRaiMap;
+	private final Map<Pair<FlatfieldImageInfo, List<Integer>>, RandomAccessibleInterval<FloatType>> dsRaiMap;
 
 	public MultiResolutionFlatfieldCorrectionWrappedImgLoader(MultiResolutionImgLoader wrappedImgLoader)
-	{
-		this( wrappedImgLoader, true );
-	}
-
-	public MultiResolutionFlatfieldCorrectionWrappedImgLoader(MultiResolutionImgLoader wrappedImgLoader,
-			boolean cacheResult)
 	{
 		super();
 		this.wrappedImgLoader = wrappedImgLoader;
 		this.active = true;
-		this.cacheResult = cacheResult;
 
 		dsRaiMap = new HashMap<>();
 	}
 
-	protected RandomAccessibleInterval< FloatType > getOrCreateBrightImgDownsampled(ViewId vId,
-			int[] downsamplingFactors)
-	{
-		// no flat-field configured for this view (or no bright image) -> no correction
-		final Pair< File, File > files = fileMap.get( vId );
-		if ( files == null || files.getA() == null )
-			return null;
-
-		ArrayList< Integer > dsFactorList = new ArrayList< Integer >();
-		for ( int i : downsamplingFactors )
-			dsFactorList.add( i );
-
-		final ValuePair< File, List< Integer > > key = new ValuePair<>( files.getA(), dsFactorList );
-
-		if ( !dsRaiMap.containsKey( key ) )
-		{
-			final RandomAccessibleInterval< FloatType > brightImg = getBrightImg( vId );
-
-			if ( brightImg == null )
-				return null;
-
-			// NB: we add a singleton z-dimension here for downsampleHDF5 to
-			// work
-			final RandomAccessibleInterval< FloatType > downsampled = downsampleHDF5(
-					Views.addDimension( brightImg, 0, 0 ), downsamplingFactors );
-			dsRaiMap.put( key, downsampled );
-		}
-
-		return dsRaiMap.get( key );
+	public RandomAccessibleInterval< FloatType > getOrCreateBrightImgDownsampled(ViewId vId, int[] downsamplingFactors) {
+		return getOrCreateDownsampledImg(vId, downsamplingFactors, Pair::getA, this::getBrightImg);
 	}
 
-	protected RandomAccessibleInterval< FloatType > getOrCreateDarkImgDownsampled(ViewId vId, int[] downsamplingFactors)
-	{
-		// no flat-field configured for this view (or no dark image) -> no correction
-		final Pair< File, File > files = fileMap.get( vId );
-		if ( files == null || files.getB() == null )
+	public RandomAccessibleInterval< FloatType > getOrCreateDarkImgDownsampled(ViewId vId, int[] downsamplingFactors) {
+		return getOrCreateDownsampledImg(vId, downsamplingFactors, Pair::getB, this::getDarkImg);
+	}
+
+	/**
+	 * Generic method to get a downsampled image or do downsampling on the fly. The bright image
+	 * is stored in the A element of the pair, the dark image in B.
+	 */
+	private RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
+			ViewId vId,
+			int[] downsamplingFactors,
+			Function<Pair<FlatfieldImageInfo, FlatfieldImageInfo>, FlatfieldImageInfo> infoSelector,
+			Function<ViewId, RandomAccessibleInterval<FloatType>> imgGetter
+	) {
+		// no flat-field configured for this view (or not this image) -> no correction
+		final Pair<FlatfieldImageInfo, FlatfieldImageInfo> infos = getInfoMap().get(vId);
+		if (infos == null || infoSelector.apply(infos) == null)
 			return null;
 
-		ArrayList< Integer > dsFactorList = new ArrayList< Integer >();
-		for ( int i : downsamplingFactors )
-			dsFactorList.add( i );
+		// Convert to a list here to have a proper hash code for the map key
+		List<Integer> dsFactorList = Arrays.stream(downsamplingFactors).boxed().collect(Collectors.toList());
+		final ValuePair<FlatfieldImageInfo, List<Integer>> key = new ValuePair<>(infoSelector.apply(infos), dsFactorList);
 
-		final ValuePair< File, List< Integer > > key = new ValuePair<>( files.getB(), dsFactorList );
+		if (!dsRaiMap.containsKey(key)) {
+			final RandomAccessibleInterval<FloatType> img = imgGetter.apply(vId);
 
-		if ( !dsRaiMap.containsKey( key ) )
-		{
-			final RandomAccessibleInterval< FloatType > darkImg = getDarkImg( vId );
-
-			if ( darkImg == null )
+			if (img == null)
 				return null;
 
-			// NB: we add a singleton z-dimension here for downsampleHDF5 to
-			// work
-			final RandomAccessibleInterval< FloatType > downsampled = downsampleHDF5(
-					Views.addDimension( darkImg, 0, 0 ), downsamplingFactors );
-			dsRaiMap.put( key, downsampled );
+			final RandomAccessibleInterval<FloatType> downsampled = downsampleHDF5(img, downsamplingFactors);
+			dsRaiMap.put(key, downsampled);
 		}
 
-		return dsRaiMap.get( key );
+		return dsRaiMap.get(key);
 	}
 
 	@Override
@@ -188,164 +151,42 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		@Override
 		public RandomAccessibleInterval< T > getImage(int timepointId, int level, ImgLoaderHint... hints)
 		{
-			/*
-			 * TODO: should we care about the MipmapTransform here? are there
-			 * other MultiresolutionImgLoaders that do pyramid differently?
-			 */
+			if ( !active )
+				return wrapped().getImage( timepointId, level, hints );
+			return corrected( timepointId, level, getImageType(), false, hints );
+		}
 
-			final MultiResolutionSetupImgLoader< ? > wrpSetupIL = wrappedImgLoader.getSetupImgLoader( setupId );
+		@SuppressWarnings("unchecked")
+		private MultiResolutionSetupImgLoader< T > wrapped()
+		{
+			return (MultiResolutionSetupImgLoader< T >) wrappedImgLoader.getSetupImgLoader( setupId );
+		}
 
-			if(!active)
-				return (RandomAccessibleInterval< T >) wrpSetupIL.getImage( timepointId, level, hints );
-
-			final int n = wrpSetupIL.getImageSize( timepointId ).numDimensions();
-
-			final int[] dsFactors = new int[n];
-			final double[] dsD = wrpSetupIL.getMipmapResolutions()[level];
-			for ( int d = 0; d < n; d++ )
-				// NB: we might need to round here -> test!
-				dsFactors[d] = (int) dsD[d];
-			// we should not need the last dimension
-			dsFactors[n - 1] = 1;
-
-			@SuppressWarnings("unchecked")
-			RandomAccessibleInterval< T > rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
-					(RandomAccessibleInterval< T >) wrpSetupIL.getImage( timepointId, level, hints ),
-					getOrCreateBrightImgDownsampled( new ViewId( timepointId, setupId ), dsFactors ),
-					getOrCreateDarkImgDownsampled( new ViewId( timepointId, setupId ), dsFactors ) );
-
-			boolean loadCompletelyRequested = false;
-			for (ImgLoaderHint hint : hints)
-				if (hint == ImgLoaderHints.LOAD_COMPLETELY)
-					loadCompletelyRequested = true;
-
-			if (loadCompletelyRequested)
-			{
-				long numPx = 1;
-				for (int d = 0; d < rai.numDimensions(); d++)
-					numPx *= rai.dimension( d );
-
-				final ImgFactory< T > imgFactory;
-				if (Math.log(numPx) / Math.log( 2 ) < 31)
-					imgFactory = new ArrayImgFactory<T>();
-				else
-					imgFactory = new CellImgFactory<T>();
-
-				Img< T > loadedImg = imgFactory.create( rai, getImageType() );
-				RealTypeConverters.copyFromTo( Views.extendZero( rai ), loadedImg );
-
-				rai = loadedImg;
-			}
-			else if ( cacheResult )
-			{
-				final int[] cellSize = new int[rai.numDimensions()];
-				Arrays.fill( cellSize, 1 );
-				for ( int d = 0; d < rai.numDimensions() - 1; d++ )
-					cellSize[d] = (int) rai.dimension( d );
-				rai =  FusionTools.cacheRandomAccessibleInterval( rai, Long.MAX_VALUE,
-						Views.iterable( rai ).firstElement().createVariable(), cellSize );
-			}
-			return rai;
+		/*
+		 * TODO: should we care about the MipmapTransform here? are there
+		 * other MultiresolutionImgLoaders that do pyramid differently?
+		 */
+		private < O extends RealType< O > & NativeType< O > > RandomAccessibleInterval< O > corrected(
+				int timepointId, int level, O type, boolean normalize, ImgLoaderHint... hints)
+		{
+			final MultiResolutionSetupImgLoader< T > wrpSetupIL = wrapped();
+			final int[] dsFactors = FlatFieldCorrectedRandomAccessibleIntervals.fieldDownsampling(
+					wrpSetupIL.getMipmapResolutions()[level], wrpSetupIL.getImageSize( timepointId ).numDimensions() );
+			final ViewId view = new ViewId( timepointId, setupId );
+			return FlatFieldCorrectedRandomAccessibleIntervals.create(
+					wrpSetupIL.getImage( timepointId, level, hints ),
+					getOrCreateBrightImgDownsampled( view, dsFactors ),
+					getOrCreateDarkImgDownsampled( view, dsFactors ),
+					type, normalize, hints );
 		}
 
 		@Override
 		public RandomAccessibleInterval< FloatType > getFloatImage(int timepointId, int level, boolean normalize,
 				ImgLoaderHint... hints)
 		{
-			final MultiResolutionSetupImgLoader< ? > wrpSetupIL = wrappedImgLoader.getSetupImgLoader( setupId );
-
-			if(!active)
-				return wrpSetupIL.getFloatImage( timepointId, level, normalize, hints );
-
-			final int n = wrpSetupIL.getImageSize( timepointId ).numDimensions();
-
-			final int[] dsFactors = new int[n];
-			final double[] dsD = wrpSetupIL.getMipmapResolutions()[level];
-			for ( int d = 0; d < n; d++ )
-				// NB: we might need to round here -> test!
-				dsFactors[d] = (int) dsD[d];
-			// we should not need the last dimension
-			dsFactors[n - 1] = 1;
-
-			@SuppressWarnings("unchecked")
-			RandomAccessibleInterval< FloatType > rai = FlatFieldCorrectedRandomAccessibleIntervals.create(
-					(RandomAccessibleInterval< T >) wrpSetupIL.getImage( timepointId, level, hints ),
-					getOrCreateBrightImgDownsampled( new ViewId( timepointId, setupId ), dsFactors ),
-					getOrCreateDarkImgDownsampled( new ViewId( timepointId, setupId ), dsFactors ), new FloatType() );
-
-			if ( normalize )
-			{
-				RandomAccessibleInterval< FloatType > raiNormalized = new VirtuallyNormalizedRandomAccessibleInterval<>(
-						rai );
-				boolean loadCompletelyRequested = false;
-				for (ImgLoaderHint hint : hints)
-					if (hint == ImgLoaderHints.LOAD_COMPLETELY)
-						loadCompletelyRequested = true;
-
-				if (loadCompletelyRequested)
-				{
-					long numPx = 1;
-					for (int d = 0; d < raiNormalized.numDimensions(); d++)
-						numPx *= raiNormalized.dimension( d );
-
-					final ImgFactory< FloatType > imgFactory;
-					if (Math.log(numPx) / Math.log( 2 ) < 31)
-						imgFactory = new ArrayImgFactory<FloatType>();
-					else
-						imgFactory = new CellImgFactory<FloatType>();
-
-					Img< FloatType > loadedImg = imgFactory.create( raiNormalized, new FloatType() );
-					FileMapImgLoaderLOCI2.copy(Views.extendZero( raiNormalized ), loadedImg);
-
-					raiNormalized = loadedImg;
-				}
-				else if ( cacheResult )
-				{
-					final int[] cellSize = new int[raiNormalized.numDimensions()];
-					Arrays.fill( cellSize, 1 );
-					for ( int d = 0; d < raiNormalized.numDimensions() - 1; d++ )
-						cellSize[d] = (int) raiNormalized.dimension( d );
-					rai =  FusionTools.cacheRandomAccessibleInterval( raiNormalized, Long.MAX_VALUE,
-							Views.iterable( rai ).firstElement().createVariable(), cellSize );
-				}
-				rai = raiNormalized;
-			}
-			else
-			{
-				boolean loadCompletelyRequested = false;
-				for (ImgLoaderHint hint : hints)
-					if (hint == ImgLoaderHints.LOAD_COMPLETELY)
-						loadCompletelyRequested = true;
-
-				if (loadCompletelyRequested)
-				{
-					long numPx = 1;
-					for (int d = 0; d < rai.numDimensions(); d++)
-						numPx *= rai.dimension( d );
-
-					final ImgFactory< FloatType > imgFactory;
-					if (Math.log(numPx) / Math.log( 2 ) < 31)
-						imgFactory = new ArrayImgFactory<FloatType>();
-					else
-						imgFactory = new CellImgFactory<FloatType>();
-
-					Img< FloatType > loadedImg = imgFactory.create( rai, new FloatType() );
-					FileMapImgLoaderLOCI2.copy(Views.extendZero( rai ), loadedImg);
-
-					rai = loadedImg;
-				}
-				else if ( cacheResult )
-				{
-					final int[] cellSize = new int[rai.numDimensions()];
-					Arrays.fill( cellSize, 1 );
-					for ( int d = 0; d < rai.numDimensions() - 1; d++ )
-						cellSize[d] = (int) rai.dimension( d );
-					rai = FusionTools.cacheRandomAccessibleInterval( rai, Long.MAX_VALUE,
-							Views.iterable( rai ).firstElement().createVariable(), cellSize );
-				}
-
-			}
-			return rai;
+			if ( !active )
+				return wrapped().getFloatImage( timepointId, level, normalize, hints );
+			return corrected( timepointId, level, new FloatType(), normalize, hints );
 		}
 
 		@Override
@@ -408,84 +249,54 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 	}
 
 	/**
-	 * downsampling code form {@link WriteSequenceToHdf5}, distilled into one
-	 * method
-	 * 
-	 * @param input
-	 *            image to downsample
-	 * @param dsFactor
-	 *            factors to downsample by
-	 * @param <T>
-	 *            the image type
-	 * @return downsampled image
+	 * Downsample an image using the imglib2-algorithm blocks API.
+	 * <p>
+	 * If the input is a cell/chunked image, the output cell size is computed
+	 * to align with input chunk boundaries (input chunk size / downsampling factor).
+	 *
+	 * @param input image to downsample
+	 * @param dsFactor factors to downsample by (may have more dimensions than input)
+	 * @param <T> the image type
+	 * @return downsampled image, or input unchanged if no downsampling needed
 	 */
-	public static <T extends RealType< T > & NativeType< T >> RandomAccessibleInterval< T > downsampleHDF5(
-			RandomAccessibleInterval< T > input, final int[] dsFactor)
-	{
-		final long[] blockMin = new long[input.numDimensions()];
+	public static <T extends RealType<T> & NativeType<T>> RandomAccessibleInterval<T> downsampleHDF5(
+			RandomAccessibleInterval<T> input,
+			final int[] dsFactor
+	) {
+		final int n = input.numDimensions();
 
-		final long[] outDim = new long[input.numDimensions()];
-		for ( int d = 0; d < input.numDimensions(); d++ )
-			outDim[d] = Math.max( input.dimension( d ) / dsFactor[d], 1 );
-
-		final Img< T > downsampled = new ArrayImgFactory< T >().create( new FinalDimensions( outDim ),
-				Views.iterable( input ).firstElement().createVariable() );
-		final RandomAccess< T > randomAccess = Views.extendBorder( input ).randomAccess();
-
-		final Cursor< T > out = downsampled.cursor();
-
-		double scale = 1;
-		for ( int f : dsFactor )
-			scale *= f;
-		scale = 1.0 / scale;
-
-		final int numBlockPixels = (int) ( outDim[0] * outDim[1] * outDim[2] );
-		final double[] accumulator = new double[numBlockPixels];
-
-		randomAccess.setPosition( blockMin );
-
-		final int ox = (int) outDim[0];
-		final int oy = (int) outDim[1];
-		final int oz = (int) outDim[2];
-
-		final int sx = ox * dsFactor[0];
-		final int sy = oy * dsFactor[1];
-		final int sz = oz * dsFactor[2];
-
-		int i = 0;
-		for ( int z = 0, bz = 0; z < sz; ++z )
-		{
-			for ( int y = 0, by = 0; y < sy; ++y )
-			{
-				for ( int x = 0, bx = 0; x < sx; ++x )
-				{
-					accumulator[i] += randomAccess.get().getRealDouble();
-					randomAccess.fwd( 0 );
-					if ( ++bx == dsFactor[0] )
-					{
-						bx = 0;
-						++i;
-					}
-				}
-				randomAccess.move( -sx, 0 );
-				randomAccess.fwd( 1 );
-				if ( ++by == dsFactor[1] )
-					by = 0;
-				else
-					i -= ox;
-			}
-			randomAccess.move( -sy, 1 );
-			randomAccess.fwd( 2 );
-			if ( ++bz == dsFactor[2] )
-				bz = 0;
-			else
-				i -= ox * oy;
+		// Build effective factors matching input dimensions, check if downsampling needed
+		boolean needsDownsampling = false;
+		final int[] effectiveFactors = new int[n];
+		for (int d = 0; d < n; d++) {
+			effectiveFactors[d] = (d < dsFactor.length) ? dsFactor[d] : 1;
+			if (effectiveFactors[d] > 1)
+				needsDownsampling = true;
 		}
 
-		for ( int j = 0; j < numBlockPixels; ++j )
-			out.next().setReal( accumulator[j] * scale );
+		// Return input unchanged if all factors are 1
+		if (!needsDownsampling)
+			return input;
 
-		return downsampled;
+		final long[] outDim = new long[n];
+		for (int d = 0; d < n; d++)
+			outDim[d] = Math.max(input.dimension(d) / effectiveFactors[d], 1);
+
+		// Determine output cell size - use input chunk size if available
+		final int[] cellSize = new int[n];
+		if (input instanceof AbstractCellImg) {
+			@SuppressWarnings("rawtypes")
+			final CellGrid grid = ((AbstractCellImg) input).getCellGrid();
+			grid.cellDimensions(cellSize);
+		} else {
+			// Default fallback for non-chunked images
+			Arrays.fill(cellSize, 128);
+		}
+
+		final BlockSupplier<T> blocks = BlockSupplier.of(input)
+				.andThen(Downsample.downsample(effectiveFactors));
+
+		return BlockAlgoUtils.cellImg(blocks, outDim, cellSize);
 	}
 
 	public static void main(String[] args)
@@ -498,7 +309,7 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		MultiResolutionImgLoader il = (MultiResolutionImgLoader) data.getSequenceDescription().getImgLoader();
 		MultiResolutionFlatfieldCorrectionWrappedImgLoader ffcil = new MultiResolutionFlatfieldCorrectionWrappedImgLoader(
 				il );
-		ffcil.setDarkImage( new ViewId( 0, 0 ), new File( "/Users/david/desktop/ff.tif" ) );
+		ffcil.setDarkImage( new ViewId( 0, 0 ), new FlatfieldImageInfo( new File( "/Users/david/desktop/ff.tif" ).toURI(), null ) );
 
 		data.getSequenceDescription().setImgLoader( ffcil );
 
@@ -509,15 +320,5 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		ImageJFunctions.show( image );
 	}
 
-	@Override
-	public boolean isCached()
-	{
-		return cacheResult;
-	}
 
-	@Override
-	public void setCached(boolean cached)
-	{
-		cacheResult = cached;
-	}
 }
