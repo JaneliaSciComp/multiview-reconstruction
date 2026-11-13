@@ -22,6 +22,7 @@
  */
 package net.preibisch.mvrecon.fiji.spimdata.explorer;
 
+import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVDisplaySettings;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
@@ -506,7 +507,34 @@ public abstract class FilteredAndGroupedExplorerPanel< AS extends SpimData2 >
 		for ( final SelectedViewDescriptionListener< AS > l : listeners )
 			l.save();
 
+		captureDisplaySettings();
+
 		io.save( data, xml );
+	}
+
+	/**
+	 * Takes the brightness settings (displayed range and slider limits per view setup) of the running BigDataViewer into
+	 * the dataset, so that the XML save stores them; without a BigDataViewer the dataset keeps the ones it has
+	 */
+	protected void captureDisplaySettings()
+	{
+		if ( !( data instanceof SpimData2 ) )
+			return;
+
+		try
+		{
+			final BasicBDVPopup p = runningBdvPopup();
+
+			if ( p != null && p.bdvRunning() && p.getBDV() != null )
+				BDVDisplaySettings.capture(
+						( (SpimData2) data ).getDisplaySettings(),
+						p.getBDV().getSetupAssignments(),
+						data.getSequenceDescription().getViewSetups().keySet() );
+		}
+		catch ( final Exception e )
+		{
+			IOFunctions.println( "Could not take the brightness settings from BigDataViewer, they are saved as they were: " + e );
+		}
 	}
 
 	protected void addPopupMenu( final JTable table )

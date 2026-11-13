@@ -160,4 +160,38 @@ public class IntensitySolverModelTest {
 			assertEquals(viaDefault.get(view).flattenedCoefficients[1][0], c.flattenedCoefficients[1][0], 1e-9);
 		});
 	}
+
+	/**
+	 * A chain of 5 views whose foreground medians rise 1.5x per view, matched consistently except at the end, where the
+	 * one overlap of the last view claims 3x: without equilibration the last view's corrected level (scale x median) is
+	 * pulled far from the others' by that single overlap; with it, toward the common level.
+	 */
+	@Test
+	public void equilibrationPullsWeaklyConnectedEndsToTheCommonLevel() {
+		final List<ViewPairCoefficientMatches> chain = new ArrayList<>();
+		final Map<ViewId, Double> medians = new java.util.HashMap<>();
+		for (int t = 0; t < 5; ++t)
+			medians.put(new ViewId(0, t), 100 * Math.pow(1.5, t));
+		for (int t = 0; t < 4; ++t) {
+			final double r = t == 3 ? 3.0 : 1.5;
+			final List<PointMatch> m = new ArrayList<>();
+			m.add(new PointMatch1D(new Point1D(100), new Point1D(100 * r), 1.0));
+			m.add(new PointMatch1D(new Point1D(1000), new Point1D(1000 * r), 1.0));
+			chain.add(new ViewPairCoefficientMatches(new ViewId(0, t), new ViewId(0, t + 1),
+					Collections.singletonList(new CoefficientMatch(0, 0, 1000, m))));
+		}
+		final IntensityCorrectionPipeline.Parameters p = new IntensityCorrectionPipeline.Parameters();
+		p.model = IntensityCorrectionPipeline.TransformationModel.SCALE;
+		p.regularization1 = IntensityCorrectionPipeline.RegularizationModel.NONE;
+		p.regularization2 = IntensityCorrectionPipeline.RegularizationModel.IDENTITY;
+		p.lambda2 = 0.01;
+		final java.util.function.DoubleUnaryOperator offset = w -> {
+			final Map<ViewId, Coefficients> c = IntensityCorrection.solve(COEFFICIENTS_SIZE, chain, ITERATIONS, p.createModel(), w, medians);
+			final double last = c.get(new ViewId(0, 4)).flattenedCoefficients[0][0] * medians.get(new ViewId(0, 4));
+			final double middle = c.get(new ViewId(0, 2)).flattenedCoefficients[0][0] * medians.get(new ViewId(0, 2));
+			return Math.abs(Math.log(last / middle));
+		};
+		final double plain = offset.applyAsDouble(0), equilibrated = offset.applyAsDouble(0.3);
+		assertTrue(equilibrated < 0.7 * plain, "last view's log level off the middle's: " + equilibrated + " with equilibration, " + plain + " without");
+	}
 }

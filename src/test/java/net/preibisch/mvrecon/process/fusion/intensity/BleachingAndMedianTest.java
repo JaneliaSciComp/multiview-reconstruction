@@ -165,4 +165,27 @@ public class BleachingAndMedianTest {
 		}
 		return pq / pp;
 	}
+
+	/**
+	 * What a fusion builds from its registrations and sizes: view 1 lies 6 px along x from view 0 (10 x 10 x 10); its
+	 * voxels inside view 0 were imaged once before, the others never; the image is view 1 at half resolution. View 0
+	 * has no earlier view.
+	 */
+	@Test
+	public void fusionCountsEarlierViewsFromRegistrations() {
+		final mpicbg.spim.data.sequence.ViewId v0 = new mpicbg.spim.data.sequence.ViewId(0, 0), v1 = new mpicbg.spim.data.sequence.ViewId(0, 1);
+		final AffineTransform3D r0 = new AffineTransform3D(), r1 = new AffineTransform3D();
+		r1.translate(6, 0, 0);
+		final java.util.Map<mpicbg.spim.data.sequence.ViewId, AffineTransform3D> reg = java.util.Map.of(v0, r0, v1, r1);
+		final java.util.Map<mpicbg.spim.data.sequence.ViewId, net.imglib2.Dimensions> dims = java.util.Map.of(v0, new FinalDimensions(10, 10, 10), v1, new FinalDimensions(10, 10, 10));
+		final AffineTransform3D half = new AffineTransform3D();
+		half.set(2, 0, 0, 0.5, 0, 2, 0, 0.5, 0, 0, 2, 0.5);
+		half.preConcatenate(r1);
+		final Bleaching b = Bleaching.of(v1, half, 0.3, List.of(v0, v1), reg, dims);
+		final int[] count = new int[5];
+		b.countLine(new long[] { 0, 2, 3 }, 5, count);
+		// half-resolution x = 0, 1 -> view 1 x = 0.5, 2.5 -> view 0 x = 6.5, 8.5 (inside); x = 2 -> 10.5 (outside)
+		org.junit.jupiter.api.Assertions.assertArrayEquals(new int[] { 1, 1, 0, 0, 0 }, count);
+		assertEquals(null, Bleaching.of(v0, r0, 0.3, List.of(v0, v1), reg, dims));
+	}
 }

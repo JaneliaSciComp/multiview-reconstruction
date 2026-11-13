@@ -23,6 +23,8 @@
 package net.preibisch.mvrecon.fiji.spimdata.explorer.popup;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.bdv.BDVDisplaySettings;
+import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityPreview;
 
 import bdv.cache.CacheControl;
@@ -392,6 +394,11 @@ public class BDVPopup extends JMenuItem implements ExplorerWindowSetable, BasicB
 
 		if ( !bdv.tryLoadSettings( xml.toString() ) )
 			InitializeViewerState.initBrightness( 0.001, 0.999, bdv.getViewerFrame() );
+
+		// the brightness settings saved with the XML (range and slider limits per view setup) replace the estimate, and the
+		// ranges of a settings.xml next to the dataset (its transform and bookmarks stay)
+		if ( spimData instanceof SpimData2 && !( (SpimData2) spimData ).getDisplaySettings().isEmpty() )
+			BDVDisplaySettings.apply( ( (SpimData2) spimData ).getDisplaySettings(), bdv.getSetupAssignments() );
 
 		// do not rotate BDV view by default
 		BDVPopup.initTransform( bdv.getViewer() );

@@ -9,12 +9,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- *
+ * 
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
+ * 
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -84,6 +84,9 @@ public class ModelHub
 
 	/** the tag of the translation-invariant models (pcmatch's model cards tag the kind of invariance), what "Translation invariant (Hugging Face)" lists */
 	public static final String TRANSLATION_INVARIANT = "translation-invariant";
+
+	/** the tag of the rotation- and mirror-invariant models (views of different orientation; same tensor contract and sampling as the translation-invariant ones), what "Rotation invariant (Hugging Face)" lists */
+	public static final String ROTATION_INVARIANT = "rotation-invariant";
 
 	/** the scheme of a hub model: {@code hf://<namespace>/<name>[@<revision>][/<file>]} */
 	public static final String SCHEME = "hf://";

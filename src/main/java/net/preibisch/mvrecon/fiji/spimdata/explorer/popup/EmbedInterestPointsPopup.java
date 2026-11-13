@@ -9,12 +9,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- *
+ * 
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
+ * 
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -42,8 +42,8 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists
 
 /**
  * "Compute Interest Point Embeddings" of the ViewSetup Explorer, one entry per {@link Source} ("Translation invariant (Hugging
- * Face) ...", "Local model ..."): the dialog of {@link Embed_Interest_Points} (which says that the dataset is saved first), the
- * save (as the "Save" button: the arrays live in the store next to the points, fresh detections are only in memory until saved,
+ * Face) ...", "Rotation invariant (Hugging Face) ...", "Local model ..."): the dialog of {@link Embed_Interest_Points} (which says
+ * that the dataset is saved first), the save (as the "Save" button: the arrays live in the store next to the points, fresh detections are only in memory until saved,
  * and the store itself is created by the first save that commits points), the embedding of the selected views, then the Interest
  * Point Explorer's "Attributes" column shows the new array.
  *

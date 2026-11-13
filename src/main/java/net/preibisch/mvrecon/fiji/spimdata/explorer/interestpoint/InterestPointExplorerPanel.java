@@ -67,8 +67,11 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorer;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointTableModel.LabelAttributes;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.StoredDetectionParameters;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class InterestPointExplorerPanel extends JPanel
 {
@@ -713,13 +716,115 @@ public class InterestPointExplorerPanel extends JPanel
 		}
 	}
 
+	/**
+	 * Makes the detection parameters of the label of the selected row the defaults of "Detect Interest Points"
+	 * (StoredDetectionParameters.presetAsDefaults), so that a detection gives the same points under a new label; the log
+	 * says what the label's parameters string did not hold (older labels) and what happened instead
+	 */
+	protected void setDetectionDefaults()
+	{
+		final int row = table.getSelectedRow();
+		final List< BasicViewDescription< ? > > vds = tableModel.getCurrentViewDescriptions();
+
+		if ( row < 0 || vds == null || vds.size() == 0 )
+		{
+			JOptionPane.showMessageDialog( table, "Nothing selected." );
+			return;
+		}
+
+		final ViewInterestPoints vip = tableModel.getViewInterestPoints();
+		final String label = InterestPointTableModel.label( InterestPointTools.getAllInterestPointMap( vip, vds ), row );
+
+		if ( label == null )
+		{
+			JOptionPane.showMessageDialog( table, "No interest points in this row." );
+			return;
+		}
+
+		// the selected views that have the label, each with the string of its detection (a filtered label: of its base label)
+		final ArrayList< ViewId > views = new ArrayList<>();
+		final ArrayList< String > strings = new ArrayList<>();
+		String baseLabel = null;
+
+		for ( final BasicViewDescription< ? > vd : vds )
+		{
+			InterestPoints list = vip.getViewInterestPointLists( vd ).getInterestPointList( label );
+
+			if ( list == null )
+				continue;
+
+			try
+			{
+				while ( list instanceof VirtualFilteredInterestPoints )
+				{
+					baseLabel = ( (VirtualFilteredInterestPoints) list ).getBaseLabel();
+					list = ( (VirtualFilteredInterestPoints) list ).getBase();
+				}
+			}
+			catch ( final IllegalStateException e )
+			{
+				IOFunctions.println( "View " + Group.pvid( vd ) + ": " + e.getMessage() );
+				continue;
+			}
+
+			views.add( new ViewId( vd.getTimePointId(), vd.getViewSetupId() ) );
+			strings.add( list.getParameters() );
+		}
+
+		if ( views.isEmpty() )
+		{
+			IOFunctions.println( "The selected views have no interest points '" + label + "', detection defaults unchanged." );
+			return;
+		}
+
+		final String parameters = strings.get( 0 );
+		final StoredDetectionParameters stored = StoredDetectionParameters.parse( parameters );
+
+		if ( stored == null )
+		{
+			IOFunctions.println( "'" + label + "' has no stored detection parameters (not a detection, or stored by another tool): '" + parameters + "', detection defaults unchanged." );
+			return;
+		}
+
+		if ( baseLabel != null )
+			IOFunctions.println( "'" + label + "' is a filtered label, using the detection parameters of its base label '" + baseLabel + "' (the filter itself is not a detection default)." );
+
+		for ( int i = 1; i < views.size(); ++i )
+			if ( !String.valueOf( strings.get( i ) ).equals( parameters ) )
+			{
+				IOFunctions.println( "The parameters of '" + label + "' differ between the selected views, using the ones of view " + Group.pvid( views.get( 0 ) ) + "." );
+				break;
+			}
+
+		final List< String > notes = stored.presetAsDefaults( viewSetupExplorer.getSpimData(), views, parameters );
+
+		IOFunctions.println( "Detection defaults set from '" + label + "': " + parameters );
+		IOFunctions.println( "Detect Interest Points now opens with them (" + ( stored.scaleSpace() ? "scale space" : "Difference-of-Gaussian" ) + ", 'Advanced' specification) and suggests a new label." );
+
+		if ( notes.isEmpty() )
+		{
+			IOFunctions.println( "All parameters were stored with the label." );
+		}
+		else
+		{
+			IOFunctions.println( "Not stored with the label, or preset differently:" );
+			for ( final String note : notes )
+				IOFunctions.println( "  - " + note );
+		}
+
+		if ( !stored.scaleSpace() )
+			IOFunctions.println( "Never stored: what the Difference-of-Gaussian was computed on (CPU/GPU), that default is unchanged." );
+	}
+
 	protected void addPopupMenu( final JTable table )
 	{
 		final JPopupMenu popupMenu = new JPopupMenu();
 		final JMenuItem filterItem = new JMenuItem( "Filter interactively ..." );
+		final JMenuItem defaultsItem = new JMenuItem( "Set detection parameters as defaults" );
 		final JMenuItem deleteItem = new JMenuItem( "Delete" );
 
 		filterItem.addActionListener( e -> filterInteractively() );
+		defaultsItem.addActionListener( e -> setDetectionDefaults() );
 
 		deleteItem.addActionListener(new ActionListener()
 		{
@@ -732,6 +837,7 @@ public class InterestPointExplorerPanel extends JPanel
 		});
 
 		popupMenu.add( filterItem );
+		popupMenu.add( defaultsItem );
 		popupMenu.add( deleteItem );
 
 		table.setComponentPopupMenu( popupMenu );

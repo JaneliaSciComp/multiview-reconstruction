@@ -9,12 +9,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- *
+ * 
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
+ * 
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -241,12 +241,29 @@ public class TestOnnxEvaluator
 	@Test
 	public void reproducesPcmatchsFixture() throws Exception
 	{
-		final Path onnx = Paths.get( System.getProperty( "user.home" ), "python/pcmatch/models/translation-stack_sigma5-30_mask_floor_ds1345678_p2000_s0_local_neg3r500.onnx" );
-		final Path fixture = Paths.get( System.getProperty( "user.home" ), "Documents/pcmatch_data/ds1_java_matching/_java_fixture/onnx_ds1_setup0.n5" );
+		reproducesPcmatchsFixture( "translation-stack_sigma5-30_mask_floor_ds1345678_p2000_s0_local_neg3r500.onnx", "onnx_ds1_setup0.n5", "6844e0e3f80c8eb2217a2021ab0c3215cddc49e11cd78269e47c47fc2ff0cb75" );
+	}
+
+	/** pcmatch's exported rotation- and mirror-invariant model (its standardisation masks a sphere, a constant of the graph) on its ds1 fixture, when both are on this machine (otherwise skipped) */
+	@Test
+	public void reproducesPcmatchsRotationInvariantFixture() throws Exception
+	{
+		reproducesPcmatchsFixture( "rotinv-stack_sigma5-30_mask_floor_ds1345678_p2000_s0_local_neg3r500_mirror_ft-allmv.onnx", "onnx_ds1_setup0_rotinv_allmv.n5", "861ed356e946ace5e099b1b9362d6c0c0560e9149a9c697f9cba96fa66622850" );
+	}
+
+	/**
+	 * @param onnxName the model in pcmatch's {@code models}
+	 * @param fixtureName the fixture pcmatch wrote for it: the patches of 256 points and their descriptors (onnxruntime)
+	 * @param fingerprint the model's fingerprint
+	 */
+	private static void reproducesPcmatchsFixture( final String onnxName, final String fixtureName, final String fingerprint ) throws Exception
+	{
+		final Path onnx = Paths.get( System.getProperty( "user.home" ), "python/pcmatch/models", onnxName );
+		final Path fixture = Paths.get( System.getProperty( "user.home" ), "Documents/pcmatch_data/ds1_java_matching/_java_fixture", fixtureName );
 		assumeTrue( Files.isRegularFile( onnx ) && Files.exists( EmbeddingModel.sidecar( onnx ) ) && Files.isDirectory( fixture ), "pcmatch's model and fixture are not on this machine" );
 
 		final EmbeddingModel model = EmbeddingModel.load( onnx );
-		assertEquals( "6844e0e3f80c8eb2217a2021ab0c3215cddc49e11cd78269e47c47fc2ff0cb75", model.contract().fingerprint() );
+		assertEquals( fingerprint, model.contract().fingerprint() );
 		assertEquals( 5, model.contract().channels() );
 		assertEquals( 16, model.contract().patch() );
 		assertEquals( 64, model.contract().outputs() );

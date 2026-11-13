@@ -90,8 +90,12 @@ public class RegistrationExplorerPanel extends JPanel
 
 	public void updateViewDescriptions( final List<BasicViewDescription<?>> vds )
 	{
-		this.lastSelectedVDs = vds;
-		tableModel.updateData( vds );
+		// the explorer keeps its selection in a HashSet, so the views arrive in arbitrary order: sort by timepoint, then setup
+		final List<BasicViewDescription<?>> sorted = new ArrayList<>( vds );
+		Collections.sort( sorted );
+
+		this.lastSelectedVDs = sorted;
+		tableModel.updateData( sorted );
 	}
 
 	protected void initComponent()

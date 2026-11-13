@@ -1,0 +1,349 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="1132" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="12">
+<defs><linearGradient id="ratio" x1="0" x2="1" y1="0" y2="0">
+<stop offset="0.000" stop-color="#d03b3b"/>
+<stop offset="0.025" stop-color="#d14241"/>
+<stop offset="0.050" stop-color="#d24848"/>
+<stop offset="0.075" stop-color="#d44f4e"/>
+<stop offset="0.100" stop-color="#d55555"/>
+<stop offset="0.125" stop-color="#d65c5b"/>
+<stop offset="0.150" stop-color="#d76262"/>
+<stop offset="0.175" stop-color="#d86968"/>
+<stop offset="0.200" stop-color="#d9706f"/>
+<stop offset="0.225" stop-color="#db7675"/>
+<stop offset="0.250" stop-color="#dc7d7c"/>
+<stop offset="0.275" stop-color="#dd8382"/>
+<stop offset="0.300" stop-color="#de8a88"/>
+<stop offset="0.325" stop-color="#df908f"/>
+<stop offset="0.350" stop-color="#e09795"/>
+<stop offset="0.375" stop-color="#e29e9c"/>
+<stop offset="0.400" stop-color="#e3a4a2"/>
+<stop offset="0.425" stop-color="#e4aba9"/>
+<stop offset="0.450" stop-color="#e5b1af"/>
+<stop offset="0.475" stop-color="#e6b8b6"/>
+<stop offset="0.500" stop-color="#e7bebc"/>
+<stop offset="0.525" stop-color="#e9c5c3"/>
+<stop offset="0.550" stop-color="#eacbc9"/>
+<stop offset="0.575" stop-color="#ebd2d0"/>
+<stop offset="0.600" stop-color="#ecd9d6"/>
+<stop offset="0.625" stop-color="#eddfdc"/>
+<stop offset="0.650" stop-color="#eee6e3"/>
+<stop offset="0.675" stop-color="#f0ece9"/>
+<stop offset="0.700" stop-color="#e7e9eb"/>
+<stop offset="0.725" stop-color="#d7e0e9"/>
+<stop offset="0.750" stop-color="#c7d6e7"/>
+<stop offset="0.775" stop-color="#b8cde6"/>
+<stop offset="0.800" stop-color="#a8c4e4"/>
+<stop offset="0.825" stop-color="#98bae2"/>
+<stop offset="0.850" stop-color="#88b1e0"/>
+<stop offset="0.875" stop-color="#79a7df"/>
+<stop offset="0.900" stop-color="#699edd"/>
+<stop offset="0.925" stop-color="#5994db"/>
+<stop offset="0.950" stop-color="#498bd9"/>
+<stop offset="0.975" stop-color="#3a81d8"/>
+<stop offset="1.000" stop-color="#2a78d6"/>
+</linearGradient></defs>
+<rect width="100%" height="100%" fill="#fcfcfb"/>
+<text x="120" y="28" font-size="15" font-weight="600" fill="#0b0b0b">Intel(R) Xeon(R) Platinum 8462Y+, 16 cores</text>
+<text x="120" y="48" fill="#52514e">parameters: 25,731 / 24,438 points per side, 1 redundancy, 3 ratio</text>
+<text x="110" y="90" text-anchor="end" fill="#0b0b0b">50</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 126× faster
+flat KD-tree 26104 ms, brute force 207 ms
+4174 candidates, identical sets: true</title><rect x="121" y="65" width="94" height="42" rx="4" fill="#db7776"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 169× faster
+flat KD-tree 39934 ms, brute force 236 ms
+3718 candidates, identical sets: true</title><rect x="217" y="65" width="94" height="42" rx="4" fill="#d96f6f"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 226× faster
+flat KD-tree 70715 ms, brute force 313 ms
+3308 candidates, identical sets: true</title><rect x="313" y="65" width="94" height="42" rx="4" fill="#d86868"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 478× faster
+flat KD-tree 135795 ms, brute force 284 ms
+2924 candidates, identical sets: true</title><rect x="409" y="65" width="94" height="42" rx="4" fill="#d55655"/></g>
+<text x="110" y="134" text-anchor="end" fill="#0b0b0b">100</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 318× faster
+flat KD-tree 87376 ms, brute force 275 ms
+16359 candidates, identical sets: true</title><rect x="121" y="109" width="94" height="42" rx="4" fill="#d7605f"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 417× faster
+flat KD-tree 187950 ms, brute force 451 ms
+14079 candidates, identical sets: true</title><rect x="217" y="109" width="94" height="42" rx="4" fill="#d55959"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 1256× faster
+flat KD-tree 446412 ms, brute force 356 ms
+12077 candidates, identical sets: true</title><rect x="313" y="109" width="94" height="42" rx="4" fill="#d03e3e"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 1394× faster
+flat KD-tree 564147 ms, brute force 405 ms
+10447 candidates, identical sets: true</title><rect x="409" y="109" width="94" height="42" rx="4" fill="#d03b3b"/></g>
+<text x="110" y="178" text-anchor="end" fill="#0b0b0b">250</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 125× faster
+flat KD-tree 77205 ms, brute force 616 ms
+15695 candidates, identical sets: true</title><rect x="121" y="153" width="94" height="42" rx="4" fill="#db7776"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 186× faster
+flat KD-tree 217201 ms, brute force 1165 ms
+13200 candidates, identical sets: true</title><rect x="217" y="153" width="94" height="42" rx="4" fill="#d96d6c"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 312× faster
+flat KD-tree 292829 ms, brute force 939 ms
+10889 candidates, identical sets: true</title><rect x="313" y="153" width="94" height="42" rx="4" fill="#d76060"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 433× faster
+flat KD-tree 447301 ms, brute force 1033 ms
+9113 candidates, identical sets: true</title><rect x="409" y="153" width="94" height="42" rx="4" fill="#d55858"/></g>
+<text x="110" y="222" text-anchor="end" fill="#0b0b0b">500</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 13× faster
+flat KD-tree 22930 ms, brute force 1790 ms
+15439 candidates, identical sets: true</title><rect x="121" y="197" width="94" height="42" rx="4" fill="#e5b0ae"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 44× faster
+flat KD-tree 102850 ms, brute force 2355 ms
+12963 candidates, identical sets: true</title><rect x="217" y="197" width="94" height="42" rx="4" fill="#df9190"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 78× faster
+flat KD-tree 232264 ms, brute force 2960 ms
+10513 candidates, identical sets: true</title><rect x="313" y="197" width="94" height="42" rx="4" fill="#dd8381"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 110× faster
+flat KD-tree 419132 ms, brute force 3810 ms
+8647 candidates, identical sets: true</title><rect x="409" y="197" width="94" height="42" rx="4" fill="#db7a79"/></g>
+<text x="110" y="266" text-anchor="end" fill="#0b0b0b">1000</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 1.2× faster
+flat KD-tree 11292 ms, brute force 9155 ms
+15217 candidates, identical sets: true</title><rect x="121" y="241" width="94" height="42" rx="4" fill="#efeae7"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 9.0× faster
+flat KD-tree 73098 ms, brute force 8127 ms
+12829 candidates, identical sets: true</title><rect x="217" y="241" width="94" height="42" rx="4" fill="#e6b8b6"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 15× faster
+flat KD-tree 166222 ms, brute force 11021 ms
+10312 candidates, identical sets: true</title><rect x="313" y="241" width="94" height="42" rx="4" fill="#e4acaa"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 23× faster
+flat KD-tree 337961 ms, brute force 14875 ms
+8374 candidates, identical sets: true</title><rect x="409" y="241" width="94" height="42" rx="4" fill="#e2a1a0"/></g>
+<text x="110" y="310" text-anchor="end" fill="#0b0b0b">2000</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 2000, avg B in radius 5062
+flat KD-tree 1.6× faster
+flat KD-tree 10765 ms, brute force 17351 ms
+15013 candidates, identical sets: true</title><rect x="121" y="285" width="94" height="42" rx="4" fill="#d4dee9"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 2000, avg B in radius 5062
+brute force 1.8× faster
+flat KD-tree 47415 ms, brute force 26855 ms
+12736 candidates, identical sets: true</title><rect x="217" y="285" width="94" height="42" rx="4" fill="#ede1de"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 2000, avg B in radius 5062
+brute force 2.9× faster
+flat KD-tree 120907 ms, brute force 41674 ms
+10203 candidates, identical sets: true</title><rect x="313" y="285" width="94" height="42" rx="4" fill="#ebd5d2"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 2000, avg B in radius 5062
+brute force 5.3× faster
+flat KD-tree 274746 ms, brute force 52214 ms
+8206 candidates, identical sets: true</title><rect x="409" y="285" width="94" height="42" rx="4" fill="#e9c6c3"/></g>
+<text x="110" y="354" text-anchor="end" fill="#0b0b0b">5000</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 5000, avg B in radius 13552
+flat KD-tree 3.1× faster
+flat KD-tree 22780 ms, brute force 69873 ms
+14781 candidates, identical sets: true</title><rect x="121" y="329" width="94" height="42" rx="4" fill="#adc7e5"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 5000, avg B in radius 13552
+flat KD-tree 4.8× faster
+flat KD-tree 27167 ms, brute force 130759 ms
+12645 candidates, identical sets: true</title><rect x="217" y="329" width="94" height="42" rx="4" fill="#92b7e2"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 5000, avg B in radius 13552
+flat KD-tree 1.2× faster
+flat KD-tree 135380 ms, brute force 167005 ms
+10133 candidates, identical sets: true</title><rect x="313" y="329" width="94" height="42" rx="4" fill="#e4e7eb"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 5000, avg B in radius 13552
+brute force 2.0× faster
+flat KD-tree 280237 ms, brute force 139923 ms
+8096 candidates, identical sets: true</title><rect x="409" y="329" width="94" height="42" rx="4" fill="#eddedb"/></g>
+<text x="110" y="408" text-anchor="end" fill="#0b0b0b">none</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius none, avg B in radius 24438
+flat KD-tree 28× faster
+flat KD-tree 3213 ms, brute force 89460 ms
+14636 candidates, identical sets: true</title><rect x="121" y="383" width="94" height="42" rx="4" fill="#2a78d6"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius none, avg B in radius 24438
+flat KD-tree 5.3× faster
+flat KD-tree 13456 ms, brute force 71858 ms
+12592 candidates, identical sets: true</title><rect x="217" y="383" width="94" height="42" rx="4" fill="#8cb3e1"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius none, avg B in radius 24438
+flat KD-tree 1.4× faster
+flat KD-tree 79382 ms, brute force 110151 ms
+10087 candidates, identical sets: true</title><rect x="313" y="383" width="94" height="42" rx="4" fill="#dde3ea"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius none, avg B in radius 24438
+brute force 1.4× faster
+flat KD-tree 197464 ms, brute force 137764 ms
+8050 candidates, identical sets: true</title><rect x="409" y="383" width="94" height="42" rx="4" fill="#eee6e3"/></g>
+<polyline points="120.0,275.4 168.0,275.4 264.0,317.7 360.0,342.8 456.0,372.0 504.0,372.0" fill="none" stroke="#0b0b0b" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="7 4"/>
+<text x="510" y="376.0" fill="#0b0b0b" font-size="11" font-weight="600">tie</text>
+<text x="168" y="444" text-anchor="middle" fill="#0b0b0b">3</text>
+<text x="264" y="444" text-anchor="middle" fill="#0b0b0b">4</text>
+<text x="360" y="444" text-anchor="middle" fill="#0b0b0b">5</text>
+<text x="456" y="444" text-anchor="middle" fill="#0b0b0b">6</text>
+<text x="312" y="464" text-anchor="middle" fill="#52514e">number of neighbors</text>
+<text transform="translate(24,240) rotate(-90)" text-anchor="middle" fill="#52514e">search radius (world units)</text>
+<text x="120" y="534" font-size="15" font-weight="600" fill="#0b0b0b">Apple M4 Max, 16 cores</text>
+<text x="120" y="554" fill="#52514e">parameters: 25,731 / 24,438 points per side, 1 redundancy, 3 ratio</text>
+<text x="110" y="596" text-anchor="end" fill="#0b0b0b">50</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 79× faster
+flat KD-tree 9838 ms, brute force 125 ms
+4174 candidates, identical sets: true</title><rect x="121" y="571" width="94" height="42" rx="4" fill="#dd8281"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 137× faster
+flat KD-tree 18172 ms, brute force 133 ms
+3718 candidates, identical sets: true</title><rect x="217" y="571" width="94" height="42" rx="4" fill="#da7574"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 236× faster
+flat KD-tree 34599 ms, brute force 146 ms
+3308 candidates, identical sets: true</title><rect x="313" y="571" width="94" height="42" rx="4" fill="#d86766"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 50, avg B in radius 1
+brute force 322× faster
+flat KD-tree 53170 ms, brute force 165 ms
+2924 candidates, identical sets: true</title><rect x="409" y="571" width="94" height="42" rx="4" fill="#d65f5f"/></g>
+<text x="110" y="640" text-anchor="end" fill="#0b0b0b">100</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 273× faster
+flat KD-tree 41844 ms, brute force 153 ms
+16359 candidates, identical sets: true</title><rect x="121" y="615" width="94" height="42" rx="4" fill="#d76463"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 451× faster
+flat KD-tree 83073 ms, brute force 184 ms
+14079 candidates, identical sets: true</title><rect x="217" y="615" width="94" height="42" rx="4" fill="#d55757"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 830× faster
+flat KD-tree 161617 ms, brute force 195 ms
+12077 candidates, identical sets: true</title><rect x="313" y="615" width="94" height="42" rx="4" fill="#d24848"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 100, avg B in radius 6
+brute force 1122× faster
+flat KD-tree 247052 ms, brute force 220 ms
+10447 candidates, identical sets: true</title><rect x="409" y="615" width="94" height="42" rx="4" fill="#d14040"/></g>
+<text x="110" y="684" text-anchor="end" fill="#0b0b0b">250</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 48× faster
+flat KD-tree 18753 ms, brute force 392 ms
+15695 candidates, identical sets: true</title><rect x="121" y="659" width="94" height="42" rx="4" fill="#df8f8d"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 148× faster
+flat KD-tree 59063 ms, brute force 399 ms
+13200 candidates, identical sets: true</title><rect x="217" y="659" width="94" height="42" rx="4" fill="#da7372"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 291× faster
+flat KD-tree 136893 ms, brute force 470 ms
+10889 candidates, identical sets: true</title><rect x="313" y="659" width="94" height="42" rx="4" fill="#d76261"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 250, avg B in radius 76
+brute force 383× faster
+flat KD-tree 215968 ms, brute force 564 ms
+9113 candidates, identical sets: true</title><rect x="409" y="659" width="94" height="42" rx="4" fill="#d65b5b"/></g>
+<text x="110" y="728" text-anchor="end" fill="#0b0b0b">500</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 10× faster
+flat KD-tree 8935 ms, brute force 871 ms
+15439 candidates, identical sets: true</title><rect x="121" y="703" width="94" height="42" rx="4" fill="#e6b5b3"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 31× faster
+flat KD-tree 36636 ms, brute force 1197 ms
+12963 candidates, identical sets: true</title><rect x="217" y="703" width="94" height="42" rx="4" fill="#e19a98"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 69× faster
+flat KD-tree 106741 ms, brute force 1557 ms
+10513 candidates, identical sets: true</title><rect x="313" y="703" width="94" height="42" rx="4" fill="#dd8685"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 500, avg B in radius 409
+brute force 94× faster
+flat KD-tree 194151 ms, brute force 2057 ms
+8647 candidates, identical sets: true</title><rect x="409" y="703" width="94" height="42" rx="4" fill="#dc7e7d"/></g>
+<text x="110" y="772" text-anchor="end" fill="#0b0b0b">1000</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 2.1× faster
+flat KD-tree 5356 ms, brute force 2521 ms
+15217 candidates, identical sets: true</title><rect x="121" y="747" width="94" height="42" rx="4" fill="#eddcda"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 5.9× faster
+flat KD-tree 22256 ms, brute force 3754 ms
+12829 candidates, identical sets: true</title><rect x="217" y="747" width="94" height="42" rx="4" fill="#e8c3c0"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 15× faster
+flat KD-tree 77768 ms, brute force 5201 ms
+10312 candidates, identical sets: true</title><rect x="313" y="747" width="94" height="42" rx="4" fill="#e4acaa"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 1000, avg B in radius 1601
+brute force 23× faster
+flat KD-tree 165147 ms, brute force 7155 ms
+8374 candidates, identical sets: true</title><rect x="409" y="747" width="94" height="42" rx="4" fill="#e2a19f"/></g>
+<text x="110" y="816" text-anchor="end" fill="#0b0b0b">2000</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 2000, avg B in radius 5062
+flat KD-tree 1.6× faster
+flat KD-tree 4663 ms, brute force 7420 ms
+15013 candidates, identical sets: true</title><rect x="121" y="791" width="94" height="42" rx="4" fill="#d4dee9"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 2000, avg B in radius 5062
+brute force 1.3× faster
+flat KD-tree 15094 ms, brute force 11622 ms
+12736 candidates, identical sets: true</title><rect x="217" y="791" width="94" height="42" rx="4" fill="#efe9e6"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 2000, avg B in radius 5062
+brute force 3.2× faster
+flat KD-tree 54356 ms, brute force 17048 ms
+10203 candidates, identical sets: true</title><rect x="313" y="791" width="94" height="42" rx="4" fill="#ebd2d0"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 2000, avg B in radius 5062
+brute force 5.6× faster
+flat KD-tree 133872 ms, brute force 23851 ms
+8206 candidates, identical sets: true</title><rect x="409" y="791" width="94" height="42" rx="4" fill="#e8c4c2"/></g>
+<text x="110" y="860" text-anchor="end" fill="#0b0b0b">5000</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius 5000, avg B in radius 13552
+flat KD-tree 3.2× faster
+flat KD-tree 5893 ms, brute force 18852 ms
+14781 candidates, identical sets: true</title><rect x="121" y="835" width="94" height="42" rx="4" fill="#abc5e4"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius 5000, avg B in radius 13552
+flat KD-tree 2.4× faster
+flat KD-tree 12841 ms, brute force 30181 ms
+12645 candidates, identical sets: true</title><rect x="217" y="835" width="94" height="42" rx="4" fill="#bdd0e6"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius 5000, avg B in radius 13552
+flat KD-tree 1.1× faster
+flat KD-tree 40872 ms, brute force 44942 ms
+10133 candidates, identical sets: true</title><rect x="313" y="835" width="94" height="42" rx="4" fill="#eaeceb"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius 5000, avg B in radius 13552
+brute force 1.7× faster
+flat KD-tree 107200 ms, brute force 64321 ms
+8096 candidates, identical sets: true</title><rect x="409" y="835" width="94" height="42" rx="4" fill="#eee2e0"/></g>
+<text x="110" y="914" text-anchor="end" fill="#0b0b0b">none</text>
+<g><title>3 neighbors (points A=25731, B=24438), radius none, avg B in radius 24438
+flat KD-tree 19× faster
+flat KD-tree 1483 ms, brute force 28544 ms
+14636 candidates, identical sets: true</title><rect x="121" y="889" width="94" height="42" rx="4" fill="#4085d8"/></g>
+<g><title>4 neighbors (points A=25731, B=24438), radius none, avg B in radius 24438
+flat KD-tree 6.8× faster
+flat KD-tree 6753 ms, brute force 45666 ms
+12592 candidates, identical sets: true</title><rect x="217" y="889" width="94" height="42" rx="4" fill="#7eabdf"/></g>
+<g><title>5 neighbors (points A=25731, B=24438), radius none, avg B in radius 24438
+flat KD-tree 1.9× faster
+flat KD-tree 28723 ms, brute force 54431 ms
+10087 candidates, identical sets: true</title><rect x="313" y="889" width="94" height="42" rx="4" fill="#cad8e8"/></g>
+<g><title>6 neighbors (points A=25731, B=24438), radius none, avg B in radius 24438
+brute force 1.1× faster
+flat KD-tree 88039 ms, brute force 78911 ms
+8050 candidates, identical sets: true</title><rect x="409" y="889" width="94" height="42" rx="4" fill="#f0ece9"/></g>
+<polyline points="120.0,795.2 168.0,795.2 264.0,822.3 360.0,852.7 456.0,878.0 504.0,878.0" fill="none" stroke="#0b0b0b" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="7 4"/>
+<text x="510" y="882.0" fill="#0b0b0b" font-size="11" font-weight="600">tie</text>
+<text x="168" y="950" text-anchor="middle" fill="#0b0b0b">3</text>
+<text x="264" y="950" text-anchor="middle" fill="#0b0b0b">4</text>
+<text x="360" y="950" text-anchor="middle" fill="#0b0b0b">5</text>
+<text x="456" y="950" text-anchor="middle" fill="#0b0b0b">6</text>
+<text x="312" y="970" text-anchor="middle" fill="#52514e">number of neighbors</text>
+<text transform="translate(24,746) rotate(-90)" text-anchor="middle" fill="#52514e">search radius (world units)</text>
+<rect x="120" y="1072" width="480" height="14" rx="3" fill="url(#ratio)"/>
+<line x1="448.9" x2="448.9" y1="1086" y2="1091" stroke="#52514e"/>
+<text x="448.9" y="1104" text-anchor="middle" fill="#52514e" font-size="11">tie</text>
+<line x1="120.0" x2="120.0" y1="1086" y2="1091" stroke="#52514e"/>
+<text x="120.0" y="1104" text-anchor="middle" fill="#52514e" font-size="11">1394×</text>
+<line x1="600.0" x2="600.0" y1="1086" y2="1091" stroke="#52514e"/>
+<text x="600.0" y="1104" text-anchor="middle" fill="#52514e" font-size="11">28×</text>
+<line x1="344.3" x2="344.3" y1="1086" y2="1091" stroke="#52514e"/>
+<text x="344.3" y="1104" text-anchor="middle" fill="#52514e" font-size="11">10×</text>
+<text x="120" y="1064" fill="#52514e" font-size="11">← brute force faster</text>
+<text x="600" y="1064" text-anchor="end" fill="#52514e" font-size="11">flat KD-tree faster →</text>
+</svg>

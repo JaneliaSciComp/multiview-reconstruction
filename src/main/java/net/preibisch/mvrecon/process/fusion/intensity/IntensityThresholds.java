@@ -202,4 +202,29 @@ public class IntensityThresholds
 		}
 		return Double.NaN;
 	}
+
+	/** The median of the voxels of {@code img} above {@code threshold}, from the same exact histogram, NaN if there are none. */
+	public static < T extends RealType< T > > double medianAbove( final RandomAccessibleInterval< T > img, final double threshold )
+	{
+		final long[] counts = new long[ 65536 ];
+		long n = 0;
+		for ( final T t : Views.iterable( img ) )
+		{
+			final double v = t.getRealDouble();
+			if ( v > threshold )
+			{
+				++counts[ ( int ) Math.max( 0, Math.min( 65535, Math.round( v ) ) ) ];
+				++n;
+			}
+		}
+		final long rank = ( n + 1 ) / 2;
+		long cumulative = 0;
+		for ( int v = 0; v < counts.length && n > 0; ++v )
+		{
+			cumulative += counts[ v ];
+			if ( cumulative >= rank )
+				return v;
+		}
+		return Double.NaN;
+	}
 }

@@ -40,6 +40,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.XmlIoActionHistory;
+import net.preibisch.mvrecon.fiji.spimdata.displaysettings.XmlIoDisplaySettings;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.XmlIoBoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
@@ -63,6 +64,7 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 	final XmlIoStitchingResults xmlStitchingResults;
 	final XmlIoIntensityAdjustments xmlIntensityAdjustments;
 	final XmlIoActionHistory xmlActionHistory;
+	final XmlIoDisplaySettings xmlDisplaySettings;
 
 	URI lastURI;
 	public static int numBackups = 5;
@@ -89,6 +91,9 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 
 		this.xmlActionHistory = new XmlIoActionHistory();
 		this.handledTags.add( xmlActionHistory.getTag() );
+
+		this.xmlDisplaySettings = new XmlIoDisplaySettings();
+		this.handledTags.add( xmlDisplaySettings.getTag() );
 
 		if ( initN5Writing )
 		{
@@ -269,6 +274,11 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 			actionHistory = xmlActionHistory.fromXml( elem, seq.getViewDescriptions().values() );
 		spimData.setActionHistory( actionHistory );
 
+		// brightness settings last saved from BigDataViewer; none = estimated when it opens
+		elem = root.getChild( xmlDisplaySettings.getTag() );
+		if ( elem != null )
+			spimData.setDisplaySettings( xmlDisplaySettings.fromXml( elem ) );
+
 		return spimData;
 	}
 
@@ -289,6 +299,8 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		root.addContent( xmlStitchingResults.toXml( spimData.getStitchingResults() ) );
 		root.addContent( xmlIntensityAdjustments.toXml( spimData.getIntensityAdjustments(), xmlFileDirectory ) );
 		root.addContent( xmlActionHistory.toXml( spimData.getActionHistory() ) );
+		if ( !spimData.getDisplaySettings().isEmpty() )
+			root.addContent( xmlDisplaySettings.toXml( spimData.getDisplaySettings() ) );
 
 		return root;
 	}

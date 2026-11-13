@@ -68,6 +68,11 @@ All interest points of a dataset live in `interestpoints.zarr` next to the XML, 
   parameters string sets the static defaults of the detection dialog, label included via `presetLabel`, and the detection
   replaces the label; otherwise the dialog suggests a label none of the selected views has, `Interest_Point_Detection.suggestLabel`:
   beads, beads2, beads3, a trailing number increased; Stephan, 2026-10-27).
+  The Interest Point Explorer's right-click "Set detection parameters as defaults" (2026-11-11, `InterestPointExplorerPanel.setDetectionDefaults`
+  → `StoredDetectionParameters.presetAsDefaults`) is the same preset without a detection: the label default is left alone (the dialog
+  suggests a new label, Stephan), a noise-floor threshold is preset as the fixed stored `t` (same detections, Stephan), a filtered label
+  uses its base's string, and the log lists what the string lacked (`StoredDetectionParameters.missing`) and what was preset differently.
+  `preset` also sets `DifferenceOfGUI.defaultSameMinMax = false` (never stored; a computed common range is the stored range).
   Since 2026-10-27 the strings also record `localization=`, `groupTiles=`, `groupIllums=`, `thresholdType=` (+ `noiseFactor=`),
   built in `DifferenceOfGUI.commonParameters()`; a stored grouping wins over the explorer's when a label is detected again. A
   string without `anisotropy=` is preset with what its detection used (`effectiveAnisotropy`: downsampleXY / downsampleZ for the
@@ -222,15 +227,26 @@ GUI (Stephan 2026-10-31 late): the explorer's "Compute Interest Point Embeddings
 Face) ..." (the hub's models tagged `translation-invariant`, `HubModel.tags` from the model card and kept in `hub.json`, plus such
 cached models the hub no longer lists; a "Model" choice whose text is "name (namespace)" and nothing else, since macros record it: no
 "cached", no commit, only an older cached revision next to the hub's current one carries its commit; a hyperlink to the organisation's
-page; default array name `translation-invariant`) and "Local model ..." (file field, default array `local-embedding`); each entry
-remembers its own array name (`Embed_Interest_Points.Source`), plugins.config has both under Interest Points > Tools (plugin arg
-"translation"/"local"); no model of the kind on the hub or in the cache = a log line, no dialog; `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
+page; default array name `translation-invariant`), "Rotation invariant (Hugging Face) ..." (2026-11-13: the same for the tag
+`rotation-invariant`, `ModelHub.ROTATION_INVARIANT`, default array `rotation-invariant`; the first such model is
+`JaneliaSciComp/bigstitcher-embedding-rotinv-stack64`, rotation and mirror invariant, fingerprint `861ed356...`, for views rotated or
+mirrored against each other, matched with a rigid or affine model; it has the tensor contract, the operators and the sampling of the
+translation model -- the standardisation masks a sphere inside the graph, the cubes are sampled along the view's own axes -- so the
+entry is all MVR needed) and "Local model ..." (file field, default array `local-embedding`); each entry
+remembers its own array name and hub model and says in one line which data its kind of model is for (`Embed_Interest_Points.Source`,
+`hint`), plugins.config has the three under Interest Points > Tools (plugin arg
+"translation"/"rotation"/"local"); no model of the kind on the hub or in the cache = a log line, no dialog; `Embed_Interest_Points.embed( data, views, label, String modelSpec, arrayName, blockSize,
 viewsInFlight )` downloads on demand. BigStitcher-Spark: `--model hf://...` is pinned on the driver, every executor downloads once into
 `--modelCache` (default as above; nodes without internet get a path). Tests `TestModelHub` (a loopback `FakeHub` serving the three API
 answers and the redirecting downloads: URIs, listing by tag and sidecar, pinned resolve, cache hits without requests, a damaged cached
-file re-downloaded, wrong bytes refused by sha256, the plugin with a hub model; and Stephan's repository on the real hub when
-reachable), BigStitcher-Spark `TestInterestPointEmbedding` (an `hf://` run against the fake hub). Verified 2026-10-30 on ds1: the rows
-from the hub model are bit-identical to those from the local file.
+file re-downloaded, wrong bytes refused by sha256, the plugin with a hub model, the listing by kind with a fake model of each; and
+the two repositories on the real hub when reachable, with the fingerprints of their current models), `TestOnnxEvaluator` (pcmatch's
+ds1 fixtures of the first translation model and of the rotation-invariant one, when on the machine), BigStitcher-Spark
+`TestInterestPointEmbedding` (an `hf://` run against the fake hub). Verified 2026-10-30 on ds1: the rows
+from the hub model are bit-identical to those from the local file. On 2026-11-13 the translation repository's model was replaced by
+the one trained with the multi-view data (`..._mv911_...`, fingerprint `05c9b9bf...`; the first upload, `6844e0e3...`, stays offered
+from the cache where it was downloaded, told apart by its commit `d90228e`), and rows stored under the old fingerprint are rows of
+another model.
 
 Design and the staging format follow PR 108 (Lila, 2026-09); its global append-only arrays with compaction were replaced by
 per-(label, timepoint) groups (Stephan, 2026-10-23: fewer moving parts; whole-label changes dominate; a few test views go into
@@ -416,6 +432,20 @@ and reference views), `InterestPointMatchCreator`, `PairwiseResult`, `Transforma
 - Layout: `RGLDMMatcher` builds the descriptors and dispatches; the old loop is `rgldm.legacy.RGLDMLegacy` (reference
   implementation for the test), the fast paths are `rgldm.subsetvector` (`SubsetVectorMatching` public, the strategies
   `FlatTreeSearch` / `BruteForceSearch` and `BestMatches` package-private).
+- Search radius and the ratio test (2026-11-13): the radius never cut the descriptors' neighbors (the descriptors are built
+  from the whole lists before the radius is looked at; it only limits which B points an A point is compared with), but the
+  second-best of the ratio test also came from inside the radius and an A point with a single B point in the radius was
+  dropped. A radius below about twice the spacing of the points therefore lost nearly all candidates, the true partners
+  first (synthetic cloud, 46 px spacing, 3 px shift, 1,560 shared points: 9 candidates at radius 10, 79 at 20, 1,331 at 100,
+  1,278 without a radius). Now the only B point in the radius is a candidate without the ratio test (as `EmbeddingsMatcher`;
+  1,561 candidates / 1,559 correct at radius 10), in `SubsetVectorMatching` (`minSubsetDistance`; the searchers are only
+  asked for two or more B points) and `RGLDMLegacy` alike. No absolute threshold guards it, `differenceThreshold` stays
+  `Float.MAX_VALUE` (Stephan, 2026-11-13: no intuition for a number): the distance is in px², its scale is the localization
+  noise² for a true pair with an intact neighborhood (about 1 px² at 0.5 px jitter, 25 at 2 px) and the point spacing² for
+  a wrong one, and a true pair whose neighborhood lost or gained a detection is as far as a wrong one (14-78 % of the true
+  lone pairs above 100 px² in the simulation), so any threshold removes what the rule recovers; RANSAC removes the wrong
+  lone pairs (0.3-30 % of the lone ones). Test `RGLDMMatcherTest.onlyPointInRadiusIsCandidate`. BigStitcher-Spark inherits
+  it (`--searchRadius` of PRECISE_TRANSLATION) once built against this.
 - Geometric hashing (2026-10-10): `GeometricHasher` takes the second-best from a *different* B point. With redundancy r
   every point has C = (3+r choose 3) descriptors in one tree, and the C+1 nearest descriptors of a query always contain
   one of another point, so the per-descriptor ratio test is no longer vetoed by another descriptor of the nearest point
@@ -486,6 +516,26 @@ Consolidated batch helpers: `setFusedModeSimple`, `setVisibleSourcesBatch`, `whi
 References:
 - [`ViewerState`](https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ViewerState.java)
 - [`ConverterSetups`](https://github.com/bigdataviewer/bigdataviewer-core/blob/master/src/main/java/bdv/viewer/ConverterSetups.java)
+
+## Brightness Settings in the XML (`DisplaySettings`, 2026-11-11)
+
+`fiji.spimdata.displaysettings.DisplaySettings` on `SpimData2` (`getDisplaySettings()`, never null): per view setup the displayed
+range (min, max) and the limits of the brightness sliders (rangeMin, rangeMax) as last adjusted in BigDataViewer. No colors
+(Stephan: the explorer colors the sources itself); nothing per timepoint (BDV has one converter per setup). XML
+(`XmlIoDisplaySettings`, written only when not empty): one element per distinct range, setups as runs,
+`<DisplaySettings><DisplayRange min= max= rangeMin= rangeMax= setups="0-99,104"/></DisplaySettings>`.
+- **Save**: `FilteredAndGroupedExplorerPanel.saveXML` → `captureDisplaySettings()` → `explorer.bdv.BDVDisplaySettings.capture`
+  from the running BDV's `SetupAssignments` (range from the `ConverterSetup`, limits from its `MinMaxGroup`); only with the
+  explicit Save, setups BDV does not show keep what they have, no BDV = unchanged. An explorer that overrides `saveXML`
+  without calling super (check BigStitcher's) must call `captureDisplaySettings()` itself.
+- **Open** (`BDVPopup.createBDV`): after `tryLoadSettings` / `initBrightness`, `BDVDisplaySettings.apply`: the stored ranges win
+  over the estimate and over the ranges of a `settings.xml` sidecar (its transform and bookmarks stay); the setups of one
+  range get a brightness group of their own (moved only when they are not in one already), setups without an entry stay estimated.
+- **Lazy BDV** (`LazyBDVPopup.syncSources`, one group and one range by design): the stored range of a setup is used when
+  nothing is on screen and no range was carried forward (before the histogram sample), with its limits; the ranges of
+  deselected sources are put into the `DisplaySettings` so that the next Save has them.
+- `SpimData2Tools.reduceSpimData2` carries the settings along. Test `TestDisplaySettings` (XML round trip, capture/apply on a
+  `SetupAssignments` without a viewer); Stephan tried it in the explorer on 2026-11-11: works.
 
 ## N5 / Zarr Export
 
