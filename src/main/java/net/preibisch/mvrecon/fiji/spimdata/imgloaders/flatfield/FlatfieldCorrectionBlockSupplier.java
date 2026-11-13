@@ -52,7 +52,7 @@ import net.imglib2.view.Views;
  * Block-based flatfield correction for efficient fusion processing.
  *
  * Applies the correction formula:
- *   corrected = (source - dark) * meanBrightCorrected / (bright - dark)
+ *   corrected = (source - dark) * (meanBrightCorrected / (bright - dark))
  *
  * The bright and dark images are 2D (XY only), while the source may be 3D.
  * For 3D blocks, the same 2D bright/dark data is reused for all Z slices,
@@ -243,32 +243,22 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 
 		final int xyLen = numDimensions >= 3 ? size[0] * size[1] : len;
 		final int zSize = numDimensions >= 3 ? size[2] : 1;
-		final float[][] fields = fields(interval, xyLen);
-		final float[] brightArray = fields[0], darkArray = fields[1];
+		final float[][] fields = gainAndDark(interval, xyLen);
+		final float[] gain = fields[0], darkArray = fields[1];
 
-		// Apply correction
 		final float[] fdest = Cast.unchecked(dest);
-		final float meanBC = (float) meanBrightCorrected;
-
 		for (int z = 0; z < zSize; z++) {
 			final int zOffset = z * xyLen;
-			for (int i = 0; i < xyLen; i++) {
-				final float darkVal = darkArray[i];
-				final float corrBright = brightArray[i] - darkVal;
-				final float srcVal = srcArray[zOffset + i];
-				final float corrImg = srcVal - darkVal;
-
-				if (corrBright == 0) {
-					fdest[zOffset + i] = 0;
-				} else {
-					fdest[zOffset + i] = corrImg * meanBC / corrBright;
-				}
-			}
+			for (int i = 0; i < xyLen; i++)
+				fdest[zOffset + i] = (srcArray[zOffset + i] - darkArray[i]) * gain[i];
 		}
 	}
 
-	/** the bright and dark field of the block's xy extent: {bright, dark}, valid until the next call */
-	private float[][] fields(final Interval interval, final int xyLen) {
+	/**
+	 * The correction of the block's xy extent as {gain, dark}, valid until the next call:
+	 * corrected = (source - dark) * gain, with gain = meanBrightCorrected / (bright - dark), 0 where bright == dark.
+	 */
+	private float[][] gainAndDark(final Interval interval, final int xyLen) {
 		final float[] brightArray = brightTemp.get(xyLen);
 		final float[] darkArray = darkTemp.get(xyLen);
 
@@ -291,15 +281,20 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 			Arrays.fill(darkArray, 0, xyLen, 0f);
 		else
 			dark.copy(interval2D, darkArray);
+
+		final float meanBC = (float) meanBrightCorrected;
+		for (int i = 0; i < xyLen; i++) {
+			final float corrBright = brightArray[i] - darkArray[i];
+			brightArray[i] = corrBright == 0 ? 0 : meanBC / corrBright; // the gain, in place
+		}
 		return new float[][] { brightArray, darkArray };
 	}
 
 	/**
 	 * The correction of {@link #of(RandomAccessibleInterval, RandomAccessibleInterval, RandomAccessibleInterval)} for
-	 * 16-bit data, as 16 bit, computed in one pass over the 16-bit block instead of three (to float, correct, to 16 bit).
-	 * The values are those of {@code of(...).andThen(Convert.convert(new UnsignedShortType(), ClampType.CLAMP))}, except
-	 * that one may differ by one count where the exact result is next to a .5 boundary: the gain is multiplied instead
-	 * of divided by, which rounds differently in the last bit. At least one of the fields must be given.
+	 * 16-bit data, as 16 bit, computed in one pass over the 16-bit block instead of three (to float, correct, to 16 bit):
+	 * the values of {@code of(...).andThen(Convert.convert(new UnsignedShortType(), ClampType.CLAMP))}.
+	 * At least one of the fields must be given.
 	 */
 	public static <S extends RealType<S>, R extends RealType<R>> BlockSupplier<UnsignedShortType> ofUnsignedShort(
 			final RandomAccessibleInterval<UnsignedShortType> sourceImg,
@@ -329,16 +324,10 @@ public class FlatfieldCorrectionBlockSupplier implements BlockSupplier<FloatType
 
 			final short[] d = Cast.unchecked(dest);
 			source.copy(interval, d);
-			final float[][] f = fields.fields(interval, xyLen);
-			final float[] brightArray = f[0], darkArray = f[1];
-			final float meanBC = (float) fields.meanBrightCorrected;
+			final float[][] f = fields.gainAndDark(interval, xyLen);
+			final float[] gain = f[0], darkArray = f[1];
 
-			// gain = mean / (bright - dark), once per block; (int)(v + 0.5f) is cheaper than Math.round()
-			final float[] gain = brightArray; // the bright field is not needed after this
-			for (int i = 0; i < xyLen; i++) {
-				final float corrBright = brightArray[i] - darkArray[i];
-				gain[i] = corrBright == 0 ? 0 : meanBC / corrBright;
-			}
+			// the float loop, rounded and clamped in place; (int)(v + 0.5f) is cheaper than Math.round()
 			for (int z = 0; z < zSize; z++) {
 				final int zOffset = z * xyLen;
 				for (int i = 0; i < xyLen; i++) {
