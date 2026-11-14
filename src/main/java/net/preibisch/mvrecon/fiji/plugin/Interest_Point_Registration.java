@@ -62,6 +62,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.Global
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.CenterOfMassGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.GeometricHashingGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.IterativeClosestPointGUI;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.EmbeddingsGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.LoadCorrespondencesGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.PairwiseGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.RGLDMGUI;
@@ -87,6 +88,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
+import net.preibisch.mvrecon.process.interestpointregistration.AlignmentLog;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOpt;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOptIterative;
@@ -123,10 +125,12 @@ public class Interest_Point_Registration implements PlugIn
 		staticPairwiseAlgorithms.add( new CenterOfMassGUI() );
 		staticPairwiseAlgorithms.add( new IterativeClosestPointGUI() );
 		staticPairwiseAlgorithms.add( new LoadCorrespondencesGUI( null ) );
+		staticPairwiseAlgorithms.add( new EmbeddingsGUI( null ) );
 	}
 
 	// basic dialog
-	public static int defaultAlgorithm = 1;
+	/** the algorithm chosen last; -1 = none yet in this session: then "Embedding Cosine Similarity" if the selected views have stored embeddings, else RGLDM */
+	public static int defaultAlgorithm = -1;
 	public static int defaultRegistrationType = 0;
 	public static int defaultOverlapType = 1;
 	public static int defaultInterestpointOverlapType = 1;
@@ -204,8 +208,14 @@ public class Interest_Point_Registration implements PlugIn
 			return false;
 
 		removed = filterRemainingViewIdsAndLabels( viewIds, brp.labelMap, data.getViewInterestPoints().getViewInterestPoints() );
-		for ( int i = 0; i < removed.size(); ++i )
-			IOFunctions.println( "Removed view " + Group.pvid( removed.get( i ) ) + " as the label '" + brp.labelMap.get( removed.get( i ) ) + "' was not present." );
+		if ( AlignmentLog.restricted )
+		{
+			if ( removed.size() > 0 )
+				IOFunctions.println( "Removed " + removed.size() + " view(s) as their label was not present." );
+		}
+		else
+			for ( int i = 0; i < removed.size(); ++i )
+				IOFunctions.println( "Removed view " + Group.pvid( removed.get( i ) ) + " as the label '" + brp.labelMap.get( removed.get( i ) ) + "' was not present." );
 
 		// query advanced parameters including global optimization now
 		final AdvancedRegistrationParameters arp = advancedRegistrationParameters( brp, timepointToProcess, data, viewIds );
@@ -421,10 +431,21 @@ public class Interest_Point_Registration implements PlugIn
 
 			TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, registrations, viewDescriptions );
 
-			IOFunctions.println( "Remaining interest points for alignment: " );
-			for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
-				for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
-					IOFunctions.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
+			if ( AlignmentLog.restricted )
+			{
+				long remaining = 0;
+				for ( final HashMap< String, Collection< InterestPoint > > element : interestpoints.values() )
+					for ( final Collection< InterestPoint > points : element.values() )
+						remaining += points.size();
+				IOFunctions.println( "Remaining interest points for alignment: " + remaining + " in " + interestpoints.size() + " view(s)" );
+			}
+			else
+			{
+				IOFunctions.println( "Remaining interest points for alignment: " );
+				for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
+					for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
+						IOFunctions.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
+			}
 		}
 
 		// statistics?
@@ -569,13 +590,15 @@ public class Interest_Point_Registration implements PlugIn
 					if ( !groupedInterestpoints.containsKey( pair.getA() ) )
 					{
 						groupedInterestpoints.put( pair.getA(), ipGrouping.group( pair.getA() ) );
-						IOFunctions.println( "Grouping interestpoints for " + pair.getA() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
+						if ( !AlignmentLog.restricted )
+							IOFunctions.println( "Grouping interestpoints for " + pair.getA() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
 					}
 
 					if ( !groupedInterestpoints.containsKey( pair.getB() ) )
 					{
 						groupedInterestpoints.put( pair.getB(), ipGrouping.group( pair.getB() ) );
-						IOFunctions.println( "Grouping interestpoints for " + pair.getB() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
+						if ( !AlignmentLog.restricted )
+							IOFunctions.println( "Grouping interestpoints for " + pair.getB() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
 					}
 				}
 
@@ -830,6 +853,9 @@ public class Interest_Point_Registration implements PlugIn
 		gd.addMessage( "Algorithm parameters [" + brp.pwr.getDescription() + "]", new Font( Font.SANS_SERIF, Font.BOLD, 12 ) );
 		gd.addMessage( "" );
 
+		// a method that cannot run on this selection (e.g. views without stored embeddings) has said why: no dialog
+		if ( !brp.pwr.prepareQuery( data, viewIds, brp.labelMap ) )
+			return null;
 		brp.pwr.addQuery( gd );
 
 		GlobalOptimizationParameters.addSimpleParametersToDialog( gd );
@@ -920,6 +946,16 @@ public class Interest_Point_Registration implements PlugIn
 		
 		if ( defaultAlgorithm >= descriptions.length )
 			defaultAlgorithm = 0;
+
+		// nothing chosen yet in this session: the embeddings matcher if the selected views have stored embeddings, else RGLDM
+		if ( defaultAlgorithm < 0 )
+		{
+			defaultAlgorithm = 1;
+			if ( EmbeddingsGUI.hasEmbeddings( data, viewIds ) )
+				for ( int i = 0; i < staticPairwiseAlgorithms.size(); ++i )
+					if ( staticPairwiseAlgorithms.get( i ) instanceof EmbeddingsGUI )
+						defaultAlgorithm = i;
+		}
 
 		gd.addChoice( "Registration_algorithm", descriptions, descriptions[ defaultAlgorithm ] );
 
@@ -1339,9 +1375,14 @@ public class Interest_Point_Registration implements PlugIn
 			// no fixed views or reference timepoint
 		}
 
-		IOFunctions.println( "Following views are fixed:" );
-		for ( final ViewId id : fmbp.fixedViews )
-			IOFunctions.println( "ViewSetupId:" + id.getViewSetupId() + " TimePoint:" + id.getTimePointId() );
+		if ( AlignmentLog.restricted )
+			IOFunctions.println( "Following views are fixed: " + fmbp.fixedViews.size() + " view(s)" );
+		else
+		{
+			IOFunctions.println( "Following views are fixed:" );
+			for ( final ViewId id : fmbp.fixedViews )
+				IOFunctions.println( "ViewSetupId:" + id.getViewSetupId() + " TimePoint:" + id.getTimePointId() );
+		}
 
 		//
 		// now the reference view(s)
@@ -1445,7 +1486,9 @@ public class Interest_Point_Registration implements PlugIn
 			// no reference view
 		}
 
-		IOFunctions.println( "Following views are references (for mapping back if there are no fixed views):" );
+		if ( !AlignmentLog.restricted )
+			IOFunctions.println( "Following views are references (for mapping back if there are no fixed views):" );
+		int references = 0;
 		for ( final Subset< ViewId > subset : subsets )
 		{
 			if ( fmbp.mapBackViews != null )
@@ -1456,10 +1499,16 @@ public class Interest_Point_Registration implements PlugIn
 				{
 					final ViewId id = fmbp.mapBackViews.get( subset ).getA();
 					if ( id != null )
-						IOFunctions.println( "ViewSetupId: " + id.getViewSetupId() + " TimePoint:" + id.getTimePointId() );
+					{
+						++references;
+						if ( !AlignmentLog.restricted )
+							IOFunctions.println( "ViewSetupId: " + id.getViewSetupId() + " TimePoint:" + id.getTimePointId() );
+					}
 				}
 			}
 		}
+		if ( AlignmentLog.restricted )
+			IOFunctions.println( "Following views are references (for mapping back if there are no fixed views): " + references + " view(s)" );
 
 		return fmbp;
 	}

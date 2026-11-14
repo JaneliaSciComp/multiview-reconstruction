@@ -367,10 +367,22 @@ else // both present in different sets
 that creates only the overlapping pairs (`SimpleBoundingBoxOverlap.generateOverlappingPairs`) instead of `definePairs()` +
 `removeNonOverlappingPairs()`. It skipped the range of the registration type (`AllToAllRange.getRangeComparator()`: same
 timepoint for "Register timepoints individually", the reference timepoint, all), so a time series registered per timepoint
-compared all timepoints with each other (Stephan's C. elegans embryo, 198 views: 19,503 pairs instead of 99). The generator
-now takes the range comparator and counts skipped (out of range or one group) and non-overlapping pairs separately; a setup
-that is not an `AllToAllRange` takes the sequential path. BigStitcher-Spark's `AbstractRegistration.identifySubsets` never
-had the fast path. Test `TestIdentifySubsets` compares both paths for all three registration types.
+compared all timepoints with each other (Stephan's C. elegans embryo, 198 views: 19,503 pairs instead of 99). Since the
+merge of 2026-11-09 the fast path is master's `PairwiseSetup.defineOverlappingPairs( overlapDetection )` (commit d5e1669da):
+`AllToAllRange` overrides it, takes the overlapping pairs from the sweep-and-prune `SimpleBoundingBoxOverlap.generateOverlappingPairs(
+views, groups )` / `overlappingIndexPairs` and then removes the pairs outside the range, any other setup or overlap detection
+runs `definePairs()` + `removeNonOverlappingPairs()`; the range-aware generator overload of 2026-11-02 is gone. BigStitcher-Spark's
+`AbstractRegistration.identifySubsets` never had the fast path. Test `TestIdentifySubsets` compares both paths for all three
+registration types.
+
+### Lesson: A Merge That Kept One Side's Whole File (2026-11-14)
+The merge of `scalespace` into master (60168248c, 2026-11-09) conflicted in `identifySubsets` and was resolved by keeping
+master's `Interest_Point_Registration.java` whole, which also dropped every non-conflicting change of the branch in that file:
+the `EmbeddingsGUI` entry of `staticPairwiseAlgorithms` (the registration dialog no longer offered "Embedding Cosine
+Similarity"), `defaultAlgorithm = -1` with the embeddings default, the `prepareQuery` call and the `AlignmentLog.restricted`
+sites. Nothing failed to compile and no test noticed. Restored on 2026-11-14; `TestInterestPointEmbedding` now asserts that
+the dialog offers the matcher. After a merge with conflicts, `git show --remerge-diff <merge>` shows what the resolution
+changed against the automatic merge: every hunk outside the conflict markers is a change that was dropped.
 
 ## Performance: Large Datasets (100K+ Views)
 

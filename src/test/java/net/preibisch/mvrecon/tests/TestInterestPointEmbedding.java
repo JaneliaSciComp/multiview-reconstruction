@@ -52,6 +52,7 @@ import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.type.numeric.real.FloatType;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.plugin.Embed_Interest_Points;
+import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.EmbeddingsGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -295,6 +296,10 @@ public class TestInterestPointEmbedding
 		for ( final ViewId v : views )
 			labelMap.put( v, new HashMap<>( Map.of( LABEL, 1.0 ) ) );
 		final EmbeddingsGUI gui = new EmbeddingsGUI( data );
+
+		// the registration dialog offers the matcher at all (the entry was lost once, with a merge that kept the other side's file)
+		assertTrue( Interest_Point_Registration.staticPairwiseAlgorithms.stream().anyMatch( a -> a instanceof EmbeddingsGUI ),
+				"'" + gui.getDescription() + "' is not among the algorithms of the registration dialog" );
 
 		// no arrays at all: not the default algorithm, and no dialog
 		assertFalse( EmbeddingsGUI.hasEmbeddings( data, views ) );
