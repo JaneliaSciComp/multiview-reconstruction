@@ -35,8 +35,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.SortedSet;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import ij.Macro;
 import ij.gui.GenericDialog;
 import ij.plugin.PlugIn;
 import mpicbg.models.AbstractModel;
@@ -85,6 +88,7 @@ import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionToSparkCli;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
@@ -129,7 +133,10 @@ public class Interest_Point_Registration implements PlugIn
 	}
 
 	// basic dialog
-	/** the algorithm chosen last; -1 = none yet in this session: then "Embedding Cosine Similarity" if the selected views have stored embeddings, else RGLDM */
+	/**
+	 * the algorithm chosen last (set when the dialog is confirmed); -1 = none yet in this session: then the dialog suggests
+	 * "Embedding Cosine Similarity" with a label that has embeddings if the selected views have stored embeddings, else RGLDM
+	 */
 	public static int defaultAlgorithm = -1;
 	public static int defaultRegistrationType = 0;
 	public static int defaultOverlapType = 1;
@@ -936,40 +943,6 @@ public class Interest_Point_Registration implements PlugIn
 			final SpimData2 data,
 			final List< ViewId > viewIds )
 	{
-		final GenericDialog gd = new GenericDialog( "Basic Registration Parameters" );
-
-		// the GenericDialog needs a list[] of String for the algorithms that can register
-		final String[] descriptions = new String[ ( staticPairwiseAlgorithms.size() ) ];
-
-		for ( int i = 0; i < descriptions.length; ++i )
-			descriptions[ i ] = staticPairwiseAlgorithms.get( i ).getDescription();
-		
-		if ( defaultAlgorithm >= descriptions.length )
-			defaultAlgorithm = 0;
-
-		// nothing chosen yet in this session: the embeddings matcher if the selected views have stored embeddings, else RGLDM
-		if ( defaultAlgorithm < 0 )
-		{
-			defaultAlgorithm = 1;
-			if ( EmbeddingsGUI.hasEmbeddings( data, viewIds ) )
-				for ( int i = 0; i < staticPairwiseAlgorithms.size(); ++i )
-					if ( staticPairwiseAlgorithms.get( i ) instanceof EmbeddingsGUI )
-						defaultAlgorithm = i;
-		}
-
-		gd.addChoice( "Registration_algorithm", descriptions, descriptions[ defaultAlgorithm ] );
-
-		if ( timepointToProcess.size() > 1 )
-		{
-			if ( defaultRegistrationType >= BasicRegistrationParameters.registrationTypeChoices.length )
-				defaultRegistrationType = 0;
-	
-			gd.addChoice( "Registration_over_time", BasicRegistrationParameters.registrationTypeChoices, BasicRegistrationParameters.registrationTypeChoices[ defaultRegistrationType ] );
-		}
-
-		gd.addChoice( "Registration_in_between_views", BasicRegistrationParameters.overlapChoices, BasicRegistrationParameters.overlapChoices[ defaultOverlapType ] );
-		gd.addChoice( "Interest_point_inclusion", BasicRegistrationParameters.interestpointOverlapChoices, BasicRegistrationParameters.interestpointOverlapChoices[ defaultInterestpointOverlapType ] );
-
 		// check which channels and labels are available and build the choices
 		final String[] labelsRaw = InterestPointTools.getAllInterestPointLabels( data, viewIds );
 
@@ -984,23 +957,55 @@ public class Interest_Point_Registration implements PlugIn
 			labels[ i ] = labelsRaw[ i ];
 		labels[ labelsRaw.length ] = "Select multiple interestpoints [extra dialog]";
 
-		// choose the first label that is complete if possible
-		if ( defaultLabel < 0 || defaultLabel >= labels.length )
+		// the stored embeddings of every label: shown with the label, and what the suggested algorithm and label depend on
+		final int[] embeddings = numEmbeddings( data, viewIds, labels );
+
+		final GenericDialog gd = new GenericDialog( "Basic Registration Parameters" );
+
+		// the GenericDialog needs a list[] of String for the algorithms that can register
+		final String[] descriptions = new String[ ( staticPairwiseAlgorithms.size() ) ];
+
+		for ( int i = 0; i < descriptions.length; ++i )
+			descriptions[ i ] = staticPairwiseAlgorithms.get( i ).getDescription();
+
+		// the algorithm chosen last. None yet in this session: the dialog suggests the embeddings matcher if a label of the
+		// selected views has stored embeddings, else RGLDM (defaultAlgorithm is set when the dialog is confirmed, so the
+		// suggestion follows the data until then, e.g. embeddings computed after the dialog was opened and cancelled)
+		final boolean suggested = defaultAlgorithm < 0;
+		int algorithmDefault = defaultAlgorithm < descriptions.length ? defaultAlgorithm : 0;
+
+		if ( suggested )
 		{
-			defaultLabel = -1;
-
-			for ( int i = 0; i < labels.length; ++i )
-				if ( !labels[ i ].contains( InterestPointTools.warningLabel ) && !labels[ i ].startsWith( "Select multiple interestpoints") )
-				{
-					defaultLabel = i;
-					break;
-				}
-
-			if ( defaultLabel == -1 )
-				defaultLabel = 0;
+			algorithmDefault = 1;
+			if ( Arrays.stream( embeddings ).anyMatch( n -> n > 0 ) )
+				for ( int i = 0; i < staticPairwiseAlgorithms.size(); ++i )
+					if ( staticPairwiseAlgorithms.get( i ) instanceof EmbeddingsGUI )
+						algorithmDefault = i;
 		}
 
-		gd.addChoice( "Interest_points" , labels, labels[ defaultLabel ] );
+		gd.addChoice( "Registration_algorithm", descriptions, descriptions[ algorithmDefault ] );
+
+		if ( timepointToProcess.size() > 1 )
+		{
+			if ( defaultRegistrationType >= BasicRegistrationParameters.registrationTypeChoices.length )
+				defaultRegistrationType = 0;
+	
+			gd.addChoice( "Registration_over_time", BasicRegistrationParameters.registrationTypeChoices, BasicRegistrationParameters.registrationTypeChoices[ defaultRegistrationType ] );
+		}
+
+		gd.addChoice( "Registration_in_between_views", BasicRegistrationParameters.overlapChoices, BasicRegistrationParameters.overlapChoices[ defaultOverlapType ] );
+		gd.addChoice( "Interest_point_inclusion", BasicRegistrationParameters.interestpointOverlapChoices, BasicRegistrationParameters.interestpointOverlapChoices[ defaultInterestpointOverlapType ] );
+
+		// the label chosen last, or the first complete one; with the embeddings matcher a label that has embeddings
+		final int labelDefault = labelDefault( labels, embeddings, defaultLabel,
+				staticPairwiseAlgorithms.get( algorithmDefault ) instanceof EmbeddingsGUI, suggested );
+
+		// a person sees the stored embeddings with the labels, a macro the labels as they are (see itemsForMacro)
+		final String macroOptions = Macro.getOptions();
+		final String[] labelItems = macroOptions == null ?
+				withEmbeddings( labels, embeddings ) : itemsForMacro( labels, Macro.getValue( macroOptions, "Interest_points", null ) );
+
+		gd.addChoice( "Interest_points" , labelItems, labelItems[ labelDefault ] );
 
 		final HashSet< Integer > tiles = new HashSet<>();
 		for ( final ViewId viewId : viewIds )
@@ -1199,6 +1204,131 @@ public class Interest_Point_Registration implements PlugIn
 			brp.labelMap.put( viewId, labelAndWeight );
 
 		return brp;
+	}
+
+	/**
+	 * @param labels the entries of the label choice: the labels as {@code InterestPointTools.getAllInterestPointLabels}
+	 *        gives them (a warning appended to those some views lack), and entries that are no label
+	 * @return per entry the number of stored embeddings (per-point arrays, {@link InterestPointArrays#namesByLabel}) the
+	 *         label has in the given views, a filtered label has its base's; 0 for an entry that is no label, and for all
+	 *         of them if the store cannot be listed (the log says why; the dialog is still shown)
+	 */
+	public static int[] numEmbeddings( final SpimData2 data, final Collection< ? extends ViewId > viewIds, final String[] labels )
+	{
+		final int[] embeddings = new int[ labels.length ];
+
+		try
+		{
+			final Map< String, SortedSet< String > > names = InterestPointArrays.namesByLabel( data.getViewInterestPoints(), viewIds );
+
+			for ( int i = 0; i < labels.length; ++i )
+			{
+				final SortedSet< String > ofLabel = names.get( InterestPointTools.getSelectedLabel( labels, i ) );
+				embeddings[ i ] = ofLabel == null ? 0 : ofLabel.size();
+			}
+		}
+		catch ( final RuntimeException e )
+		{
+			IOFunctions.println( "Could not list the stored embeddings of the interest point labels, the dialog shows none: " + e );
+			Arrays.fill( embeddings, 0 );
+		}
+
+		return embeddings;
+	}
+
+	/**
+	 * The label the dialog starts with.
+	 *
+	 * @param labels the entries of the label choice, the last one is no label ("Select multiple interestpoints")
+	 * @param embeddings the number of stored embeddings per entry ({@link #numEmbeddings})
+	 * @param chosenLast the entry chosen last, -1 = none yet
+	 * @param embeddingsMatcher whether the dialog starts with the embeddings matcher
+	 * @param suggested whether the dialog suggests its algorithm (none was chosen yet) instead of showing the one chosen last
+	 * @return the entry chosen last -- unless there is none, or the embeddings matcher is suggested and that label has no
+	 *         embeddings. Then the first label that all views have; for the embeddings matcher the first such label with
+	 *         embeddings, or else the first label with embeddings that only some views have
+	 */
+	public static int labelDefault( final String[] labels, final int[] embeddings, final int chosenLast, final boolean embeddingsMatcher, final boolean suggested )
+	{
+		if ( chosenLast >= 0 && chosenLast < labels.length && !( embeddingsMatcher && suggested && embeddings[ chosenLast ] == 0 ) )
+			return chosenLast;
+
+		int complete = -1, embedded = -1;
+
+		for ( int i = 0; i < labels.length - 1; ++i )
+		{
+			final boolean isComplete = !labels[ i ].contains( InterestPointTools.warningLabel );
+
+			if ( embeddingsMatcher && embeddings[ i ] > 0 )
+			{
+				if ( isComplete )
+					return i;
+				if ( embedded < 0 )
+					embedded = i;
+			}
+
+			if ( isComplete && complete < 0 )
+				complete = i;
+		}
+
+		return embedded >= 0 ? embedded : Math.max( complete, 0 );
+	}
+
+	/** what the label choice appends to the name of a label with stored embeddings: " [1 embedding]", " [2 embeddings]" */
+	private static final Pattern embeddingsNote = Pattern.compile( " \\[\\d+ embeddings?\\]$" );
+
+	/**
+	 * @return the entries as the dialog shows them: " [N embeddings]" after the name of every label with stored embeddings
+	 *         (before the warning of a label some views lack), the others unchanged
+	 */
+	public static String[] withEmbeddings( final String[] labels, final int[] embeddings )
+	{
+		final String[] items = labels.clone();
+
+		for ( int i = 0; i < items.length; ++i )
+			if ( embeddings[ i ] > 0 )
+			{
+				final String note = " [" + embeddings[ i ] + ( embeddings[ i ] == 1 ? " embedding]" : " embeddings]" );
+				final int warning = items[ i ].indexOf( InterestPointTools.warningLabel );
+				items[ i ] = warning < 0 ? items[ i ] + note : items[ i ].substring( 0, warning ) + note + items[ i ].substring( warning );
+			}
+
+		return items;
+	}
+
+	/** @return the label an entry of the label choice names, without what the dialog appends (the embeddings, the warning) */
+	public static String labelOf( final String item )
+	{
+		final int warning = item.indexOf( InterestPointTools.warningLabel );
+		return embeddingsNote.matcher( warning < 0 ? item : item.substring( 0, warning ) ).replaceFirst( "" );
+	}
+
+	/**
+	 * The entries of the label choice when a macro runs the dialog. Nothing is shown then, and ImageJ takes the entry that
+	 * equals the macro's text; if none does, Fiji reports an invalid choice and goes on with the default, headless Fiji
+	 * silently takes the first entry. So a macro gets the labels as they are, without their embeddings:
+	 * {@code interest_points=beads} goes on working. If its text is no entry but names a label as the dialog showed it when
+	 * the macro was recorded ("beads [2 embeddings]", also with another number or another warning), that label's entry
+	 * becomes the text.
+	 *
+	 * @param labels the entries without their embeddings
+	 * @param macroValue what the macro says for the choice, null = nothing
+	 * @return the entries to hand to the dialog
+	 */
+	public static String[] itemsForMacro( final String[] labels, final String macroValue )
+	{
+		if ( macroValue == null || Arrays.asList( labels ).contains( macroValue ) )
+			return labels;
+
+		for ( int i = 0; i < labels.length; ++i )
+			if ( labelOf( labels[ i ] ).equals( labelOf( macroValue ) ) )
+			{
+				final String[] items = labels.clone();
+				items[ i ] = macroValue;
+				return items;
+			}
+
+		return labels;
 	}
 
 	public static ArrayList< String > multipleInterestPointsGUI( final String[] labels )

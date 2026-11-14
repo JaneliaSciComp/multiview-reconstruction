@@ -26,6 +26,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -212,19 +213,26 @@ public class InterestPointArrays
 
 		try ( final N5Reader reader = URITools.instantiateN5Reader( StorageFormat.ZARR, store.getContainerURI() ) )
 		{
-			final String arrays = new Group( label, timepoint ).path() + "/" + ARRAYS;
-			if ( !reader.exists( arrays ) )
-				return result;
+			return list( reader, store.getContainerURI(), label, timepoint );
+		}
+	}
 
-			final String[] names = reader.list( arrays );
-			Arrays.sort( names );
+	private static List< Attributes > list( final N5Reader reader, final URI container, final String label, final int timepoint )
+	{
+		final List< Attributes > result = new ArrayList<>();
 
-			for ( final String name : names )
-			{
-				final Attributes attributes = attributes( reader, store.getContainerURI(), label, timepoint, name );
-				if ( attributes != null )
-					result.add( attributes );
-			}
+		final String arrays = new Group( label, timepoint ).path() + "/" + ARRAYS;
+		if ( !reader.exists( arrays ) )
+			return result;
+
+		final String[] names = reader.list( arrays );
+		Arrays.sort( names );
+
+		for ( final String name : names )
+		{
+			final Attributes attributes = attributes( reader, container, label, timepoint, name );
+			if ( attributes != null )
+				result.add( attributes );
 		}
 
 		return result;
@@ -256,6 +264,73 @@ public class InterestPointArrays
 					for ( final Attributes array : list( baseDir, base, lists.getTimePointId() ) )
 						names.add( array.name() );
 			}
+		}
+
+		return names;
+	}
+
+	/** where the rows of a view's label are: the (base label, timepoint) group of a dataset's store */
+	private record Location( URI baseDir, String label, int timepoint ) {}
+
+	/**
+	 * @return for every label the given views have, the names of its arrays: those of every (base label, timepoint) a view
+	 *         has the label in, sorted (a filtered label has its base's); an empty set for a label without arrays. What
+	 *         {@link #names} gives for all labels in one set, per label, e.g. for a dialog that marks the labels with
+	 *         stored embeddings. Every group is listed once, through one reader per store.
+	 * @param vip the lists of the dataset
+	 * @param views the views, those without interest points are skipped
+	 * @throws IllegalStateException as {@link #baseLabel} and {@link #list}
+	 */
+	public static Map< String, SortedSet< String > > namesByLabel( final ViewInterestPoints vip, final Collection< ? extends ViewId > views )
+	{
+		final TreeMap< String, HashSet< Location > > locations = new TreeMap<>();
+
+		for ( final ViewId viewId : views )
+		{
+			final ViewInterestPointLists lists = vip.getViewInterestPointLists( viewId );
+			if ( lists == null )
+				continue;
+
+			for ( final String label : lists.getHashMap().keySet() )
+				locations.computeIfAbsent( label, l -> new HashSet<>() ).add(
+						new Location( lists.getInterestPointList( label ).getBasePath(), baseLabel( lists, label ), lists.getTimePointId() ) );
+		}
+
+		final TreeMap< String, SortedSet< String > > names = new TreeMap<>();
+		final HashMap< URI, N5Reader > readers = new HashMap<>(); // per dataset directory, null = it has no store
+		final HashMap< Location, List< Attributes > > listed = new HashMap<>();
+
+		try
+		{
+			for ( final Map.Entry< String, HashSet< Location > > e : locations.entrySet() )
+			{
+				final SortedSet< String > ofLabel = names.computeIfAbsent( e.getKey(), l -> new TreeSet<>() );
+
+				for ( final Location location : e.getValue() )
+				{
+					List< Attributes > arrays = listed.get( location );
+
+					if ( arrays == null )
+					{
+						final InterestPointsZarrStore store = InterestPointsZarrStore.get( location.baseDir() );
+						if ( !readers.containsKey( location.baseDir() ) )
+							readers.put( location.baseDir(), store.exists() ? URITools.instantiateN5Reader( StorageFormat.ZARR, store.getContainerURI() ) : null );
+
+						final N5Reader reader = readers.get( location.baseDir() );
+						arrays = reader == null ? new ArrayList<>() : list( reader, store.getContainerURI(), location.label(), location.timepoint() );
+						listed.put( location, arrays );
+					}
+
+					for ( final Attributes array : arrays )
+						ofLabel.add( array.name() );
+				}
+			}
+		}
+		finally
+		{
+			for ( final N5Reader reader : readers.values() )
+				if ( reader != null )
+					reader.close();
 		}
 
 		return names;
