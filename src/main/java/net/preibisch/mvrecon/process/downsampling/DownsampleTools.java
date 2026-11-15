@@ -264,7 +264,28 @@ public class DownsampleTools
 		return downSamplingFactors;
 	}
 
+	/**
+	 * Maps detections of an opened (downsampled) image with square pixels to full resolution, see
+	 * {@link #correctForDownsampling(List, AffineTransform3D, VoxelDimensions)} (voxel size unknown)
+	 *
+	 * @param ips - the detections, changed in place
+	 * @param t - the transform of the opened image to full resolution (openAndDownsample)
+	 */
 	public static void correctForDownsampling( final List< ? extends InterestPoint > ips, final AffineTransform3D t )
+	{
+		correctForDownsampling( ips, t, null );
+	}
+
+	/**
+	 * Maps detections of an opened (downsampled) image to full resolution: the positions with the transform, the sigma
+	 * from pixels of the reference axis of the opened image to full-resolution pixels of the finer lateral axis of the
+	 * view ({@link #sigmaScale}). For equal pixel sizes and equal downsampling in x and y that is the downsampling in x.
+	 *
+	 * @param ips - the detections, changed in place
+	 * @param t - the transform of the opened image to full resolution (openAndDownsample)
+	 * @param voxelSize - the voxel size of the view at full resolution, null = square pixels
+	 */
+	public static void correctForDownsampling( final List< ? extends InterestPoint > ips, final AffineTransform3D t, final VoxelDimensions voxelSize )
 	{
 		IOFunctions.println("(" + new Date(System.currentTimeMillis()) + "): Correcting coordinates for downsampling using AffineTransform: " + t );
 
@@ -276,8 +297,8 @@ public class DownsampleTools
 
 		final double[] tmp = new double[ ips.get( 0 ).getL().length ];
 
-		// the sigma of the detections scales with the geometric mean of the scaling in x and y (the offset does not matter)
-		final double sigmaScale = Math.sqrt( Math.abs( t.get( 0, 0 ) * t.get( 1, 1 ) ) );
+		// the sigma of the detections: from the reference axis of the opened image to the finer lateral axis at full resolution (the offset does not matter)
+		final double sigmaScale = sigmaScale( voxelSize, t );
 
 		for ( final InterestPoint ip : ips )
 		{
@@ -298,39 +319,122 @@ public class DownsampleTools
 		}
 	}
 
+	/** @return the voxel size of the view per dimension, { 1, 1, 1 } if it has none */
+	public static double[] voxelSize( final BasicViewDescription< ? > vd )
+	{
+		return voxelSize( vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null );
+	}
+
+	/** @return the voxel size per dimension, { 1, 1, 1 } for null */
+	public static double[] voxelSize( final VoxelDimensions voxelSize )
+	{
+		return voxelSize == null ? new double[] { 1.0, 1.0, 1.0 } : new double[] { voxelSize.dimension( 0 ), voxelSize.dimension( 1 ), voxelSize.dimension( 2 ) };
+	}
+
+	/** @return the scaling of a mipmap transform per dimension (the absolute values of its diagonal) */
+	public static double[] scale( final AffineTransform3D mipmapTransform )
+	{
+		return new double[] { Math.abs( mipmapTransform.get( 0, 0 ) ), Math.abs( mipmapTransform.get( 1, 1 ) ), Math.abs( mipmapTransform.get( 2, 2 ) ) };
+	}
+
 	/**
-	 * The voxel size of an opened (downsampled) image per dimension relative to x: the anisotropy the Gaussians of a
-	 * detection compensate so that they are isotropic in physical units (the sigma in dimension d is sigma / anisotropy[ d ],
-	 * DoGImgLib2.computeDoG and DoGScaleSpace)
+	 * The reference axis of an opened (downsampled) image: its finer lateral axis, the one the sigma of a detection
+	 * refers to. The pixel sizes in x and y of a view may differ (either one can be the coarser), and so may the
+	 * downsampling in x and y.
+	 *
+	 * @param voxelSize - the voxel size of the view at full resolution per dimension
+	 * @param scale - the downsampling of the opened image per dimension (the diagonal of its mipmap transform)
+	 * @return 0 (x) or 1 (y): the lateral axis with the smaller pixel in the opened image, x if they are equal
+	 */
+	public static int referenceAxis( final double[] voxelSize, final double[] scale )
+	{
+		return voxelSize[ 1 ] * scale[ 1 ] < voxelSize[ 0 ] * scale[ 0 ] ? 1 : 0;
+	}
+
+	/**
+	 * The factor between the sigma of a detection in the opened (downsampled) image and its stored sigma: the first is
+	 * in pixels of the reference axis of the opened image ({@link #referenceAxis}), the second in full-resolution pixels
+	 * of the finer lateral axis of the view. For equal pixel sizes and equal downsampling in x and y it is the
+	 * downsampling in x.
+	 *
+	 * @param voxelSize - the voxel size of the view at full resolution per dimension
+	 * @param scale - the downsampling of the opened image per dimension (the diagonal of its mipmap transform)
+	 * @return scale_ref * ( voxel_ref / min( voxel_x, voxel_y ) )
+	 */
+	public static double sigmaScale( final double[] voxelSize, final double[] scale )
+	{
+		final int r = referenceAxis( voxelSize, scale );
+
+		// the ratio as its own quotient: exactly 1 when the reference axis is the finer one at full resolution too
+		return scale[ r ] * ( voxelSize[ r ] / Math.min( voxelSize[ 0 ], voxelSize[ 1 ] ) );
+	}
+
+	/** {@link #sigmaScale(double[], double[])} for a voxel size (null = square pixels) and the mipmap transform of the opened image */
+	public static double sigmaScale( final VoxelDimensions voxelSize, final AffineTransform3D mipmapTransform )
+	{
+		return sigmaScale( voxelSize( voxelSize ), scale( mipmapTransform ) );
+	}
+
+	/** {@link #sigmaScale(double[], double[])} for a view and the mipmap transform of the opened image */
+	public static double sigmaScale( final BasicViewDescription< ? > vd, final AffineTransform3D mipmapTransform )
+	{
+		return sigmaScale( voxelSize( vd ), scale( mipmapTransform ) );
+	}
+
+	/**
+	 * The voxel size of an opened (downsampled) image per dimension relative to its reference axis, the finer lateral
+	 * one ({@link #referenceAxis}): the anisotropy the Gaussians of a detection compensate so that they are isotropic in
+	 * physical units (the sigma in dimension d is sigma / anisotropy[ d ], DoGImgLib2.computeDoG and DoGScaleSpace; the
+	 * sigma itself is in pixels of the reference axis). The lateral ratio always comes from the calibration. For equal
+	 * pixel sizes and equal downsampling in x and y the reference is x and the result { 1, 1, (anisotropyZ * sz) / sx }.
 	 *
 	 * @param vd - the view (its calibration)
 	 * @param mipmapTransform - the transform of the opened image to full resolution (openAndDownsample)
-	 * @param anisotropyZ - z voxel / x voxel at FULL resolution as estimated by the user (the PSF blurs z more than the calibration says), NaN = the ratio of the calibration
-	 * @return { 1, (vy * sy) / (vx * sx), (anisotropyZ * sz) / sx } with v = the voxel size and s = the diagonal of the mipmap transform
+	 * @param anisotropyZ - z voxel / finer lateral voxel at FULL resolution as estimated by the user (the PSF blurs z more than the calibration says), NaN = the ratio of the calibration
+	 * @return { ox / oref, oy / oref, (anisotropyZ * sz) / sref * ( min( vx, vy ) / vref ) } with v = the voxel size, s = the
+	 *         diagonal of the mipmap transform, o = v * s the voxel size of the opened image and ref its finer lateral axis
 	 */
 	public static double[] anisotropy( final BasicViewDescription< ? > vd, final AffineTransform3D mipmapTransform, final double anisotropyZ )
 	{
-		final double vx, vy, vz;
+		final double[] v = voxelSize( vd );
+		final double[] s = scale( mipmapTransform );
 
-		if ( vd.getViewSetup().hasVoxelSize() )
-		{
-			final VoxelDimensions voxelSize = vd.getViewSetup().getVoxelSize();
-			vx = voxelSize.dimension( 0 );
-			vy = voxelSize.dimension( 1 );
-			vz = voxelSize.dimension( 2 );
-		}
-		else
-		{
-			vx = vy = vz = 1.0;
-		}
+		final int r = referenceAxis( v, s );
+		final double vFine = Math.min( v[ 0 ], v[ 1 ] );
 
-		final double a = Double.isNaN( anisotropyZ ) ? vz / vx : anisotropyZ;
+		final double a = Double.isNaN( anisotropyZ ) ? v[ 2 ] / vFine : anisotropyZ;
 
-		final double sx = Math.abs( mipmapTransform.get( 0, 0 ) );
-		final double sy = Math.abs( mipmapTransform.get( 1, 1 ) );
-		final double sz = Math.abs( mipmapTransform.get( 2, 2 ) );
+		// written so that equal pixel sizes and downsampling in x and y give the doubles they always gave (the last factor is exactly 1 then)
+		return new double[] {
+				r == 0 ? 1.0 : ( v[ 0 ] * s[ 0 ] ) / ( v[ 1 ] * s[ 1 ] ),
+				r == 1 ? 1.0 : ( v[ 1 ] * s[ 1 ] ) / ( v[ 0 ] * s[ 0 ] ),
+				( a * s[ 2 ] ) / s[ r ] * ( vFine / v[ r ] ) };
+	}
 
-		return new double[] { 1.0, ( vy * sy ) / ( vx * sx ), ( a * sz ) / sx };
+	/**
+	 * The anisotropy the Difference-of-Gaussian compensates. With a z anisotropy it is {@link #anisotropy}. Without one
+	 * (NaN) the Gaussians are as wide in pixels of z as in pixels of the reference axis, but laterally they still follow
+	 * the calibration; null (isotropic in pixels) when the pixels of the opened image are equal in x and y, which is
+	 * what a Difference-of-Gaussian without a z anisotropy always did.
+	 *
+	 * @param vd - the view (its calibration)
+	 * @param mipmapTransform - the transform of the opened image to full resolution (openAndDownsample)
+	 * @param anisotropyZ - z voxel / finer lateral voxel at FULL resolution, NaN = none
+	 * @return the voxel size of the opened image per dimension relative to its reference axis, or null
+	 */
+	public static double[] anisotropyDoG( final BasicViewDescription< ? > vd, final AffineTransform3D mipmapTransform, final double anisotropyZ )
+	{
+		if ( !Double.isNaN( anisotropyZ ) )
+			return anisotropy( vd, mipmapTransform, anisotropyZ );
+
+		final double[] anisotropy = anisotropy( vd, mipmapTransform, 1.0 );
+
+		if ( anisotropy[ 0 ] == 1.0 && anisotropy[ 1 ] == 1.0 )
+			return null;
+
+		anisotropy[ 2 ] = 1.0;
+
+		return anisotropy;
 	}
 
 	public static int downsampleFactor( final int downsampleXY, final int downsampleZ, final VoxelDimensions v )

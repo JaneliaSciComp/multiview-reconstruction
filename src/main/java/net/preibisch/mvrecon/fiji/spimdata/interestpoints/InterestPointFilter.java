@@ -47,7 +47,7 @@ import net.preibisch.legacy.io.IOFunctions;
  * of a label is "_" + the letter of the axis + the entry, e.g. "_r0.004", "_r0.004-0.01", "_i200", "_s1.5-3".
  *
  * Units: the response in the units of the DoG (the image normalized to [0,1]), the intensity in the units of the image,
- * the sigma in full-resolution pixels (x).
+ * the sigma in full-resolution pixels of the finer lateral axis (x and y for equal pixel sizes).
  *
  * A count limit ({@link Limit}, the former "Limit amount of detections" of the detection dialog) keeps only n points per
  * view: the n highest, the n around the median or the n lowest by one attribute (intensity, |response| or sigma), applied

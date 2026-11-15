@@ -1197,14 +1197,40 @@ public class TransformationTools
 		}
 	}
 
+	/** see {@link #getAverageAnisotropyFactor(SequenceDescription, Collection)} */
 	public static double getAverageAnisotropyFactor( final SpimData spimData, final Collection< ? extends ViewId > views )
 	{
 		return getAverageAnisotropyFactor( spimData.getSequenceDescription(), views );
 	}
 
+	/**
+	 * The anisotropy in z of the views: z voxel / finer lateral voxel (x or y), averaged over the views. The pixel sizes
+	 * of a view may differ between x and y; the calibration scales each axis by its voxel size over the smallest one, so
+	 * this is how much larger the z voxel is than the pixel of the calibrated, isotropic xy plane (the factor "preserve
+	 * anisotropy" shrinks a fused image by in z).
+	 *
+	 * @return the average of z / min( x, y ) over the views that have a voxel size, 1 if none has
+	 */
 	public static double getAverageAnisotropyFactor( final SequenceDescription seq, final Collection< ? extends ViewId > views )
 	{
-		double avgFactor = 0;
+		return getAverageVoxelRatios( seq, views )[ 2 ];
+	}
+
+	/** see {@link #getAverageVoxelRatios(SequenceDescription, Collection)} */
+	public static double[] getAverageVoxelRatios( final SpimData spimData, final Collection< ? extends ViewId > views )
+	{
+		return getAverageVoxelRatios( spimData.getSequenceDescription(), views );
+	}
+
+	/**
+	 * The voxel size of the views per dimension relative to their finer lateral voxel (x or y), averaged over the views:
+	 * { 1, 1, z / x } for equal pixel sizes in x and y, e.g. { 1, 2, 4 } or { 2, 1, 4 } otherwise.
+	 *
+	 * @return the average of { x, y, z } / min( x, y ) over the views that have a voxel size, { 1, 1, 1 } if none has
+	 */
+	public static double[] getAverageVoxelRatios( final SequenceDescription seq, final Collection< ? extends ViewId > views )
+	{
+		final double[] avg = new double[ 3 ];
 		int count = 0;
 
 		for ( final ViewId vd : views )
@@ -1215,24 +1241,19 @@ public class TransformationTools
 
 			if ( vx != null )
 			{
-				final double x = vx.dimension( 0 );
-				final double y = vx.dimension( 1 );
-				final double z = vx.dimension( 2 );
+				final double fine = Math.min( vx.dimension( 0 ), vx.dimension( 1 ) );
 
-				avgFactor += z / (( x + y ) / 2 );
+				for ( int d = 0; d < 3; ++d )
+					avg[ d ] += vx.dimension( d ) / fine;
+
 				++count;
-
-				if ( x != y )
-					IOFunctions.println( "Warning: Voxelsize in x and y is different.");
 			}
 		}
 
-		if ( count > 0 )
-			avgFactor /= (double)count;
-		else
-			avgFactor = 1.0;
+		for ( int d = 0; d < 3; ++d )
+			avg[ d ] = count > 0 ? avg[ d ] / (double)count : 1.0;
 
-		return avgFactor;
+		return avg;
 	}
 
 	public static double[][] unitCube()

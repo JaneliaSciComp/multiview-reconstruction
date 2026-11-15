@@ -47,10 +47,11 @@ public class InterestPoint extends Point implements RealLocalizable, Serializabl
 	protected final float response;
 
 	/**
-	 * the lower sigma of the DoG the point was detected with, in x pixels of the image it was detected in; once the
-	 * point is mapped to full resolution (DownsampleTools.correctForDownsampling) in full-resolution pixels of the
-	 * view (geometric mean over x and y). For the scale space the sigma in z is this value divided by the anisotropy
-	 * the scale space was computed with (z voxel / x voxel), in z pixels.
+	 * the lower sigma of the DoG the point was detected with, in pixels of the reference axis of the image it was
+	 * detected in (its finer lateral axis; x for equal pixel sizes in x and y); once the point is mapped to full
+	 * resolution (DownsampleTools.correctForDownsampling) in full-resolution pixels of the finer lateral axis of the
+	 * view (DownsampleTools.sigmaScale). The sigma in another dimension is this value divided by the anisotropy the
+	 * detection was computed with (the voxel size of that dimension relative to the reference axis), in its pixels.
 	 */
 	protected float sigma;
 

@@ -75,8 +75,9 @@ import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 /**
- * Interactive estimation of the anisotropy of a view (z voxel / xy voxel at full resolution) in
- * BigDataViewer: the view is shown on its raw pixel grid as a side view, one slider scales it in z in
+ * Interactive estimation of the anisotropy of a view (z voxel / finer lateral voxel at full resolution) in
+ * BigDataViewer: the view is shown on its pixel grid as a side view (x and y scaled by the calibration if their
+ * pixel sizes differ, so that the plane has square pixels), one slider scales it in z in
  * real time, the anisotropy is right when round structures (beads) look round (shift+X, shift+Y).
  * The slider ({@link BoundedValueSlider}) looks and behaves like the brightness slider of BigDataViewer:
  * value textbox next to it, the bounds stacked to the right (click them or right-click the slider to
@@ -93,6 +94,9 @@ public class InteractiveAnisotropy
 	final BasicViewDescription< ? > vd;
 	final double calibration;
 
+	/** the voxel size in x and y relative to the finer of the two (1, 1 for equal pixel sizes): the calibration of the plane */
+	final double[] lateral;
+
 	final BdvStackSource< ? > bdv;
 	final TransformedSource< ? > transformedSource;
 
@@ -106,6 +110,7 @@ public class InteractiveAnisotropy
 	{
 		this.vd = data.getSequenceDescription().getViewDescriptions().get( view );
 		this.calibration = calibrationAnisotropy( vd );
+		this.lateral = lateralCalibration( vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null );
 		this.anisotropy = DifferenceOfGUI.estimateAnisotropy( calibration );
 
 		final String name = Group.pvid( view );
@@ -158,14 +163,14 @@ public class InteractiveAnisotropy
 	}
 
 	/**
-	 * Scales the displayed view in z (the source transform becomes diag( 1, 1, a ) times the mipmap transform) and repaints
+	 * Scales the displayed view in z (the source transform becomes diag( x, y, a ) times the mipmap transform with x, y the lateral calibration, 1 for equal pixel sizes) and repaints
 	 */
 	public void setAnisotropy( final double a )
 	{
 		this.anisotropy = a;
 
 		// a scaling of 0 is not invertible, the display uses a tiny one instead
-		transformedSource.setFixedTransform( anisotropyTransform( Math.max( a, 0.001 ) ) );
+		transformedSource.setFixedTransform( anisotropyTransform( lateral[ 0 ], lateral[ 1 ], Math.max( a, 0.001 ) ) );
 		bdv.getBdvHandle().getViewerPanel().requestRepaint();
 	}
 
@@ -305,7 +310,32 @@ public class InteractiveAnisotropy
 	}
 
 	/**
-	 * @return z voxel / x voxel of the calibration of the view (1 if unknown)
+	 * @return diag( x, y, a ): the view with its lateral calibration (the voxel size in x and y relative to the finer of the two) and the anisotropy in z
+	 */
+	public static AffineTransform3D anisotropyTransform( final double x, final double y, final double a )
+	{
+		final AffineTransform3D t = new AffineTransform3D();
+		t.set( x, 0, 0 );
+		t.set( y, 1, 1 );
+		t.set( a, 2, 2 );
+		return t;
+	}
+
+	/**
+	 * @return the voxel size in x and y relative to the finer of the two, { 1, 1 } for equal pixel sizes or an unknown voxel size
+	 */
+	public static double[] lateralCalibration( final VoxelDimensions voxelSize )
+	{
+		if ( voxelSize == null )
+			return new double[] { 1.0, 1.0 };
+
+		final double fine = Math.min( voxelSize.dimension( 0 ), voxelSize.dimension( 1 ) );
+
+		return new double[] { voxelSize.dimension( 0 ) / fine, voxelSize.dimension( 1 ) / fine };
+	}
+
+	/**
+	 * @return z voxel / finer lateral voxel (x or y) of the calibration of the view (1 if unknown)
 	 */
 	public static double calibrationAnisotropy( final BasicViewDescription< ? > vd )
 	{
@@ -314,7 +344,7 @@ public class InteractiveAnisotropy
 
 	public static double calibrationAnisotropy( final VoxelDimensions voxelSize )
 	{
-		return voxelSize.dimension( 2 ) / voxelSize.dimension( 0 );
+		return voxelSize.dimension( 2 ) / Math.min( voxelSize.dimension( 0 ), voxelSize.dimension( 1 ) );
 	}
 
 	/**

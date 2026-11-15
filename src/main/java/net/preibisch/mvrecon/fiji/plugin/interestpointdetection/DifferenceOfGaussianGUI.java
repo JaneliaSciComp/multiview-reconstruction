@@ -147,6 +147,7 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 		dog.toProcess = new ArrayList< ViewDescription >();
 
 		dog.localization = this.localization;
+		dog.downsampling = downsampling.clone();
 		dog.downsampleXY = (int)downsampling[ 0 ];
 		dog.downsampleZ = (int)downsampling[ 2 ];
 		dog.anisotropyZ = this.anisotropyZ;
@@ -175,9 +176,6 @@ public class DifferenceOfGaussianGUI extends DifferenceOfGUI implements GenericD
 	{
 		final DoGParameters dog = detectionParameters();
 		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap< ViewId, List< InterestPoint > >();
-
-		if ( downsampling[ 0 ] != downsampling[ 1 ] )
-			IOFunctions.println( "WARNING: The Difference-of-Gaussian opens the views with one factor for x and y, using the x factor " + downsampling[ 0 ] + " for y (" + downsampling[ 1 ] + ") too." );
 
 		for ( final ViewDescription vd : SpimData2.getAllViewIdsForTimePointSorted( spimData, viewIdsToProcess, t ) )
 		{

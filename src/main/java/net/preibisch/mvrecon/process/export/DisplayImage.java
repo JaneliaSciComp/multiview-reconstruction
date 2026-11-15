@@ -108,11 +108,12 @@ public class DisplayImage implements ImgExport, Calibrateable
 
 		if ( bb != null )
 		{
-			final double calXY = ( cal[0] + cal[1] ) / 2.0;
-			imp.getCalibration().xOrigin = -(bb.min( 0 ) / ds) * calXY;
-			imp.getCalibration().yOrigin = -(bb.min( 1 ) / ds) * calXY;
+			// per axis: the pixels of a fused image are square unless the registrations of its views scale x and y differently
+			imp.getCalibration().xOrigin = -(bb.min( 0 ) / ds) * cal[0];
+			imp.getCalibration().yOrigin = -(bb.min( 1 ) / ds) * cal[1];
 			imp.getCalibration().zOrigin = -(bb.min( 2 ) / ds) * cal[2];
-			imp.getCalibration().pixelWidth = imp.getCalibration().pixelHeight = ds * calXY;
+			imp.getCalibration().pixelWidth = ds * cal[0];
+			imp.getCalibration().pixelHeight = ds * cal[1];
 			imp.getCalibration().pixelDepth = ds * ai * cal[2];
 		}
 

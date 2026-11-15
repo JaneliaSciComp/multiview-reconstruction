@@ -31,6 +31,6 @@ public class InteractiveDoGParams {
 	public boolean findMaxima = DifferenceOfGaussianGUI.defaultFindMax;
 	public boolean findMinima = DifferenceOfGaussianGUI.defaultFindMin;
 
-	/** the voxel size of the previewed image per dimension relative to x (DownsampleTools.anisotropy), the Gaussians are isotropic in physical units; null = isotropic in pixels */
+	/** the voxel size of the previewed image per dimension relative to its reference axis (the finer of x and y) (DownsampleTools.anisotropy), the Gaussians are isotropic in physical units; null = isotropic in pixels */
 	public double[] anisotropy = null;
 }

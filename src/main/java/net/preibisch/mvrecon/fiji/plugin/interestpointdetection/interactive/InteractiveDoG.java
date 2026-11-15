@@ -409,8 +409,8 @@ public class InteractiveDoG
 		// the scale-space preview draws them: the ball of maximal response, radius sqrt(3) sigma, cut by the current slice
 		final double radius = Math.sqrt( 3 ) * params.sigma;
 
-		HelperFunctions.drawRealLocalizable( HelperFunctions.filterPeaks( peaksMax, rectangle, params.threshold ), imagePlus, radius, Color.RED, true );
-		HelperFunctions.drawRealLocalizable( HelperFunctions.filterPeaks( peaksMin, rectangle, params.threshold ), imagePlus, radius, Color.GREEN, false );
+		HelperFunctions.drawRealLocalizable( HelperFunctions.filterPeaks( peaksMax, rectangle, params.threshold ), imagePlus, radius, params.anisotropy, Color.RED, true );
+		HelperFunctions.drawRealLocalizable( HelperFunctions.filterPeaks( peaksMin, rectangle, params.threshold ), imagePlus, radius, params.anisotropy, Color.GREEN, false );
 	}
 
 	/**

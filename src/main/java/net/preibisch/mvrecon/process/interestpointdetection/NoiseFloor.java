@@ -261,9 +261,9 @@ public class NoiseFloor
 	 * @param image - the image as the detection sees it (opened at the detection resolution, not normalized)
 	 * @param min - the lower end of the intensity range the detection normalizes with (the user's or the one of this image)
 	 * @param max - the upper end
-	 * @param sigma - the sigma of the DoG (x pixels at this resolution; the initial blur of the scale space)
+	 * @param sigma - the sigma of the DoG (pixels of the reference axis at this resolution; the initial blur of the scale space)
 	 * @param k - the ratio of the two Gaussians, 2^(1/4) for the DoG, 2^(1/steps) for the scale space
-	 * @param anisotropy - the voxel size per dimension relative to x (DownsampleTools.anisotropy), null = isotropic in pixels
+	 * @param anisotropy - the voxel size per dimension relative to the reference axis (DownsampleTools.anisotropy), null = isotropic in pixels
 	 * @param numBlocks - the random blocks (all blocks if the image has fewer)
 	 * @param blockSize - the block size per dimension (clamped to the image, the last entry repeats for further dimensions)
 	 * @param seed - of the random blocks (the same seed picks the same blocks)

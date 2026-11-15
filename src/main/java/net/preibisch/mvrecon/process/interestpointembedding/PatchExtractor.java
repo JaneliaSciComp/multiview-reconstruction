@@ -41,16 +41,19 @@ import net.preibisch.mvrecon.process.interestpointembedding.EmbeddingModel.Contr
  * pcmatch's {@code patches.extract_multiscale} (2026-10-30, {@code SCALESPACE_TASK_onnx.md} section 3), so that the rows
  * Java computes are the rows pcmatch computes:
  * <ol>
- * <li>the point's sigma: the label's detection sigma {@code σ} ({@link DetectionScale}, full-resolution xy pixels); if
+ * <li>the point's sigma: the label's detection sigma {@code σ} ({@link DetectionScale}, full-resolution xy pixels; for
+ * unequal pixel sizes in x and y: pixels of the finer of the two, {@code v = min(vx, vy)} below); if
  * every point of the view carries its own sigma (the scale space), {@code max(sigma_i, σ)} quantised to steps of
  * 2^(1/12) ({@link #quantise}); a label without the attribute uses {@code σ} unquantised;</li>
  * <li>per extent {@code k}: the sample spacing {@code d = k σ_i / patch} in full-resolution xy pixels (the cube's edge is {@code k σ_i});</li>
  * <li>the pyramid level: the finest whose xy factor is {@code <= d + 1e-6} (level 0 if none), but never finer than the first
  * level whose factor is {@code >=} the detection's downsampling ({@code read_floor} "detection": no cube is read from data
- * finer than the DoG saw; the coarsest level if none is that coarse);</li>
+ * finer than the DoG saw; the coarsest level if none is that coarse). Both hold per lateral axis: {@code fx <= d v/vx} and
+ * {@code fy <= d v/vy} (no lateral axis is read from a level coarser than its sample spacing), {@code fx >=} and
+ * {@code fy >=} the detection's factors;</li>
  * <li>the grid: the point in level voxels {@code (x/fx, y/fy, z/fz)} (the levels' half-voxel offsets are ignored, as pcmatch
- * does); sample {@code (iz, iy, ix)} at {@code + ((ix - r) d/fx, (iy - r) d (vx/vy)/fy, (iz - r) d (vx/vz)/fz)}, {@code r = (patch - 1)/2}:
- * isotropic in physical units (step {@code d vx} along every axis), centred on the point;</li>
+ * does); sample {@code (iz, iy, ix)} at {@code + ((ix - r) d (v/vx)/fx, (iy - r) d (v/vy)/fy, (iz - r) d (v/vz)/fz)}, {@code r = (patch - 1)/2}:
+ * isotropic in physical units (step {@code d v} along every axis), centred on the point;</li>
  * <li>trilinear interpolation of the level's voxels; a sample is valid iff every coordinate is within {@code [0, size - 1]} of
  * the level, otherwise it is NaN (scipy's {@code mode="constant"}); intensities are the stored values as float, no scaling.</li>
  * </ol>
@@ -141,6 +144,9 @@ public class PatchExtractor
 	final boolean pointSigma;
 	final int floorLevel;
 
+	/** finer lateral voxel size / voxel size per dimension: the step of a cube in pixels of a dimension per pixel of the finer lateral axis */
+	final double[] ratio;
+
 	/**
 	 * @param pyramid the view's pyramid
 	 * @param voxelSize the voxel size of the view (x, y, z; only the ratios matter)
@@ -159,13 +165,17 @@ public class PatchExtractor
 		if ( voxelSize.length != 3 || !( voxelSize[ 0 ] > 0 && voxelSize[ 1 ] > 0 && voxelSize[ 2 ] > 0 ) )
 			throw new IllegalArgumentException( "invalid voxel size " + Arrays.toString( voxelSize ) );
 
-		// the read floor: the first level whose xy factor is >= the detection's downsampling, the coarsest if none is that coarse
+		// the voxel size per dimension relative to the finer lateral axis, the one the sigmas refer to (1 in x for equal pixel sizes)
+		final double fine = Math.min( voxelSize[ 0 ], voxelSize[ 1 ] );
+		this.ratio = new double[] { fine / voxelSize[ 0 ], fine / voxelSize[ 1 ], fine / voxelSize[ 2 ] };
+
+		// the read floor: the first level whose x and y factors are >= the detection's downsampling, the coarsest if none is that coarse
 		int floor = 0;
-		if ( !contract.readsBelowDetection() && detection.downsampleXY() > 1 )
+		if ( !contract.readsBelowDetection() && ( detection.downsampleX() > 1 || detection.downsampleY() > 1 ) )
 		{
 			floor = pyramid.numLevels() - 1;
 			for ( int level = 0; level < pyramid.numLevels(); ++level )
-				if ( pyramid.factors( level )[ 0 ] >= detection.downsampleXY() - LEVEL_EPSILON )
+				if ( pyramid.factors( level )[ 0 ] >= detection.downsampleX() - LEVEL_EPSILON && pyramid.factors( level )[ 1 ] >= detection.downsampleY() - LEVEL_EPSILON )
 				{
 					floor = level;
 					break;
@@ -190,7 +200,7 @@ public class PatchExtractor
 		return Math.pow( 2, steps / SIGMA_STEPS_PER_OCTAVE );
 	}
 
-	/** @return the sigma the extents of a point are multiples of (step 1 of the class comment), in full-resolution xy pixels */
+	/** @return the sigma the extents of a point are multiples of (step 1 of the class comment), in full-resolution pixels of the finer lateral axis */
 	public double sigmaOf( final InterestPoint point )
 	{
 		if ( !pointSigma )
@@ -201,15 +211,18 @@ public class PatchExtractor
 		return quantise( sigma );
 	}
 
-	/** @return the sample spacing of an extent for a sigma, in full-resolution xy pixels (step 2) */
+	/** @return the sample spacing of an extent for a sigma, in full-resolution pixels of the finer lateral axis (step 2) */
 	public double spacing( final double extent, final double sigma ) { return extent * sigma / contract.patch(); }
 
 	/** @return the pyramid level a cube of the given spacing is read from (step 3) */
 	public int levelOf( final double spacing )
 	{
 		int level = 0;
+		// the spacing in full-resolution pixels of x and of y (the same for equal pixel sizes): a level must not be coarser than that in either
+		final double spacingX = spacing * ratio[ 0 ], spacingY = spacing * ratio[ 1 ];
+
 		for ( int l = 0; l < pyramid.numLevels(); ++l )
-			if ( pyramid.factors( l )[ 0 ] <= spacing + LEVEL_EPSILON )
+			if ( pyramid.factors( l )[ 0 ] <= spacingX + LEVEL_EPSILON && pyramid.factors( l )[ 1 ] <= spacingY + LEVEL_EPSILON )
 				level = l;
 		return Math.max( level, floorLevel );
 	}
@@ -252,7 +265,6 @@ public class PatchExtractor
 			final double sigma = sigmaOf( point );
 			final float outside = contract.outside();
 			final double x = point.getL()[ 0 ], y = point.getL()[ 1 ], z = point.getL()[ 2 ];
-			final double ratioY = voxelSize[ 0 ] / voxelSize[ 1 ], ratioZ = voxelSize[ 0 ] / voxelSize[ 2 ];
 
 			int i = offset;
 			for ( int c = 0; c < contract.channels(); ++c )
@@ -265,7 +277,7 @@ public class PatchExtractor
 				final double maxX = size[ 0 ] - 1, maxY = size[ 1 ] - 1, maxZ = size[ 2 ] - 1;
 
 				final double px = x / f[ 0 ], py = y / f[ 1 ], pz = z / f[ 2 ];
-				final double sx = d / f[ 0 ], sy = d * ratioY / f[ 1 ], sz = d * ratioZ / f[ 2 ];
+				final double sx = d * ratio[ 0 ] / f[ 0 ], sy = d * ratio[ 1 ] / f[ 1 ], sz = d * ratio[ 2 ] / f[ 2 ];
 
 				for ( int iz = 0; iz < p; ++iz )
 				{

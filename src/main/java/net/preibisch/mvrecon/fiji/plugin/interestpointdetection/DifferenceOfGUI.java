@@ -90,7 +90,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	public static boolean defaultManual = false;
 	public static long[] defaultManualDownsampling = null;
 
-	// the anisotropy at full resolution (z voxel / x voxel): by default the estimate from the calibration (estimateAnisotropy, the PSF
+	// the anisotropy at full resolution (z voxel / finer lateral voxel, x or y): by default the estimate from the calibration (estimateAnisotropy, the PSF
 	// blurs z more than the calibration says), remembered while the calibration is the same; the "Estimate Anisotropy (BDV)" tool sets it, too
 	public static double anisotropyEstimateFactor = 0.8;
 	public static double defaultAnisotropyZ = Double.NaN;
@@ -117,7 +117,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	/** the resolution the detection runs at, as downsampling in x, y, z of the full-resolution views (the starting resolution of the scale space) */
 	protected long[] downsampling;
 
-	/** z voxel / x voxel at full resolution as estimated by the user (the PSF blurs z more than the calibration says, see estimateAnisotropy); converted to the opened resolution per view (DownsampleTools.anisotropy) */
+	/** z voxel / finer lateral voxel (x or y) at full resolution as estimated by the user (the PSF blurs z more than the calibration says, see estimateAnisotropy); converted to the opened resolution per view (DownsampleTools.anisotropy) */
 	protected double anisotropyZ;
 
 	/** the precomputed resolution levels of the first view ("fx, fy, fz"), the entries of the drop-down */
@@ -573,7 +573,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			defaultAnisotropyCalibration = calibration;
 		}
 
-		gd.addNumericField( "Anisotropy_z (z voxel / xy voxel at full resolution; estimate: calibration x " + anisotropyEstimateFactor + ")", defaultAnisotropyZ, 3 );
+		gd.addNumericField( "Anisotropy_z (z voxel / finer xy voxel at full resolution; estimate: calibration x " + anisotropyEstimateFactor + ")", defaultAnisotropyZ, 3 );
 	}
 
 	/**
@@ -723,18 +723,18 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	}
 
 	/**
-	 * @return z voxel / x voxel of the calibration (1 if unknown)
+	 * @return z voxel / finer lateral voxel (x or y) of the calibration (1 if unknown)
 	 */
 	public static double calibrationAnisotropy( final VoxelDimensions voxelSize )
 	{
 		if ( voxelSize == null )
 			return 1.0;
 		else
-			return voxelSize.dimension( 2 ) / voxelSize.dimension( 0 );
+			return voxelSize.dimension( 2 ) / Math.min( voxelSize.dimension( 0 ), voxelSize.dimension( 1 ) );
 	}
 
 	/**
-	 * @return z voxel / x voxel of the calibration of the view (1 if unknown)
+	 * @return z voxel / finer lateral voxel (x or y) of the calibration of the view (1 if unknown)
 	 */
 	public static double calibrationAnisotropy( final ViewDescription vd )
 	{
@@ -742,7 +742,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 	}
 
 	/**
-	 * @return the estimate of the anisotropy (z voxel / x voxel at full resolution) from the calibration: the ratio of the
+	 * @return the estimate of the anisotropy (z voxel / finer lateral voxel at full resolution) from the calibration: the ratio of the
 	 * calibration times anisotropyEstimateFactor (0.8, Stephan 2026-10-20), because the PSF blurs z more than xy, so structures
 	 * appear less squeezed in z than the voxel ratio says
 	 */
@@ -994,8 +994,9 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Using group " + group );
 
-		// the resolution of the dialog (one factor for x and y)
-		final long downsampleXY = downsampling[ 0 ];
+		// the resolution of the dialog; x and y may differ, the fused preview then has the pixel of the finer of the two (the reference axis of the detection)
+		final long downsampleX = downsampling[ 0 ];
+		final long downsampleY = downsampling[ 1 ];
 		final long downsampleZ = downsampling[ 2 ];
 
 		// the fused group is isotropic in physical units, what remains of the anisotropy is the user's estimate relative to the calibration (the PSF)
@@ -1004,7 +1005,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 		final NumberFormat f = TransformationTools.f;
 
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Desired downsampling: (" +
-				f.format( downsampleXY ) + ", " + f.format( downsampleXY ) + ", " + f.format( downsampleZ ) + ") " +
+				f.format( downsampleX ) + ", " + f.format( downsampleY ) + ", " + f.format( downsampleZ ) + ") " +
 				"relative to the un-transformed input image." );
 
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() )  + "): Identifying corresponding scaling of fused dataset" );
@@ -1038,7 +1039,7 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			scale = TransformationTools.averageVectors( scales );
 
 			IOFunctions.println( "Using average scaling: (" + f.format( scale[ 0 ] ) + ", " + f.format( scale[ 1 ] ) + ", " + f.format( scale[ 2 ] ) + ")" +
-					", should be (" + f.format( 1.0 / downsampleXY ) + ", " + f.format( 1.0 / downsampleXY ) + ", " + f.format( 1.0 / downsampleZ ) + ")" );
+					", should be (" + f.format( 1.0 / downsampleX ) + ", " + f.format( 1.0 / downsampleY ) + ", " + f.format( 1.0 / downsampleZ ) + ")" );
 			IOFunctions.println( "Using average Mapback Model: " + TransformationTools.printAffine3D( mapBack ) );
 		}
 		else
@@ -1047,13 +1048,14 @@ public abstract class DifferenceOfGUI extends InterestPointDetectionGUI
 			scale = scales.get( 0 );
 
 			IOFunctions.println( "Using scaling of first view: (" + f.format( scale[ 0 ] ) + ", " + f.format( scale[ 1 ] ) + ", " + f.format( scale[ 2 ] ) + ")" +
-					", should be (" + f.format( 1.0 / downsampleXY ) + ", " + f.format( 1.0 / downsampleXY ) + ", " + f.format( 1.0 / downsampleZ ) + ")" );
+					", should be (" + f.format( 1.0 / downsampleX ) + ", " + f.format( 1.0 / downsampleY ) + ", " + f.format( 1.0 / downsampleZ ) + ")" );
 			IOFunctions.println( "Using Mapback Model of first view: " + TransformationTools.printAffine3D( mapBack ) );
 		}
 
+		// the fused image has square pixels: those of the finer lateral axis of the views at the resolution of the dialog (the scaling of
+		// the views differs between x and y when their pixel sizes do; for equal ones this is the downsampling in x and y over their scaling)
 		final double[] targetDS = new double[ 3 ];
-		targetDS[ 0 ] = ( 1.0 / downsampleXY ) / ( ( scale[ 0 ] + scale[ 1 ] ) / 2.0 );
-		targetDS[ 1 ] = ( 1.0 / downsampleXY ) / ( ( scale[ 0 ] + scale[ 1 ] ) / 2.0 );
+		targetDS[ 0 ] = targetDS[ 1 ] = Math.max( ( 1.0 / downsampleX ) / scale[ 0 ], ( 1.0 / downsampleY ) / scale[ 1 ] );
 		targetDS[ 2 ] = ( 1.0 / downsampleZ ) / scale[ 2 ];
 
 		IOFunctions.println( "Fused image must be downsampled by: (" +

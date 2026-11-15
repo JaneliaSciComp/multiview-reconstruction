@@ -101,6 +101,18 @@ public class HelperFunctions {
 	 */
 	public static <L extends RealLocalizable> void drawRealLocalizable(final Collection<L> peaks, final ImagePlus imp,
 			final double radius, final Color col, final boolean clearFirst) {
+		drawRealLocalizable( peaks, imp, radius, null, col, clearFirst );
+	}
+
+	/**
+	 * As above for an image with anisotropic voxels: the ball has the given radius in pixels of the reference axis (the
+	 * dimension with anisotropy 1, the one the sigma refers to), so it is drawn as an ellipse with the half axes
+	 * radius / anisotropy[ 0 ] and radius / anisotropy[ 1 ], cut by the current slice at ( z - slice ) * anisotropy[ 2 ]
+	 *
+	 * @param anisotropy - the voxel size of the image per dimension relative to its reference axis (DownsampleTools.anisotropy), null = isotropic in pixels
+	 */
+	public static <L extends RealLocalizable> void drawRealLocalizable(final Collection<L> peaks, final ImagePlus imp,
+			final double radius, final double[] anisotropy, final Color col, final boolean clearFirst) {
 		// extract peaks to show
 		// we will overlay them with RANSAC result
 		Overlay overlay = imp.getOverlay();
@@ -124,7 +136,7 @@ public class HelperFunctions {
 			final double x = peak.getDoublePosition(0);
 			final double y = peak.getDoublePosition(1);
 			// 2d peaks have no z coordinate, so treat them as being on the current slice
-			final double dz = peak.numDimensions() > 2 ? peak.getDoublePosition(2) - currentSlice : 0;
+			final double dz = ( peak.numDimensions() > 2 ? peak.getDoublePosition(2) - currentSlice : 0 ) * ( anisotropy == null || anisotropy.length < 3 ? 1.0 : anisotropy[ 2 ] );
 			final double rs2 = r * r - dz * dz;
 
 			if ( rs2 <= 0 )
@@ -134,7 +146,10 @@ public class HelperFunctions {
 
 			if ( rs >= 0.5 )
 			{
-				final OvalRoi or = new OvalRoi(x - rs + 0.5, y - rs + 0.5, rs * 2, rs * 2);
+				// the half axes in pixels of x and y
+				final double rx = anisotropy == null ? rs : rs / anisotropy[ 0 ], ry = anisotropy == null ? rs : rs / anisotropy[ 1 ];
+
+				final OvalRoi or = new OvalRoi(x - rx + 0.5, y - ry + 0.5, rx * 2, ry * 2);
 				or.setStrokeColor(col);
 				overlay.add(or);
 			}

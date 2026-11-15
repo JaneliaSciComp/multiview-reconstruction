@@ -360,13 +360,13 @@ public class TestDoGAnisotropy
 		assertTrue( lines.stream().noneMatch( l -> l.startsWith( "#" ) && l.contains( "anisotropy" ) ), "no warning: the anisotropy is an option of detect-interestpoints" );
 		assertTrue( lines.stream().anyMatch( l -> !l.startsWith( "#" ) && l.contains( "-dsxy 2" ) && l.contains( "-dsz 1" ) && l.contains( "--anisotropy 1.5" ) && !l.contains( "--method" ) ), "the command is rendered with the anisotropy" );
 
-		// different factors for x and y: rendered with the x factor and a warning
+		// different factors for x and y: rendered as -dsx / -dsy, without a warning
 		params.remove( "downsampleXY" );
 		params.put( "downsampleX", "4" );
 		params.put( "downsampleY", "2" );
 		final List< String > linesXY = ActionToSparkCli.render( new ActionRecord( "detect-interestpoints", System.currentTimeMillis(), DifferenceOfGaussianGUI.class.getName(), params, views, "interestpoints:beads" ), "dataset.xml" );
-		assertTrue( linesXY.stream().anyMatch( l -> l.startsWith( "#" ) && l.contains( "x by 4 and y by 2" ) ) );
-		assertTrue( linesXY.stream().anyMatch( l -> !l.startsWith( "#" ) && l.contains( "-dsxy 4" ) ) );
+		assertTrue( linesXY.stream().noneMatch( l -> l.startsWith( "#" ) && l.contains( "WARNING" ) ), "no warning for different factors in x and y" );
+		assertTrue( linesXY.stream().anyMatch( l -> !l.startsWith( "#" ) && l.contains( "-dsx 4" ) && l.contains( "-dsy 2" ) && l.contains( "-dsz 1" ) && !l.contains( "-dsxy" ) ) );
 	}
 
 	/**

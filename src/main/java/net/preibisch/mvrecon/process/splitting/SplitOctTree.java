@@ -911,11 +911,11 @@ public class SplitOctTree implements SplitView
 			if ( vd.isPresent() )
 				allViewIds.add( vd );
 
-		final double avgAnisoF = TransformationTools.getAverageAnisotropyFactor( data, allViewIds );
+		final double[] avgVoxelRatios = TransformationTools.getAverageVoxelRatios( data, allViewIds );
 
 		gd.addChoice( "Anisotropy", ANISOTROPY_CHOICES, ANISOTROPY_CHOICES[ defaultAnisotropyChoice ] );
 		gd.addMessage(
-				"Average anisotropy factor: " + TransformationTools.f.format( avgAnisoF ) + " (Z / avg(XY))\n" +
+				"Average voxel size (X, Y, Z) relative to the finer of X and Y: " + TransformationTools.f.format( avgVoxelRatios[ 0 ] ) + ", " + TransformationTools.f.format( avgVoxelRatios[ 1 ] ) + ", " + TransformationTools.f.format( avgVoxelRatios[ 2 ] ) + "\n" +
 				"Skips splitting dimensions whose physical extent is < 50% of the largest.",
 				GUIHelper.smallStatusFont, Color.DARK_GRAY );
 
@@ -997,14 +997,13 @@ public class SplitOctTree implements SplitView
 		}
 		else
 		{
-			// Global or per-view: use average anisotropy factor for now
+			// Global or per-view: use the average voxel size per dimension (relative to the finer of x and y) for now
 			final List< ViewId > allViewIds = new ArrayList<>();
 			for ( final mpicbg.spim.data.sequence.ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
 				if ( vd.isPresent() )
 					allViewIds.add( vd );
 
-			final double avgAnisoF = TransformationTools.getAverageAnisotropyFactor( data, allViewIds );
-			anisotropy = new double[] { 1, 1, avgAnisoF };
+			anisotropy = TransformationTools.getAverageVoxelRatios( data, allViewIds );
 
 			IOFunctions.println( "Using anisotropy factor: " + Arrays.toString( anisotropy ) +
 					" (" + ANISOTROPY_CHOICES[ anisotropyChoice ] + ")" );

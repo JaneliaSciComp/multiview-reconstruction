@@ -44,12 +44,26 @@ public class DoGParameters extends InterestPointParameters
 	public boolean findMax = true;
 
 	/**
-	 * z voxel / x voxel at FULL resolution as estimated by the user (the PSF blurs z more than the calibration says):
-	 * the Gaussians are then isotropic in physical units, the sigma in dimension d of the opened image is
-	 * sigma / anisotropy[ d ] (DownsampleTools.anisotropy) and sigma itself is the x sigma. NaN (the default) = no
-	 * anisotropy, the Gaussians are isotropic in pixels, what every caller got before 2026-10 (e.g. BigStitcher-Spark)
+	 * z voxel / finer lateral voxel (x or y) at FULL resolution as estimated by the user (the PSF blurs z more than the
+	 * calibration says): the Gaussians are then isotropic in physical units, the sigma in dimension d of the opened image
+	 * is sigma / anisotropy[ d ] (DownsampleTools.anisotropy) and sigma itself is the sigma of the finer lateral axis of
+	 * the opened image. NaN (the default) = no z anisotropy: the Gaussians are as wide in z pixels as in pixels of that
+	 * axis, laterally they still follow the calibration (DownsampleTools.anisotropyDoG); for equal pixel sizes in x and
+	 * y that is isotropic in pixels, what every caller got before 2026-10 (e.g. BigStitcher-Spark)
 	 */
 	public double anisotropyZ = Double.NaN;
+
+	/**
+	 * The downsampling of the views in x, y, z (powers of two, x and y may differ); null (the default) = the
+	 * inherited downsampleXY for x and y and downsampleZ, see {@link #downsampling()}
+	 */
+	public long[] downsampling = null;
+
+	/** @return the downsampling in x, y, z the detection runs at */
+	public long[] downsampling()
+	{
+		return downsampling != null ? downsampling.clone() : new long[] { downsampleXY, downsampleXY, downsampleZ };
+	}
 
 	public double percentGPUMem = 75;
 	public CUDADevice deviceCUDA = null;

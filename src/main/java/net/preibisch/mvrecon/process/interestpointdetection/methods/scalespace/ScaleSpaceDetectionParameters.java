@@ -52,7 +52,7 @@ public class ScaleSpaceDetectionParameters extends InterestPointParameters
 	public long[] downsampling = new long[] { 1, 1, 1 };
 
 	/**
-	 * z voxel / x voxel at FULL resolution (increase if the PSF blurs z more), NaN = calibration ratio
+	 * z voxel / finer lateral voxel (x or y) at FULL resolution (increase if the PSF blurs z more), NaN = calibration ratio
 	 * of each view; ScaleSpace converts it to the starting resolution (scaleSpace.anisotropy) per view
 	 */
 	public double anisotropyZ = Double.NaN;

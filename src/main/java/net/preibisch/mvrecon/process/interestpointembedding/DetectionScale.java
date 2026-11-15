@@ -32,22 +32,26 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 /**
  * The scale a label was detected at, read from its parameters string: the detection sigma in full-resolution xy pixels
  * ({@code s x downsampleXY}: the DoG ran on the downsampled image with sigma {@code s} in its pixels, the points are stored in
- * full-resolution pixels) and the xy downsampling factor of the detection (the pyramid level it ran at). The extents of
+ * full-resolution pixels) and the xy downsampling factor of the detection (the pyramid level it ran at). For views with
+ * unequal pixel sizes in x and y, or a detection that downsampled x and y differently, the sigma is in full-resolution
+ * pixels of the finer lateral axis ({@code s x} {@link DownsampleTools#sigmaScale}, as the stored sigma of the points) and
+ * the downsampling is kept per axis. The extents of
  * the embedding's cubes are multiples of that sigma, and no cube is read from a level finer than the detection's. Exactly
  * pcmatch's {@code bigstitcher.dog_sigma_fullres_px} and {@code dog_downsample_xy} (2026-10-30), so that both sides
  * sample the same cubes:
  * <ul>
  * <li>{@code DOG ...} and {@code DOG-SS ...} strings of the GUI and of BigStitcher-Spark ({@link StoredDetectionParameters}):
- * {@code s}; the factor from {@code downsampleXY=} (Spark), the geometric mean of {@code downsampleX=}/{@code downsampleY=}
- * rounded (GUI since MVR 10), or {@code downsampleXYIndex=} of master's DoG, where 0 and -1 meant "match the z resolution":
+ * {@code s}; the factors from {@code downsampleXY=} (Spark), {@code downsampleX=}/{@code downsampleY=}
+ * (GUI since MVR 10, Spark for different factors), or {@code downsampleXYIndex=} of master's DoG, where 0 and -1 meant "match the z resolution":
  * {@link DownsampleTools#downsampleFactor} of the voxel size stored in the XML, as the detection computed it; no key = 1.
  * For the scale space {@code s} is the sigma of the finest level: a point's own sigma attribute is the scale of the point,
  * the label's sigma its lower bound ({@link PatchExtractor}).</li>
  * <li>{@code LEARNED ...} strings of pcmatch's detector: {@code sigma=} is already in full-resolution pixels, {@code downsampleXY=} (default 1).</li>
  * </ul>
  *
- * @param sigma - the detection sigma in full-resolution xy pixels
- * @param downsampleXY - the xy downsampling factor of the detection
+ * @param sigma - the detection sigma in full-resolution pixels of the finer lateral axis (xy pixels for equal pixel sizes)
+ * @param downsampleX - the downsampling factor of the detection in x
+ * @param downsampleY - the downsampling factor of the detection in y
  * @param fromCalibration - true if the factor was derived from the voxel size of the XML ({@code downsampleXYIndex} 0/-1 of
  *        master's DoG): it is only right while the XML still holds the calibration the detection saw; after "Specify Calibration"
  *        the string has to be pinned to the factor the detection used (e.g. {@code downsampleXYIndex=2}) or the label detected again
@@ -56,14 +60,19 @@ import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
  *
  * @author Stephan Preibisch
  */
-public record DetectionScale( double sigma, int downsampleXY, boolean fromCalibration )
+public record DetectionScale( double sigma, int downsampleX, int downsampleY, boolean fromCalibration )
 {
 	public DetectionScale( final double sigma, final int downsampleXY ) { this( sigma, downsampleXY, false ); }
+
+	public DetectionScale( final double sigma, final int downsampleXY, final boolean fromCalibration ) { this( sigma, downsampleXY, downsampleXY, fromCalibration ); }
+
+	/** @return the xy downsampling factor of the detection; the smaller one if x and y were downsampled differently */
+	public int downsampleXY() { return Math.min( downsampleX, downsampleY ); }
 
 	/**
 	 * @param label the label (for messages)
 	 * @param parameters its parameters string ({@code InterestPoints.getParameters()})
-	 * @param voxelSize the voxel size of the view as stored in the XML (only for {@code downsampleXYIndex} 0/-1 of master's DoG)
+	 * @param voxelSize the voxel size of the view as stored in the XML (for {@code downsampleXYIndex} 0/-1 of master's DoG and for the sigma of views with unequal pixel sizes in x and y; null = square pixels)
 	 * @return the scale of the detection
 	 * @throws IllegalArgumentException if the string is not one of a detection with a sigma (a filtered, copied or manual label: resolve the base label first)
 	 */
@@ -95,38 +104,48 @@ public record DetectionScale( double sigma, int downsampleXY, boolean fromCalibr
 		if ( !( p.sigma() > 0 ) )
 			throw new IllegalArgumentException( "The label '" + label + "' (" + parameters + ") has no positive 's=' sigma." );
 
-		final int downsampleXY;
+		final int downsampleX, downsampleY;
 		boolean fromCalibration = false;
 		if ( p.downsampling() != null )
-			downsampleXY = (int) Math.round( Math.sqrt( (double) p.downsampling()[ 0 ] * p.downsampling()[ 1 ] ) );
+		{
+			downsampleX = (int) p.downsampling()[ 0 ];
+			downsampleY = (int) p.downsampling()[ 1 ];
+		}
 		else if ( values.containsKey( "downsampleXY" ) )
-			downsampleXY = (int) StoredDetectionParameters.longValue( values, "downsampleXY", 1 );
+			downsampleX = downsampleY = (int) StoredDetectionParameters.longValue( values, "downsampleXY", 1 );
 		else if ( values.containsKey( "downsampleX" ) )
-			downsampleXY = (int) Math.round( Math.sqrt( StoredDetectionParameters.doubleValue( values, "downsampleX" ) * StoredDetectionParameters.doubleValue( values, "downsampleY" ) ) );
+		{
+			downsampleX = (int) StoredDetectionParameters.longValue( values, "downsampleX", 1 );
+			downsampleY = (int) StoredDetectionParameters.longValue( values, "downsampleY", downsampleX );
+		}
 		else
 		{
 			final int index = (int) StoredDetectionParameters.longValue( values, "downsampleXYIndex", 1 );
 			if ( index >= 1 )
-				downsampleXY = index;
+				downsampleX = downsampleY = index;
 			else
 			{
 				if ( voxelSize == null )
 					throw new IllegalArgumentException( "The label '" + label + "' (" + parameters + ") was detected with downsampleXYIndex=" + index + " (matched to the z resolution), which needs the voxel size of the view, and the XML has none." );
-				downsampleXY = DownsampleTools.downsampleFactor( index, (int) StoredDetectionParameters.longValue( values, "downsampleZ", 1 ), voxelSize );
+				downsampleX = downsampleY = DownsampleTools.downsampleFactor( index, (int) StoredDetectionParameters.longValue( values, "downsampleZ", 1 ), voxelSize );
 				fromCalibration = true;
 			}
 		}
 
-		if ( downsampleXY < 1 )
-			throw new IllegalArgumentException( "The label '" + label + "' (" + parameters + ") has a downsampling of " + downsampleXY + " (an early scale-space string, 'match the z resolution'); pin the string to the factor the detection ran at, e.g. downsampleXY=2 downsampleXYIndex=2, or detect the label again." );
+		if ( downsampleX < 1 || downsampleY < 1 )
+			throw new IllegalArgumentException( "The label '" + label + "' (" + parameters + ") has a downsampling of " + Math.min( downsampleX, downsampleY ) + " (an early scale-space string, 'match the z resolution'); pin the string to the factor the detection ran at, e.g. downsampleXY=2 downsampleXYIndex=2, or detect the label again." );
 
-		return new DetectionScale( p.sigma() * downsampleXY, downsampleXY, fromCalibration );
+		// s is in pixels of the finer lateral axis of the image the detection ran on, the points store full-resolution pixels of the
+		// finer lateral axis of the view: for equal pixel sizes and factors in x and y that is s x downsampleXY
+		final double sigmaScale = DownsampleTools.sigmaScale( DownsampleTools.voxelSize( voxelSize ), new double[] { downsampleX, downsampleY, 1 } );
+
+		return new DetectionScale( p.sigma() * sigmaScale, downsampleX, downsampleY, fromCalibration );
 	}
 
 	@Override
 	public String toString()
 	{
-		return "sigma " + sigma + " px (full resolution), detected at downsampling " + downsampleXY
+		return "sigma " + sigma + " px (full resolution), detected at downsampling " + ( downsampleX == downsampleY ? "" + downsampleX : downsampleX + " (x), " + downsampleY + " (y)" )
 				+ ( fromCalibration ? " (derived from the voxel size of the XML, the label's string says downsampleXYIndex 0/-1: only right while the XML holds the calibration the detection saw)" : "" );
 	}
 }

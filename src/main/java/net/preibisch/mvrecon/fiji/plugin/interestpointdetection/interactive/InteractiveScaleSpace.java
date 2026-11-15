@@ -784,6 +784,7 @@ public class InteractiveScaleSpace
 
 		final double az = p.anisotropy[ 2 ];
 		final double ay = p.anisotropy[ 1 ];
+		final double ax = p.anisotropy[ 0 ];
 		final double sigmaMax = candidates == null ? p.sigmaMin : candidates.sigmaMax;
 		final Overlay overlay = new Overlay();
 		int drawn = 0;
@@ -795,7 +796,8 @@ public class InteractiveScaleSpace
 			if ( rs < 0.5 )
 				continue;
 
-			final Roi roi = new OvalRoi( peak.l[ 0 ] + 0.5 - rs, peak.l[ 1 ] + 0.5 - rs / ay, 2 * rs, 2 * rs / ay );
+			// rs is in pixels of the reference axis (the finer of x and y): the half axes in pixels of x and y
+			final Roi roi = new OvalRoi( peak.l[ 0 ] + 0.5 - rs / ax, peak.l[ 1 ] + 0.5 - rs / ay, 2 * rs / ax, 2 * rs / ay );
 			roi.setStrokeColor( peak.finest ? finestColor : color( peak.sigma, p.sigmaMin, sigmaMax ) );
 			roi.setStroke( stroke( !peak.isMax ) );
 			overlay.add( roi );
@@ -1112,17 +1114,17 @@ public class InteractiveScaleSpace
 		c.gridwidth = 2;
 		c.insets = new Insets( 2, 4, 2, 4 );
 
-		// the initial blur at this resolution, at full resolution and in physical units
-		final double sx = Math.abs( mipmapTransform.get( 0, 0 ) );
-		String blur = format( p.sigmaMin, "0.00" ) + " px at this resolution = " + format( p.sigmaMin * sx, "0.00" ) + " px at full resolution";
+		// the initial blur at this resolution (pixels of the finer of x and y), at full resolution (pixels of the finer lateral axis) and in physical units
+		final double sigmaScale = DownsampleTools.sigmaScale( session.voxelSize, mipmapTransform );
+		String blur = format( p.sigmaMin, "0.00" ) + " px at this resolution = " + format( p.sigmaMin * sigmaScale, "0.00" ) + " px at full resolution";
 
 		if ( session.voxelSize != null )
-			blur += " = " + format( p.sigmaMin * sx * session.voxelSize.dimension( 0 ), "0.00" ) + " " + session.voxelSize.unit();
+			blur += " = " + format( p.sigmaMin * sigmaScale * Math.min( session.voxelSize.dimension( 0 ), session.voxelSize.dimension( 1 ) ), "0.00" ) + " " + session.voxelSize.unit();
 
 		// a fixed width wraps the long lines instead of widening the window
 		final JLabel info = new JLabel( "<html><body style='width: 560px'><b>" + name + "</b> (" + Util.printCoordinates( img.dimensionsAsLongArray() ) + " px)<br>"
 				+ "initial blur (sigma): " + blur + "<br>"
-				+ "anisotropy (voxel size relative to x): " + format( p.anisotropy[ 0 ], "0.00" ) + ", " + format( p.anisotropy[ 1 ], "0.00" ) + ", " + format( p.anisotropy[ 2 ], "0.00" ) + "<br>"
+				+ "anisotropy (voxel size relative to the finer of x and y): " + format( p.anisotropy[ 0 ], "0.00" ) + ", " + format( p.anisotropy[ 1 ], "0.00" ) + ", " + format( p.anisotropy[ 2 ], "0.00" ) + "<br>"
 				+ "intensity range: [" + format( p.minIntensity, "0.0" ) + ", " + format( p.maxIntensity, "0.0" ) + "]<br>"
 				+ "the scale space is computed inside the rectangle ROI (draw another one) around the current slice, again when you leave the computed slices</body></html>" );
 		info.setFont( GUIHelper.smallStatusFont );
@@ -1304,7 +1306,7 @@ public class InteractiveScaleSpace
 	}
 
 	/**
-	 * @return the detections per slice: each detection is listed for all slices its ball (radius sqrt(3) sigma, in pixels of x) intersects, in the order handed in
+	 * @return the detections per slice: each detection is listed for all slices its ball (radius sqrt(3) sigma, in pixels of the reference axis) intersects, in the order handed in
 	 */
 	public static List< List< ScaleSpacePeak > > binPerSlice( final List< ScaleSpacePeak > peaks, final int numSlices, final double anisotropyZ )
 	{

@@ -168,7 +168,7 @@ public class DoGImgLib2
 	 * Difference-of-Gaussian detection with Gaussians that are isotropic in physical units (the default block size,
 	 * no CUDA), see the variant with the block size and CUDA for the details
 	 *
-	 * @param anisotropy - the voxel size of the image per dimension relative to x (DownsampleTools.anisotropy), null = isotropic in pixels
+	 * @param anisotropy - the voxel size of the image per dimension relative to its reference axis (the finer of x and y, DownsampleTools.anisotropy), null = isotropic in pixels
 	 * @return the detections (with the DoG response, the sigma of the detection and the image intensity) in the coordinates of the input
 	 */
 	public static < T extends RealType< T > > ArrayList< InterestPoint > computeDoG(
@@ -198,7 +198,7 @@ public class DoGImgLib2
 	 * @param input - the image, extended beyond the interval by the caller
 	 * @param mask - weights &gt; 0 where the image is valid, null = everywhere
 	 * @param interval - the interval to process
-	 * @param sigma - the sigma of the DoG detection (in x pixels, see the variant with the anisotropy)
+	 * @param sigma - the sigma of the DoG detection (in pixels of the reference axis, see the variant with the anisotropy)
 	 * @param threshold - the minimal |DoG| of a detection
 	 * @param localization - 0 = none, 1 = quadratic fit
 	 * @param findMin - keep the minima
@@ -236,11 +236,11 @@ public class DoGImgLib2
 
 	/**
 	 * Difference-of-Gaussian detection with Gaussians that are isotropic in physical units: the sigma in dimension d
-	 * is sigma / anisotropy[ d ], so sigma is the x sigma (the stored sigma of the detections, as in the scale space);
+	 * is sigma / anisotropy[ d ], so sigma is the sigma of the reference axis, the dimension with anisotropy 1 (the stored sigma of the detections, as in the scale space);
 	 * otherwise as the variant without the anisotropy
 	 *
-	 * @param anisotropy - the voxel size of the image per dimension relative to x (DownsampleTools.anisotropy for an
-	 * opened view and the user's estimate of z voxel / x voxel at full resolution), null = isotropic in pixels
+	 * @param anisotropy - the voxel size of the image per dimension relative to its reference axis (DownsampleTools.anisotropy for an
+	 * opened view: the finer of x and y, with the user's estimate of z voxel / that voxel at full resolution), null = isotropic in pixels
 	 * @return the detections (with the DoG response, the sigma of the detection and the image intensity) in the coordinates of the input
 	 */
 	public static < T extends RealType< T > > ArrayList< InterestPoint > computeDoG(
@@ -278,7 +278,7 @@ public class DoGImgLib2
 	 * (findPeaks with the threshold for localization 0, threshold / 3 otherwise), the localization (keeps |value| &gt; threshold)
 	 * and the shift of the positions to the coordinates of the input
 	 *
-	 * @return the detections with their response, the sigma of the detection (the x sigma) and the image intensity, numbered 0..n-1 in detection order; the parameters as for computeDoG
+	 * @return the detections with their response, the sigma of the detection (of the reference axis) and the image intensity, numbered 0..n-1 in detection order; the parameters as for computeDoG
 	 */
 	protected static < T extends RealType< T > > ArrayList< InterestPoint > detectPeaks(
 			final RandomAccessible< T > input,
@@ -484,7 +484,7 @@ public class DoGImgLib2
 
 	/**
 	 * The two Gaussian sigmas of the DoG per dimension: the targets are sigma and sigma * k (k = 2^(1/4)), each divided
-	 * by the anisotropy of the dimension (the voxel size relative to x, DownsampleTools.anisotropy; null = isotropic in
+	 * by the anisotropy of the dimension (the voxel size relative to the reference axis, DownsampleTools.anisotropy; null = isotropic in
 	 * pixels, bit-identical to the code before the anisotropy existed, as is an anisotropy of 1); applied is the target
 	 * minus the blur the image carries (0.5 px) in quadrature, and a target below that blur gives 0, nothing is applied
 	 * in that dimension (the convention of the scale space, DoGScaleSpace.computeSigmaDiff)

@@ -73,8 +73,8 @@ public class ScaleSpace
 	/**
 	 * @param vd - the view
 	 * @param mipmapTransform - the transform of the opened (downsampled) image to full resolution (DownsampleTools.openAndDownsample)
-	 * @param anisotropyZ - z voxel / x voxel at FULL resolution, NaN = the ratio of the calibration
-	 * @return the voxel size of the OPENED image per dimension relative to x (ScaleSpaceParameters.anisotropy), see DownsampleTools.anisotropy (shared with the DoG)
+	 * @param anisotropyZ - z voxel / finer lateral voxel (x or y) at FULL resolution, NaN = the ratio of the calibration
+	 * @return the voxel size of the OPENED image per dimension relative to its finer lateral axis (ScaleSpaceParameters.anisotropy), see DownsampleTools.anisotropy (shared with the DoG)
 	 */
 	public static double[] anisotropy( final ViewDescription vd, final AffineTransform3D mipmapTransform, final double anisotropyZ )
 	{
@@ -134,7 +134,7 @@ public class ScaleSpace
 
 			// maps positions and sigmas to full resolution
 			if ( !points.isEmpty() )
-				DownsampleTools.correctForDownsampling( points, mipmapTransform );
+				DownsampleTools.correctForDownsampling( points, mipmapTransform, vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null );
 
 			perRegion.add( points );
 		}
@@ -145,9 +145,9 @@ public class ScaleSpace
 
 		if ( combined.size() > 1 )
 		{
-			final double[] scale = new double[] { Math.abs( mipmapTransform.get( 0, 0 ) ), Math.abs( mipmapTransform.get( 1, 1 ) ), Math.abs( mipmapTransform.get( 2, 2 ) ) };
+			final double[] scale = DownsampleTools.scale( mipmapTransform );
 			final int before = combined.size();
-			final ArrayList< InterestPoint > mergedPoints = DoGScaleSpace.mergeDuplicates( combined, scale, p.scaleSpace.sigmaMin, p.scaleSpace.combineDistance );
+			final ArrayList< InterestPoint > mergedPoints = DoGScaleSpace.mergeDuplicates( combined, scale, DownsampleTools.sigmaScale( vd, mipmapTransform ), p.scaleSpace.sigmaMin, p.scaleSpace.combineDistance );
 			merged = before - mergedPoints.size();
 
 			combined = new ArrayList<>( mergedPoints.size() );
@@ -203,10 +203,10 @@ public class ScaleSpace
 					p.scaleSpace.maxIntensity = p.maxIntensity;
 				}
 
-				// the voxel size of the opened image per dimension relative to x, the Gaussians become isotropic in physical units
+				// the voxel size of the opened image per dimension relative to its finer lateral axis, the Gaussians become isotropic in physical units
 				p.scaleSpace.anisotropy = anisotropy( vd, input.getB(), p.anisotropyZ );
 
-				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): anisotropy of the opened image (voxel size per dimension relative to x) = " + Util.printCoordinates( p.scaleSpace.anisotropy ) +
+				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): anisotropy of the opened image (voxel size per dimension relative to the finer of x and y) = " + Util.printCoordinates( p.scaleSpace.anisotropy ) +
 						", sigma of the finest level in pixels = (" + p.scaleSpace.sigmaMin / p.scaleSpace.anisotropy[ 0 ] + ", " + p.scaleSpace.sigmaMin / p.scaleSpace.anisotropy[ 1 ] + ", " + p.scaleSpace.sigmaMin / p.scaleSpace.anisotropy[ 2 ] + ")" );
 
 				List< InterestPoint > ips;
@@ -224,7 +224,7 @@ public class ScaleSpace
 							service );
 
 						// maps positions and sigmas to full resolution
-						DownsampleTools.correctForDownsampling( ips, input.getB() );
+						DownsampleTools.correctForDownsampling( ips, input.getB(), vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null );
 					}
 					else
 					{

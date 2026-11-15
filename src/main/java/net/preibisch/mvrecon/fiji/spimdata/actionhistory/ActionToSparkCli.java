@@ -254,8 +254,11 @@ public class ActionToSparkCli
 				new String[]{ "minIntensity", "-i0" },
 				new String[]{ "maxIntensity", "-i1" },
 				new String[]{ "downsampleXY", "-dsxy" },
+				// different factors for x and y are recorded as downsampleX / downsampleY instead of downsampleXY (-dsx / -dsy override -dsxy)
+				new String[]{ "downsampleX", "-dsx" },
+				new String[]{ "downsampleY", "-dsy" },
 				new String[]{ "downsampleZ", "-dsz" },
-				// z voxel / x voxel at full resolution (the Gaussians isotropic in physical units); "NaN" = none is dropped in render()
+				// z voxel / finer lateral voxel (x or y) at full resolution (the Gaussians isotropic in physical units); "NaN" = none is dropped in render()
 				new String[]{ "anisotropy", "--anisotropy" },
 				// the scale space (ScaleSpaceGUI): the method, its steps per octave, octaves (-1 = all) and whether the finest
 				// level keeps all its spatial extrema; finestLevel=false is rendered as the negated flag (see render())
@@ -524,8 +527,8 @@ public class ActionToSparkCli
 					+ "one value for the whole job; pick one manually (or split into per-calibration runs) "
 					+ "before running the command below." );
 
-		// the anisotropy (z voxel / x voxel at full resolution, the Gaussians isotropic in physical units) is an option of
-		// detect-interestpoints; NaN = none (the Difference-of-Gaussian then blurs isotropically in pixels) is omitted
+		// the anisotropy (z voxel / finer lateral voxel at full resolution, the Gaussians isotropic in physical units) is an option of
+		// detect-interestpoints; NaN = none (the Difference-of-Gaussian then follows only the lateral calibration) is omitted
 		if ( "NaN".equals( params.get( "anisotropy" ) ) )
 			params.remove( "anisotropy" );
 
@@ -548,14 +551,6 @@ public class ActionToSparkCli
 			}
 			else
 				warnUntranslated( out, "WARNING: malformed count limit '" + String.join( ":", parts ) + "' (expected axis:mode:count), it is omitted below." );
-		}
-
-		// -dsxy takes one factor for x and y; a resolution level with different x and y factors is rendered with the x factor
-		if ( !params.containsKey( "downsampleXY" ) && params.containsKey( "downsampleX" ) )
-		{
-			warnUntranslated( out, "WARNING: mvrecon downsampled x by " + params.get( "downsampleX" ) + " and y by " + params.get( "downsampleY" )
-					+ " — BigStitcher-Spark's -dsxy takes one factor for both, the x factor is used below." );
-			params.put( "downsampleXY", params.get( "downsampleX" ) );
 		}
 
 		// mvrecon only records regularizationModel/lambda when the user actually regularized (see

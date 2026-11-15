@@ -138,7 +138,7 @@ public class DoG
 	 * @param vd - the view
 	 * @param img - the opened (downsampled) image
 	 * @param mipmapTransform - its transform to full resolution
-	 * @param anisotropy - the anisotropy of the opened image (DownsampleTools.anisotropy), null = isotropic in pixels
+	 * @param anisotropy - the anisotropy of the opened image (DownsampleTools.anisotropyDoG), null = isotropic in pixels
 	 * @param dog - the parameters (regions set)
 	 * @param service - the executor
 	 * @return the detections of the view at full resolution, ids 0..n-1
@@ -192,9 +192,9 @@ public class DoG
 					dog.accurateCUDA,
 					dog.percentGPUMem );
 
-			// maps the positions to full resolution
+			// maps the positions and the sigma to full resolution
 			if ( !points.isEmpty() )
-				DownsampleTools.correctForDownsampling( points, mipmapTransform );
+				DownsampleTools.correctForDownsampling( points, mipmapTransform, vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null );
 
 			perRegion.add( points );
 		}
@@ -242,14 +242,15 @@ public class DoG
 						DownsampleTools.openAndDownsample(
 								dog.imgloader,
 								vd,
-								new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
+								dog.downsampling(),
 								false );
 
-				// the voxel size of the opened image per dimension relative to x, the Gaussians become isotropic in physical units (null = isotropic in pixels)
-				final double[] anisotropy = Double.isNaN( dog.anisotropyZ ) ? null : DownsampleTools.anisotropy( vd, input.getB(), dog.anisotropyZ );
+				// the voxel size of the opened image per dimension relative to its finer lateral axis, the Gaussians become isotropic
+				// in physical units (without a z anisotropy only laterally; null = isotropic in pixels)
+				final double[] anisotropy = DownsampleTools.anisotropyDoG( vd, input.getB(), dog.anisotropyZ );
 
 				if ( anisotropy != null )
-					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): anisotropy of the opened image (voxel size per dimension relative to x) = " + Util.printCoordinates( anisotropy ) +
+					IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): anisotropy of the opened image (voxel size per dimension relative to the finer of x and y) = " + Util.printCoordinates( anisotropy ) +
 							", sigma in pixels = (" + dog.sigma / anisotropy[ 0 ] + ", " + dog.sigma / anisotropy[ 1 ] + ", " + dog.sigma / anisotropy[ 2 ] + ")" );
 
 				List< InterestPoint > ips;
@@ -277,8 +278,8 @@ public class DoG
 								dog.accurateCUDA,
 								dog.percentGPUMem );
 
-						// maps the positions to full resolution
-						DownsampleTools.correctForDownsampling( ips, input.getB() );
+						// maps the positions and the sigma to full resolution
+						DownsampleTools.correctForDownsampling( ips, input.getB(), vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null );
 					}
 					else
 					{

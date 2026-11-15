@@ -36,6 +36,7 @@ import java.awt.GraphicsEnvironment;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -53,6 +54,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import ij.Macro;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
+import mpicbg.spim.data.sequence.VoxelDimensions;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
@@ -183,6 +185,106 @@ public class TestInterestPointEmbedding
 		assertEquals( PatchExtractor.quantise( 3.6 ), perPoint.sigmaOf( none ), 1e-9 );
 		assertEquals( Math.pow( 2, 22 / 12.0 ), PatchExtractor.quantise( 3.6 ), 1e-9 ); // 12 log2 3.6 = 22.17 -> 22
 		assertEquals( 16.0, PatchExtractor.quantise( 16 ), 1e-9 );
+	}
+
+	/**
+	 * Views with unequal pixel sizes in x and y (either one the coarser), and detections that downsampled x and y
+	 * differently: the detection sigma is in full-resolution pixels of the finer lateral axis, the pyramid level and the
+	 * read floor are chosen per lateral axis, and the cubes are isotropic in physical units
+	 */
+	@Test
+	public void unequalPixelSizesInXAndY() throws Exception
+	{
+		final String tail = " anisotropy=1.0 minIntensity=0.0 maxIntensity=1137.0 localization=QUADRATIC groupTiles=false groupIllums=false overlappingOnly=false thresholdType=fixed";
+		final VoxelDimensions coarseX = new FinalVoxelDimensions( "um", 2, 1, 4 ), coarseY = new FinalVoxelDimensions( "um", 1, 2, 4 ), square = new FinalVoxelDimensions( "um", 1, 1, 4 );
+
+		// the same downsampling in x and y: the detection ran with s in pixels of the finer axis, downsampled by 2
+		for ( final VoxelDimensions v : new VoxelDimensions[] { coarseX, coarseY, square, null } )
+		{
+			final DetectionScale scale = DetectionScale.of( "beads", "DOG s=1.5 t=0.008 min=false max=true downsampleX=2 downsampleY=2 downsampleZ=1" + tail, v );
+			assertEquals( 3.0, scale.sigma(), 0.0 );
+			assertEquals( 2, scale.downsampleX() );
+			assertEquals( 2, scale.downsampleY() );
+			assertEquals( 2, scale.downsampleXY() );
+		}
+
+		// only the finer axis downsampled by 2: square pixels of twice its size, either way
+		DetectionScale scale = DetectionScale.of( "beads", "DOG s=1.1 t=0.008 min=false max=true downsampleX=1 downsampleY=2 downsampleZ=1" + tail, coarseX );
+		assertEquals( 2.2, scale.sigma(), 0.0 );
+		assertEquals( 1, scale.downsampleX() );
+		assertEquals( 2, scale.downsampleY() );
+		assertEquals( 1, scale.downsampleXY() );
+
+		scale = DetectionScale.of( "beads", "DOG-SS s=1.6 steps=3 octaves=-1 finestLevel=true t=0.01 min=false max=true downsampleX=2 downsampleY=1 downsampleZ=1" + tail, coarseY );
+		assertEquals( 3.2, scale.sigma(), 0.0 );
+		assertEquals( 2, scale.downsampleX() );
+		assertEquals( 1, scale.downsampleY() );
+
+		// square pixels, only x downsampled: s is in pixels of y, which are full-resolution pixels
+		scale = DetectionScale.of( "beads", "DOG s=1.8 t=0.008 min=false max=true downsampleX=2 downsampleY=1 downsampleZ=1" + tail, square );
+		assertEquals( 1.8, scale.sigma(), 0.0 );
+
+		// y pixels twice as large as x pixels, a pyramid that first halves x: a level is used once it is no coarser than the
+		// sample spacing in x AND in y (the spacing d is in pixels of x, d / 2 in pixels of y)
+		final Pyramid pyramid = new Pyramid( new double[][] { { 1, 1, 1 }, { 2, 1, 1 }, { 2, 2, 1 }, { 4, 2, 1 } }, level -> null );
+		final Contract full = contract( new double[] { 5 }, 16, 64, "fp", "full" );
+		final PatchExtractor yCoarse = new PatchExtractor( pyramid, new double[] { 1, 2, 2 }, new DetectionScale( 2, 1 ), full, false );
+		assertEquals( 0, yCoarse.levelOf( 1.5 ) );
+		assertEquals( 1, yCoarse.levelOf( 2.0 ) ); // (2, 1, 1): square pixels
+		assertEquals( 1, yCoarse.levelOf( 3.9 ) );
+		assertEquals( 3, yCoarse.levelOf( 4.0 ) ); // (4, 2, 1)
+		assertEquals( 3, yCoarse.levelOf( 100 ) );
+
+		// x pixels twice as large: d is in pixels of y, x is never read coarser than d / 2
+		final PatchExtractor xCoarse = new PatchExtractor( pyramid, new double[] { 2, 1, 2 }, new DetectionScale( 2, 1 ), full, false );
+		assertEquals( 0, xCoarse.levelOf( 3.9 ) );
+		assertEquals( 2, xCoarse.levelOf( 4.0 ) ); // (2, 2, 1); (2, 1, 1) is as good for x but finer than needed in y
+		assertEquals( 3, xCoarse.levelOf( 8.0 ) );
+
+		// square pixels: a level with different factors in x and y is used once both fit; (2, 1, 1) never is, (2, 2, 1) fits whenever it does
+		final PatchExtractor squarePixels = new PatchExtractor( pyramid, new double[] { 1, 1, 2 }, new DetectionScale( 2, 1 ), full, false );
+		assertEquals( 0, squarePixels.levelOf( 1.9 ) );
+		assertEquals( 2, squarePixels.levelOf( 2.0 ) );
+		assertEquals( 2, squarePixels.levelOf( 3.9 ) );
+		assertEquals( 3, squarePixels.levelOf( 4.0 ) );
+
+		// the read floor: the first level that is no finer than the detection in x and in y
+		final Contract floored = contract( new double[] { 5 }, 16, 64, "fp", "detection" );
+		assertEquals( 1, new PatchExtractor( pyramid, new double[] { 1, 2, 2 }, new DetectionScale( 4, 2, 1, false ), floored, false ).getFloorLevel() );
+		assertEquals( 2, new PatchExtractor( pyramid, new double[] { 1, 2, 2 }, new DetectionScale( 4, 2, 2, false ), floored, false ).getFloorLevel() );
+		assertEquals( 2, new PatchExtractor( pyramid, new double[] { 2, 1, 2 }, new DetectionScale( 4, 1, 2, false ), floored, false ).getFloorLevel() );
+		assertEquals( 0, new PatchExtractor( pyramid, new double[] { 2, 1, 2 }, new DetectionScale( 4, 1, 1, false ), floored, false ).getFloorLevel() );
+
+		// the cubes: a linear image, value = x + 10 y + 100 z, so every trilinear sample inside is exact. Extent 4 x sigma 2 is a
+		// cube of 8 pixels of the finer lateral axis with 4 samples per edge: 2 of its pixels apart, 1 pixel in the coarser axis and in z
+		final long[] size = { 20, 20, 12 };
+		final ArrayImg< FloatType, FloatArray > img = ArrayImgs.floats( size );
+		final net.imglib2.Cursor< FloatType > cursor = img.localizingCursor();
+		while ( cursor.hasNext() )
+		{
+			cursor.fwd();
+			cursor.get().set( cursor.getIntPosition( 0 ) + 10 * cursor.getIntPosition( 1 ) + 100 * cursor.getIntPosition( 2 ) );
+		}
+
+		final Contract contract = contract( new double[] { 4 }, 4, 2, "fp", "detection" );
+
+		for ( final double[] voxelSize : new double[][] { { 2, 1, 2 }, { 1, 2, 2 } } )
+		{
+			final double stepX = voxelSize[ 0 ] == 2 ? 1 : 2, stepY = voxelSize[ 1 ] == 2 ? 1 : 2;
+			final PatchExtractor extractor = new PatchExtractor( new Pyramid( new double[][] { { 1, 1, 1 } }, level -> img ), voxelSize, new DetectionScale( 2, 1 ), contract, false );
+
+			final float[] patches = new float[ contract.patchSize() ];
+			extractor.sampler().extract( new InterestPoint( 0, new double[] { 10.25, 9.5, 6.0 } ), patches, 0 );
+
+			int i = 0;
+			for ( int iz = 0; iz < 4; ++iz )
+				for ( int iy = 0; iy < 4; ++iy )
+					for ( int ix = 0; ix < 4; ++ix )
+					{
+						final double x = 10.25 + ( ix - 1.5 ) * stepX, y = 9.5 + ( iy - 1.5 ) * stepY, z = 6.0 + ( iz - 1.5 ) * 1;
+						assertEquals( x + 10 * y + 100 * z, patches[ i++ ], 1e-3, "voxel size " + Arrays.toString( voxelSize ) + ", sample " + ix + "," + iy + "," + iz );
+					}
+		}
 	}
 
 	@Test

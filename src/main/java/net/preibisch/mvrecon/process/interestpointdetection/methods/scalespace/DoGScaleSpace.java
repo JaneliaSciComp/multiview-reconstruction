@@ -83,10 +83,10 @@ import util.ImgLib2Tools;
  * dimensions, so pixel p of octave o sits at 2^o * p in octave 0 and the sigmas continue seamlessly.
  * Peaks are refined by a quadratic fit in space and scale (Localization.computeQuadraticLocalization).
  * Each point carries the refined DoG response, the lower sigma of its DoG level,
- * sigmaMin * k^(level-1) * 2^octave, in x pixels of octave 0, and the intensity of the (raw) input at
+ * sigmaMin * k^(level-1) * 2^octave, in pixels of the reference axis of octave 0, and the intensity of the (raw) input at
  * its position.
  *
- * Anisotropic voxels: with ScaleSpaceParameters.anisotropy (voxel size per dimension relative to x)
+ * Anisotropic voxels: with ScaleSpaceParameters.anisotropy (voxel size per dimension relative to the reference axis, the finer of x and y)
  * the sigma of every level in dimension d is sigma_i / anisotropy[ d ], i.e. the less resolved
  * dimensions are blurred less so that the Gaussians are isotropic in physical units. The input of
  * octave o carries, per dimension, max( sigma_0 / anisotropy[ d ], imageSigma / 2^o ) of blur and
@@ -595,12 +595,12 @@ public class DoGScaleSpace
 		if ( !DoGImgLib2.silent )
 		{
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): computing scale space DoG with (sigmaMin=" + p.sigmaMin + ", steps=" + p.steps + ", k=" + k + ", octaves=" + octaves.size() + ", threshold=" + p.threshold +
-					( anisotropy == null ? ", isotropic in pixels)" : ", anisotropy (voxel size per dimension relative to x)=" + Util.printCoordinates( anisotropy ) + ")" ) );
+					( anisotropy == null ? ", isotropic in pixels)" : ", anisotropy (voxel size per dimension relative to the reference axis)=" + Util.printCoordinates( anisotropy ) + ")" ) );
 
 			for ( final Octave octave : octaves )
 			{
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): octave " + octave.o + ": domain=" + Util.printInterval( octave.domain ) + ", block=" + Util.printInterval( octave.block ) +
-						", sigmas (in x pixels of octave 0)=" + Util.printCoordinates( sigmasInBasePixels( sigma, octave.f ) ) );
+						", sigmas (in pixels of the reference axis of octave 0)=" + Util.printCoordinates( sigmasInBasePixels( sigma, octave.f ) ) );
 
 				// levels that are not blurred at all in a dimension (the input carries more blur than the target)
 				for ( int d = 0; d < n; ++d )
@@ -1060,7 +1060,7 @@ public class DoGScaleSpace
 	}
 
 	/**
-	 * The DoG responses at the center of a Gaussian blob of size b (in x pixels, isotropic in physical units, i.e.
+	 * The DoG responses at the center of a Gaussian blob of size b (in pixels of the reference axis, isotropic in physical units, i.e.
 	 * b / anisotropy[ d ] in pixels of dimension d) up to a factor: the Gaussian level with total blur t has the
 	 * value prod_d ( b_d^2 + t_d^2 )^(-1/2) there (times the mass of the blob), the DoG is their difference / ( k - 1 )
 	 *
@@ -1096,10 +1096,10 @@ public class DoGScaleSpace
 	 *
 	 * @param responses - the DoG responses of levels 0..m-1 at the point
 	 * @param totalSigma - [level 0..m][dimension] total blur of the Gaussian levels (see totalSigmaOctave0)
-	 * @param anisotropy - voxel size per dimension relative to x (null = isotropic)
+	 * @param anisotropy - voxel size per dimension relative to the reference axis (null = isotropic)
 	 * @param kMin1Inv - the weight of the DoG, 1 / ( k - 1 )
 	 * @param bMax - the largest size tried
-	 * @return { b (in x pixels), C, relative residual sqrt( sum( ( d - C m )^2 ) / sum( d^2 ) ) }; b == 0 or b == bMax means the
+	 * @return { b (in pixels of the reference axis), C, relative residual sqrt( sum( ( d - C m )^2 ) / sum( d^2 ) ) }; b == 0 or b == bMax means the
 	 *         minimum is at an end of the range (no parabolic refinement there): b == bMax a blob larger than the range, b == 0 a
 	 *         profile that decays as fast as a point source or faster (no size information below the image blur)
 	 */
@@ -1310,6 +1310,23 @@ public class DoGScaleSpace
 	 */
 	public static ArrayList< InterestPoint > mergeDuplicates( final List< InterestPoint > points, final double[] scale, final double sigmaMin, final double combineDistance )
 	{
+		// square pixels with the same downsampling in x and y: the sigmas were scaled with the downsampling in x
+		return mergeDuplicates( points, scale, scale[ 0 ], sigmaMin, combineDistance );
+	}
+
+	/**
+	 * mergeDuplicates for points whose sigmas were scaled to full resolution with another factor than the downsampling
+	 * in x: views with unequal pixel sizes or unequal downsampling in x and y (DownsampleTools.sigmaScale).
+	 *
+	 * @param points - the detections, positions and sigmas scaled to full resolution (DownsampleTools.correctForDownsampling) or not
+	 * @param scale - full-resolution pixels per pixel of octave 0 per dimension (the diagonal of the mipmap transform), { 1, 1, 1 } for unscaled points
+	 * @param sigmaScale - the factor the sigmas were scaled with (DownsampleTools.sigmaScale), 1 for unscaled points
+	 * @param sigmaMin - the sigma of level 1 of octave 0 in pixels of the reference axis of octave 0 (ScaleSpaceParameters.sigmaMin)
+	 * @param combineDistance - in pixels of octave 0 (ScaleSpaceParameters.combineDistance)
+	 * @return the points that remain, sorted by |response| descending, ids as they were
+	 */
+	public static ArrayList< InterestPoint > mergeDuplicates( final List< InterestPoint > points, final double[] scale, final double sigmaScale, final double sigmaMin, final double combineDistance )
+	{
 		final ArrayList< InterestPoint > sorted = new ArrayList<>( points );
 		sorted.sort( ( a, b ) -> Double.compare( Math.abs( b.getResponse() ), Math.abs( a.getResponse() ) ) );
 
@@ -1331,7 +1348,7 @@ public class DoGScaleSpace
 
 			positions.add( new RealPoint( l ) );
 			values[ i ] = ip.getResponse();
-			octaves[ i ] = octaveOf( ip.getSigma() / scale[ 0 ], sigmaMin );
+			octaves[ i ] = octaveOf( ip.getSigma() / sigmaScale, sigmaMin );
 		}
 
 		final ArrayList< InterestPoint > result = new ArrayList<>();
@@ -1478,8 +1495,8 @@ public class DoGScaleSpace
 	 * The Gaussian blur that is applied to the input of an octave to obtain each level, per dimension
 	 * and level (0 = none, the input carries that much blur in that dimension already).
 	 *
-	 * @param sigma - the sigmas of the levels in x pixels (computeSigmas)
-	 * @param anisotropy - voxel size per dimension relative to x, null = isotropic in pixels
+	 * @param sigma - the sigmas of the levels in pixels of the reference axis (computeSigmas)
+	 * @param anisotropy - voxel size per dimension relative to the reference axis, null = isotropic in pixels
 	 * @param imageSigma - the blur the image carries (octave 0)
 	 * @param octave - the octave
 	 * @param n - number of dimensions

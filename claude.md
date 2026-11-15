@@ -668,6 +668,52 @@ range (min, max) and the limits of the brightness sliders (rangeMin, rangeMax) a
 - `SpimData2Tools.reduceSpimData2` carries the settings along. Test `TestDisplaySettings` (XML round trip, capture/apply on a
   `SetupAssignments` without a viewer); Stephan tried it in the explorer on 2026-11-11: works.
 
+## Unequal Pixel Sizes in X and Y (2026-11-15)
+
+Stacks whose pixels differ between x and y, e.g. voxel (1, 2, 4) or (2, 1, 4); either lateral axis can be the coarser one.
+The data model always handled it (voxel sizes per axis, the "calibration" is diag(v) / min(v) over all three axes,
+`DatasetCreationUtils.createViewRegistrations`; registration and fusion run in calibrated coordinates). What took x as the
+reference or used one number for x and y was fixed, with one convention (Stephan, 2026-11-13/14):
+
+- **Reference axis** = the finer lateral axis of the OPENED image (`DownsampleTools.referenceAxis`: voxel size x
+  downsampling per axis, x on a tie). The sigma of a detection (dialog, label strings, `ScaleSpaceParameters.sigmaMin`) is
+  in its pixels. "The axis with the highest resolution, as for z: the blur in a coarser axis starts once the scale reaches
+  it" (the 0.5 px image blur rule in `DoGImgLib2.computeSigmas` / `DoGScaleSpace` is per dimension and always was).
+- **Anisotropy vector** (`DownsampleTools.anisotropy`) = the voxel size of the opened image relative to the reference axis;
+  `anisotropyZ` is z voxel / finer lateral voxel at full resolution (`DifferenceOfGUI.calibrationAnisotropy` = z / min(x, y)).
+  The lateral ratio always comes from the calibration: no parameter, no estimation, no key in the label strings.
+- **Stored per-point sigma** = full-resolution pixels of the finer lateral axis of the view: sigma x `DownsampleTools.sigmaScale`
+  (`correctForDownsampling( ips, t, voxelSize )`; the two-argument version assumes square pixels). `DoGScaleSpace.mergeDuplicates`
+  has an overload with that factor (the octave of a stored sigma), `DetectionScale` and `PatchExtractor` use it (the cube
+  spacing is in pixels of the finer lateral axis, the pyramid level and the read floor are chosen per lateral axis).
+- **x and y may be downsampled differently** (the manual entry of the resolution, a pyramid level with different factors):
+  `DoGParameters.downsampling` (null = `downsampleXY` for both, what BigStitcher's `ICPRefinement` sets), the scale space
+  always took three factors. Recorded as `downsampleX` / `downsampleY` (label string and action history), rendered for
+  BigStitcher-Spark as `-dsx` / `-dsy` (which override `-dsxy` there).
+- **A DoG without a z anisotropy** (from code, BigStitcher-Spark's default): `DownsampleTools.anisotropyDoG`, null = isotropic
+  in pixels for equal pixels in x and y as always, otherwise { lateral ratios of the calibration, z = 1 }.
+- `TransformationTools.getAverageAnisotropyFactor` = z / min(x, y) (it was z / mean(x, y): 2.67 instead of 4 for (1, 2, 4));
+  `getAverageVoxelRatios` gives all three for the splitting (`SplitOctTree` dialog). `DisplayImage.setCalibration` sets pixel
+  width and height separately. Fusion output stays isotropic in xy (no "preserve xy anisotropy", Stephan).
+
+**Nothing changes for equal pixel sizes and equal downsampling in x and y**: the formulas are written so that they give the
+same doubles as before (ratios as their own quotient, exactly 1 then; `TestXYAnisotropy.testNothingChangesForEqualXY`), and
+the whole suite passed with unchanged expected values.
+
+Not changed, deliberately: the importers with one xy value (SmartSPIM, MicroManager metadata), content-based fusion weights and
+FRC (pixel units, as for z), the pyramid proposal, a "replace the calibration, keep the registrations" action (Stephan: not
+needed). Limits: labels detected on such data before 2026-11-15 carry no marker (when x was the coarser axis their sigma
+referred to x); a DoG without a z anisotropy on data whose x and y voxel sizes differ by metadata noise now applies that
+ratio; previews (`HelperFunctions.drawRealLocalizable` ellipses, `InteractiveScaleSpace`, the grouped preview,
+`InteractiveAnisotropy` showing the calibrated plane) are not covered by tests; pcmatch must mirror `PatchExtractor` before it
+embeds such data (identical for equal pixel sizes); validated on synthetic data only.
+
+Fixture: `SimulateUtil.setUpRoundBeads()` (beads of sigma 2) and `SimulateUtil.subsampled( data, axis, factor )` (a test image
+loader that subsamples x or y, voxel size and calibration to match: its calibrated coordinates are the pixels of the full
+dataset). `TestXYAnisotropy`: before any change the y-coarse dataset already detected, registered and fused like the full one
+(98-100% of the detections within 1 px, fused images correlate at 0.996); the x-coarse one did not (157 of 171 detections,
+85% found again) and does now (170, 98-100%, 0.998). `TestInterestPointEmbedding.unequalPixelSizesInXAndY`.
+
 ## N5 / Zarr Export
 
 ### Two Workflows
