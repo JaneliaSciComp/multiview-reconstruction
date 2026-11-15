@@ -50,10 +50,13 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 /**
  * Computes the embeddings of the interest points of a view and stores them as the per-point array of the label (what
  * {@code pcmatch embed} does, now in Java): all points of the (base) label, sampled by a {@link PatchExtractor} and run
- * through an {@link EmbeddingModel} block by block, one row per point, written by {@link InterestPointArrays#writeSetup} under
- * the base label with pcmatch's meta ({@code model.fingerprint}, {@code model.config}, {@code model.file}, the writer and
- * date). The array then satisfies the matcher's rule of one row per point of the base label, for the filtered labels of
- * the base as well. The GUI ("Compute Interest Point Embeddings") and BigStitcher-Spark ({@code embed-interestpoints}) share this code: the
+ * through an {@link EmbeddingModel} block by block, one row per point, stored under the base label with pcmatch's meta
+ * ({@code model.fingerprint}, {@code model.config}, {@code model.file}, the writer and date). The array then satisfies
+ * the matcher's rule of one row per point of the base label, for the filtered labels of the base as well. The rows of all
+ * views of an array are one table in the store, written by the save of the dataset like the points
+ * ({@link InterestPointArrays#commit}): the explorer keeps the rows in memory until then ({@link #stageArray},
+ * {@link #stage}), a task of BigStitcher-Spark writes its view's rows as a staging file ({@link #prepareArray} on the
+ * driver, {@link #write}) that the driver's save moves into the table. The GUI ("Compute Interest Point Embeddings") and BigStitcher-Spark ({@code embed-interestpoints}) share this code: the
  * GUI runs the blocks of several views on one pool ({@link #embedViews}), a Spark task embeds its one view ({@link #embedView}).
  *
  * @author Stephan Preibisch
@@ -416,7 +419,10 @@ public class InterestPointEmbedding
 	}
 
 	/**
-	 * Writes the rows of a view into the (prepared) array of its base label, replacing the setup's rows.
+	 * Writes the rows of a view for the (prepared) array of its base label, replacing the setup's rows: as a staging file
+	 * of the store, readable at once, which the next save of the dataset moves into the array's table
+	 * ({@link InterestPointArrays#writeSetup}, {@link InterestPointArrays#commit}). For a writer that does not save the
+	 * dataset itself, one task of BigStitcher-Spark per view.
 	 *
 	 * @param baseDir the dataset directory
 	 * @param name the array
@@ -425,5 +431,39 @@ public class InterestPointEmbedding
 	public static void write( final URI baseDir, final String name, final Result result )
 	{
 		InterestPointArrays.writeSetup( baseDir, result.baseLabel(), result.view().getTimePointId(), name, result.view().getViewSetupId(), result.ids(), result.values(), result.columns() );
+	}
+
+	/**
+	 * {@link #prepareArray} in memory, for a dataset that is saved by this JVM (the explorer, the plugin): the array is
+	 * defined for all readers of this JVM and written when the dataset is saved ({@link InterestPointArrays#stageArray}),
+	 * as its rows are ({@link #stage}); the store need not exist. An array of the same model and width is kept, one of
+	 * another model or width is replaced as a whole (with the save).
+	 *
+	 * @return whether nothing was held in memory for the array before (see {@link InterestPointArrays#stageArray})
+	 */
+	public static boolean stageArray( final URI baseDir, final String baseLabel, final int timepoint, final String name, final EmbeddingModel.Contract contract, final String writer )
+	{
+		final InterestPointArrays.Attributes existing = InterestPointArrays.attributes( baseDir, baseLabel, timepoint, name );
+		final boolean replace = existing != null && !( existing.columns() == contract.outputs() && contract.fingerprint().equals( existing.fingerprint() ) );
+
+		if ( replace )
+			IOFunctions.println( "The array '" + name + "' of label '" + baseLabel + "', tpId=" + timepoint + " holds the rows of another model (fingerprint " + existing.fingerprint() + ", " + existing.columns() + " columns) and is replaced as a whole: rows of two models cannot be matched against each other." );
+		else if ( existing != null )
+			IOFunctions.println( "The array '" + name + "' of label '" + baseLabel + "', tpId=" + timepoint + " exists for this model (fingerprint " + contract.fingerprint() + "); the rows of the embedded views are replaced." );
+
+		return InterestPointArrays.stageArray( baseDir, baseLabel, timepoint, name, contract.outputs(), meta( contract, writer ), replace );
+	}
+
+	/**
+	 * Keeps the rows of a view in memory, in the array of its base label ({@link #stageArray}), replacing the rows of the
+	 * view; they are written when the dataset is saved.
+	 *
+	 * @param baseDir the dataset directory
+	 * @param name the array
+	 * @param result the rows
+	 */
+	public static void stage( final URI baseDir, final String name, final Result result )
+	{
+		InterestPointArrays.stageSetup( baseDir, result.baseLabel(), result.view().getTimePointId(), name, result.view().getViewSetupId(), result.ids(), result.values(), result.columns() );
 	}
 }

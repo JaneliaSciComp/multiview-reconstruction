@@ -37,6 +37,7 @@ import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -66,7 +67,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.Ba
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionRecord;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.EmbedInterestPointsPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointTableModel;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.Attributes;
@@ -511,26 +512,23 @@ public class TestInterestPointEmbedding
 		}
 	}
 
+	/**
+	 * The embeddings are held in memory like the interest points and written when the dataset is saved (Stephan, 2026-11-14):
+	 * detections that are not saved yet can be embedded, every reader of this JVM has the vectors at once, the store gets
+	 * them with the save, and a detection that replaces a label drops its embeddings, in the store with the next save.
+	 */
 	@Test
-	public void savesBeforeEmbedding() throws Exception
+	public void embeddingsAreSavedWithTheDataset() throws Exception
 	{
-		// the explorer's sequence without the GUI (EmbedInterestPointsPopup): detections that are not saved yet have no store to
-		// hold their arrays, so the dataset is saved first, then the embedding runs
 		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
 		final SpimData2 data = unsavedBeads( xml );
 		final List< ViewId > views = viewsWith( data, LABEL );
+		assertTrue( views.size() >= 2 );
+		final URI baseDir = data.getBasePathURI();
+		final int tp = views.get( 0 ).getTimePointId();
+		final File array = new File( new File( baseDir ), InterestPointsZarrStore.ZARR_CONTAINER + "/" + LABEL + "/tp" + tp + "/" + InterestPointArrays.ARRAYS + "/embedding" );
 		final Path onnx = tempDir.resolve( "tiny.onnx" );
 		TestOnnxModels.write( onnx, new double[] { 3, 6 }, 4, 3, 5, 21 );
-
-		assertFalse( InterestPointsZarrStore.get( data.getBasePathURI() ).exists() );
-		assertTrue( EmbedInterestPointsPopup.hasUnsavedInterestPoints( data, views ) );
-		final IllegalStateException e = assertThrows( IllegalStateException.class, () -> Embed_Interest_Points.embed( data, views, LABEL, onnx, "embedding", 50 ) );
-		assertTrue( e.getMessage().contains( "save the dataset first" ), e.getMessage() );
-
-		// what the explorer does before the embedding
-		new XmlIoSpimData2().save( data, xml.toURI() );
-		assertFalse( EmbedInterestPointsPopup.hasUnsavedInterestPoints( data, views ) );
-		assertTrue( InterestPointsZarrStore.get( data.getBasePathURI() ).exists() );
 
 		final Embed_Interest_Points.Parameters p = new Embed_Interest_Points.Parameters();
 		p.label = LABEL;
@@ -538,14 +536,92 @@ public class TestInterestPointEmbedding
 		p.arrayName = "embedding";
 		p.blockSize = 50;
 		p.viewsInFlight = 2;
-		assertTrue( Embed_Interest_Points.embed( data, views, p ) );
 
+		// detections that are not saved yet: there is no store, the embedding runs on them and writes nothing
+		assertFalse( InterestPointsZarrStore.get( baseDir ).exists() );
+		assertFalse( InterestPointArrays.hasStaged( baseDir ) );
+		assertTrue( Embed_Interest_Points.embed( data, views, p ) );
+		assertFalse( InterestPointsZarrStore.get( baseDir ).exists() );
+		assertTrue( InterestPointArrays.hasStaged( baseDir ) );
+
+		// every reader has them: the matcher's vectors, the explorer's column, the registration dialog
+		final HashMap< ViewId, float[] > inMemory = new HashMap<>();
 		for ( final ViewId v : views )
 		{
 			final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( v );
 			final Vectors vectors = InterestPointArrays.vectors( lists, LABEL, "embedding" );
 			assertEquals( lists.getInterestPointList( LABEL ).getInterestPointsCopy().size(), vectors.size() + vectors.missing() );
+			inMemory.put( v, vectors.values() );
 		}
+		assertEquals( 1, InterestPointArrays.list( baseDir, LABEL, tp ).size() );
+		assertEquals( views.size(), InterestPointArrays.rows( baseDir, InterestPointArrays.attributes( baseDir, LABEL, tp, "embedding" ) ).size() );
+		assertEquals( Set.of( "embedding" ), InterestPointArrays.namesByLabel( data.getViewInterestPoints(), views ).get( LABEL ) );
+		assertTrue( InterestPointTableModel.computeAttributes( data.getViewInterestPoints(), views, LABEL ).text.endsWith( "+ embedding 5-D" ) );
+
+		// the save writes the points and their embeddings: one table for all views (one generation), no tables per view
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( InterestPointArrays.hasStaged( baseDir ) );
+		for ( final ViewId v : views )
+		{
+			assertTrue( stored( baseDir, tp, v ) );
+			assertFalse( new File( array, InterestPointArrays.SETUP_PREFIX + v.getViewSetupId() ).exists() );
+		}
+		assertEquals( 1, array.list( ( dir, name ) -> name.matches( "g\\d+" ) ).length );
+
+		final SpimData2 loaded = new XmlIoSpimData2().load( xml.toURI() );
+		for ( final ViewId v : views )
+			assertArrayEquals( inMemory.get( v ), InterestPointArrays.vectors( loaded.getViewInterestPoints().getViewInterestPointLists( v ), LABEL, "embedding" ).values() );
+
+		// a detection replaces the label of the first view: its embedding is gone for the readers at once ...
+		final ViewId first = views.get( 0 ), second = views.get( 1 );
+		final String parameters = data.getViewInterestPoints().getViewInterestPointLists( first ).getInterestPointList( LABEL ).getParameters();
+		final HashMap< ViewId, List< InterestPoint > > redetected = new HashMap<>();
+		redetected.put( first, TestInterestPointStorage.points( 7, 1 ) );
+		InterestPointTools.removeReferences( data, LABEL, Collections.singletonList( first ) );
+		InterestPointTools.addInterestPoints( data, LABEL, redetected, parameters );
+
+		assertNull( InterestPointArrays.read( baseDir, LABEL, tp, first.getViewSetupId(), "embedding" ) );
+		assertEquals( views.size() - 1, InterestPointArrays.rows( baseDir, InterestPointArrays.attributes( baseDir, LABEL, tp, "embedding" ) ).size() );
+		assertThrows( IllegalStateException.class, () -> InterestPointArrays.vectors( data.getViewInterestPoints().getViewInterestPointLists( first ), LABEL, "embedding" ) );
+		assertTrue( InterestPointTableModel.computeAttributes( data.getViewInterestPoints(), views, LABEL ).text.endsWith( "(" + ( views.size() - 1 ) + "/" + views.size() + " views)" ) );
+
+		// ... and in the store with the save; the other views keep theirs
+		assertTrue( stored( baseDir, tp, first ) );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( stored( baseDir, tp, first ) );
+		assertTrue( stored( baseDir, tp, second ) );
+
+		// the new points embedded and saved: one row per new point
+		assertTrue( Embed_Interest_Points.embed( data, Collections.singletonList( first ), p ) );
+		assertEquals( 7, InterestPointArrays.read( baseDir, LABEL, tp, first.getViewSetupId(), "embedding" ).size() );
+		assertFalse( stored( baseDir, tp, first ) );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertTrue( stored( baseDir, tp, first ) );
+		assertEquals( 7, InterestPointArrays.read( baseDir, LABEL, tp, first.getViewSetupId(), "embedding" ).size() );
+
+		// embedded, then detected again before the save: nothing of the old points reaches the store
+		assertTrue( Embed_Interest_Points.embed( data, Collections.singletonList( second ), p ) );
+		redetected.clear();
+		redetected.put( second, TestInterestPointStorage.points( 9, 2 ) );
+		InterestPointTools.removeReferences( data, LABEL, Collections.singletonList( second ) );
+		InterestPointTools.addInterestPoints( data, LABEL, redetected, parameters );
+		assertNull( InterestPointArrays.read( baseDir, LABEL, tp, second.getViewSetupId(), "embedding" ) );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( stored( baseDir, tp, second ) );
+
+		// all views detected again: the array goes as a whole
+		InterestPointTools.removeReferences( data, LABEL, views );
+		assertTrue( InterestPointArrays.list( baseDir, LABEL, tp ).isEmpty() || InterestPointArrays.rows( baseDir, InterestPointArrays.attributes( baseDir, LABEL, tp, "embedding" ) ).isEmpty() );
+		assertTrue( array.isDirectory() );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( array.exists() );
+		assertTrue( InterestPointArrays.list( baseDir, LABEL, tp ).isEmpty() );
+	}
+
+	/** @return whether the store holds rows of the array "embedding" for a view (whatever this JVM holds for the next save) */
+	static boolean stored( final URI baseDir, final int tp, final ViewId view )
+	{
+		return InterestPointArrays.rowsInStore( baseDir, LABEL, tp, "embedding" ).containsKey( view.getViewSetupId() );
 	}
 
 	/** the simulated beads with a DoG label whose parameters string the embedding can read, saved so that the store exists */

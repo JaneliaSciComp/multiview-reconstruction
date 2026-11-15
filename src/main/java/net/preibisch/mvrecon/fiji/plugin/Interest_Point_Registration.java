@@ -82,6 +82,8 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.statistics.Ti
 import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.ExplorerWindow;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.MissingInterestPointsDialog;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
@@ -120,6 +122,12 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 public class Interest_Point_Registration implements PlugIn
 {
 	public static ArrayList< PairwiseGUI > staticPairwiseAlgorithms = new ArrayList< PairwiseGUI >();
+
+	/**
+	 * the explorer a registration was started from, set by its menu entry for the time of the call (null: the plugin, a
+	 * macro): where the user is asked what to do about interest points the dataset lists without data
+	 */
+	public static ExplorerWindow< ? > currentPanel = null;
 
 	static
 	{
@@ -223,6 +231,15 @@ public class Interest_Point_Registration implements PlugIn
 		else
 			for ( int i = 0; i < removed.size(); ++i )
 				IOFunctions.println( "Removed view " + Group.pvid( removed.get( i ) ) + " as the label '" + brp.labelMap.get( removed.get( i ) ) + "' was not present." );
+
+		// interest points the dataset lists without data (an XML that outlived its interestpoints.zarr / .n5): every read of them
+		// would throw, so the registration stops here and the explorer asks whether to remove them or to detect them again
+		final HashSet< String > labelsToRead = new HashSet<>();
+		for ( final ViewId viewId : viewIds )
+			labelsToRead.addAll( brp.labelMap.get( viewId ).keySet() );
+
+		if ( !MissingInterestPointsDialog.check( data, viewIds, labelsToRead, currentPanel, "the registration" ) )
+			return false;
 
 		// query advanced parameters including global optimization now
 		final AdvancedRegistrationParameters arp = advancedRegistrationParameters( brp, timepointToProcess, data, viewIds );

@@ -356,13 +356,29 @@ public class InterestPointsZarrStore
 	// container
 	// ------------------------------------------------------------------------------------------------
 
-	private String path( final String... parts )
+	String path( final String... parts )
 	{
 		return kva.compose( containerURI, parts );
 	}
 
 	/** @return true if the container exists (its root zarr.json) */
 	public boolean exists() { return kva.exists( path( "zarr.json" ) ); }
+
+	/** Creates the container if it does not exist yet (as the first commit of points does), for per-point arrays of a dataset whose points are all still in the N5 layout. */
+	public void ensureContainer() { writer(); }
+
+	/**
+	 * the per-point arrays (embeddings) this JVM changed and has not written yet: rows computed in the explorer and the
+	 * removal of rows whose points were replaced or removed stay in memory until the dataset is saved, as the points do
+	 * ({@link InterestPointArrays#commit}, called by the save of the dataset, not by {@link #commit()})
+	 */
+	final StagedInterestPointArrays stagedArrays = new StagedInterestPointArrays();
+
+	/** the per-point arrays as the container holds them: their tables, the rows written directly since, their commit */
+	final InterestPointArraysOnDisk arraysOnDisk = new InterestPointArraysOnDisk( this );
+
+	/** @return the access to the files of the container (and of its staging directory) */
+	KeyValueAccess kva() { return kva; }
 
 	/** @return a reader of the container, or null if there is no container yet; the writer serves as the reader once it exists */
 	private synchronized N5Reader reader()
@@ -405,7 +421,7 @@ public class InterestPointsZarrStore
 	}
 
 	/** The attributes of a group read from its zarr.json, bypassing the caches of the readers, or null if there is no such group. */
-	private JsonObject readAttributes( final String groupPath )
+	JsonObject readAttributes( final String groupPath )
 	{
 		final String json = path( groupPath, "zarr.json" );
 		if ( !kva.exists( json ) )
@@ -866,7 +882,7 @@ public class InterestPointsZarrStore
 	}
 
 	/** Opens a staging file for reading; closing the stream also releases the underlying data. */
-	private DataInputStream openStagingFile( final String name ) throws IOException
+	DataInputStream openStagingFile( final String name ) throws IOException
 	{
 		final VolatileReadData data = kva.createReadData( path( STAGING, name ) );
 		return new DataInputStream( new BufferedInputStream( data.inputStream() ) )
@@ -894,7 +910,7 @@ public class InterestPointsZarrStore
 		return in;
 	}
 
-	private static boolean isMissingFile( final Throwable error )
+	static boolean isMissingFile( final Throwable error )
 	{
 		for ( Throwable cause = error; cause != null; cause = cause.getCause() )
 			if ( cause instanceof java.nio.file.NoSuchFileException || cause instanceof N5Exception.N5NoSuchKeyException )
@@ -1366,7 +1382,7 @@ public class InterestPointsZarrStore
 		}
 	}
 
-	/** Removes the points and correspondences of an entry at the next commit. */
+	/** Removes the points and correspondences of an entry at the next commit, and with the next save of the dataset its rows in the arrays of its group (they describe points that are gone). */
 	public void remove( final Key key )
 	{
 		synchronized ( lock )
@@ -1375,6 +1391,8 @@ public class InterestPointsZarrStore
 			stagedCorrs.remove( key );
 			removed.add( key );
 		}
+
+		stagedArrays.removeRows( key.group(), Collections.singleton( key.setup() ) );
 	}
 
 	/**
@@ -1817,7 +1835,7 @@ public class InterestPointsZarrStore
 			parallel( "deleting staging files", body );
 	}
 
-	private static void removeIfExists( final N5Writer zarr, final String path )
+	static void removeIfExists( final N5Writer zarr, final String path )
 	{
 		if ( zarr.exists( path ) )
 			zarr.remove( path );
@@ -1841,7 +1859,7 @@ public class InterestPointsZarrStore
 		}
 	}
 
-	private static int roundUp( final int value, final int multiple ) { return ( ( value + multiple - 1 ) / multiple ) * multiple; }
+	static int roundUp( final int value, final int multiple ) { return ( ( value + multiple - 1 ) / multiple ) * multiple; }
 
 	// ------------------------------------------------------------------------------------------------
 	// Zarr v3 arrays
@@ -1870,7 +1888,7 @@ public class InterestPointsZarrStore
 	 * collected per shard and written when the shard is complete (or at {@link #finish()}), so that at most one shard
 	 * of chunk buffers is in memory.
 	 */
-	private static final class ArrayWriter
+	static final class ArrayWriter
 	{
 		private final N5Writer zarr;
 		private final String dataset;
@@ -1959,7 +1977,7 @@ public class InterestPointsZarrStore
 	}
 
 	/** Writes a small unsharded index table [columns, rows] as one chunk. */
-	private static void writeLongs( final N5Writer zarr, final String dataset, final int columns, final long[] values )
+	static void writeLongs( final N5Writer zarr, final String dataset, final int columns, final long[] values )
 	{
 		final int rows = values.length / columns;
 		final DatasetAttributes attributes = rawChecksummed( columns, rows, DataType.INT64, Math.max( 1, rows ) ).build();
@@ -1969,7 +1987,7 @@ public class InterestPointsZarrStore
 			zarr.writeBlock( dataset, attributes, new LongArrayDataBlock( new int[] { columns, rows }, new long[] { 0, 0 }, values ) );
 	}
 
-	private static long[] readLongs( final N5Reader zarr, final String dataset, final int columns )
+	static long[] readLongs( final N5Reader zarr, final String dataset, final int columns )
 	{
 		final DatasetAttributes attributes = zarr.getDatasetAttributes( dataset );
 		final long rows = attributes.getDimensions()[ 1 ];

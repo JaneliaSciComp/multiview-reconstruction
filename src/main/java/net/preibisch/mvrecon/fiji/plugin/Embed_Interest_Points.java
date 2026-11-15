@@ -29,10 +29,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.SortedMap;
 import java.util.concurrent.ExecutorService;
 
 import ij.gui.GenericDialog;
@@ -46,6 +48,8 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.Attributes;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.MissingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointembedding.EmbeddingModel;
@@ -55,8 +59,10 @@ import net.preibisch.mvrecon.process.interestpointembedding.ModelHub.HubModel;
 
 /**
  * Computes the embeddings of a label's interest points with a model (pcmatch's ONNX export, run by the Java evaluator)
- * and stores them as the per-point array of the label in {@code interestpoints.zarr}, what {@code pcmatch embed} does:
- * one unit vector per point of the (base) label, which "Embeddings" of "Register using Interest Points" matches on. The blocks of
+ * as the per-point array of the label, what {@code pcmatch embed} does: one unit vector per point of the (base) label,
+ * which "Embeddings" of "Register using Interest Points" matches on. The vectors are kept in memory like the interest
+ * points and written into {@code interestpoints.zarr} when the dataset is saved ({@link InterestPointArrays#stageArray};
+ * Stephan, 2026-11-14), so unsaved detections can be embedded and the registration can use the vectors right away. The blocks of
  * all selected views run on one pool of {@link Threads#numThreads()} threads, {@code defaultViewsInFlight} views at a time
  * ({@link InterestPointEmbedding#embedViews}). Three entries ({@link Source}): "Translation invariant (Hugging Face)" lists the
  * translation-invariant models of the hub ({@link ModelHub}: the repositories of the known namespaces tagged {@code bigstitcher}
@@ -66,9 +72,8 @@ import net.preibisch.mvrecon.process.interestpointembedding.ModelHub.HubModel;
  * {@code rotation-invariant} by default; for views rotated or mirrored against each other, the cubes are sampled as for the
  * translation-invariant models), "Local model" takes a
  * file (array {@code local-embedding} by default). Reachable from the ViewSetup Explorer ("Compute Interest Point Embeddings", below
- * "Detect Interest Points"; its entries save the dataset first, EmbedInterestPointsPopup: the arrays live in the store next to the
- * points and fresh detections are only in memory until saved) and as plugins; BigStitcher-Spark's {@code embed-interestpoints} does
- * the same per view on the cluster
+ * "Detect Interest Points"; nothing is written until its "Save") and as plugins (which save the dataset when they are done);
+ * BigStitcher-Spark's {@code embed-interestpoints} does the same per view on the cluster and writes each view's rows directly
  * ({@link InterestPointEmbedding}).
  *
  * @author Stephan Preibisch
@@ -165,7 +170,7 @@ public class Embed_Interest_Points implements PlugIn
 		return embed( data, viewIds, p );
 	}
 
-	/** {@link #getParameters(SpimData2, List, Source, boolean)} without the note that the dataset is saved first (the plugin, which has just loaded the XML) */
+	/** {@link #getParameters(SpimData2, List, Source, boolean)} for a caller that saves the dataset itself when the embedding is done (the plugin) */
 	public static Parameters getParameters( final SpimData2 data, final List< ViewId > viewIds, final Source source )
 	{
 		return getParameters( data, viewIds, source, false );
@@ -178,11 +183,11 @@ public class Embed_Interest_Points implements PlugIn
 	 * @param data the dataset
 	 * @param viewIds the views (present ones)
 	 * @param source the entry: the hub's models of one kind, or a local file
-	 * @param savesFirst whether the caller saves the dataset before the embedding (the ViewSetup Explorer: fresh detections are only
-	 *        in memory until saved, and the arrays live in the store next to the points), which the dialog then says
+	 * @param savedByUser whether the vectors stay in memory until the user saves the dataset (the ViewSetup Explorer), which
+	 *        the dialog then says; false for a caller that saves when the embedding is done (the plugin)
 	 * @return the parameters, or null if the dialog was cancelled or there is nothing to embed (logged)
 	 */
-	public static Parameters getParameters( final SpimData2 data, final List< ViewId > viewIds, final Source source, final boolean savesFirst )
+	public static Parameters getParameters( final SpimData2 data, final List< ViewId > viewIds, final Source source, final boolean savedByUser )
 	{
 		final String[] labels = InterestPointTools.getAllInterestPointLabels( data, viewIds );
 
@@ -239,11 +244,13 @@ public class Embed_Interest_Points implements PlugIn
 		gd.addNumericField( "Points_per_block", defaultBlockSize, 0 );
 		gd.addNumericField( "Views_in_parallel", defaultViewsInFlight, 0 );
 		gd.addMessage(
-				( savesFirst ? "The dataset is saved first (XML and interest points, as the 'Save' button does): the vectors are stored next to the saved points.\n" : "" )
-				+ ( available != null
+				( available != null
 						? "Computes one vector per interest point with a " + source.tag + " model of the Hugging Face Hub (downloaded once into\n" + ModelHub.defaultCacheDir() + " and pinned to its commit)"
 						: "Computes one vector per interest point with a local model (pcmatch's 'export-onnx' file with its '.onnx.json' sidecar next to it)" )
-				+ " and stores the vectors with the points\n(interestpoints.zarr, <label>/tp<T>/arrays/<array name>); 'Embedding Cosine Similarity' of 'Register using Interest Points' matches on them.\n"
+				+ " and keeps the vectors with the points;\n'Embedding Cosine Similarity' of 'Register using Interest Points' matches on them.\n"
+				+ ( savedByUser
+						? "Nothing is written yet: like the interest points, the vectors are in memory until the dataset is saved ('Save'), then stored in\ninterestpoints.zarr (<label>/tp<T>/arrays/<array name>).\n"
+						: "They are stored in interestpoints.zarr (<label>/tp<T>/arrays/<array name>) when the dataset is saved, which happens when the embedding is done.\n" )
 				+ ( source.hint != null ? source.hint + "\n" : "" )
 				+ "A filtered label is embedded through its base label (all its points). An array of another model under the same name is replaced.\n"
 				+ "The blocks of 'Views in parallel' views share the " + Threads.numThreads() + " threads; the points and the opened images of that many views are\n"
@@ -376,10 +383,25 @@ public class Embed_Interest_Points implements PlugIn
 	 * @param arrayName the array the rows go to
 	 * @param blockSize points per inference call
 	 * @param viewsInFlight views whose blocks are in the pool at a time (their points and opened images are in memory at once)
-	 * @return whether rows were written
+	 * @return whether rows were computed (they are in memory and written when the dataset is saved); false also if the dataset
+	 *         lists the label without data for a view ({@link MissingInterestPoints}), which the log reports
+	 * @throws RuntimeException if a view cannot be embedded (e.g. a label without detection parameters); an array that got no rows is not left behind
 	 */
 	public static boolean embed( final SpimData2 data, final List< ViewId > viewIds, final String label, final String modelSpec, final String arrayName, final int blockSize, final int viewsInFlight )
 	{
+		// interest points the dataset lists without data cannot be embedded (the explorer asks what to do about them before it gets here)
+		final SortedMap< String, List< ViewId > > missing =
+				MissingInterestPoints.find( data.getViewInterestPoints(), InterestPointTools.viewsWithLabel( data, label, viewIds ), Collections.singletonList( label ) );
+
+		if ( !missing.isEmpty() )
+		{
+			for ( final String line : MissingInterestPoints.describe( data.getViewInterestPoints(), missing ) )
+				IOFunctions.println( line );
+
+			IOFunctions.println( "Nothing was embedded: remove these interest points from the dataset or detect them again (the Interest Point Explorer offers both)." );
+			return false;
+		}
+
 		final EmbeddingModel model;
 		final ModelHub.Local local;
 		try
@@ -405,13 +427,29 @@ public class Embed_Interest_Points implements PlugIn
 
 		// the arrays of the (base label, timepoint) groups the views belong to, once each
 		final HashSet< String > prepared = new HashSet<>();
+		final ArrayList< Runnable > removeIfEmpty = new ArrayList<>();
 		for ( final ViewId view : views )
 		{
 			final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( view );
 			final String base = InterestPointArrays.baseLabel( lists, label );
 			final URI baseDir = lists.getInterestPointList( base ).getBasePath();
-			if ( prepared.add( baseDir + "|" + base + "|" + view.getTimePointId() ) )
-				InterestPointEmbedding.prepareArray( baseDir, base, view.getTimePointId(), arrayName, model.contract(), WRITER );
+			final int timepoint = view.getTimePointId();
+			if ( prepared.add( baseDir + "|" + base + "|" + timepoint ) )
+			{
+				// in memory, as the rows below: written when the dataset is saved
+				final boolean fresh = InterestPointEmbedding.stageArray( baseDir, base, timepoint, arrayName, model.contract(), WRITER );
+				removeIfEmpty.add( () ->
+				{
+					// what this call defined is taken back (an array of another model that it was to replace stays) ...
+					if ( fresh )
+						InterestPointArrays.forgetStaged( baseDir, base, timepoint, arrayName );
+
+					// ... and an array without rows (left in the store by an earlier version) goes with the next save
+					final Attributes array = InterestPointArrays.attributes( baseDir, base, timepoint, arrayName );
+					if ( array != null && InterestPointArrays.rows( baseDir, array ).isEmpty() )
+						InterestPointArrays.stageRemove( baseDir, base, timepoint, arrayName );
+				} );
+			}
 		}
 
 		final ExecutorService service = Threads.createFixedExecutorService();
@@ -420,14 +458,31 @@ public class Embed_Interest_Points implements PlugIn
 		try
 		{
 			points = InterestPointEmbedding.embedViews( data, views, label, model, blockSize, service, viewsInFlight, result ->
-					InterestPointEmbedding.write( data.getViewInterestPoints().getViewInterestPointLists( result.view() ).getInterestPointList( result.baseLabel() ).getBasePath(), arrayName, result ) );
+					InterestPointEmbedding.stage( data.getViewInterestPoints().getViewInterestPointLists( result.view() ).getInterestPointList( result.baseLabel() ).getBasePath(), arrayName, result ) );
+		}
+		catch ( final RuntimeException e )
+		{
+			// an array that got no rows is not left behind: it would be listed as an embedding of the label
+			for ( final Runnable remove : removeIfEmpty )
+			{
+				try
+				{
+					remove.run();
+				}
+				catch ( final RuntimeException e2 )
+				{
+					IOFunctions.println( "Could not take back the empty array '" + arrayName + "': " + e2 );
+				}
+			}
+
+			throw e;
 		}
 		finally
 		{
 			service.shutdown();
 		}
 
-		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Embedded " + points + " points of " + views.size() + " view(s), label '" + label + "', as array '" + arrayName + "' with " + Threads.numThreads() + " threads, " + viewsInFlight + " view(s) in parallel, in " + ( ( System.currentTimeMillis() - t ) / 1000 ) + " s." );
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Embedded " + points + " points of " + views.size() + " view(s), label '" + label + "', as array '" + arrayName + "' with " + Threads.numThreads() + " threads, " + viewsInFlight + " view(s) in parallel, in " + ( ( System.currentTimeMillis() - t ) / 1000 ) + " s. The vectors are in memory and are written when the dataset is saved." );
 
 		final LinkedHashMap< String, String > params = ActionHistoryRecorder.params();
 		ActionHistoryRecorder.put( params, "label", label );

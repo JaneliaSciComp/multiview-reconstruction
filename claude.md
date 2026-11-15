@@ -100,6 +100,7 @@ interestpoints.zarr/zarr.json            root: interestpoints = "2.0.0"
 <label>/tp<T>/gK/entries  INT64   [6, E]  setup, kind (0 plain, 1 filtered), points offset, count, corr offset, count
 <label>/tp<T>/gK/partners INT64   [6, P]  setup, partner tp, setup, label id (attr partnerLabels), offset, count
 staging/<millis>_<nanos>_<rnd>.stage     one per Spark task, folded in by the next commit
+<label>/tp<T>/arrays/<name>/gK/...       the embeddings of the label, one table per array for all setups (see below)
 ```
 Sharded arrays, raw + crc32c, 65,536 rows per inner chunk, 1,048,576 per shard (statics `defaultChunkRows/defaultShardRows`,
 a group keeps its grid). Zarr order reverses the dimensions (`[6, N]` appears as shape `[N, 6]`). Positions are float32 (local
@@ -138,16 +139,127 @@ with data in neither the store nor the N5 throws; a plain list stored under a fi
 throws. Decoded chunks are cached per store, bounded by `chunkCacheBytes` (256 MB, `-Dmvr.interestpoints.cacheBytes=0` = off);
 it matters on Spark executors whose tasks re-create their lists, not in Fiji.
 
+**Interest points the XML lists without data (`MissingInterestPoints`, 2026-11-14).** An XML that outlived its containers, or the
+entries of some views (Stephan's `SparkTest/IP`: `beads` in all 7 views, no `interestpoints.n5`, no generation in the store):
+every read throws ("No ... are stored for ... although the XML lists the label"). Stephan: it must not crash, but offer to remove
+the detections from the XML or to detect them again with the recorded parameters preset.
+- Found without reading: `InterestPointsZarr.withoutData( lists )` (nothing in memory, then one `missingEntries` per store, and
+  only for the keys it lacks `InterestPointsN5ToZarr.contains` / `InterestPointsTextFiles.exists`); `MissingInterestPoints.find(
+  vip, views, labels )` gives label → views (a filtered label is looked at with the labels it filters), `describe` the log lines,
+  `remove( data, entries )` takes them out of the dataset in memory: the label, its filtered labels, the correspondences of ALL
+  other lists that point to them (`CorrespondenceTools.removeCorrespondencesTo`: the entry's own correspondences are gone, so the
+  other lists are looked at, through `getCorrespondingViews()` = the store's partner index, no read unless they point there; a
+  re-detection gives new ids, so stale references would name other points), and the history of a label that is gone everywhere.
+  `removeCorrespondencesForViewLabel` falls back to that for an entry without data, so the explorer's Delete and a detection that
+  overwrites the label (`removeReferences`) work on it too. Nothing is written until the XML is saved.
+- GUI: `explorer.interestpoint.MissingInterestPointsDialog`: `check( data, views, labels, panel, operation )` logs and returns
+  false if something is missing, and with an explorer panel, a display and no macro asks per label (`offer`): "Re-detect ..."
+  (`StoredDetectionParameters.preset` + `DetectInterestPointsPopup.detect`, only if the recorded string is a detection),
+  "Remove from XML", "Not now". Callers: the Interest Point Explorer (its table is painted from `getValueAt`, where the unguarded
+  counts of `#Corresponding`/`#Correspondences` threw on the EDT: all counts go through `count( label, supplier )`, a failed
+  label is not read again until the selection or the data changes, its cells read "missing" / "no data stored", the panel asks
+  once per label via `invokeLater`, right-click "Fix missing interest points ..." asks again), `EmbedInterestPointsPopup` (before
+  the save), `Interest_Point_Registration.register` (after the basic dialog; `currentPanel` is set by `RegisterInterestPointsPopup`
+  as `Interest_Point_Detection.currentPanel`; plugin and macro: log only). "Re-detect interest points with attributes" lists such
+  a label as "(no points stored)".
+- `Embed_Interest_Points.embed` returns false for a label without data, and an embedding that fails (e.g. a label without detection
+  parameters) removes the array it created if it got no rows; `InterestPointArrays.namesByLabel` names only arrays with rows (the
+  two failed attempts of 2026-11-14 left empty `rotation-invariant` arrays that counted as "[1 embedding]"), and the Interest Point
+  Explorer's `withArrays` skips them as well (it had shown `thinned-out` with "embedding 'rotation-invariant' 64-D (0/7 views)" while
+  the registration dialog showed no embeddings, Stephan 2026-11-14: one rule for both, an array without rows is no embedding).
+  `thinned-out` itself cannot be embedded: its string "thinned-out 'nuclei', kept range ..." is no detection, there is no sigma.
+- The store's commit does not remove a group directory that only holds `arrays/` (no generation): the arrays may belong to points
+  that are still in the N5, so the leftover `beads/tp0/arrays` of such a dataset stays.
+- Tests `TestMissingInterestPoints` (XML copied without its store; one view's entry removed from the store; the table model without
+  a panel; embedding; the registration run by a macro).
+
+**Embeddings in memory until Save, and dropped when their points go (2026-11-14).** Stephan: writing the rows as they are computed
+"is not clean", they are to be held in memory like the interest points until Save is clicked; a re-detection deletes the old
+embeddings ("simple and clean"), and the stale ones go from disk with the Save.
+- `StagedInterestPointArrays`, one per `InterestPointsZarrStore` (`store.stagedArrays`): arrays defined here (new, kept for the
+  same model, or `replace` another model's) with the rows per setup; arrays removed as a whole; per (label, timepoint) the setups
+  whose rows go from every array of the group. Every reader of `InterestPointArrays` (`attributes`, `list`, `rows`, `read` and so
+  `vectors`, `names`, `namesByLabel`) lays it over the store, so the explorer's column, the registration dialog and the matcher
+  work on embeddings that are not saved yet. Rows computed after a removal are kept (`rows` wins over the group's removed setups).
+- Written by `InterestPointArrays.commit( store )` (`flush` until the layout below), called from
+  `XmlIoSpimData2.saveInterestPointsInParallel` after the commit of the points (NOT from `store.commit()`: "Resave as ZARR store"
+  commits too and must not write embeddings or delete rows of points that are not saved). An array defined without rows is not
+  created; `store.ensureContainer()` for a dataset whose points are all in the N5. Kept and written again by the next save if
+  writing fails. The stores of lists with another base path are committed as well.
+- Staging API: `stageArray( ..., replace )` (returns whether nothing was held before), `stageSetup`, `stageRemove`, `forgetStaged`,
+  `stageRemoveRows`, `hasStaged`; `InterestPointEmbedding.stageArray` / `stage` are `prepareArray` / `write` in memory, used by
+  `Embed_Interest_Points.embed` (GUI and plugin; a failed embedding takes its definition back). `prepareArray` / `write` /
+  `createArray` / `writeSetup` / `remove` are for a writer without shared memory (BigStitcher-Spark's tasks), see the layout below.
+- Rows are dropped in two places, both explicit: `InterestPointTools.removeReferences` (a label is overwritten: GUI detection,
+  filter dialogs, BigStitcher-Spark's driver; the log names the embeddings) and `InterestPointsZarrStore.remove( key )` (an
+  entry is deleted). NOT in `setInterestPoints`: tried, a list that gets points and then has an array written directly without
+  a dataset save in between (tests, pcmatch-style writers) had its rows hidden by the stale mark. Tools that put new points
+  under an existing label without `removeReferences` (thin-out and the like) therefore leave stale rows, as they leave stale
+  correspondences; the count check still refuses them.
+- Memory: a 64-D model holds about 260 bytes per point until the save. Not saved = gone, like unsaved points.
+- Test `TestInterestPointEmbedding.embeddingsAreSavedWithTheDataset`. BigStitcher-Spark: its driver's XML save commits what
+  `removeReferences` staged.
+
+**Embeddings as one table per array, written like the points (2026-11-14, late).** Stephan: "we should save embeddings the same
+way we save interestpoints, sharding across views." Until then every view was an array of its own (`setup<S>/{id, values}`,
+pcmatch's layout), sharded with 65,536 rows per inner chunk and no compression, so each view took at least one whole chunk on
+disk whatever its rows (16.7 MB for 64-D: 114 MB per array for the 7 views / 4,905 points of `SparkTest/IP`, 169 KB of vectors
+per view), and that padding was the time of a save (32 ms per view; 2,000 views x 300 points: 65 s and about 34 GB; written in
+parallel 21 s; with chunks sized to the rows 10 s, parallel or not).
+```
+<label>/tp<T>/arrays/<name>/zarr.json           columns D, dtype float32, meta, layout, generation K
+<label>/tp<T>/arrays/<name>/gK/values   FLOAT32 [D, N]  the rows of all setups, in setup order
+<label>/tp<T>/arrays/<name>/gK/id       INT32   [1, N]  the ids of the points the rows belong to
+<label>/tp<T>/arrays/<name>/gK/entries  INT64   [3, E]  setup, offset, count
+staging/<millis>_<nanos>_<rnd>.rows             the rows of one setup written directly (a Spark task), folded in by the next commit
+<label>/tp<T>/arrays/<name>/setup<S>/{id, values}   tables per setup: pcmatch's layout and Java's until 2026-11-14, read only
+```
+- `InterestPointArraysOnDisk`, one per store (`store.arraysOnDisk`): layout, staging files, commit. Sharded, raw + crc32c, 4,096
+  rows per inner chunk and 65,536 per shard (`InterestPointArrays.defaultChunkRows/defaultShardRows`: 1 MB / 16.7 MB at 64-D; an
+  array keeps its grid; smaller than the points' grid because a row is about ten points and the last chunk is stored whole).
+- The commit is the points' commit, per array (`InterestPointArrays.commit( store )`, called by the dataset save): the arrays
+  changed in memory, those with staging files, and every array of a (label, timepoint) with removed setups; `gK+1` from the kept
+  entries of `gK` (copied as contiguous ranges, in pieces of 8 chunks), the rows in memory and the latest staging file per setup;
+  the flip of `generation` in the array's `zarr.json` under `commit.lock` after re-reading it (a commit that another process
+  overtook is refused, its new generation removed, everything stays held); then `gK`, the folded staging files and the tables per
+  setup that were replaced or are stale are deleted. An array left without rows is removed; staging files of an array that no
+  longer exists are dropped. It reuses the store's `ArrayWriter`, `arrayAttrs`, `writeLongs` / `readLongs`, `readAttributes`.
+- Reading a setup: rows in memory, else nothing if the view or the array is marked in memory, else the latest staging file, else
+  the tables of the setup, else its entry of the generation. A fresh N5 reader per read; the generation is read from the array's
+  `zarr.json` every time and only the index of a generation (immutable) is kept per JVM; no chunk cache; the staging directory is
+  listed at most every `generationCheckMillis`; a read that a commit overtakes is repeated once.
+- Tables per setup are never written (except fixtures, `writeSetupTables`) and a save does not move them (the explicit-migration
+  rule, as for N5 points): they stay until the setup's rows are written anew or go stale. Where a setup has tables and an entry,
+  the tables are its rows (a commit that writes a setup deletes its tables, so tables can only be newer: another writer's).
+  There is no action that moves the old tables and none is planned (Stephan, 2026-11-14: it is early, not many embeddings are
+  around); computing the embeddings again is what compacts an old array.
+- Direct writers (no shared memory with the JVM that saves): `createArray` writes the array's `zarr.json`, `writeSetup` one
+  staging file that every reader takes as the setup's rows at once, `remove` deletes directly (staging files included).
+  BigStitcher-Spark's `embed-interestpoints` needed no change: `prepareArray` on the driver, `write` in the tasks, the driver's
+  XML save commits. Its `TestInterestPointEmbedding` and `TestEmbeddings` pass (2026-11-14: its compiled test classes run on
+  this repo's classes, not rebuilt or installed).
+- A view marked stale in memory hides and removes everything the store holds for it, staging files written after the mark
+  included; only rows staged in memory afterwards are kept.
+- pcmatch: Java reads what pcmatch writes; pcmatch cannot read an array Java wrote until it knows `gK` + `entries`, and what
+  its reader does with these extra children of an array was not checked.
+- Measured (64-D, local SSD, 8 threads): 2,000 views x 300 points: commit from memory 0.2-0.4 s and 156 MB; one view again +
+  commit 0.3 s; 2,000 staging files written in parallel 0.8 s + commit 1.0 s; reading all views back 2.4 s; 50 views x 100,000
+  points: 1.3-1.5 s, 1.3 GB. Copy of `SparkTest/IP`: `rotation-invariant` 119 MB -> 2.1 MB after computing it again + Save (53 ms),
+  the vectors identical to those of the old tables; `local-embedding` (stale, untouched) stays as 7 tables.
+- Tests `TestInterestPointArrays` (`writeArray` = `createArray` + `writeSetup` + commit with 4 rows per chunk;
+  `rowsWrittenDirectlyAreCommitted`, `keptRowsAreCopied`, `tablesPerSetupAreReadAndReplaced`, `rowsOfReplacedPointsGoWithTheCommit`),
+  `TestInterestPointEmbedding.embeddingsAreSavedWithTheDataset` (`InterestPointArrays.rowsInStore` = what the store holds).
+
 **Per-point arrays and matching on them (embeddings, 2026-10-29).** A writer may keep rows about the store's points next to the
 generations, keyed by point id: `<label>/tp<T>/arrays/<name>/zarr.json` (`columns` D, `dtype` float32, the writer's `meta` with
 `model.fingerprint`) and `setup<S>/{id, values}` (int32 [N, 1], float32 [N, D]; pcmatch's `embed` writes one 64-D unit vector
-per point as `embedding` (named `descriptor` until 2026-10-29); further tables in `setup<S>` are ignored, pcmatch wrote a `loc` table until 2026-10-29). Java only
-reads them, `InterestPointArrays` (`attributes`, `read`, `join`, `vectors( lists, label, name )`): a filtered label reads its base
+per point as `embedding` (named `descriptor` until 2026-10-29); further tables in `setup<S>` are ignored, pcmatch wrote a `loc` table until 2026-10-29; these tables per setup are pcmatch's layout, Java writes one table per array since 2026-11-14, see above). Read by
+`InterestPointArrays` (`attributes`, `read`, `join`, `vectors( lists, label, name )`): a filtered label reads its base
 label's rows; rows are joined by id, and the array must have exactly one row per point of the (base) label in the view (another
 number of rows, or a point without a row = the label was detected again and the ids name other points: the view fails with "run
 pcmatch embed again"; no positions are compared, Stephan's decision of 2026-10-29: a re-detection changes the number of points;
 the count is the base label's, so pcmatch embeds all points of the base even when asked for a filtered label); a NaN row = no
-vector. A fresh N5 reader per read (the writer swaps a setup's tables in place). A commit leaves `arrays/` alone, removing the label removes it with its timepoint
+vector. A fresh N5 reader per read (pcmatch swaps a setup's tables in place). A commit of the points leaves `arrays/` alone, removing the label removes it with its timepoint
 group. The matcher on these rows is `pairwise.methods.embeddings.EmbeddingsMatcher` (KD-tree radius query in the registered frame,
 inclusive at the radius, so the tree is asked for `Math.nextUp( radius )` and the squared distance tested; one cosine per pair
 accumulated in double; a single neighbour is a candidate if cos > smin (the minimal cosine similarity, 0.3 by default; a dialog slider and `--minSimilarity` since 2026-10-29 late); otherwise best/second: candidate if cos > smin and
@@ -179,10 +291,9 @@ none stale; reading 0.2 s, matching 6-8 s, RANSAC 190 s at 10,000 iterations on 
 **Computing the embeddings in Java (`process.interestpointembedding`, 2026-10-30).** What `pcmatch embed` does, in MVR: "Embed
 Interest Points (ONNX model) ..." of the ViewSetup Explorer (Processing, directly below "Detect Interest Points", Stephan's choice of
 2026-10-30) / Plugins > BigStitcher > Interest Points > Tools (`Embed_Interest_Points`, `EmbedInterestPointsPopup`; action
-`embed-interestpoints`, rendered by `ActionToSparkCli` as the BigStitcher-Spark command of that name; the explorer entries save
-the dataset first, `panel.saveXML()`, and the dialog says so, Stephan 2026-11-01: the arrays need the points in the store and fresh
-detections are only in memory until saved, `createArray` without a store says to save or to "Resave as ZARR store"; the plugin from
-the menu has just loaded the XML and saves it afterwards)
+`embed-interestpoints`, rendered by `ActionToSparkCli` as the BigStitcher-Spark command of that name; since 2026-11-14 nothing is
+written until the dataset is saved, see "Embeddings in memory until Save" below: the explorer entries no longer save the dataset
+first, unsaved detections can be embedded; the plugin from the menu saves the XML when it is done, which writes the rows)
 writes the per-point array of a label with a model, and the matcher above reads it. The model is pcmatch's ONNX export
 (`pcmatch export-onnx`: `x.onnx` plus the sidecar `x.onnx.json` with the fingerprint, the `DescriptorConfig` and the tensor contract),
 behind a thin abstraction: `EmbeddingModel` (the `Contract` from the sidecar, `embed( patches, n )`, `load( Path )`) with one backend,
@@ -207,7 +318,7 @@ hundred points) keep all threads busy, a view's rows go to the consumer (the wri
 is done and the next view is admitted (an `ExecutorCompletionService` over the blocks; `viewsInFlight` bounds the memory, the points
 and opened images of that many views); a Spark task embeds its one view with `embedView`. `prepareArray` creates the array or replaces
 one of another model/width whole (the matcher refuses mixed fingerprints anyway), `write` stores a setup's rows
-(`InterestPointArrays.createArray` / `writeSetup` / `remove`, zarr v3 sharded as pcmatch writes; a setup is replaced whole; the meta
+(`InterestPointArrays.createArray` / `writeSetup` / `remove`; since 2026-11-14 a staging file that the save of the dataset moves into the array's one table, see "Embeddings as one table per array"; a setup is replaced whole; the meta
 is pcmatch's: `model.{config, file, fingerprint, onnx}`, `writer`, `date`, `point_sigma`). Verified 2026-10-30 against pcmatch's
 fixtures: ds1 `beads` (256 points) and the embryo `ss-iso_r0.008` (255 points, per-point sigma 12.7..181 px, levels 3-5): identical
 NaN masks, levels and spacings, cubes within 1e-4 relative, vectors within 3e-5 of pcmatch's own and 2.5e-4 of its stored GPU rows
