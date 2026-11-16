@@ -26,6 +26,7 @@ import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.concurrent.ForkJoinPool;
 
 import org.janelia.saalfeldlab.n5.N5FSWriter;
@@ -45,6 +46,7 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.XmlIoBoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.XmlIoIntensityAdjustments;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
@@ -359,6 +361,9 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 	 * not save again. The batch is closed in any case, so a failed save does not leave later saves of this JVM in memory.
 	 * A label still stored as text files (an old dataset) is written into the store only when it changed (points and
 	 * correspondences together); afterwards, and when another JVM moved it, its XML text is the store's entry.
+	 * After the commit the per-point arrays (embeddings) this JVM holds in memory are written, and the rows of views whose
+	 * points were replaced or removed are deleted ({@link InterestPointArrays#commit}): embeddings are saved with the
+	 * dataset, like the points they describe.
 	 *
 	 * @param spimData the SpimData2 object whose interest points should be saved
 	 */
@@ -377,10 +382,19 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 		if ( allIPs.isEmpty() )
 		{
 			store.commit(); // deletes of the last lists are staged and still need a commit
+			InterestPointArrays.commit( store );
 			return;
 		}
 
 		IOFunctions.println( "Saving interest points multi-threaded (" + numThreads + " threads) ... " );
+
+		// the stores of lists whose base path is another than the dataset's (their points live there unless this save moves
+		// them): what is held in memory for their embeddings is held there. Before the save, which changes the base paths.
+		final HashSet< InterestPointsZarrStore > otherStores = new HashSet<>();
+		for ( final InterestPoints ipl : allIPs )
+			if ( ipl instanceof InterestPointsZarr && ipl.getBasePath() != null )
+				otherStores.add( ( (InterestPointsZarr) ipl ).store() );
+		otherStores.remove( store );
 
 		final ForkJoinPool pool = new ForkJoinPool( numThreads );
 		store.beginBatch(); // the saves below stay in memory until the commit
@@ -414,6 +428,11 @@ public class XmlIoSpimData2 extends XmlIoAbstractSpimData< SequenceDescription, 
 			).get();
 
 			store.commit();
+
+			// the embeddings computed, replaced or made stale (their points were replaced or removed) since the last save
+			InterestPointArrays.commit( store );
+			for ( final InterestPointsZarrStore other : otherStores )
+				InterestPointArrays.commit( other );
 
 			// text-backed lists whose entry is in the store by now (one batched lookup, nothing for a dataset without text files)
 			InterestPointsZarr.updateTextBacked( allIPs, store );

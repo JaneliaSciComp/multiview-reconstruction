@@ -22,7 +22,10 @@
  */
 package net.preibisch.mvrecon.tests;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -40,6 +43,7 @@ import java.util.Map;
 import org.janelia.saalfeldlab.n5.DataBlock;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.junit.jupiter.api.Test;
@@ -62,10 +66,11 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInteres
 import util.URITools;
 
 /**
- * The per-point arrays of the store ({@link InterestPointArrays}): another writer's rows keyed by point id, read
- * and joined to the points of a view by id, checked by count. The arrays are written here as pcmatch writes them (sharded
- * zarr v3 tables {@code id} and {@code values} per setup under {@code <label>/tp<T>/arrays/<name>}), with tiny chunks so
- * that a table spans several chunks and shards.
+ * The per-point arrays of the store ({@link InterestPointArrays}): rows keyed by point id, read and joined to the points
+ * of a view by id, checked by count. The arrays are written here as a writer without shared memory writes them (the array,
+ * then one staging file per setup) and committed into the array's tables ({@code <label>/tp<T>/arrays/<name>/gK}: one
+ * sharded zarr v3 table {@code values} and {@code id} for all setups), with tiny chunks so that a table spans several
+ * chunks and shards; the tables per setup that pcmatch writes are read as well.
  */
 public class TestInterestPointArrays
 {
@@ -119,20 +124,77 @@ public class TestInterestPointArrays
 		return values;
 	}
 
-	/** An array in the layout of pcmatch's {@code write_point_array} (public: BigStitcher-Spark's tests plant embeddings with it). */
+	/** The rows of a setup written and committed into the array's tables (public: BigStitcher-Spark's tests plant embeddings with it). */
 	public static void writeArray( final URI baseURI, final String label, final int tp, final String name, final int setup,
 			final int[] ids, final float[] values, final int columns, final String fingerprint )
 	{
-		// the production writer (InterestPointArrays.createArray / writeSetup) with small chunks and shards, so that the reads cross them
+		// the production writer (InterestPointArrays.createArray / writeSetup / commit) with small chunks and shards, so that the reads cross them
+		InterestPointArrays.createArray( baseURI, label, tp, name, columns, meta( fingerprint ) );
+		InterestPointArrays.writeSetup( baseURI, label, tp, name, setup, ids, values, columns );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+	}
+
+	static JsonObject meta( final String fingerprint )
+	{
 		final JsonObject model = new JsonObject();
 		model.addProperty( "fingerprint", fingerprint );
 		model.addProperty( "file", "test.pt" );
 		final JsonObject meta = new JsonObject();
 		meta.add( "model", model );
 		meta.addProperty( "writer", "TestInterestPointArrays" );
+		return meta;
+	}
 
-		InterestPointArrays.createArray( baseURI, label, tp, name, columns, meta );
-		InterestPointArrays.writeSetup( baseURI, label, tp, name, setup, ids, values, columns, 4, 12 );
+	/** The commit of the arrays, a new array with 4 rows per chunk and 12 per shard. */
+	static void commit( final InterestPointsZarrStore store )
+	{
+		final int chunkRows = InterestPointArrays.defaultChunkRows, shardRows = InterestPointArrays.defaultShardRows;
+		InterestPointArrays.defaultChunkRows = 4;
+		InterestPointArrays.defaultShardRows = 12;
+
+		try
+		{
+			InterestPointArrays.commit( store );
+		}
+		finally
+		{
+			InterestPointArrays.defaultChunkRows = chunkRows;
+			InterestPointArrays.defaultShardRows = shardRows;
+		}
+	}
+
+	/** The rows of a setup as tables of their own, as pcmatch writes them (and this class did until 2026-11-14). */
+	static void writeTables( final URI baseURI, final String name, final int setup, final int[] ids, final float[] values, final int columns )
+	{
+		InterestPointArrays.createArray( baseURI, LABEL, 0, name, columns, meta( FINGERPRINT ) );
+		InterestPointArrays.writeSetupTables( baseURI, LABEL, 0, name, setup, ids, values, columns, 4, 12 );
+	}
+
+	static File container( final URI baseURI ) { return new File( new File( baseURI ), InterestPointsZarrStore.ZARR_CONTAINER ); }
+
+	static File arrayDirectory( final URI baseURI, final String name )
+	{
+		return new File( container( baseURI ), InterestPointsZarrStore.Group.encodeLabel( LABEL ) + "/tp0/" + InterestPointArrays.ARRAYS + "/" + name );
+	}
+
+	/** @return the generations an array has on disk (directories g<number>), sorted */
+	static List< String > generations( final File array )
+	{
+		final List< String > generations = new ArrayList<>();
+		final String[] children = array.list();
+		if ( children != null )
+			for ( final String child : children )
+				if ( child.matches( "g\\d+" ) )
+					generations.add( child );
+		Collections.sort( generations );
+		return generations;
+	}
+
+	/** @return the number of staging files of rows written directly and not committed yet */
+	static int stagingFiles( final URI baseURI )
+	{
+		final String[] files = new File( container( baseURI ), "staging" ).list( ( dir, file ) -> file.endsWith( ".rows" ) );
+		return files == null ? 0 : files.length;
 	}
 
 	@Test
@@ -306,9 +368,11 @@ public class TestInterestPointArrays
 		final Rows rows = InterestPointArrays.read( baseURI, LABEL, 0, 0, NAME );
 		assertTrue( assertThrows( IllegalStateException.class, () -> InterestPointArrays.join( rows, points, n ) ).getMessage().contains( "twice" ) );
 
-		// tables of different lengths (the writer refuses to produce them, so the values table is replaced by a shorter one)
+		// tables of different lengths (the writers refuse to produce them, so the values table of a setup is replaced by a shorter one)
 		assertThrows( IllegalArgumentException.class, () -> writeArray( baseURI, LABEL, 0, "short", 0, ids, new float[ COLUMNS * ( n - 1 ) ], COLUMNS, FINGERPRINT ) );
-		writeArray( baseURI, LABEL, 0, "short", 0, ids, new float[ COLUMNS * n ], COLUMNS, FINGERPRINT );
+		assertThrows( IllegalArgumentException.class, () -> writeTables( baseURI, "short", 0, ids, new float[ COLUMNS * ( n - 1 ) ], COLUMNS ) );
+		writeTables( baseURI, "short", 0, ids, new float[ COLUMNS * n ], COLUMNS );
+		assertEquals( n, InterestPointArrays.read( baseURI, LABEL, 0, 0, "short" ).size() );
 		try ( final N5Writer zarr = URITools.instantiateN5Writer( StorageFormat.ZARR, new File( new File( baseURI ), InterestPointsZarrStore.ZARR_CONTAINER ).toURI() ) )
 		{
 			final String shortValues = InterestPointsZarrStore.Group.encodeLabel( LABEL ) + "/tp0/" + InterestPointArrays.ARRAYS + "/short/" + InterestPointArrays.SETUP_PREFIX + "0/" + InterestPointArrays.VALUES;
@@ -327,5 +391,271 @@ public class TestInterestPointArrays
 
 		// the points themselves are untouched by all of this
 		assertEquals( n, new InterestPointsZarr( baseURI, new ViewId( 0, 0 ), LABEL ).getInterestPointsCopy().size() );
+	}
+
+	/** Checks that the vectors of a view are those of its points by {@link #value}, {@code missing} of them without a vector. */
+	void checkVectors( final URI baseURI, final int view, final int missing )
+	{
+		final List< InterestPoint > points = TestInterestPointsZarr.points( view, LABEL );
+		final Vectors vectors = InterestPointArrays.vectors( lists( baseURI, view ), LABEL, NAME );
+
+		assertEquals( points.size() - missing, vectors.size() );
+		assertEquals( missing, vectors.missing() );
+
+		for ( final InterestPoint point : points )
+		{
+			final int index = vectors.indexOf( point.getId() );
+			if ( index >= 0 )
+				for ( int c = 0; c < COLUMNS; ++c )
+					assertEquals( value( point.getId(), c ), vectors.values()[ index * COLUMNS + c ], 0.0f );
+		}
+	}
+
+	/**
+	 * A writer without shared memory (a Spark task) writes a setup's rows as one staging file: every reader has them at
+	 * once, the commit moves them into the one table the array has for all views, and a setup written again replaces its
+	 * rows there while the other views keep theirs.
+	 */
+	@Test
+	public void rowsWrittenDirectlyAreCommitted()
+	{
+		final URI baseURI = store();
+		final List< InterestPoint > p0 = TestInterestPointsZarr.points( 0, LABEL ), p1 = TestInterestPointsZarr.points( 1, LABEL );
+		final File array = arrayDirectory( baseURI, NAME );
+
+		InterestPointArrays.createArray( baseURI, LABEL, 0, NAME, COLUMNS, meta( FINGERPRINT ) );
+		final Attributes attributes = InterestPointArrays.attributes( baseURI, LABEL, 0, NAME );
+		assertTrue( InterestPointArrays.rows( baseURI, attributes ).isEmpty() );
+
+		// rows of another width or for an array that does not exist are refused
+		assertThrows( IllegalStateException.class, () -> InterestPointArrays.writeSetup( baseURI, LABEL, 0, NAME, 0, ids( p0 ), new float[ 2 * p0.size() ], 2 ) );
+		assertThrows( IllegalStateException.class, () -> InterestPointArrays.writeSetup( baseURI, LABEL, 0, "nothere", 0, ids( p0 ), values( p0, false ), COLUMNS ) );
+		assertEquals( 0, stagingFiles( baseURI ) );
+
+		InterestPointArrays.writeSetup( baseURI, LABEL, 0, NAME, 0, ids( p0 ), values( p0, false ), COLUMNS );
+		InterestPointArrays.writeSetup( baseURI, LABEL, 0, NAME, 1, ids( p1 ), values( p1, false ), COLUMNS );
+
+		// two staging files, nothing in the array yet, and the rows are there for every reader
+		assertEquals( 2, stagingFiles( baseURI ) );
+		assertTrue( generations( array ).isEmpty() );
+		assertEquals( Map.of( 0, (long) p0.size(), 1, (long) p1.size() ), InterestPointArrays.rows( baseURI, attributes ) );
+		assertEquals( Map.of( 0, (long) p0.size(), 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME ) );
+		checkVectors( baseURI, 0, 0 );
+		checkVectors( baseURI, 1, 0 );
+
+		commit( InterestPointsZarrStore.get( baseURI ) );
+
+		// one table for both views in the first generation, in chunks of 4 rows; no staging file, no tables per setup
+		assertEquals( 0, stagingFiles( baseURI ) );
+		assertEquals( 1, generations( array ).size() );
+		final String first = generations( array ).get( 0 );
+		assertFalse( new File( array, InterestPointArrays.SETUP_PREFIX + 0 ).exists() );
+		try ( final N5Reader zarr = URITools.instantiateN5Reader( StorageFormat.ZARR, container( baseURI ).toURI() ) )
+		{
+			final String values = InterestPointsZarrStore.Group.encodeLabel( LABEL ) + "/tp0/" + InterestPointArrays.ARRAYS + "/" + NAME + "/" + first + "/" + InterestPointArrays.VALUES;
+			assertArrayEquals( new long[] { COLUMNS, p0.size() + p1.size() }, zarr.getDatasetAttributes( values ).getDimensions() );
+			assertEquals( 4, zarr.getDatasetAttributes( values ).getChunkSize()[ 1 ] );
+			assertEquals( 12, zarr.getDatasetAttributes( values ).getBlockSize()[ 1 ] );
+		}
+		assertEquals( Map.of( 0, (long) p0.size(), 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME ) );
+		checkVectors( baseURI, 0, 0 );
+		checkVectors( baseURI, 1, 0 );
+
+		// a commit without changes writes nothing
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		assertEquals( List.of( first ), generations( array ) );
+
+		// the first view written again (its first row NaN now): its rows are replaced at once, and in the table with the commit
+		InterestPointArrays.writeSetup( baseURI, LABEL, 0, NAME, 0, ids( p0 ), values( p0, true ), COLUMNS );
+		checkVectors( baseURI, 0, 1 );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		assertEquals( 0, stagingFiles( baseURI ) );
+		assertEquals( 1, generations( array ).size() ); // the old generation is gone
+		assertNotEquals( first, generations( array ).get( 0 ) );
+		checkVectors( baseURI, 0, 1 );
+		checkVectors( baseURI, 1, 0 );
+
+		// another process commits (a store object of its own) rows this JVM still lists as a staging file: they are read from the table
+		InterestPointArrays.writeSetup( baseURI, LABEL, 0, NAME, 1, ids( p1 ), values( p1, true ), COLUMNS );
+		commit( new InterestPointsZarrStore( baseURI ) );
+		assertEquals( 0, stagingFiles( baseURI ) );
+		checkVectors( baseURI, 0, 1 );
+		checkVectors( baseURI, 1, 1 );
+
+		// removing the array takes everything, also rows that are not committed
+		InterestPointArrays.writeSetup( baseURI, LABEL, 0, NAME, 0, ids( p0 ), values( p0, false ), COLUMNS );
+		assertEquals( 1, stagingFiles( baseURI ) );
+		assertTrue( InterestPointArrays.remove( baseURI, LABEL, 0, NAME ) );
+		assertEquals( 0, stagingFiles( baseURI ) );
+		assertFalse( array.exists() );
+		assertNull( InterestPointArrays.attributes( baseURI, LABEL, 0, NAME ) );
+		assertFalse( InterestPointArrays.remove( baseURI, LABEL, 0, NAME ) );
+	}
+
+	/** The rows of a setup with {@code count} rows: ids 0..count-1, the values a function of setup, id, column and {@code version}. */
+	static float[] rowsOf( final int setup, final int count, final int version )
+	{
+		final float[] values = new float[ COLUMNS * count ];
+		for ( int r = 0; r < count; ++r )
+			for ( int c = 0; c < COLUMNS; ++c )
+				values[ COLUMNS * r + c ] = value( 1000 * setup + r + 100000 * version, c );
+		return values;
+	}
+
+	static int[] idsOf( final int count )
+	{
+		final int[] ids = new int[ count ];
+		for ( int r = 0; r < count; ++r )
+			ids[ r ] = r;
+		return ids;
+	}
+
+	/**
+	 * A commit copies the rows it keeps from the old generation into the new one (in ranges that span setups and pieces of
+	 * several chunks): every view has its own rows afterwards, whichever views around it were written again, removed or empty.
+	 */
+	@Test
+	public void keptRowsAreCopied()
+	{
+		final URI baseURI = store();
+		final int[] counts = { 0, 7, 33, 5, 40, 1, 0, 61, 3 }; // 4 rows per chunk, 12 per shard, kept rows copied in pieces of 32
+		final int[] versions = new int[ counts.length ];
+
+		InterestPointArrays.createArray( baseURI, LABEL, 0, NAME, COLUMNS, meta( FINGERPRINT ) );
+		for ( int setup = 0; setup < counts.length; ++setup )
+			InterestPointArrays.writeSetup( baseURI, LABEL, 0, NAME, setup, idsOf( counts[ setup ] ), rowsOf( setup, counts[ setup ], 0 ), COLUMNS );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+
+		final Runnable check = () ->
+		{
+			final Map< Integer, Long > stored = InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME );
+			for ( int setup = 0; setup < counts.length; ++setup )
+			{
+				final Rows rows = InterestPointArrays.read( baseURI, LABEL, 0, setup, NAME );
+				if ( counts[ setup ] < 0 )
+				{
+					assertNull( rows, "setup " + setup );
+					assertFalse( stored.containsKey( setup ) );
+					continue;
+				}
+				assertEquals( counts[ setup ], rows.size(), "setup " + setup );
+				assertEquals( (long) counts[ setup ], stored.get( setup ) );
+				assertArrayEquals( idsOf( counts[ setup ] ), rows.ids(), "setup " + setup );
+				assertArrayEquals( rowsOf( setup, counts[ setup ], versions[ setup ] ), rows.values(), "setup " + setup );
+			}
+		};
+		check.run();
+
+		// a view in the middle written again with another number of rows, in memory
+		counts[ 2 ] = 9;
+		versions[ 2 ] = 1;
+		InterestPointArrays.stageSetup( baseURI, LABEL, 0, NAME, 2, idsOf( 9 ), rowsOf( 2, 9, 1 ), COLUMNS );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		check.run();
+
+		// the points of two views replaced, one of them embedded again; a view added behind the last one
+		InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, List.of( 4, 7 ) );
+		counts[ 4 ] = -1;
+		counts[ 7 ] = 2;
+		versions[ 7 ] = 2;
+		InterestPointArrays.stageSetup( baseURI, LABEL, 0, NAME, 7, idsOf( 2 ), rowsOf( 7, 2, 2 ), COLUMNS );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		check.run();
+		assertEquals( 1, generations( arrayDirectory( baseURI, NAME ) ).size() );
+	}
+
+	/**
+	 * Tables per setup (pcmatch's layout, and this class's until 2026-11-14) are a setup's rows where they exist; a save
+	 * leaves them where they are, and they go when the setup's rows are written anew.
+	 */
+	@Test
+	public void tablesPerSetupAreReadAndReplaced()
+	{
+		final URI baseURI = store();
+		final List< InterestPoint > p0 = TestInterestPointsZarr.points( 0, LABEL ), p1 = TestInterestPointsZarr.points( 1, LABEL );
+		final File array = arrayDirectory( baseURI, NAME );
+		final File tables = new File( array, InterestPointArrays.SETUP_PREFIX + 0 );
+
+		writeTables( baseURI, NAME, 0, ids( p0 ), values( p0, false ), COLUMNS );
+		assertTrue( tables.isDirectory() );
+		assertEquals( Map.of( 0, (long) p0.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME ) );
+		checkVectors( baseURI, 0, 0 );
+
+		// another view written and committed: the array has both, the tables stay where they are
+		InterestPointArrays.writeSetup( baseURI, LABEL, 0, NAME, 1, ids( p1 ), values( p1, false ), COLUMNS );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		assertTrue( tables.isDirectory() );
+		assertEquals( 1, generations( array ).size() );
+		assertEquals( Map.of( 0, (long) p0.size(), 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME ) );
+		checkVectors( baseURI, 0, 0 );
+		checkVectors( baseURI, 1, 0 );
+
+		// the rows of the setup written anew: its tables go with the commit
+		InterestPointArrays.writeSetup( baseURI, LABEL, 0, NAME, 0, ids( p0 ), values( p0, true ), COLUMNS );
+		checkVectors( baseURI, 0, 1 );
+		assertTrue( tables.isDirectory() );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		assertFalse( tables.exists() );
+		checkVectors( baseURI, 0, 1 );
+		checkVectors( baseURI, 1, 0 );
+
+		// tables another writer writes after that are the setup's rows again
+		writeTables( baseURI, NAME, 0, ids( p0 ), values( p0, false ), COLUMNS );
+		checkVectors( baseURI, 0, 0 );
+		checkVectors( baseURI, 1, 0 );
+	}
+
+	/**
+	 * The points of a view were replaced: its rows are gone for the readers at once and from every array of the label with
+	 * the commit (the array's table, tables per setup, rows not committed yet); an array left without rows is removed.
+	 */
+	@Test
+	public void rowsOfReplacedPointsGoWithTheCommit()
+	{
+		final URI baseURI = store();
+		final List< InterestPoint > p0 = TestInterestPointsZarr.points( 0, LABEL ), p1 = TestInterestPointsZarr.points( 1, LABEL );
+
+		writeArray( baseURI, 0, p0, false );
+		writeArray( baseURI, 1, p1, false );
+		writeArray( baseURI, LABEL, 0, "another", 0, ids( p0 ), new float[ 2 * p0.size() ], 2, FINGERPRINT ); // only the first view
+		writeTables( baseURI, "tables", 0, ids( p0 ), values( p0, false ), COLUMNS );
+		writeTables( baseURI, "tables", 1, ids( p1 ), values( p1, false ), COLUMNS );
+		InterestPointArrays.createArray( baseURI, LABEL, 0, "pending", COLUMNS, meta( FINGERPRINT ) );
+		InterestPointArrays.writeSetup( baseURI, LABEL, 0, "pending", 0, ids( p0 ), values( p0, false ), COLUMNS );
+		assertEquals( 4, InterestPointArrays.list( baseURI, LABEL, 0 ).size() );
+
+		InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, List.of( 0 ) );
+
+		// gone for the readers, still in the store
+		assertTrue( InterestPointArrays.hasStaged( baseURI ) );
+		assertNull( InterestPointArrays.read( baseURI, LABEL, 0, 0, NAME ) );
+		assertNull( InterestPointArrays.read( baseURI, LABEL, 0, 0, "tables" ) );
+		assertNull( InterestPointArrays.read( baseURI, LABEL, 0, 0, "pending" ) );
+		assertEquals( Map.of( 1, (long) p1.size() ), InterestPointArrays.rows( baseURI, InterestPointArrays.attributes( baseURI, LABEL, 0, NAME ) ) );
+		assertEquals( 2, InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME ).size() );
+		assertEquals( 1, stagingFiles( baseURI ) );
+
+		commit( InterestPointsZarrStore.get( baseURI ) );
+
+		assertFalse( InterestPointArrays.hasStaged( baseURI ) );
+		assertEquals( Map.of( 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME ) );
+		assertEquals( Map.of( 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, "tables" ) );
+		assertFalse( new File( arrayDirectory( baseURI, "tables" ), InterestPointArrays.SETUP_PREFIX + 0 ).exists() );
+		assertTrue( new File( arrayDirectory( baseURI, "tables" ), InterestPointArrays.SETUP_PREFIX + 1 ).isDirectory() );
+		assertFalse( arrayDirectory( baseURI, "another" ).exists() ); // its only rows went
+		assertFalse( arrayDirectory( baseURI, "pending" ).exists() );
+		assertEquals( 0, stagingFiles( baseURI ) );
+		checkVectors( baseURI, 1, 0 );
+		assertEquals( 2, InterestPointArrays.list( baseURI, LABEL, 0 ).size() );
+
+		// rows computed for the new points after that are kept (in memory until the commit)
+		InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, List.of( 0, 1 ) );
+		InterestPointArrays.stageSetup( baseURI, LABEL, 0, NAME, 1, ids( p1 ), values( p1, true ), COLUMNS );
+		checkVectors( baseURI, 1, 1 );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		assertEquals( Map.of( 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME ) );
+		checkVectors( baseURI, 1, 1 );
+		assertFalse( arrayDirectory( baseURI, "tables" ).exists() );
+		assertEquals( 1, InterestPointArrays.list( baseURI, LABEL, 0 ).size() );
 	}
 }

@@ -27,23 +27,31 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
+import java.awt.GraphicsEnvironment;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import ij.Macro;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.img.array.ArrayImg;
@@ -52,11 +60,14 @@ import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.type.numeric.real.FloatType;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.plugin.Embed_Interest_Points;
+import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.EmbeddingsGUI;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.RGLDMGUI;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionRecord;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.EmbedInterestPointsPopup;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointTableModel;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.Attributes;
@@ -65,6 +76,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
+import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointembedding.DetectionScale;
 import net.preibisch.mvrecon.process.interestpointembedding.EmbeddingModel;
 import net.preibisch.mvrecon.process.interestpointembedding.EmbeddingModel.Contract;
@@ -296,6 +308,10 @@ public class TestInterestPointEmbedding
 			labelMap.put( v, new HashMap<>( Map.of( LABEL, 1.0 ) ) );
 		final EmbeddingsGUI gui = new EmbeddingsGUI( data );
 
+		// the registration dialog offers the matcher at all (the entry was lost once, with a merge that kept the other side's file)
+		assertTrue( Interest_Point_Registration.staticPairwiseAlgorithms.stream().anyMatch( a -> a instanceof EmbeddingsGUI ),
+				"'" + gui.getDescription() + "' is not among the algorithms of the registration dialog" );
+
 		// no arrays at all: not the default algorithm, and no dialog
 		assertFalse( EmbeddingsGUI.hasEmbeddings( data, views ) );
 		assertFalse( gui.prepareQuery( data, views, labelMap ) );
@@ -312,26 +328,207 @@ public class TestInterestPointEmbedding
 		assertTrue( gui.prepareQuery( data, views, labelMap ) );
 	}
 
-	@Test
-	public void savesBeforeEmbedding() throws Exception
+	static final String MULTIPLE = "Select multiple interestpoints [extra dialog]";
+
+	/** the beads with two arrays of the label, and a filtered label (which has its base's arrays) in the first view only */
+	static String filteredLabelInFirstView( final SpimData2 data, final List< ViewId > views )
 	{
-		// the explorer's sequence without the GUI (EmbedInterestPointsPopup): detections that are not saved yet have no store to
-		// hold their arrays, so the dataset is saved first, then the embedding runs
+		final String filtered = LABEL + "_i500";
+		data.getViewInterestPoints().getViewInterestPointLists( views.get( 0 ) ).addInterestPointList( filtered,
+				VirtualFilteredInterestPoints.create( data.getBasePathURI(), views.get( 0 ), filtered, LABEL, InterestPointFilter.fromString( "intensity=500.." ) ) );
+		return filtered;
+	}
+
+	/**
+	 * The label choice of the registration dialog: " [N embeddings]" after the labels with stored embeddings (a filtered
+	 * label has its base's), a label with embeddings as the default when the dialog suggests the embeddings matcher, and
+	 * the entries a macro gets: the labels as they are, or as the macro names them
+	 */
+	@Test
+	public void registrationDialogShowsEmbeddings() throws Exception
+	{
 		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
-		final SpimData2 data = unsavedBeads( xml );
+		final SpimData2 data = beads( xml );
 		final List< ViewId > views = viewsWith( data, LABEL );
+		assertTrue( views.size() >= 2 );
 		final Path onnx = tempDir.resolve( "tiny.onnx" );
 		TestOnnxModels.write( onnx, new double[] { 3, 6 }, 4, 3, 5, 21 );
 
-		assertFalse( InterestPointsZarrStore.get( data.getBasePathURI() ).exists() );
-		assertTrue( EmbedInterestPointsPopup.hasUnsavedInterestPoints( data, views ) );
-		final IllegalStateException e = assertThrows( IllegalStateException.class, () -> Embed_Interest_Points.embed( data, views, LABEL, onnx, "embedding", 50 ) );
-		assertTrue( e.getMessage().contains( "save the dataset first" ), e.getMessage() );
+		final String filtered = filteredLabelInFirstView( data, views );
+		final String warning = InterestPointTools.warningLabel + "1/" + views.size() + " Views!)";
+		final String[] labels = { LABEL, filtered + warning, MULTIPLE };
+		assertArrayEquals( new String[] { LABEL, filtered + warning }, InterestPointTools.getAllInterestPointLabels( data, views ) );
 
-		// what the explorer does before the embedding
-		new XmlIoSpimData2().save( data, xml.toURI() );
-		assertFalse( EmbedInterestPointsPopup.hasUnsavedInterestPoints( data, views ) );
-		assertTrue( InterestPointsZarrStore.get( data.getBasePathURI() ).exists() );
+		// no embeddings: the choice as it always was, the first label that all views have
+		int[] n = Interest_Point_Registration.numEmbeddings( data, views, labels );
+		assertArrayEquals( new int[] { 0, 0, 0 }, n );
+		assertArrayEquals( labels, Interest_Point_Registration.withEmbeddings( labels, n ) );
+		assertEquals( 0, Interest_Point_Registration.labelDefault( labels, n, -1, false, true ) );
+		assertEquals( Map.of( LABEL, Set.of(), filtered, Set.of() ), InterestPointArrays.namesByLabel( data.getViewInterestPoints(), views ) );
+
+		// one array (in one view: an array counts, whether or not it covers the views), then a second one
+		assertTrue( Embed_Interest_Points.embed( data, views.subList( 1, 2 ), LABEL, onnx, "translation-invariant", 50 ) );
+		n = Interest_Point_Registration.numEmbeddings( data, views, labels );
+		assertArrayEquals( new int[] { 1, 1, 0 }, n );
+		assertArrayEquals( new String[] { LABEL + " [1 embedding]", filtered + " [1 embedding]" + warning, MULTIPLE }, Interest_Point_Registration.withEmbeddings( labels, n ) );
+
+		assertTrue( Embed_Interest_Points.embed( data, views, LABEL, onnx, "rotation-invariant", 50 ) );
+		n = Interest_Point_Registration.numEmbeddings( data, views, labels );
+		assertArrayEquals( new int[] { 2, 2, 0 }, n );
+		final String[] shown = Interest_Point_Registration.withEmbeddings( labels, n );
+		assertArrayEquals( new String[] { LABEL + " [2 embeddings]", filtered + " [2 embeddings]" + warning, MULTIPLE }, shown );
+
+		final SortedSet< String > both = new TreeSet<>( List.of( "rotation-invariant", "translation-invariant" ) );
+		assertEquals( Map.of( LABEL, both, filtered, both ), InterestPointArrays.namesByLabel( data.getViewInterestPoints(), views ) );
+		// the views without the filtered label: only the label they have
+		assertEquals( Map.of( LABEL, both ), InterestPointArrays.namesByLabel( data.getViewInterestPoints(), views.subList( 1, views.size() ) ) );
+		assertTrue( EmbeddingsGUI.hasEmbeddings( data, views ) );
+
+		// the label an entry names, whatever the dialog appended
+		assertEquals( LABEL, Interest_Point_Registration.labelOf( shown[ 0 ] ) );
+		assertEquals( filtered, Interest_Point_Registration.labelOf( shown[ 1 ] ) );
+		assertEquals( filtered, Interest_Point_Registration.labelOf( labels[ 1 ] ) );
+		assertEquals( MULTIPLE, Interest_Point_Registration.labelOf( MULTIPLE ) );
+		assertEquals( "spots [raw]", Interest_Point_Registration.labelOf( "spots [raw]" ) );
+
+		// the label the dialog starts with: a (complete), b (2 of 4 views), c (complete)
+		final String[] abc = { "a", "b" + InterestPointTools.warningLabel + "2/4 Views!)", "c", MULTIPLE };
+		final int[] none = { 0, 0, 0, 0 }, bc = { 0, 1, 2, 0 }, b = { 0, 3, 0, 0 };
+		assertEquals( 0, Interest_Point_Registration.labelDefault( abc, none, -1, false, true ) );  // RGLDM: the first complete label
+		assertEquals( 2, Interest_Point_Registration.labelDefault( abc, bc, -1, true, true ) );     // embeddings: the first complete label that has them
+		assertEquals( 1, Interest_Point_Registration.labelDefault( abc, b, -1, true, true ) );      // or else an incomplete one
+		assertEquals( 0, Interest_Point_Registration.labelDefault( abc, bc, -1, false, false ) );   // another algorithm chosen last: as before
+		assertEquals( 2, Interest_Point_Registration.labelDefault( abc, bc, 0, true, true ) );      // a label chosen elsewhere gives way to the suggestion
+		assertEquals( 1, Interest_Point_Registration.labelDefault( abc, bc, 1, true, true ) );      // unless it has embeddings
+		assertEquals( 0, Interest_Point_Registration.labelDefault( abc, bc, 0, true, false ) );     // the user's algorithm and label stay
+		assertEquals( 3, Interest_Point_Registration.labelDefault( abc, bc, 3, false, false ) );
+		assertEquals( 2, Interest_Point_Registration.labelDefault( abc, bc, 9, true, false ) );     // an index that no longer exists
+		assertEquals( 0, Interest_Point_Registration.labelDefault( abc, bc, 9, false, false ) );
+		assertEquals( 0, Interest_Point_Registration.labelDefault( new String[] { abc[ 1 ], MULTIPLE }, new int[ 2 ], -1, false, true ) );
+
+		// a macro: the labels as they are, unless its text names a label as the dialog showed it at some time
+		assertSame( labels, Interest_Point_Registration.itemsForMacro( labels, null ) );
+		assertSame( labels, Interest_Point_Registration.itemsForMacro( labels, LABEL ) );
+		assertSame( labels, Interest_Point_Registration.itemsForMacro( labels, MULTIPLE ) );
+		assertSame( labels, Interest_Point_Registration.itemsForMacro( labels, "nuclei" ) );
+		assertArrayEquals( new String[] { shown[ 0 ], labels[ 1 ], MULTIPLE }, Interest_Point_Registration.itemsForMacro( labels, shown[ 0 ] ) );
+		assertArrayEquals( new String[] { LABEL + " [7 embeddings]", labels[ 1 ], MULTIPLE }, Interest_Point_Registration.itemsForMacro( labels, LABEL + " [7 embeddings]" ) );
+		assertArrayEquals( new String[] { LABEL, shown[ 1 ], MULTIPLE }, Interest_Point_Registration.itemsForMacro( labels, shown[ 1 ] ) );
+		assertArrayEquals( new String[] { LABEL, filtered, MULTIPLE }, Interest_Point_Registration.itemsForMacro( labels, filtered ) );
+	}
+
+	/** runs the basic registration dialog as a macro does: ImageJ hands the options to threads named "Run$_..." and shows nothing */
+	static BasicRegistrationParameters dialogByMacro( final String options, final SpimData2 data, final List< ViewId > views ) throws Exception
+	{
+		final BasicRegistrationParameters[] result = new BasicRegistrationParameters[ 1 ];
+		final Throwable[] failure = new Throwable[ 1 ];
+
+		final Thread thread = new Thread( () -> {
+			try
+			{
+				Macro.setOptions( options );
+				result[ 0 ] = new Interest_Point_Registration().basicRegistrationParameters(
+						SpimData2.getAllTimePointsSorted( data, views ), data.getSequenceDescription().getTimePoints().size(), data, new ArrayList<>( views ) );
+			}
+			catch ( final Throwable t )
+			{
+				failure[ 0 ] = t;
+			}
+			finally
+			{
+				Macro.setOptions( null );
+			}
+		}, "Run$_registration" );
+
+		thread.start();
+		thread.join();
+
+		if ( failure[ 0 ] != null )
+			throw new AssertionError( "the dialog failed for '" + options + "'", failure[ 0 ] );
+		assertNotNull( result[ 0 ], "the dialog was cancelled for '" + options + "'" );
+		return result[ 0 ];
+	}
+
+	/**
+	 * ImageJ's own dialog, run by macros (skipped without a display): a macro that names a label by its name goes on
+	 * selecting it when the label has embeddings, and so does the text the recorder writes from the displayed choice
+	 */
+	@Test
+	public void registrationDialogByMacro() throws Exception
+	{
+		assumeFalse( GraphicsEnvironment.isHeadless() );
+
+		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
+		final SpimData2 data = beads( xml );
+		final List< ViewId > views = viewsWith( data, LABEL );
+		final Path onnx = tempDir.resolve( "tiny.onnx" );
+		TestOnnxModels.write( onnx, new double[] { 3, 6 }, 4, 3, 5, 21 );
+		assertTrue( Embed_Interest_Points.embed( data, views, LABEL, onnx, "rotation-invariant", 50 ) );
+
+		final String filtered = filteredLabelInFirstView( data, views );
+		final String warning = InterestPointTools.warningLabel + "1/" + views.size() + " Views!)";
+
+		final int algorithm = Interest_Point_Registration.defaultAlgorithm, label = Interest_Point_Registration.defaultLabel;
+		final int overlap = Interest_Point_Registration.defaultOverlapType, ipOverlap = Interest_Point_Registration.defaultInterestpointOverlapType;
+		final boolean tiles = Interest_Point_Registration.defaultGroupTiles, illums = Interest_Point_Registration.defaultGroupIllums, channels = Interest_Point_Registration.defaultGroupChannels;
+
+		try
+		{
+			// nothing chosen yet, a macro that says nothing: the embeddings matcher with the first label that has embeddings
+			Interest_Point_Registration.defaultAlgorithm = Interest_Point_Registration.defaultLabel = -1;
+			BasicRegistrationParameters brp = dialogByMacro( "registration_in_between_views=[Compare all views against each other]", data, views );
+			assertTrue( brp.pwr instanceof EmbeddingsGUI, brp.pwr.getDescription() );
+			assertEquals( Set.of( LABEL ), brp.labelMap.get( views.get( 0 ) ).keySet() );
+
+			// the label by its name while the default is another one: the label with embeddings, and the one with a warning
+			Interest_Point_Registration.defaultLabel = 1;
+			brp = dialogByMacro( "registration_algorithm=[" + new RGLDMGUI().getDescription() + "] interest_points=" + LABEL, data, views );
+			assertTrue( brp.pwr instanceof RGLDMGUI, brp.pwr.getDescription() );
+			assertEquals( Set.of( LABEL ), brp.labelMap.get( views.get( 0 ) ).keySet() );
+
+			Interest_Point_Registration.defaultLabel = 0;
+			brp = dialogByMacro( "interest_points=" + filtered, data, views );
+			assertEquals( Set.of( filtered ), brp.labelMap.get( views.get( 0 ) ).keySet() );
+
+			// as recorded from the displayed choice, the brackets inside the brackets included
+			Interest_Point_Registration.defaultLabel = 1;
+			brp = dialogByMacro( "interest_points=[" + LABEL + " [1 embedding]]", data, views );
+			assertEquals( Set.of( LABEL ), brp.labelMap.get( views.get( 0 ) ).keySet() );
+
+			Interest_Point_Registration.defaultLabel = 0;
+			brp = dialogByMacro( "interest_points=[" + filtered + " [1 embedding]" + warning + "] registration_algorithm=[" + new EmbeddingsGUI( null ).getDescription() + "]", data, views );
+			assertTrue( brp.pwr instanceof EmbeddingsGUI, brp.pwr.getDescription() );
+			assertEquals( Set.of( filtered ), brp.labelMap.get( views.get( 0 ) ).keySet() );
+		}
+		finally
+		{
+			Interest_Point_Registration.defaultAlgorithm = algorithm;
+			Interest_Point_Registration.defaultLabel = label;
+			Interest_Point_Registration.defaultOverlapType = overlap;
+			Interest_Point_Registration.defaultInterestpointOverlapType = ipOverlap;
+			Interest_Point_Registration.defaultGroupTiles = tiles;
+			Interest_Point_Registration.defaultGroupIllums = illums;
+			Interest_Point_Registration.defaultGroupChannels = channels;
+		}
+	}
+
+	/**
+	 * The embeddings are held in memory like the interest points and written when the dataset is saved (Stephan, 2026-11-14):
+	 * detections that are not saved yet can be embedded, every reader of this JVM has the vectors at once, the store gets
+	 * them with the save, and a detection that replaces a label drops its embeddings, in the store with the next save.
+	 */
+	@Test
+	public void embeddingsAreSavedWithTheDataset() throws Exception
+	{
+		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
+		final SpimData2 data = unsavedBeads( xml );
+		final List< ViewId > views = viewsWith( data, LABEL );
+		assertTrue( views.size() >= 2 );
+		final URI baseDir = data.getBasePathURI();
+		final int tp = views.get( 0 ).getTimePointId();
+		final File array = new File( new File( baseDir ), InterestPointsZarrStore.ZARR_CONTAINER + "/" + LABEL + "/tp" + tp + "/" + InterestPointArrays.ARRAYS + "/embedding" );
+		final Path onnx = tempDir.resolve( "tiny.onnx" );
+		TestOnnxModels.write( onnx, new double[] { 3, 6 }, 4, 3, 5, 21 );
 
 		final Embed_Interest_Points.Parameters p = new Embed_Interest_Points.Parameters();
 		p.label = LABEL;
@@ -339,14 +536,92 @@ public class TestInterestPointEmbedding
 		p.arrayName = "embedding";
 		p.blockSize = 50;
 		p.viewsInFlight = 2;
-		assertTrue( Embed_Interest_Points.embed( data, views, p ) );
 
+		// detections that are not saved yet: there is no store, the embedding runs on them and writes nothing
+		assertFalse( InterestPointsZarrStore.get( baseDir ).exists() );
+		assertFalse( InterestPointArrays.hasStaged( baseDir ) );
+		assertTrue( Embed_Interest_Points.embed( data, views, p ) );
+		assertFalse( InterestPointsZarrStore.get( baseDir ).exists() );
+		assertTrue( InterestPointArrays.hasStaged( baseDir ) );
+
+		// every reader has them: the matcher's vectors, the explorer's column, the registration dialog
+		final HashMap< ViewId, float[] > inMemory = new HashMap<>();
 		for ( final ViewId v : views )
 		{
 			final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( v );
 			final Vectors vectors = InterestPointArrays.vectors( lists, LABEL, "embedding" );
 			assertEquals( lists.getInterestPointList( LABEL ).getInterestPointsCopy().size(), vectors.size() + vectors.missing() );
+			inMemory.put( v, vectors.values() );
 		}
+		assertEquals( 1, InterestPointArrays.list( baseDir, LABEL, tp ).size() );
+		assertEquals( views.size(), InterestPointArrays.rows( baseDir, InterestPointArrays.attributes( baseDir, LABEL, tp, "embedding" ) ).size() );
+		assertEquals( Set.of( "embedding" ), InterestPointArrays.namesByLabel( data.getViewInterestPoints(), views ).get( LABEL ) );
+		assertTrue( InterestPointTableModel.computeAttributes( data.getViewInterestPoints(), views, LABEL ).text.endsWith( "+ embedding 5-D" ) );
+
+		// the save writes the points and their embeddings: one table for all views (one generation), no tables per view
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( InterestPointArrays.hasStaged( baseDir ) );
+		for ( final ViewId v : views )
+		{
+			assertTrue( stored( baseDir, tp, v ) );
+			assertFalse( new File( array, InterestPointArrays.SETUP_PREFIX + v.getViewSetupId() ).exists() );
+		}
+		assertEquals( 1, array.list( ( dir, name ) -> name.matches( "g\\d+" ) ).length );
+
+		final SpimData2 loaded = new XmlIoSpimData2().load( xml.toURI() );
+		for ( final ViewId v : views )
+			assertArrayEquals( inMemory.get( v ), InterestPointArrays.vectors( loaded.getViewInterestPoints().getViewInterestPointLists( v ), LABEL, "embedding" ).values() );
+
+		// a detection replaces the label of the first view: its embedding is gone for the readers at once ...
+		final ViewId first = views.get( 0 ), second = views.get( 1 );
+		final String parameters = data.getViewInterestPoints().getViewInterestPointLists( first ).getInterestPointList( LABEL ).getParameters();
+		final HashMap< ViewId, List< InterestPoint > > redetected = new HashMap<>();
+		redetected.put( first, TestInterestPointStorage.points( 7, 1 ) );
+		InterestPointTools.removeReferences( data, LABEL, Collections.singletonList( first ) );
+		InterestPointTools.addInterestPoints( data, LABEL, redetected, parameters );
+
+		assertNull( InterestPointArrays.read( baseDir, LABEL, tp, first.getViewSetupId(), "embedding" ) );
+		assertEquals( views.size() - 1, InterestPointArrays.rows( baseDir, InterestPointArrays.attributes( baseDir, LABEL, tp, "embedding" ) ).size() );
+		assertThrows( IllegalStateException.class, () -> InterestPointArrays.vectors( data.getViewInterestPoints().getViewInterestPointLists( first ), LABEL, "embedding" ) );
+		assertTrue( InterestPointTableModel.computeAttributes( data.getViewInterestPoints(), views, LABEL ).text.endsWith( "(" + ( views.size() - 1 ) + "/" + views.size() + " views)" ) );
+
+		// ... and in the store with the save; the other views keep theirs
+		assertTrue( stored( baseDir, tp, first ) );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( stored( baseDir, tp, first ) );
+		assertTrue( stored( baseDir, tp, second ) );
+
+		// the new points embedded and saved: one row per new point
+		assertTrue( Embed_Interest_Points.embed( data, Collections.singletonList( first ), p ) );
+		assertEquals( 7, InterestPointArrays.read( baseDir, LABEL, tp, first.getViewSetupId(), "embedding" ).size() );
+		assertFalse( stored( baseDir, tp, first ) );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertTrue( stored( baseDir, tp, first ) );
+		assertEquals( 7, InterestPointArrays.read( baseDir, LABEL, tp, first.getViewSetupId(), "embedding" ).size() );
+
+		// embedded, then detected again before the save: nothing of the old points reaches the store
+		assertTrue( Embed_Interest_Points.embed( data, Collections.singletonList( second ), p ) );
+		redetected.clear();
+		redetected.put( second, TestInterestPointStorage.points( 9, 2 ) );
+		InterestPointTools.removeReferences( data, LABEL, Collections.singletonList( second ) );
+		InterestPointTools.addInterestPoints( data, LABEL, redetected, parameters );
+		assertNull( InterestPointArrays.read( baseDir, LABEL, tp, second.getViewSetupId(), "embedding" ) );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( stored( baseDir, tp, second ) );
+
+		// all views detected again: the array goes as a whole
+		InterestPointTools.removeReferences( data, LABEL, views );
+		assertTrue( InterestPointArrays.list( baseDir, LABEL, tp ).isEmpty() || InterestPointArrays.rows( baseDir, InterestPointArrays.attributes( baseDir, LABEL, tp, "embedding" ) ).isEmpty() );
+		assertTrue( array.isDirectory() );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( array.exists() );
+		assertTrue( InterestPointArrays.list( baseDir, LABEL, tp ).isEmpty() );
+	}
+
+	/** @return whether the store holds rows of the array "embedding" for a view (whatever this JVM holds for the next save) */
+	static boolean stored( final URI baseDir, final int tp, final ViewId view )
+	{
+		return InterestPointArrays.rowsInStore( baseDir, LABEL, tp, "embedding" ).containsKey( view.getViewSetupId() );
 	}
 
 	/** the simulated beads with a DoG label whose parameters string the embedding can read, saved so that the store exists */

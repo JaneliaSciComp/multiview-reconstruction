@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
+import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -88,23 +89,17 @@ public class EmbeddingsGUI extends PairwiseGUI
 	/**
 	 * @param data the dataset
 	 * @param viewIds the selected views
-	 * @return whether any label of the selected views has stored embeddings (a per-point array, {@link InterestPointArrays#names});
-	 *         then this is the registration dialog's algorithm until the user picks one ({@code Interest_Point_Registration.defaultAlgorithm})
+	 * @return whether any label of the selected views has stored embeddings (a per-point array, {@link InterestPointArrays#namesByLabel});
+	 *         then the registration dialog suggests this algorithm, with such a label, until the user has chosen one
+	 *         ({@code Interest_Point_Registration.defaultAlgorithm}; the dialog counts them per label, {@code numEmbeddings})
 	 */
 	public static boolean hasEmbeddings( final SpimData2 data, final List< ViewId > viewIds )
 	{
-		final HashMap< ViewId, HashMap< String, Double > > labelMap = new HashMap<>();
-		for ( final ViewId viewId : viewIds )
-		{
-			final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( viewId );
-			if ( lists == null )
-				continue;
-			final HashMap< String, Double > labels = new HashMap<>();
-			for ( final String label : lists.getHashMap().keySet() )
-				labels.put( label, 1.0 );
-			labelMap.put( viewId, labels );
-		}
-		return !InterestPointArrays.names( data.getViewInterestPoints(), labelMap ).isEmpty();
+		for ( final SortedSet< String > names : InterestPointArrays.namesByLabel( data.getViewInterestPoints(), viewIds ).values() )
+			if ( !names.isEmpty() )
+				return true;
+
+		return false;
 	}
 
 	@Override

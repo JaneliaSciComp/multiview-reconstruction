@@ -24,7 +24,9 @@ package net.preibisch.mvrecon.fiji.spimdata.interestpoints;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,6 +37,7 @@ import java.util.concurrent.Future;
 import java.util.function.Function;
 
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.util.Pair;
 
 /**
  * Utility methods for managing interest point correspondences.
@@ -307,8 +310,21 @@ public class CorrespondenceTools
 		if ( vipl == null || !vipl.contains( label ) )
 			return 0;
 
-		final List< CorrespondingInterestPoints > correspondences =
-				new ArrayList<>( vipl.getInterestPointList( label ).getCorrespondingInterestPointsCopy() );
+		final List< CorrespondingInterestPoints > correspondences;
+
+		try
+		{
+			correspondences = new ArrayList<>( vipl.getInterestPointList( label ).getCorrespondingInterestPointsCopy() );
+		}
+		catch ( final RuntimeException e )
+		{
+			// an entry the dataset names without data (InterestPointsZarr.withoutData): its own correspondences are gone
+			// with it, so those of other views that point to it are found by looking at the other lists
+			if ( InterestPointsZarr.withoutData( Collections.singletonList( vipl.getInterestPointList( label ) ) ).isEmpty() )
+				throw e;
+
+			return removeCorrespondencesTo( vip, Collections.singletonMap( viewId, Collections.singletonList( label ) ), numThreads );
+		}
 
 		if ( correspondences.isEmpty() )
 			return 0;
@@ -386,6 +402,106 @@ public class CorrespondenceTools
 		}
 
 		return totalRemoved;
+	}
+
+	/**
+	 * Removes from all other lists of the dataset the correspondences that point to one of the given (view, label)
+	 * entries, found by looking at those lists: for entries whose own correspondences cannot be followed, i.e. entries the
+	 * dataset names without data ({@link InterestPointsZarr#withoutData}), where
+	 * {@link #removeCorrespondencesForViewLabel} has nothing to start from. A list whose partners the store's index names
+	 * ({@link InterestPoints#getCorrespondingViews()}) is only read if it points to one of the entries; a list that cannot
+	 * be read (it has no data itself) is skipped. Nothing is saved, a changed list is saved with the dataset.
+	 *
+	 * @param vip the lists of the dataset, all of them are looked at
+	 * @param targets the entries: the labels per view
+	 * @param numThreads the number of threads
+	 * @return the number of correspondences removed
+	 */
+	public static int removeCorrespondencesTo(
+			final ViewInterestPoints vip,
+			final Map< ? extends ViewId, ? extends Collection< String > > targets,
+			final int numThreads )
+	{
+		final Map< ViewId, Set< String > > lookup = new HashMap<>();
+
+		for ( final Map.Entry< ? extends ViewId, ? extends Collection< String > > e : targets.entrySet() )
+			lookup.computeIfAbsent( new ViewId( e.getKey().getTimePointId(), e.getKey().getViewSetupId() ), v -> new HashSet<>() ).addAll( e.getValue() );
+
+		if ( lookup.isEmpty() )
+			return 0;
+
+		// every list that is not one of the entries
+		final List< InterestPoints > others = new ArrayList<>();
+
+		for ( final Map.Entry< ViewId, ViewInterestPointLists > e : vip.getViewInterestPoints().entrySet() )
+		{
+			final Set< String > ofView = lookup.get( new ViewId( e.getKey().getTimePointId(), e.getKey().getViewSetupId() ) );
+
+			for ( final Map.Entry< String, InterestPoints > list : e.getValue().getHashMap().entrySet() )
+				if ( ofView == null || !ofView.contains( list.getKey() ) )
+					others.add( list.getValue() );
+		}
+
+		final ExecutorService exec = Executors.newFixedThreadPool( Math.max( 1, numThreads ) );
+		final List< Future< Integer > > futures = new ArrayList<>();
+
+		for ( final InterestPoints list : others )
+			futures.add( exec.submit( () ->
+			{
+				try
+				{
+					boolean pointsToEntry = false;
+
+					for ( final Pair< ViewId, String > partner : list.getCorrespondingViews() )
+						if ( isEntry( lookup, partner.getA(), partner.getB() ) )
+						{
+							pointsToEntry = true;
+							break;
+						}
+
+					if ( !pointsToEntry )
+						return 0;
+
+					final List< CorrespondingInterestPoints > correspondences = new ArrayList<>( list.getCorrespondingInterestPointsCopy() );
+					final int sizeBefore = correspondences.size();
+
+					correspondences.removeIf( c -> isEntry( lookup, c.getCorrespondingViewId(), c.getCorrespodingLabel() ) );
+
+					if ( correspondences.size() < sizeBefore )
+						list.setCorrespondingInterestPoints( correspondences );
+
+					return sizeBefore - correspondences.size();
+				}
+				catch ( final RuntimeException e )
+				{
+					return 0; // a list without data itself
+				}
+			} ) );
+
+		exec.shutdown();
+
+		int removed = 0;
+
+		for ( final Future< Integer > f : futures )
+		{
+			try
+			{
+				removed += f.get();
+			}
+			catch ( final Exception e )
+			{
+				e.printStackTrace();
+			}
+		}
+
+		return removed;
+	}
+
+	private static boolean isEntry( final Map< ViewId, Set< String > > entries, final ViewId viewId, final String label )
+	{
+		final Set< String > labels = entries.get( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
+
+		return labels != null && labels.contains( label );
 	}
 
 	/**

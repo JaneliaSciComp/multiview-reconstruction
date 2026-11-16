@@ -102,6 +102,14 @@ public class InterestPointsN5ToZarr
 		return reader;
 	}
 
+	/** @return whether the N5 has the points group of an entry ({@code tpId_X_viewSetupId_Y/label}); nothing is read */
+	public boolean contains( final String path )
+	{
+		final N5Reader n5 = reader();
+
+		return n5 != null && n5.exists( InterestPointsN5.ipDataset( path ) );
+	}
+
 	/**
 	 * Reads the points of an entry with their attributes (NaN where the label was stored without them).
 	 *

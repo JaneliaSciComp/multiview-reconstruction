@@ -133,9 +133,61 @@ public class InterestPointsZarr extends InterestPoints
 	}
 
 	/** @return the places a load looked in, for an error message */
-	private String storedNowhere()
+	public synchronized String storedNowhere()
 	{
 		return "(neither in " + InterestPointsZarrStore.ZARR_CONTAINER + " nor in " + InterestPointsN5.baseN5 + ( textFile == null ? "" : " nor in '" + textFile + InterestPointsTextFiles.IP_EXT + "'" ) + ")";
+	}
+
+	/**
+	 * The lists among the given ones that the dataset names but that have no data anywhere: nothing in memory (loaded, set
+	 * or changed), no entry in the store (committed, staged or in a staging file), none in the N5 layout and no text files.
+	 * A read of such a list throws ("No interest points are stored for ... although the XML lists the label"); it comes
+	 * from an XML that outlived its {@code interestpoints.zarr} / {@code interestpoints.n5}, or the entries of some views.
+	 * A filtered label counts by its own entry (its marker and correspondences), not by its base label.
+	 *
+	 * One batched lookup per store ({@link InterestPointsZarrStore#missingEntries}); only for the keys the store lacks one
+	 * look into the N5 or at the text file each.
+	 *
+	 * @param lists the lists, those of other types are ignored
+	 * @return the lists without data, in the order given
+	 */
+	public static List< InterestPointsZarr > withoutData( final Collection< ? extends InterestPoints > lists )
+	{
+		// nothing in memory: per store, by key
+		final Map< InterestPointsZarrStore, Map< Key, InterestPointsZarr > > candidates = new HashMap<>();
+
+		for ( final InterestPoints list : lists )
+			if ( list instanceof InterestPointsZarr )
+			{
+				final InterestPointsZarr zarrList = (InterestPointsZarr) list;
+
+				synchronized ( zarrList )
+				{
+					if ( zarrList.points == null && zarrList.correspondingInterestPoints == null )
+						candidates.computeIfAbsent( zarrList.store(), s -> new HashMap<>() ).put( zarrList.key, zarrList );
+				}
+			}
+
+		final Set< InterestPointsZarr > missing = new HashSet<>();
+
+		for ( final Map.Entry< InterestPointsZarrStore, Map< Key, InterestPointsZarr > > ofStore : candidates.entrySet() )
+			for ( final Key key : ofStore.getKey().missingEntries( ofStore.getValue().keySet() ) )
+			{
+				final InterestPointsZarr zarrList = ofStore.getValue().get( key );
+				final String textFile = zarrList.getTextFile();
+
+				if ( !InterestPointsN5ToZarr.get( zarrList.getBasePath() ).contains( zarrList.path )
+						&& !( textFile != null && InterestPointsTextFiles.exists( zarrList.getBasePath(), textFile ) ) )
+					missing.add( zarrList );
+			}
+
+		final List< InterestPointsZarr > result = new ArrayList<>();
+
+		for ( final InterestPoints list : lists )
+			if ( missing.remove( list ) )
+				result.add( (InterestPointsZarr) list );
+
+		return result;
 	}
 
 	/** The points of the store's layout as InterestPoints by id. */

@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.process.interestpointdetection;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.TreeSet;
 import java.util.Collection;
@@ -33,6 +34,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -42,6 +44,8 @@ import net.imglib2.RandomAccessible;
 import net.imglib2.RealRandomAccess;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
 import net.imglib2.type.numeric.RealType;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
@@ -53,6 +57,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
@@ -441,22 +446,49 @@ public class InterestPointTools
 	/**
 	 * Before a label is overwritten in the views (by a re-detection, a filtered label or a plain copy of the points that
 	 * pass a filter): removes the correspondences of other views that point to it
-	 * (CorrespondenceTools.removeCorrespondencesForViewLabel) and the records of the action history that produced it
-	 * ("interestpoints:" + label). Its dependants (filtered labels of it) stay and follow the new points; their
-	 * correspondences may be stale, which is logged.
+	 * (CorrespondenceTools.removeCorrespondencesForViewLabel), the records of the action history that produced it
+	 * ("interestpoints:" + label), and its embeddings for these views (the rows of its per-point arrays: they describe the
+	 * points that go; in memory at once, in the store when the dataset is saved, InterestPointArrays.stageRemoveRows;
+	 * Stephan, 2026-11-14). Its dependants (filtered labels of it) stay and follow the new points; their correspondences
+	 * may be stale, which is logged.
 	 */
 	public static void removeReferences( final SpimData2 data, final String label, final Collection< ? extends ViewId > views )
 	{
 		int removed = 0;
-		final TreeSet< String > dependants = new TreeSet<>();
+		final TreeSet< String > dependants = new TreeSet<>(), embeddings = new TreeSet<>();
+		final HashMap< Pair< URI, Integer >, TreeSet< Integer > > setups = new HashMap<>(); // the views by dataset directory and timepoint
 
 		for ( final ViewId viewId : views )
 		{
 			removed += CorrespondenceTools.removeCorrespondencesForViewLabel( data.getViewInterestPoints(), viewId, label, Threads.numThreads() );
-			dependants.addAll( dependentLabels( data.getViewInterestPoints().getViewInterestPointLists( viewId ), label ) );
+
+			final ViewInterestPointLists vipl = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+			dependants.addAll( dependentLabels( vipl, label ) );
+
+			final InterestPoints list = vipl.getInterestPointList( label );
+			if ( list != null && list.getBasePath() != null )
+				setups.computeIfAbsent( new ValuePair<>( list.getBasePath(), viewId.getTimePointId() ), k -> new TreeSet<>() ).add( viewId.getViewSetupId() );
 		}
 
 		IOFunctions.println( "Overwriting label '" + label + "' in " + views.size() + " view(s): removed " + removed + " corresponding entries of other views that pointed to it." );
+
+		try
+		{
+			for ( final Map.Entry< Pair< URI, Integer >, TreeSet< Integer > > e : setups.entrySet() )
+			{
+				for ( final InterestPointArrays.Attributes array : InterestPointArrays.list( e.getKey().getA(), label, e.getKey().getB() ) )
+					embeddings.add( array.name() );
+
+				InterestPointArrays.stageRemoveRows( e.getKey().getA(), label, e.getKey().getB(), e.getValue() );
+			}
+		}
+		catch ( final RuntimeException e )
+		{
+			IOFunctions.println( "Could not look up the embeddings of '" + label + "': " + e );
+		}
+
+		if ( !embeddings.isEmpty() )
+			IOFunctions.println( "The embeddings " + embeddings + " of '" + label + "' described the points that are replaced: they are dropped for these view(s) (in the store when the dataset is saved); compute them again for the new points." );
 
 		if ( !dependants.isEmpty() )
 			IOFunctions.println( "The filtered label(s) " + dependants + " filter '" + label + "' and now follow its new points, their correspondences may be stale." );

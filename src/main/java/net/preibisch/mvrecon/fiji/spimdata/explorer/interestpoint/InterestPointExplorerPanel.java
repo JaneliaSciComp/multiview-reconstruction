@@ -39,7 +39,9 @@ import java.awt.event.MouseListener;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
@@ -51,8 +53,11 @@ import javax.swing.JSlider;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
+import javax.swing.SwingUtilities;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
 import javax.swing.table.DefaultTableCellRenderer;
 
 import bdv.tools.HelpDialog;
@@ -89,6 +94,13 @@ public class InterestPointExplorerPanel extends JPanel
 
 	// the open interactive filter window (one at a time, its preview lives in the table model)
 	protected InteractiveInterestPointFilter filterWindow = null;
+
+	/** the popup menu entry that asks what to do about interest points the dataset lists without data ({@link #repair}) */
+	public static final String FIX_MISSING = "Fix missing interest points ...";
+
+	/** the labels without data that this window asked about: once each by itself, the popup menu asks again */
+	private final HashSet< String > repairOffered = new HashSet<>();
+	private boolean repairScheduled = false;
 
 	public InterestPointExplorerPanel( final ViewInterestPoints viewInterestPoints, final FilteredAndGroupedExplorer< ? > viewSetupExplorer )
 	{
@@ -625,6 +637,47 @@ public class InterestPointExplorerPanel extends JPanel
 	}
 
 	/**
+	 * The table model found, while a cell was computed (i.e. while the table is painted), that the dataset lists interest
+	 * points without data: asks what to do about them once the painting is done, see {@link #repair}
+	 */
+	protected void offerRepair()
+	{
+		if ( repairScheduled )
+			return;
+
+		repairScheduled = true;
+
+		SwingUtilities.invokeLater( () ->
+		{
+			repairScheduled = false;
+			repair( false );
+		} );
+	}
+
+	/**
+	 * Asks per label that the dataset lists without data for the selected views ({@link InterestPointTableModel#missingEntries})
+	 * whether to detect it again or to remove it from the XML ({@link MissingInterestPointsDialog#offer}); the table
+	 * shows such a label as "missing" in the meantime.
+	 *
+	 * @param again false: only the labels this window has not asked about yet (the table found them); true: all of them (the popup menu)
+	 */
+	protected void repair( final boolean again )
+	{
+		final List< BasicViewDescription< ? > > vds = tableModel.getCurrentViewDescriptions();
+
+		if ( vds == null || vds.isEmpty() || !MissingInterestPointsDialog.canAsk() )
+			return;
+
+		for ( final Map.Entry< String, List< ViewId > > e : tableModel.missingEntries().entrySet() )
+		{
+			if ( !repairOffered.add( e.getKey() ) && !again )
+				continue;
+
+			MissingInterestPointsDialog.offer( viewSetupExplorer.getSpimData(), e.getKey(), e.getValue(), vds, viewSetupExplorer.getPanel() );
+		}
+	}
+
+	/**
 	 * A right-click selects the row under the mouse (if it is not selected yet), so that the popup menu acts on it
 	 */
 	protected void selectRowForPopup( final MouseEvent e )
@@ -821,10 +874,25 @@ public class InterestPointExplorerPanel extends JPanel
 		final JPopupMenu popupMenu = new JPopupMenu();
 		final JMenuItem filterItem = new JMenuItem( "Filter interactively ..." );
 		final JMenuItem defaultsItem = new JMenuItem( "Set detection parameters as defaults" );
+		final JMenuItem fixItem = new JMenuItem( FIX_MISSING );
 		final JMenuItem deleteItem = new JMenuItem( "Delete" );
 
 		filterItem.addActionListener( e -> filterInteractively() );
 		defaultsItem.addActionListener( e -> setDetectionDefaults() );
+		fixItem.addActionListener( e -> repair( true ) );
+
+		// only when the table shows a label that the dataset lists without data
+		popupMenu.addPopupMenuListener( new PopupMenuListener()
+		{
+			@Override
+			public void popupMenuWillBecomeVisible( final PopupMenuEvent e ) { fixItem.setEnabled( !tableModel.missingEntries().isEmpty() ); }
+
+			@Override
+			public void popupMenuWillBecomeInvisible( final PopupMenuEvent e ) {}
+
+			@Override
+			public void popupMenuCanceled( final PopupMenuEvent e ) {}
+		} );
 
 		deleteItem.addActionListener(new ActionListener()
 		{
@@ -838,6 +906,7 @@ public class InterestPointExplorerPanel extends JPanel
 
 		popupMenu.add( filterItem );
 		popupMenu.add( defaultsItem );
+		popupMenu.add( fixItem );
 		popupMenu.add( deleteItem );
 
 		table.setComponentPopupMenu( popupMenu );

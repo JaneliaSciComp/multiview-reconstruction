@@ -25,6 +25,7 @@ package net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import javax.swing.table.AbstractTableModel;
@@ -54,6 +56,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.At
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.MissingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
@@ -88,8 +91,19 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 	HashMap< ViewId, Collection< ? extends RealLocalizable > > points = new HashMap<>();
 
-	// the labels whose points could not be read (e.g. a filtered label of a base label that stores no response): logged once, the cell says so, the label can still be deleted
+	// the labels whose points could not be read (e.g. a filtered label of a base label that stores no response): logged once, the cell says so, the label can still be deleted;
+	// not tried again until the selection or the data changes
 	private final HashSet< String > failed = new HashSet<>();
+
+	// of the failed labels, those that failed because the dataset lists interest points without data (MissingInterestPoints): per label of the
+	// table the entries without data (its own, or those of the label it filters) among the selected views
+	private final HashMap< String, SortedMap< String, List< ViewId > > > missing = new HashMap<>();
+
+	/** what the cells of a label say whose points the dataset lists but that are stored nowhere */
+	public static final String MISSING_TEXT = "missing";
+
+	/** what the cells of a label say whose points cannot be read for another reason */
+	public static final String ERROR_TEXT = "ERROR (see log)";
 
 	// which attributes (DoG response, intensity, sigma) the points of a label store in the selected views and which per-point arrays (embeddings) it has, computed once per label and selection (it loads the points)
 	private final HashMap< String, LabelAttributes > attributes = new HashMap<>();
@@ -126,15 +140,17 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 		// the labels may have changed (detected again, filtered labels created)
 		this.failed.clear();
+		this.missing.clear();
 		this.attributes.clear();
 	}
 	protected ViewInterestPoints getViewInterestPoints() { return viewInterestPoints; }
 	protected List< BasicViewDescription< ? > > getCurrentViewDescriptions() { return currentVDs; } 
 	
-	protected void updateViewDescription( final List< BasicViewDescription< ? > > vds )
+	public void updateViewDescription( final List< BasicViewDescription< ? > > vds )
 	{
 		this.currentVDs = vds;
 		this.failed.clear();
+		this.missing.clear();
 		this.attributes.clear();
 
 		// update everything
@@ -198,44 +214,37 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 				return virtualList( viewInterestPoints, currentVDs, label ) == null ? label : label + " (virtual)";
 			else if ( column == 1 )
 			{
-				try
-				{
-					return numDetections( viewInterestPoints, currentVDs, label );
-				}
-				catch ( final RuntimeException e )
-				{
-					if ( failed.add( label ) )
-						IOFunctions.println( "Cannot read the interest points '" + label + "': " + e.getMessage() );
-
-					return "ERROR (see log)";
-				}
+				return count( label, () -> numDetections( viewInterestPoints, currentVDs, label ) );
 			}
 			else if ( column == 2 )
 			{
-				// Show fraction when in green state (state 2) for the selected row
-				if ( selectedState == 2 && selectedRow == row )
+				return count( label, () ->
 				{
-					final int interVisible = numCorrespondingBetweenVisible( viewInterestPoints, currentVDs, label );
+					// Show fraction when in green state (state 2) for the selected row
+					if ( selectedState == 2 && selectedRow == row )
+					{
+						final int interVisible = numCorrespondingBetweenVisible( viewInterestPoints, currentVDs, label );
 
-				// Count unique consensus sets when displaying 2 views
-				if ( currentVDs.size() == 2 )
-				{
-					final int numSets = numConsensusSetsBetweenVisible( viewInterestPoints, currentVDs, label );
-					return interVisible + " (" + numSets + " set" + (numSets == 1 ? "" : "s") + ")";
-				}
-				else
-				{
-					final int total = numCorresponding( viewInterestPoints, currentVDs, label );
-					return interVisible + "/" + total;
-				}
-				}
-				else
-				{
-					return numCorresponding( viewInterestPoints, currentVDs, label );
-				}
+						// Count unique consensus sets when displaying 2 views
+						if ( currentVDs.size() == 2 )
+						{
+							final int numSets = numConsensusSetsBetweenVisible( viewInterestPoints, currentVDs, label );
+							return interVisible + " (" + numSets + " set" + (numSets == 1 ? "" : "s") + ")";
+						}
+						else
+						{
+							final int total = numCorresponding( viewInterestPoints, currentVDs, label );
+							return interVisible + "/" + total;
+						}
+					}
+					else
+					{
+						return numCorresponding( viewInterestPoints, currentVDs, label );
+					}
+				} );
 			}
 			else if ( column == 3 )
-				return numCorrespondences( viewInterestPoints, currentVDs, label );
+				return count( label, () -> numCorrespondences( viewInterestPoints, currentVDs, label ) );
 			else if ( column == 4 )
 				return findNumPresent( labels, currentVDs, label );
 			else if ( column == ATTRIBUTES_COLUMN )
@@ -245,6 +254,95 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 			else
 				return -1;
 		}
+	}
+
+	/**
+	 * A cell that counts the points or correspondences of a label: the table is painted from these, so a label that cannot
+	 * be read must not throw here. It is logged once ({@link #readFailed}), its cells say {@link #MISSING_TEXT} or
+	 * {@link #ERROR_TEXT}, and it is not read again until the selection or the data changes.
+	 */
+	private Object count( final String label, final Supplier< Object > count )
+	{
+		if ( !failed.contains( label ) )
+		{
+			try
+			{
+				return count.get();
+			}
+			catch ( final RuntimeException e )
+			{
+				readFailed( label, e );
+			}
+		}
+
+		return isMissing( label ) ? MISSING_TEXT : ERROR_TEXT;
+	}
+
+	/**
+	 * The points or correspondences of a label could not be read. The first time for a label (per selection): finds out
+	 * whether the dataset lists interest points without data ({@link MissingInterestPoints}), says so in the log and has
+	 * the panel offer the repair; any other failure is logged with its message.
+	 */
+	protected void readFailed( final String label, final RuntimeException e )
+	{
+		if ( !failed.add( label ) )
+			return;
+
+		SortedMap< String, List< ViewId > > without = null;
+
+		try
+		{
+			without = MissingInterestPoints.find( viewInterestPoints, currentVDs, Collections.singletonList( label ) );
+		}
+		catch ( final RuntimeException e2 )
+		{
+			IOFunctions.println( "Cannot check where the interest points '" + label + "' are stored: " + e2 );
+		}
+
+		if ( without == null || without.isEmpty() )
+		{
+			IOFunctions.println( "Cannot read the interest points '" + label + "': " + e.getMessage() );
+			return;
+		}
+
+		missing.put( label, without );
+
+		for ( final String line : MissingInterestPoints.describe( viewInterestPoints, without ) )
+			IOFunctions.println( line );
+
+		if ( panel != null )
+			panel.offerRepair();
+	}
+
+	/** @return whether the label cannot be read because the dataset lists interest points without data (known once a cell of it was computed) */
+	public boolean isMissing( final String label )
+	{
+		return missing.containsKey( label );
+	}
+
+	/** @return whether the row shows a label the dataset lists without data (for the popup menu) */
+	public boolean isMissing( final int row )
+	{
+		if ( currentVDs == null || currentVDs.isEmpty() )
+			return false;
+
+		final String label = label( InterestPointTools.getAllInterestPointMap( viewInterestPoints, currentVDs ), row );
+
+		return label != null && isMissing( label );
+	}
+
+	/**
+	 * @return the entries without data among the selected views that made labels of the table unreadable, the views per
+	 *         label (a filtered label is listed by the label it filters, if that is the one without data)
+	 */
+	public SortedMap< String, List< ViewId > > missingEntries()
+	{
+		final TreeMap< String, List< ViewId > > all = new TreeMap<>( InterestPointTools.naturalOrder );
+
+		for ( final SortedMap< String, List< ViewId > > ofLabel : missing.values() )
+			all.putAll( ofLabel );
+
+		return all;
 	}
 
 	/**
@@ -327,16 +425,29 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 		if ( result == null )
 		{
-			try
-			{
-				result = computeAttributes( viewInterestPoints, currentVDs, label );
-			}
-			catch ( final RuntimeException e )
-			{
-				if ( failed.add( label ) )
-					IOFunctions.println( "Cannot read the interest points '" + label + "': " + e.getMessage() );
+			result = noAttributes;
 
-				result = noAttributes;
+			if ( !failed.contains( label ) )
+			{
+				try
+				{
+					result = computeAttributes( viewInterestPoints, currentVDs, label );
+				}
+				catch ( final RuntimeException e )
+				{
+					readFailed( label, e );
+				}
+			}
+
+			if ( isMissing( label ) )
+			{
+				final StringBuilder what = new StringBuilder();
+
+				for ( final Map.Entry< String, List< ViewId > > e : missing.get( label ).entrySet() )
+					what.append( what.length() == 0 ? "" : "; " ).append( "'" ).append( e.getKey() ).append( "' in " ).append( e.getValue().size() ).append( " of the selected view(s)" );
+
+				result = new LabelAttributes( "no data stored",
+						"The dataset (XML) lists these interest points, but nothing is stored for " + what + ". Right-click > '" + InterestPointExplorerPanel.FIX_MISSING + "' removes them from the XML or detects them again.", false );
 			}
 
 			attributes.put( label, result );
@@ -469,7 +580,8 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 	 * point of the (base) label, " + embedding 64-D (1/4 views)" and a mark when views have no rows or another number of
 	 * rows than points (the label was detected again since the rows were written, or only some of its points were
 	 * embedded); an array not named {@link InterestPointArrays#EMBEDDING} shows its name ("embedding 'descriptor' 64-D");
-	 * nothing when the label has no arrays.
+	 * nothing when the label has no arrays. An array without rows for any view (created, never written: an embedding that
+	 * failed) is no embedding and not shown, as the registration dialog does not count it ({@link InterestPointArrays#namesByLabel}).
 	 *
 	 * @param points the attributes of the points
 	 * @param vip all lists
@@ -497,8 +609,13 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 			for ( final Attributes array : InterestPointArrays.list( baseDir, base, e.getKey() ) )
 			{
-				final ArrayState state = arrays.computeIfAbsent( array.name(), n -> new ArrayState( array ) );
 				final SortedMap< Integer, Long > rows = InterestPointArrays.rows( baseDir, array );
+
+				// an array that holds nothing is no embedding of the label
+				if ( rows.isEmpty() )
+					continue;
+
+				final ArrayState state = arrays.computeIfAbsent( array.name(), n -> new ArrayState( array ) );
 
 				for ( final ViewId v : e.getValue() )
 				{
@@ -709,7 +826,7 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 		// Clear correspondence color map cache when selection changes
 		correspondenceColorMap = null;
 
-		final BasicBDVPopup bdvPopup = panel.viewSetupExplorer.getPanel().runningBdvPopup();
+		final BasicBDVPopup bdvPopup = panel == null ? null : panel.viewSetupExplorer.getPanel().runningBdvPopup();
 
 		if ( currentVDs != null && currentVDs.size() != 0 && bdvPopup != null && bdvPopup.bdvRunning() && row >= 0 && row < getRowCount() && col >= 1 && col <= 2  )
 		{
@@ -759,78 +876,26 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 			final String label = label( InterestPointTools.getAllInterestPointMap( viewInterestPoints, currentVDs ), row );
 
-			if ( label == null )
+			// nothing to show for a label whose points cannot be read (its cells say so)
+			if ( label == null || failed.contains( label ) )
 			{
 				this.selectedRow = this.selectedCol = -1;
 				this.selectedState = 0;
 				this.points = new HashMap<>();
 			}
-			else if ( col == 1 )
+			else
 			{
-				this.points = new HashMap<>();
-
-				for ( final ViewId v : currentVDs )
-					this.points.put( v, viewInterestPoints.getViewInterestPointLists( v ).getInterestPointList( label ).getInterestPointsCopy().values() );
-			}
-			else // col == 2
-			{
-				this.points = new HashMap<>();
-
-				if ( selectedState == 1 )
+				try
 				{
-					// State 1: Show all interest points with any correspondences
-					for ( final ViewId v : currentVDs )
-					{
-						final InterestPoints ipList = viewInterestPoints.getViewInterestPointLists( v ).getInterestPointList( label );
-						final Map< Integer, InterestPoint > map = ipList.getInterestPointsCopy();
-						final Collection< InterestPoint > tmp = new HashSet<>();
-
-						for ( final CorrespondingInterestPoints ip : ipList.getCorrespondingInterestPointsCopy() )
-						{
-							if ( !map.containsKey( ip.getDetectionId() ) )
-							{
-								IOFunctions.println( "Inconsistency in the interest points of view: " + Group.pvid( v ) );
-								IOFunctions.println( "Cannot find interestpoint for id = " + ip.getDetectionId() );
-							}
-							else
-							{
-								tmp.add( map.get( ip.getDetectionId() ) );
-							}
-						}
-
-						points.put( v, tmp );
-					}
+					loadSelectedPoints( label, col );
 				}
-				else // selectedState == 2
+				catch ( final RuntimeException e )
 				{
-					// State 2: Show only interest points with correspondences between currently visible views
-					final HashSet< ViewId > visibleViewSet = new HashSet<>( currentVDs );
-
-					for ( final ViewId v : currentVDs )
-					{
-						final InterestPoints ipList = viewInterestPoints.getViewInterestPointLists( v ).getInterestPointList( label );
-						final Map< Integer, InterestPoint > map = ipList.getInterestPointsCopy();
-						final Collection< InterestPoint > tmp = new HashSet<>();
-
-						for ( final CorrespondingInterestPoints ip : ipList.getCorrespondingInterestPointsCopy() )
-						{
-							// Only include if correspondence is to another visible view
-							if ( visibleViewSet.contains( ip.getCorrespondingViewId() ) )
-							{
-								if ( !map.containsKey( ip.getDetectionId() ) )
-								{
-									IOFunctions.println( "Inconsistency in the interest points of view: " + Group.pvid( v ) );
-									IOFunctions.println( "Cannot find interestpoint for id = " + ip.getDetectionId() );
-								}
-								else
-								{
-									tmp.add( map.get( ip.getDetectionId() ) );
-								}
-							}
-						}
-
-						points.put( v, tmp );
-					}
+					// e.g. interest points the dataset lists without data, in a cell that was not painted yet
+					readFailed( label, e );
+					this.selectedRow = this.selectedCol = -1;
+					this.selectedState = 0;
+					this.points = new HashMap<>();
 				}
 			}
 
@@ -859,6 +924,82 @@ public class InterestPointTableModel extends AbstractTableModel implements Inter
 
 		if ( bdvPopup != null && bdvPopup.bdvRunning() )
 			bdvPopup.updateBDV();
+	}
+
+	/**
+	 * Loads the points that a selected cell shows in BigDataViewer: all points of the label (column 1), or those with
+	 * correspondences (column 2: any, or only to other selected views, by {@code selectedState})
+	 */
+	private void loadSelectedPoints( final String label, final int col )
+	{
+		if ( col == 1 )
+		{
+			this.points = new HashMap<>();
+
+			for ( final ViewId v : currentVDs )
+				this.points.put( v, viewInterestPoints.getViewInterestPointLists( v ).getInterestPointList( label ).getInterestPointsCopy().values() );
+		}
+		else // col == 2
+		{
+			this.points = new HashMap<>();
+
+			if ( selectedState == 1 )
+			{
+				// State 1: Show all interest points with any correspondences
+				for ( final ViewId v : currentVDs )
+				{
+					final InterestPoints ipList = viewInterestPoints.getViewInterestPointLists( v ).getInterestPointList( label );
+					final Map< Integer, InterestPoint > map = ipList.getInterestPointsCopy();
+					final Collection< InterestPoint > tmp = new HashSet<>();
+
+					for ( final CorrespondingInterestPoints ip : ipList.getCorrespondingInterestPointsCopy() )
+					{
+						if ( !map.containsKey( ip.getDetectionId() ) )
+						{
+							IOFunctions.println( "Inconsistency in the interest points of view: " + Group.pvid( v ) );
+							IOFunctions.println( "Cannot find interestpoint for id = " + ip.getDetectionId() );
+						}
+						else
+						{
+							tmp.add( map.get( ip.getDetectionId() ) );
+						}
+					}
+
+					points.put( v, tmp );
+				}
+			}
+			else // selectedState == 2
+			{
+				// State 2: Show only interest points with correspondences between currently visible views
+				final HashSet< ViewId > visibleViewSet = new HashSet<>( currentVDs );
+
+				for ( final ViewId v : currentVDs )
+				{
+					final InterestPoints ipList = viewInterestPoints.getViewInterestPointLists( v ).getInterestPointList( label );
+					final Map< Integer, InterestPoint > map = ipList.getInterestPointsCopy();
+					final Collection< InterestPoint > tmp = new HashSet<>();
+
+					for ( final CorrespondingInterestPoints ip : ipList.getCorrespondingInterestPointsCopy() )
+					{
+						// Only include if correspondence is to another visible view
+						if ( visibleViewSet.contains( ip.getCorrespondingViewId() ) )
+						{
+							if ( !map.containsKey( ip.getDetectionId() ) )
+							{
+								IOFunctions.println( "Inconsistency in the interest points of view: " + Group.pvid( v ) );
+								IOFunctions.println( "Cannot find interestpoint for id = " + ip.getDetectionId() );
+							}
+							else
+							{
+								tmp.add( map.get( ip.getDetectionId() ) );
+							}
+						}
+					}
+
+					points.put( v, tmp );
+				}
+			}
+		}
 	}
 
 	public int getSelectedRow() { return selectedRow; }

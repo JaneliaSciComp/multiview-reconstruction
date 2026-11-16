@@ -57,6 +57,7 @@ import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointE
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.MissingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5ToZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
@@ -380,6 +381,9 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 		final String[] labels = InterestPointTools.getAllInterestPointLabels( spimData, views );
 		int listed = 0;
 
+		// the labels the dataset lists without data (MissingInterestPoints): nothing to read, a detection brings them back
+		final Map< String, List< ViewId > > withoutData = MissingInterestPoints.find( spimData.getViewInterestPoints(), views, null );
+
 		for ( int i = 0; i < labels.length; ++i )
 		{
 			final String label = InterestPointTools.getSelectedLabel( labels, i );
@@ -394,23 +398,33 @@ public class RemoveDetectionsPopup extends JMenu implements ExplorerWindowSetabl
 			if ( first instanceof VirtualFilteredInterestPoints )
 				continue;
 
-			final EnumSet< Axis > missing;
+			final String what;
 
-			try
+			if ( withoutData.containsKey( label ) )
 			{
-				missing = InterestPointTools.missingAttributes( spimData, withLabel, label, EnumSet.allOf( Axis.class ) );
+				what = " (no points stored" + ( withoutData.get( label ).size() < withLabel.size() ? " in " + withoutData.get( label ).size() + " of " + withLabel.size() + " views" : "" ) + ")";
 			}
-			catch ( final RuntimeException ex )
+			else
 			{
-				IOFunctions.println( "Cannot read the interest points '" + label + "': " + ex.getMessage() );
-				continue;
-			}
+				final EnumSet< Axis > missing;
 
-			if ( missing.isEmpty() )
-				continue;
+				try
+				{
+					missing = InterestPointTools.missingAttributes( spimData, withLabel, label, EnumSet.allOf( Axis.class ) );
+				}
+				catch ( final RuntimeException ex )
+				{
+					IOFunctions.println( "Cannot read the interest points '" + label + "': " + ex.getMessage() );
+					continue;
+				}
+
+				if ( missing.isEmpty() )
+					continue;
+
+				what = " (no " + missing.stream().map( a -> a.key ).collect( Collectors.joining( ", " ) ) + ")";
+			}
 
 			final String parameters = first.getParameters();
-			final String what = " (no " + missing.stream().map( a -> a.key ).collect( Collectors.joining( ", " ) ) + ")";
 			final JMenuItem item;
 
 			if ( StoredDetectionParameters.parse( parameters ) == null )

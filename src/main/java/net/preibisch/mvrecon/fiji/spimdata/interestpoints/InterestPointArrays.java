@@ -26,6 +26,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -54,14 +55,18 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStor
 import util.URITools;
 
 /**
- * Per-point arrays of the interest point store: rows that a writer keeps about the store's points (pcmatch's {@code embed}
- * and, since 2026-10-30, {@code process.interestpointembedding} write the learned embedding of every point), keyed by point
- * id and independent of the generations. They sit next to the generations of a (label, timepoint):
+ * Per-point arrays of the interest point store: rows that a writer keeps about the store's points (the learned embedding of
+ * every point: {@code process.interestpointembedding} and pcmatch's {@code embed}), keyed by point id and independent of the
+ * generations of the points. They sit next to the generations of a (label, timepoint). Since 2026-11-14 an array is one
+ * table for all views, written like the points (Stephan: "the same way we save interest points, sharding across views";
+ * the layout, the staging files and the commit are {@link InterestPointArraysOnDisk}):
  *
  * <pre>
- * &lt;enc label&gt;/tp&lt;T&gt;/arrays/&lt;name&gt;/zarr.json                attributes: columns D, dtype "float32", meta (the writer's JSON, verbatim)
- * &lt;enc label&gt;/tp&lt;T&gt;/arrays/&lt;name&gt;/setup&lt;S&gt;/id           int32   [N, 1]  the ids of the points the rows belong to
- * &lt;enc label&gt;/tp&lt;T&gt;/arrays/&lt;name&gt;/setup&lt;S&gt;/values       float32 [N, D]  the rows, in no particular order
+ * &lt;enc label&gt;/tp&lt;T&gt;/arrays/&lt;name&gt;/zarr.json          attributes: columns D, dtype "float32", meta (the writer's JSON, verbatim), generation K
+ * &lt;enc label&gt;/tp&lt;T&gt;/arrays/&lt;name&gt;/gK/values           float32 [N, D]  the rows of all setups, in setup order
+ * &lt;enc label&gt;/tp&lt;T&gt;/arrays/&lt;name&gt;/gK/id               int32   [N, 1]  the ids of the points the rows belong to
+ * &lt;enc label&gt;/tp&lt;T&gt;/arrays/&lt;name&gt;/gK/entries          int64   [E, 3]  setup, offset, count
+ * &lt;enc label&gt;/tp&lt;T&gt;/arrays/&lt;name&gt;/setup&lt;S&gt;/{id, values}  the layout until 2026-11-14 and pcmatch's: tables per setup, read only here
  * </pre>
  *
  * A filtered label has no rows of its own, the rows of its base label apply (same ids). An array describes the label as it
@@ -71,11 +76,22 @@ import util.URITools;
  * on the vectors of other points; no stored positions are compared (Stephan, 2026-10-29). A row of NaN = no vector. Other
  * tables a writer keeps in {@code setup<S>} are ignored (pcmatch wrote a float32 {@code loc} table until 2026-10-29).
  *
- * The arrays are not part of a generation: a commit of the (label, timepoint) leaves them where they are, removing the label
- * removes them with its timepoint group. Specification: {@code SCALESPACE_TASK_arrays.md} (pcmatch, 2026-10-28). Writing
- * ({@link #createArray}, {@link #writeSetup}, {@link #remove}): the array group with its attributes once, then a setup's
- * tables whole (an existing setup is removed first; a {@code setup<S>} without a complete {@code values} is a write in
- * progress to the readers); zarr v3, sharded, raw + crc32c, as pcmatch writes.
+ * The arrays are not part of a generation of the points: a commit of the (label, timepoint) leaves them where they are,
+ * removing the label removes them with its timepoint group. Specification of the tables per setup:
+ * {@code SCALESPACE_TASK_arrays.md} (pcmatch, 2026-10-28); they are read where a setup has them (they are what another
+ * writer wrote since the last commit, or rows from before 2026-11-14) and never written here, except for fixtures
+ * ({@link #writeSetupTables}).
+ *
+ * Two ways to write (Stephan, 2026-11-14), both end in {@link #commit}, which the save of the dataset calls. In memory
+ * until the dataset is saved, like the interest points: the explorer and the plugin ({@link #stageArray},
+ * {@link #stageSetup}, {@link #stageRemove}; {@link StagedInterestPointArrays}, one per store). Directly, for a writer
+ * that shares no memory with the JVM that saves the dataset (the tasks of BigStitcher-Spark): {@link #createArray}, then
+ * {@link #writeSetup} writes a setup's rows as one staging file, readable at once, which the next commit (the driver's
+ * save) moves into the array's tables. The holder in memory also takes the rows that became stale: when a label is
+ * overwritten ({@code InterestPointTools.removeReferences}: a detection, a filter) or an entry is removed
+ * ({@code InterestPointsZarrStore.remove}), the rows of these views go from every array of the label
+ * ({@link #stageRemoveRows}), for the readers at once and in the store with the save. All readers here lay the holder
+ * over the store, so the explorer, the registration dialog and the matcher see the embeddings as the save will leave them.
  *
  * @author Stephan Preibisch
  */
@@ -95,10 +111,15 @@ public class InterestPointArrays
 	static final String ATTR_LAYOUT = "layout";
 
 	/** what the writer records as the array's layout */
-	public static final String LAYOUT = "per setup setup<S>/: id int32 [N, 1], values float32 [N, D]; rows are joined to the label's points by id; one row per point of the (base) label";
+	public static final String LAYOUT = "g<generation>/: values float32 [N, D] and id int32 [N, 1] hold the rows of all setups in setup order, entries int64 [E, 3] = setup, offset, count; "
+			+ "setup<S>/{id, values}: rows another writer keeps per setup, they are the setup's rows where they exist; rows are joined to the label's points by id; one row per point of the (base) label";
 
-	/** rows per inner chunk and per shard of a setup's tables as written by Java */
-	public static int defaultChunkRows = 65536, defaultShardRows = 1 << 18;
+	/**
+	 * rows per inner chunk and per shard of an array's tables: 1 MB and 16.7 MB for 64 columns (an array keeps its grid).
+	 * Smaller than the points' 65,536 rows: a row here is about ten times a point, and the last chunk of a table is stored
+	 * whole.
+	 */
+	public static int defaultChunkRows = 4096, defaultShardRows = 1 << 16;
 
 	/** The attributes of an array: its width, type and the writer's meta (pcmatch records the model there: {@code model.fingerprint}, {@code model.file}, ...). */
 	public record Attributes( String label, int timepoint, String name, int columns, String dtype, JsonObject meta )
@@ -166,36 +187,21 @@ public class InterestPointArrays
 
 	/**
 	 * @return the attributes of the array {@code name} of (label, timepoint), or null if the dataset has no such array (no
-	 *         store, no group); the label is the one the rows were written under (the base of a filtered label)
+	 *         store, no group); the label is the one the rows were written under (the base of a filtered label). As all
+	 *         readers here: what this JVM holds for the next save ({@link StagedInterestPointArrays}) lies over the store.
 	 */
 	public static Attributes attributes( final URI baseDir, final String label, final int timepoint, final String name )
 	{
 		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
-		if ( !store.exists() )
+		final Attributes staged = store.stagedArrays.attributes( label, timepoint, name );
+
+		if ( staged != null )
+			return staged;
+
+		if ( !store.stagedArrays.storeArrayCounts( label, timepoint, name ) || !store.exists() )
 			return null;
 
-		try ( final N5Reader reader = URITools.instantiateN5Reader( StorageFormat.ZARR, store.getContainerURI() ) )
-		{
-			return attributes( reader, store.getContainerURI(), label, timepoint, name );
-		}
-	}
-
-	private static Attributes attributes( final N5Reader reader, final URI container, final String label, final int timepoint, final String name )
-	{
-		final String path = Attributes.path( label, timepoint, name );
-		if ( !reader.exists( path ) )
-			return null;
-
-		final Integer columns = reader.getAttribute( path, ATTR_COLUMNS, Integer.class );
-		final String dtype = reader.getAttribute( path, ATTR_DTYPE, String.class );
-		final JsonObject meta = reader.getAttribute( path, ATTR_META, JsonObject.class );
-
-		if ( columns == null || columns < 1 || dtype == null )
-			throw new IllegalStateException( "'" + path + "' of '" + container + "' is no per-point array (it needs the attributes '" + ATTR_COLUMNS + "' and '" + ATTR_DTYPE + "'), stopping." );
-		if ( !dtype.equals( "float32" ) )
-			throw new IllegalStateException( "'" + path + "' of '" + container + "' has dtype '" + dtype + "', this reader supports float32, stopping." );
-
-		return new Attributes( label, timepoint, name, columns, dtype, meta == null ? new JsonObject() : meta );
+		return store.arraysOnDisk.attributes( label, timepoint, name );
 	}
 
 	/**
@@ -205,29 +211,9 @@ public class InterestPointArrays
 	 */
 	public static List< Attributes > list( final URI baseDir, final String label, final int timepoint )
 	{
-		final List< Attributes > result = new ArrayList<>();
 		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
-		if ( !store.exists() )
-			return result;
 
-		try ( final N5Reader reader = URITools.instantiateN5Reader( StorageFormat.ZARR, store.getContainerURI() ) )
-		{
-			final String arrays = new Group( label, timepoint ).path() + "/" + ARRAYS;
-			if ( !reader.exists( arrays ) )
-				return result;
-
-			final String[] names = reader.list( arrays );
-			Arrays.sort( names );
-
-			for ( final String name : names )
-			{
-				final Attributes attributes = attributes( reader, store.getContainerURI(), label, timepoint, name );
-				if ( attributes != null )
-					result.add( attributes );
-			}
-		}
-
-		return result;
+		return store.stagedArrays.list( label, timepoint, store.exists() ? store.arraysOnDisk.list( label, timepoint ) : new ArrayList<>() );
 	}
 
 	/**
@@ -261,44 +247,146 @@ public class InterestPointArrays
 		return names;
 	}
 
+	/** where the rows of a view's label are: the (base label, timepoint) group of a dataset's store */
+	private record Location( URI baseDir, String label, int timepoint ) {}
+
 	/**
-	 * @return the number of rows an array holds per setup (only the setups with a complete {@code values} table), by
-	 *         setup; empty if it has none
+	 * @return for every label the given views have, the names of its arrays that hold rows: those of every (base label,
+	 *         timepoint) a view has the label in, sorted (a filtered label has its base's); an empty set for a label
+	 *         without such arrays. An array without rows for any setup (created, never written: a writer that failed)
+	 *         is no embedding and not named. What {@link #names} gives for all labels in one set, per label, e.g. for a
+	 *         dialog that marks the labels with stored embeddings. Every group is listed once, through one reader per store.
+	 * @param vip the lists of the dataset
+	 * @param views the views, those without interest points are skipped
+	 * @throws IllegalStateException as {@link #baseLabel} and {@link #list}
+	 */
+	public static Map< String, SortedSet< String > > namesByLabel( final ViewInterestPoints vip, final Collection< ? extends ViewId > views )
+	{
+		final TreeMap< String, HashSet< Location > > locations = new TreeMap<>();
+
+		for ( final ViewId viewId : views )
+		{
+			final ViewInterestPointLists lists = vip.getViewInterestPointLists( viewId );
+			if ( lists == null )
+				continue;
+
+			for ( final String label : lists.getHashMap().keySet() )
+				locations.computeIfAbsent( label, l -> new HashSet<>() ).add(
+						new Location( lists.getInterestPointList( label ).getBasePath(), baseLabel( lists, label ), lists.getTimePointId() ) );
+		}
+
+		final TreeMap< String, SortedSet< String > > names = new TreeMap<>();
+		final HashMap< URI, N5Reader > readers = new HashMap<>(); // per dataset directory, null = it has no store
+		final HashMap< Location, List< Attributes > > listed = new HashMap<>();
+
+		try
+		{
+			for ( final Map.Entry< String, HashSet< Location > > e : locations.entrySet() )
+			{
+				final SortedSet< String > ofLabel = names.computeIfAbsent( e.getKey(), l -> new TreeSet<>() );
+
+				for ( final Location location : e.getValue() )
+				{
+					List< Attributes > arrays = listed.get( location );
+
+					if ( arrays == null )
+					{
+						final InterestPointsZarrStore store = InterestPointsZarrStore.get( location.baseDir() );
+						if ( !readers.containsKey( location.baseDir() ) )
+							readers.put( location.baseDir(), store.arraysOnDisk.reader() );
+
+						final N5Reader reader = readers.get( location.baseDir() );
+						arrays = store.stagedArrays.list( location.label(), location.timepoint(),
+								reader == null ? new ArrayList<>() : store.arraysOnDisk.list( location.label(), location.timepoint() ) );
+						arrays.removeIf( array -> !hasRows( store, reader, array ) );
+						listed.put( location, arrays );
+					}
+
+					for ( final Attributes array : arrays )
+						ofLabel.add( array.name() );
+				}
+			}
+		}
+		finally
+		{
+			for ( final N5Reader reader : readers.values() )
+				if ( reader != null )
+					reader.close();
+		}
+
+		return names;
+	}
+
+	/**
+	 * @return whether an array holds rows for any setup: rows computed here for the next save, or rows of the store (in the
+	 *         array's tables, in complete tables of a setup, or written directly since the last commit) that still count
+	 *         (the points of the view were not replaced)
+	 * @param reader a reader of the store, null if the dataset has none
+	 */
+	private static boolean hasRows( final InterestPointsZarrStore store, final N5Reader reader, final Attributes array )
+	{
+		final StagedInterestPointArrays staged = store.stagedArrays;
+
+		if ( staged.hasRows( array.label(), array.timepoint(), array.name() ) )
+			return true;
+
+		if ( reader == null || !staged.storeArrayCounts( array.label(), array.timepoint(), array.name() ) )
+			return false;
+
+		for ( final Integer setup : store.arraysOnDisk.rows( reader, array ).keySet() )
+			if ( staged.storeRowsCount( array.label(), array.timepoint(), array.name(), setup ) )
+				return true;
+
+		return false;
+	}
+
+	/** @return the setup of a {@code setup<S>} directory of an array, null for anything else (e.g. a setup a writer is still writing under a temporary name) */
+	static Integer setupOf( final String child )
+	{
+		if ( !child.startsWith( SETUP_PREFIX ) )
+			return null;
+
+		try
+		{
+			return Integer.parseInt( child.substring( SETUP_PREFIX.length() ) );
+		}
+		catch ( final NumberFormatException e )
+		{
+			return null;
+		}
+	}
+
+	/**
+	 * @return the number of rows an array holds per setup, by setup; empty if it has none. As all readers here: what this
+	 *         JVM holds for the next save lies over the store.
 	 */
 	public static SortedMap< Integer, Long > rows( final URI baseDir, final Attributes array )
 	{
-		final SortedMap< Integer, Long > rows = new TreeMap<>();
 		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
-		if ( !store.exists() )
-			return rows;
 
-		try ( final N5Reader reader = URITools.instantiateN5Reader( StorageFormat.ZARR, store.getContainerURI() ) )
+		return store.stagedArrays.rows( array, store.stagedArrays.storeArrayCounts( array.label(), array.timepoint(), array.name() ) ? rowsInStore( store, array ) : new TreeMap<>() );
+	}
+
+	/**
+	 * @return the number of rows per setup of an array as the store holds it now, without what this JVM holds for the next
+	 *         save (rows computed and not saved, rows that go with the save); empty if the store has no such array. For
+	 *         tests and diagnostics: what a save has written.
+	 */
+	public static SortedMap< Integer, Long > rowsInStore( final URI baseDir, final String label, final int timepoint, final String name )
+	{
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
+		final Attributes array = store.exists() ? store.arraysOnDisk.attributes( label, timepoint, name ) : null;
+
+		return array == null ? new TreeMap<>() : rowsInStore( store, array );
+	}
+
+	/** @return the number of rows per setup of an array as the store holds it; empty if it has none */
+	private static SortedMap< Integer, Long > rowsInStore( final InterestPointsZarrStore store, final Attributes array )
+	{
+		try ( final N5Reader reader = store.arraysOnDisk.reader() )
 		{
-			if ( !reader.exists( array.path() ) )
-				return rows;
-
-			for ( final String child : reader.list( array.path() ) )
-			{
-				if ( !child.startsWith( SETUP_PREFIX ) )
-					continue;
-
-				final int setup;
-				try
-				{
-					setup = Integer.parseInt( child.substring( SETUP_PREFIX.length() ) );
-				}
-				catch ( final NumberFormatException e )
-				{
-					continue; // e.g. a setup the writer is still writing under a temporary name
-				}
-
-				final String path = array.path() + "/" + child;
-				if ( reader.datasetExists( path + "/" + VALUES ) )
-					rows.put( setup, reader.getDatasetAttributes( path + "/" + ID ).getDimensions()[ 1 ] );
-			}
+			return store.arraysOnDisk.rows( reader, array );
 		}
-
-		return rows;
 	}
 
 	/**
@@ -316,68 +404,34 @@ public class InterestPointArrays
 	public static Rows read( final URI baseDir, final String label, final int timepoint, final int setup, final String name )
 	{
 		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
-		if ( !store.exists() )
+
+		// rows computed here for the next save
+		final int[] stagedIds = store.stagedArrays.ids( label, timepoint, name, setup );
+		final float[] stagedValues = store.stagedArrays.values( label, timepoint, name, setup );
+
+		if ( stagedIds != null && stagedValues != null )
+		{
+			final Attributes attributes = attributes( baseDir, label, timepoint, name );
+
+			if ( attributes == null )
+				throw new IllegalStateException( "Rows are held for the array '" + name + "' of label '" + label + "', tpId=" + timepoint + ", but the array is neither defined nor in the store." );
+
+			return new Rows( attributes, setup, stagedIds, stagedValues );
+		}
+
+		// the rows of the store, unless the array was removed or replaced here or the points of the view were replaced
+		if ( !store.stagedArrays.storeRowsCount( label, timepoint, name, setup ) || !store.exists() )
 			return null;
 
-		final URI container = store.getContainerURI();
+		final Attributes attributes = store.arraysOnDisk.attributes( label, timepoint, name );
+		if ( attributes == null )
+			return null;
 
-		// a fresh reader every time: the writer replaces a setup's tables in place (under a temporary name, then swapped),
-		// so cached metadata or chunks of an earlier read must not survive into this one
-		try ( final N5Reader reader = URITools.instantiateN5Reader( StorageFormat.ZARR, container ) )
+		// a fresh reader every time: nothing an earlier read cached survives a writer that replaced the rows since
+		try ( final N5Reader reader = store.arraysOnDisk.reader() )
 		{
-			final Attributes attributes = attributes( reader, container, label, timepoint, name );
-			if ( attributes == null )
-				return null;
-
-			final String path = attributes.path() + "/" + SETUP_PREFIX + setup;
-			if ( !reader.datasetExists( path + "/" + VALUES ) )
-				return null;
-
-			final DatasetAttributes idAttrs = reader.getDatasetAttributes( path + "/" + ID );
-			final long rows = idAttrs.getDimensions()[ 1 ];
-
-			final int[] ids = readTable( reader, container, path + "/" + ID, 1, rows, DataType.INT32 );
-			final float[] values = readTable( reader, container, path + "/" + VALUES, attributes.columns(), rows, DataType.FLOAT32 );
-
-			return new Rows( attributes, setup, ids, values );
+			return store.arraysOnDisk.read( reader, attributes, setup );
 		}
-	}
-
-	/** Reads a whole [columns, rows] table (rows of {@code columns} values, columns fastest) chunk by chunk through the shard index. */
-	@SuppressWarnings( "unchecked" )
-	private static < T > T readTable( final N5Reader reader, final URI container, final String dataset, final int columns, final long rows, final DataType type )
-	{
-		final DatasetAttributes attributes = reader.getDatasetAttributes( dataset );
-		final long[] dimensions = attributes.getDimensions();
-
-		if ( dimensions.length != 2 || dimensions[ 0 ] != columns || dimensions[ 1 ] != rows )
-			throw new IllegalStateException( "'" + dataset + "' of '" + container + "' is " + Arrays.toString( dimensions ) + ", expected [" + columns + ", " + rows + "] (columns, rows), stopping." );
-		if ( attributes.getDataType() != type )
-			throw new IllegalStateException( "'" + dataset + "' of '" + container + "' is " + attributes.getDataType() + ", expected " + type + ", stopping." );
-		if ( rows * columns > Integer.MAX_VALUE - 8 )
-			throw new IllegalStateException( "'" + dataset + "' of '" + container + "' has " + rows + " rows of " + columns + " values, more than one view can hold in memory, stopping." );
-
-		final int chunkRows = attributes.getChunkSize()[ 1 ];
-		if ( attributes.getChunkSize()[ 0 ] != columns )
-			throw new IllegalStateException( "'" + dataset + "' of '" + container + "' is chunked along the columns, this reader expects whole rows per chunk, stopping." );
-
-		final T data = (T) ( type == DataType.INT32 ? new int[ (int) ( rows * columns ) ] : new float[ (int) ( rows * columns ) ] );
-
-		for ( long chunkIndex = 0; chunkIndex * chunkRows < rows; ++chunkIndex )
-		{
-			final DataBlock< ? > block = reader.readChunk( dataset, attributes, 0, chunkIndex );
-			if ( block == null )
-				throw new IllegalStateException( "chunk " + chunkIndex + " of '" + dataset + "' of '" + container + "' is missing, stopping." );
-
-			final long chunkStart = chunkIndex * chunkRows;
-			final int count = (int) Math.min( chunkRows, rows - chunkStart );
-			if ( java.lang.reflect.Array.getLength( block.getData() ) < count * columns )
-				throw new IllegalStateException( "chunk " + chunkIndex + " of '" + dataset + "' of '" + container + "' holds fewer values than the array's shape says, stopping." );
-
-			System.arraycopy( block.getData(), 0, data, (int) ( chunkStart * columns ), count * columns );
-		}
-
-		return data;
 	}
 
 	/**
@@ -487,8 +541,8 @@ public class InterestPointArrays
 	// ------------------------------------------------------------------------------------------------
 
 	/**
-	 * Creates the group of an array with its attributes (columns, dtype float32, meta, layout); the dataset's store must
-	 * exist (the label's points are in it). An existing group is left as it is (its attributes are not touched).
+	 * Creates the group of an array with its attributes (columns, dtype float32, meta, layout), directly; the dataset's
+	 * store must exist (the label's points are in it). An existing group is left as it is (its attributes are not touched).
 	 *
 	 * @param baseDir the dataset directory
 	 * @param label the label the rows are written under (the base of a filtered label)
@@ -501,25 +555,19 @@ public class InterestPointArrays
 	{
 		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
 		if ( !store.exists() )
-			throw new IllegalStateException( "The dataset '" + baseDir + "' has no interest point store (" + InterestPointsZarrStore.ZARR_CONTAINER + "), the points of label '" + label + "' are not in it: save the dataset first (the ViewSetup Explorer's 'Compute Interest Point Embeddings' saves it before it runs), or, for points still in the N5 or text files of an old dataset, move them with Filter/Manage Interest Points > 'Resave as ZARR store'." );
+			throw new IllegalStateException( "The dataset '" + baseDir + "' has no interest point store (" + InterestPointsZarrStore.ZARR_CONTAINER + "), the points of label '" + label + "' are not in it: save the dataset first, or, for points still in the N5 or text files of an old dataset, move them with Filter/Manage Interest Points > 'Resave as ZARR store'. (An array written directly needs the store; 'Compute Interest Point Embeddings' keeps its rows in memory and writes them when the dataset is saved, stageArray.)" );
 		if ( columns < 1 )
 			throw new IllegalArgumentException( "an array needs at least one column, got " + columns );
 
-		try ( final N5Writer zarr = URITools.instantiateN5Writer( StorageFormat.ZARR, store.getContainerURI() ) )
-		{
-			final String path = Attributes.path( label, timepoint, name );
-			if ( zarr.exists( path ) )
-				return;
-			zarr.createGroup( path );
-			zarr.setAttribute( path, ATTR_COLUMNS, columns );
-			zarr.setAttribute( path, ATTR_DTYPE, "float32" );
-			zarr.setAttribute( path, ATTR_META, meta == null ? new JsonObject() : meta );
-			zarr.setAttribute( path, ATTR_LAYOUT, LAYOUT );
-		}
+		store.arraysOnDisk.define( label, timepoint, name, columns, meta );
 	}
 
 	/**
-	 * Writes one setup's rows of an array (the group must exist, {@link #createArray}), replacing the setup's tables.
+	 * Writes one setup's rows of an array directly (the array must exist, {@link #createArray}): as one staging file of
+	 * the store, which every reader takes as the setup's rows from now on and which the next {@link #commit} (the save of
+	 * the dataset) moves into the array's tables. For a writer that shares no memory with the JVM that saves the dataset:
+	 * one task of BigStitcher-Spark per view, the driver's save commits. Several writers may write setups of one array
+	 * at the same time.
 	 *
 	 * @param baseDir the dataset directory
 	 * @param label the label the rows are written under (the base of a filtered label)
@@ -532,11 +580,22 @@ public class InterestPointArrays
 	 */
 	public static void writeSetup( final URI baseDir, final String label, final int timepoint, final String name, final int setup, final int[] ids, final float[] values, final int columns )
 	{
-		writeSetup( baseDir, label, timepoint, name, setup, ids, values, columns, defaultChunkRows, defaultShardRows );
+		if ( columns < 1 || values.length != (long) ids.length * columns )
+			throw new IllegalArgumentException( ids.length + " ids and " + values.length + " values do not make rows of " + columns + " columns" );
+
+		InterestPointsZarrStore.get( baseDir ).arraysOnDisk.stageRows( label, timepoint, name, setup, ids, values, columns );
 	}
 
-	/** {@link #writeSetup(URI, String, int, String, int, int[], float[], int)} with the rows per inner chunk and per shard given (tests) */
-	public static void writeSetup( final URI baseDir, final String label, final int timepoint, final String name, final int setup, final int[] ids, final float[] values, final int columns, final int chunkRows, final int shardRows )
+	/**
+	 * Writes one setup's rows as tables of their own, {@code setup<S>/{id, values}}: the layout of pcmatch and of this
+	 * class until 2026-11-14 (the array must exist, {@link #createArray}; the setup's tables are replaced). Only for
+	 * fixtures and tests of the readers, which take such tables as the setup's rows: every setup is an array of its own
+	 * there, at least one inner chunk on disk each.
+	 *
+	 * @param chunkRows the rows per inner chunk
+	 * @param shardRows the rows per shard, a multiple of {@code chunkRows}
+	 */
+	public static void writeSetupTables( final URI baseDir, final String label, final int timepoint, final String name, final int setup, final int[] ids, final float[] values, final int columns, final int chunkRows, final int shardRows )
 	{
 		if ( columns < 1 || values.length != (long) ids.length * columns )
 			throw new IllegalArgumentException( ids.length + " ids and " + values.length + " values do not make rows of " + columns + " columns" );
@@ -608,23 +667,124 @@ public class InterestPointArrays
 	}
 
 	/**
-	 * Removes an array (all its setups) of a (label, timepoint).
+	 * Removes an array of a (label, timepoint) directly, with everything the store holds for it (its tables, tables per
+	 * setup, rows written directly and not committed yet).
 	 *
 	 * @return whether there was one
 	 */
 	public static boolean remove( final URI baseDir, final String label, final int timepoint, final String name )
 	{
+		return InterestPointsZarrStore.get( baseDir ).arraysOnDisk.remove( label, timepoint, name );
+	}
+
+	// ------------------------------------------------------------------------------------------------
+	// in memory until the dataset is saved (the explorer; pcmatch and BigStitcher-Spark's tasks write directly, above)
+	// ------------------------------------------------------------------------------------------------
+
+	/**
+	 * Defines an array of a (label, timepoint) in memory: it exists for all readers of this JVM from now on and is written
+	 * when the dataset is saved ({@link #commit}), like interest points that were detected and not saved yet. The store
+	 * need not exist.
+	 *
+	 * @param replace whether an array of that name (in the store or in memory) holds rows of another model or width: they
+	 *        go, the array starts empty
+	 * @return whether nothing was held in memory for the array before (a caller that fails before it adds rows can then
+	 *         take the definition back, {@link #forgetStaged})
+	 */
+	public static boolean stageArray( final URI baseDir, final String label, final int timepoint, final String name, final int columns, final JsonObject meta, final boolean replace )
+	{
+		if ( columns < 1 )
+			throw new IllegalArgumentException( "an array needs at least one column, got " + columns );
+
+		return InterestPointsZarrStore.get( baseDir ).stagedArrays.define( label, timepoint, name, columns, meta == null ? new JsonObject() : meta, replace );
+	}
+
+	/**
+	 * Keeps one setup's rows of an array in memory until the dataset is saved, replacing the setup's rows (those in memory
+	 * now, those of the store with the save). The array must be defined ({@link #stageArray}) or exist in the store.
+	 *
+	 * @param ids the ids of the points the rows belong to
+	 * @param values the rows, {@code columns} values each
+	 */
+	public static void stageSetup( final URI baseDir, final String label, final int timepoint, final String name, final int setup, final int[] ids, final float[] values, final int columns )
+	{
+		final Attributes array = attributes( baseDir, label, timepoint, name );
+
+		if ( array == null )
+			throw new IllegalStateException( "The array '" + name + "' of label '" + label + "', tpId=" + timepoint + " does not exist; define it first (stageArray)." );
+		if ( array.columns() != columns )
+			throw new IllegalStateException( "The array '" + name + "' of label '" + label + "', tpId=" + timepoint + " has " + array.columns() + " columns, the rows have " + columns + "." );
+		if ( values.length != (long) ids.length * columns )
+			throw new IllegalArgumentException( ids.length + " ids and " + values.length + " values do not make rows of " + columns + " columns." );
+
+		InterestPointsZarrStore.get( baseDir ).stagedArrays.rows( label, timepoint, name, setup, ids, values );
+	}
+
+	/**
+	 * Removes an array as a whole, in memory: the readers of this JVM no longer see it, the array of the store (if it has
+	 * one) goes when the dataset is saved.
+	 *
+	 * @return whether there was one
+	 */
+	public static boolean stageRemove( final URI baseDir, final String label, final int timepoint, final String name )
+	{
 		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseDir );
-		if ( !store.exists() )
+
+		if ( attributes( baseDir, label, timepoint, name ) == null )
 			return false;
 
-		try ( final N5Writer zarr = URITools.instantiateN5Writer( StorageFormat.ZARR, store.getContainerURI() ) )
-		{
-			final String path = Attributes.path( label, timepoint, name );
-			if ( !zarr.exists( path ) )
-				return false;
-			return zarr.remove( path );
-		}
+		store.stagedArrays.remove( label, timepoint, name, store.exists() && store.arraysOnDisk.attributes( label, timepoint, name ) != null );
+		return true;
+	}
+
+	/** Forgets what is held in memory for an array (its definition, its rows, its removal): it is again as the store has it. */
+	public static void forgetStaged( final URI baseDir, final String label, final int timepoint, final String name )
+	{
+		InterestPointsZarrStore.get( baseDir ).stagedArrays.forget( label, timepoint, name );
+	}
+
+	/**
+	 * The points of views were replaced (a detection that overwrites the label, any other new list of points) or removed:
+	 * the rows of their setups go from every array of the (label, timepoint), since they describe points that no longer
+	 * exist (Stephan, 2026-11-14: a re-detection deletes the old embeddings). In memory at once (the readers of this JVM
+	 * no longer see them), in the store when the dataset is saved; rows computed afterwards for these views are kept.
+	 *
+	 * @param label the label the rows are stored under (a filtered label has none of its own)
+	 * @param setups the setups of the views
+	 */
+	public static void stageRemoveRows( final URI baseDir, final String label, final int timepoint, final Collection< Integer > setups )
+	{
+		InterestPointsZarrStore.get( baseDir ).stagedArrays.removeRows( new Group( label, timepoint ), setups );
+	}
+
+	/** @return whether this JVM holds changes of the dataset's arrays that the next save writes */
+	public static boolean hasStaged( final URI baseDir )
+	{
+		return !InterestPointsZarrStore.get( baseDir ).stagedArrays.isEmpty();
+	}
+
+	/**
+	 * The commit of the arrays of a dataset, as {@link InterestPointsZarrStore#commit()} is the commit of its points: writes
+	 * what this JVM holds in memory ({@link StagedInterestPointArrays}: rows computed, arrays removed or replaced, the views
+	 * whose points were replaced or removed) and the rows written directly since the last commit ({@link #writeSetup}) into
+	 * the arrays' tables. Per array that changed, the next generation is written from the kept rows of the old one and the
+	 * new rows, the array is flipped to it under its lock file and the old generation is deleted; an array left without
+	 * rows is removed; an array defined without rows is not created ({@link InterestPointArraysOnDisk#commit}). What is
+	 * held is forgotten once everything is written; if writing fails it is kept and the next save writes all of it again.
+	 *
+	 * The save of the dataset calls it after the interest points are committed
+	 * ({@code XmlIoSpimData2.saveInterestPointsInParallel}); the commit of the points alone does not ("Resave as ZARR
+	 * store" commits points and must not write the embeddings of points that are not saved).
+	 */
+	public static void commit( final InterestPointsZarrStore store )
+	{
+		store.arraysOnDisk.commit( store.stagedArrays );
+	}
+
+	/** {@link #commit(InterestPointsZarrStore)} for the store of a dataset directory */
+	public static void commit( final URI baseDir )
+	{
+		commit( InterestPointsZarrStore.get( baseDir ) );
 	}
 
 	/** @return the row of an id in the sorted keys of {@link #join}, or -1 */
