@@ -90,8 +90,10 @@ import util.URITools;
  * save) moves into the array's tables. The holder in memory also takes the rows that became stale: when a label is
  * overwritten ({@code InterestPointTools.removeReferences}: a detection, a filter) or an entry is removed
  * ({@code InterestPointsZarrStore.remove}), the rows of these views go from every array of the label
- * ({@link #stageRemoveRows}), for the readers at once and in the store with the save. All readers here lay the holder
- * over the store, so the explorer, the registration dialog and the matcher see the embeddings as the save will leave them.
+ * ({@link #stageRemoveRows}), for the readers at once and in the store with the save. The rows of some views can also be
+ * removed from one array (the Interest Point Explorer's "Remove embeddings": {@link #viewsWithRows} is what it offers,
+ * {@code InterestPointTools.removeEmbeddings} what it runs), the same way. All readers here lay the holder over the store,
+ * so the explorer, the registration dialog and the matcher see the embeddings as the save will leave them.
  *
  * @author Stephan Preibisch
  */
@@ -755,6 +757,75 @@ public class InterestPointArrays
 	public static void stageRemoveRows( final URI baseDir, final String label, final int timepoint, final Collection< Integer > setups )
 	{
 		InterestPointsZarrStore.get( baseDir ).stagedArrays.removeRows( new Group( label, timepoint ), setups );
+	}
+
+	/**
+	 * Removes the rows of some views from ONE array, in memory: the readers of this JVM no longer see them, what the store
+	 * holds for these setups (in the array's table, in tables per setup, written directly) goes when the dataset is saved.
+	 * The other arrays of the (label, timepoint) keep their rows; an array that is left without rows is removed by the save;
+	 * rows computed afterwards for these views are kept.
+	 *
+	 * @param label the label the rows are stored under (a filtered label has none of its own, see {@link #baseLabel})
+	 * @param setups the setups of the views
+	 * @return the setups that had rows and lost them, ascending; empty if there is no such array or it has no rows for them
+	 */
+	public static SortedSet< Integer > stageRemoveRows( final URI baseDir, final String label, final int timepoint, final String name, final Collection< Integer > setups )
+	{
+		final TreeSet< Integer > removed = new TreeSet<>();
+		final Attributes array = attributes( baseDir, label, timepoint, name );
+
+		if ( array == null )
+			return removed;
+
+		removed.addAll( rows( baseDir, array ).keySet() );
+		removed.retainAll( setups );
+
+		InterestPointsZarrStore.get( baseDir ).stagedArrays.removeRows( label, timepoint, name, removed );
+
+		return removed;
+	}
+
+	/**
+	 * @return the embeddings a label has in the given views: per array (by name, ascending) those of the views it holds
+	 *         rows for, in the order given; a filtered label has its base's; an array without rows for any of the views is
+	 *         not named. Whether the rows still fit the points is not looked at (a stale array is one, too). What the
+	 *         Interest Point Explorer's "Remove embeddings" offers; one {@link #list} and one {@link #rows} per array of
+	 *         every (dataset directory, base label, timepoint) the views name.
+	 * @param vip the lists of the dataset
+	 * @param views the views, those without the label are skipped
+	 * @throws IllegalStateException as {@link #baseLabel} and {@link #list}
+	 */
+	public static SortedMap< String, List< ViewId > > viewsWithRows( final ViewInterestPoints vip, final Collection< ? extends ViewId > views, final String label )
+	{
+		// the views by where their rows are, in the order given
+		final HashMap< Location, List< ViewId > > byLocation = new HashMap<>();
+		final List< Location > locations = new ArrayList<>();
+
+		for ( final ViewId viewId : views )
+		{
+			final ViewInterestPointLists lists = vip.getViewInterestPointLists( viewId );
+			if ( lists == null || !lists.contains( label ) )
+				continue;
+
+			final Location location = new Location( lists.getInterestPointList( label ).getBasePath(), baseLabel( lists, label ), lists.getTimePointId() );
+			if ( !byLocation.containsKey( location ) )
+				locations.add( location );
+			byLocation.computeIfAbsent( location, l -> new ArrayList<>() ).add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
+		}
+
+		final TreeMap< String, List< ViewId > > result = new TreeMap<>();
+
+		for ( final Location location : locations )
+			for ( final Attributes array : list( location.baseDir(), location.label(), location.timepoint() ) )
+			{
+				final SortedMap< Integer, Long > rows = rows( location.baseDir(), array );
+
+				for ( final ViewId viewId : byLocation.get( location ) )
+					if ( rows.containsKey( viewId.getViewSetupId() ) )
+						result.computeIfAbsent( array.name(), n -> new ArrayList<>() ).add( viewId );
+			}
+
+		return result;
 	}
 
 	/** @return whether this JVM holds changes of the dataset's arrays that the next save writes */

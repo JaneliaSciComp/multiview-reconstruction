@@ -50,6 +50,7 @@ import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.real.FloatType;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DetectionOrigin;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -310,7 +311,7 @@ public class InteractiveProjections
 
 				newIpl.setInterestPoints( ipMap.values() );
 				newIpl.setCorrespondingInterestPoints( new ArrayList<>() );
-				newIpl.setParameters( "manually removed detections from '" +label + "'" );
+				newIpl.setParameters( DetectionOrigin.derivedParameters( lists, label, "manually removed detections from '" + label + "'" ) );
 
 				lists.addInterestPointList( newLabel, newIpl );
 			}

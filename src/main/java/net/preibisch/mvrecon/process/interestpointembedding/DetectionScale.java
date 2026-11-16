@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import mpicbg.spim.data.sequence.VoxelDimensions;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DetectionOrigin;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.StoredDetectionParameters;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 
@@ -65,7 +66,8 @@ public record DetectionScale( double sigma, int downsampleXY, boolean fromCalibr
 	 * @param parameters its parameters string ({@code InterestPoints.getParameters()})
 	 * @param voxelSize the voxel size of the view as stored in the XML (only for {@code downsampleXYIndex} 0/-1 of master's DoG)
 	 * @return the scale of the detection
-	 * @throws IllegalArgumentException if the string is not one of a detection with a sigma (a filtered, copied or manual label: resolve the base label first)
+	 * @throws IllegalArgumentException if the string is not one of a detection with a sigma (a filtered, thinned-out or otherwise derived label:
+	 *         look up the detection of its points first, {@link DetectionOrigin}; a manual label has none)
 	 */
 	public static DetectionScale of( final String label, final String parameters, final VoxelDimensions voxelSize )
 	{
@@ -91,7 +93,7 @@ public record DetectionScale( double sigma, int downsampleXY, boolean fromCalibr
 
 		final StoredDetectionParameters p = StoredDetectionParameters.parse( parameters );
 		if ( p == null )
-			throw new IllegalArgumentException( "The label '" + label + "' has no DoG detection parameters (params = '" + parameters + "'); there is no detection sigma to scale the embedding's cubes by. A filtered label is embedded through its base label." );
+			throw new IllegalArgumentException( "The label '" + label + "' has no DoG detection parameters (params = '" + parameters + "') and neither records the detection of its points nor names a label they were taken from; there is no detection sigma to scale the embedding's cubes by." );
 		if ( !( p.sigma() > 0 ) )
 			throw new IllegalArgumentException( "The label '" + label + "' (" + parameters + ") has no positive 's=' sigma." );
 

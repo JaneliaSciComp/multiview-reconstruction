@@ -26,6 +26,7 @@ import java.net.URI;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -40,6 +41,7 @@ import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DetectionOrigin;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
@@ -112,10 +114,13 @@ public class InterestPointEmbedding
 	 *
 	 * @param data the dataset
 	 * @param view the view
-	 * @param label the label (a filtered label is embedded through its base: all points of the base, under the base)
+	 * @param label the label (a filtered label is embedded through its base: all points of the base, under the base; a label
+	 *        that was made from the points of another one, e.g. thinned out, is embedded itself, at the scale of the detection
+	 *        its points come from, {@link DetectionOrigin})
 	 * @param model the model (its contract sets the extents and the patch)
 	 * @return the view, ready for {@link #embed}
-	 * @throws IllegalArgumentException if the label has no detection scale, the view no voxel size, or the view's images cannot be sampled
+	 * @throws IllegalArgumentException if the label has no detection scale (neither it nor a label it was derived from was detected, or the label it was
+	 *         derived from holds other points now, {@link #checkDerived}), the view no voxel size, or the view's images cannot be sampled
 	 */
 	public static Prepared prepare( final SpimData2 data, final ViewId view, final String label, final EmbeddingModel model )
 	{
@@ -132,19 +137,85 @@ public class InterestPointEmbedding
 			throw new IllegalArgumentException( Group.pvid( view ) + " has no voxel size in the XML; the cubes are isotropic in physical units and need the ratios." );
 		final double[] voxelSize = new double[] { voxelDimensions.dimension( 0 ), voxelDimensions.dimension( 1 ), voxelDimensions.dimension( 2 ) };
 
-		final DetectionScale detection = DetectionScale.of( base, list.getParameters(), voxelDimensions );
+		// the scale of the detection the points come from. A label that was made from the points of another one (thinned out,
+		// cleaned manually, the ones with correspondences, a copy of filtered points) has its points, with their positions
+		// and attributes: it records the detection they were found with, or (made before 2026-11-16) names the label they
+		// were taken from, which is followed until a detection is reached (Stephan, 2026-11-16; DetectionOrigin)
+		final DetectionOrigin origin = DetectionOrigin.of( lists, base );
+		final DetectionScale detection;
+
+		try
+		{
+			detection = DetectionScale.of( origin.label(), origin.parameters(), voxelDimensions );
+		}
+		catch ( final IllegalArgumentException e )
+		{
+			throw origin.derived().isEmpty() ? e : new IllegalArgumentException( "The interest points '" + base + "' were derived from other labels (" + origin.chain() + "), none of which was detected: " + e.getMessage() );
+		}
 
 		final List< InterestPoint > points = new ArrayList<>( list.getInterestPointsCopy().values() );
 		points.sort( ( a, b ) -> Integer.compare( a.getId(), b.getId() ) );
+
+		// parameters that were found through the name of another label are only those of these points while they still are its points
+		if ( origin.byName() )
+			checkDerived( lists, view, base, points, origin, detection );
 
 		final PatchExtractor.Pyramid pyramid = PatchExtractor.Pyramid.of( data.getSequenceDescription().getImgLoader(), view );
 		final PatchExtractor extractor = new PatchExtractor( pyramid, voxelSize, detection, model.contract(), hasSigma( points ) );
 
 		IOFunctions.println( "(" + new java.util.Date( System.currentTimeMillis() ) + "): Embedding " + points.size() + " points of " + Group.pvid( view ) + ", label '" + base + "'" + ( base.equals( label ) ? "" : " (base of '" + label + "')" )
+				+ ( !origin.derived().isEmpty() ? " (with the detection parameters of '" + origin.label() + "' it was derived from: " + origin.chain() + ")"
+						: DetectionOrigin.recordedDetection( list.getParameters() ) != null ? " (a derived label, with the detection parameters recorded for its points)" : "" )
 				+ ": " + detection + ", " + ( extractor.usesPointSigma() ? "per-point sigma" : "the label's sigma" ) + ", pyramid of " + pyramid.numLevels() + " level(s), read floor level " + extractor.getFloorLevel()
 				+ ", voxel size " + voxelSize[ 0 ] + " x " + voxelSize[ 1 ] + " x " + voxelSize[ 2 ] );
 
 		return new Prepared( new ViewId( view.getTimePointId(), view.getViewSetupId() ), base, points, extractor );
+	}
+
+	/**
+	 * The detection of another label is the detection of these points only while they are points of that label: the
+	 * parameters of a derived label name a label, not a detection, and a label that was detected again since holds other
+	 * points, found with other parameters (Stephan's `thinned-out` of 2026-11-01 named `nuclei`, which was detected again
+	 * on 2026-11-14 at another sigma and downsampling: following the name would have sampled the cubes at 5.46 px instead
+	 * of 3.87 px, without a word). The tools that derive a label keep the positions, so every point has to be found among
+	 * the points of the label the chain ends in, whatever happened to the labels in between.
+	 *
+	 * @throws IllegalArgumentException if a point is not a point of the label the detection was taken from
+	 */
+	private static void checkDerived( final ViewInterestPointLists lists, final ViewId view, final String label, final List< InterestPoint > points, final DetectionOrigin origin, final DetectionScale detection )
+	{
+		final Collection< InterestPoint > detected;
+
+		try
+		{
+			detected = lists.getInterestPointList( origin.label() ).getInterestPointsCopy().values();
+		}
+		catch ( final RuntimeException e )
+		{
+			throw new IllegalArgumentException( "The interest points '" + label + "' of " + Group.pvid( view ) + " were derived from '" + origin.label() + "' (" + origin.chain() + "), whose points cannot be read: " + e.getMessage() );
+		}
+
+		final int found = DetectionOrigin.pointsAmong( points, detected );
+
+		if ( found == points.size() )
+			return;
+
+		// what the points say themselves, if they store a sigma
+		String own = "";
+		if ( hasSigma( points ) )
+		{
+			float min = Float.MAX_VALUE, max = 0;
+			for ( final InterestPoint p : points )
+			{
+				min = Math.min( min, p.getSigma() );
+				max = Math.max( max, p.getSigma() );
+			}
+			own = " (the points of '" + label + "' store a sigma of " + ( min == max ? "" + min : min + " to " + max ) + " px, '" + origin.label() + "' is detected at " + (float) detection.sigma() + " px)";
+		}
+
+		throw new IllegalArgumentException( "The interest points '" + label + "' of " + Group.pvid( view ) + " were derived from '" + origin.label() + "' (" + origin.chain() + "), but only " + found + " of its " + points.size()
+				+ " points are points of '" + origin.label() + "' now (which has " + detected.size() + "): '" + origin.label() + "' was detected again or changed since, so its parameters (" + origin.parameters()
+				+ ") are not those of the detection these points come from, and the scale to sample their cubes at is not recorded anywhere" + own + ". Derive '" + label + "' again from the current '" + origin.label() + "' to embed it." );
 	}
 
 	/** logs the line of a finished view and builds its rows */

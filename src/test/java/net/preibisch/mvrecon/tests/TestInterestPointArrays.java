@@ -35,10 +35,12 @@ import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.janelia.saalfeldlab.n5.DataBlock;
 import org.janelia.saalfeldlab.n5.DataType;
@@ -657,5 +659,92 @@ public class TestInterestPointArrays
 		checkVectors( baseURI, 1, 1 );
 		assertFalse( arrayDirectory( baseURI, "tables" ).exists() );
 		assertEquals( 1, InterestPointArrays.list( baseURI, LABEL, 0 ).size() );
+	}
+
+	/**
+	 * The rows of some views removed from ONE array (the Interest Point Explorer's "Remove embeddings"): gone for the
+	 * readers at once, for that array only, and from the store with the commit (the array's table, tables per setup, rows
+	 * not committed yet); an array left without rows is removed; rows computed after the removal are kept; rows that were
+	 * only held in memory go without the store being touched.
+	 */
+	@Test
+	public void rowsOfOneArrayAreRemovedWithTheCommit()
+	{
+		final URI baseURI = store();
+		final List< InterestPoint > p0 = TestInterestPointsZarr.points( 0, LABEL ), p1 = TestInterestPointsZarr.points( 1, LABEL );
+
+		writeArray( baseURI, 0, p0, false );
+		writeArray( baseURI, 1, p1, false );
+		writeArray( baseURI, LABEL, 0, "another", 0, ids( p0 ), new float[ 2 * p0.size() ], 2, FINGERPRINT );
+		writeArray( baseURI, LABEL, 0, "another", 1, ids( p1 ), new float[ 2 * p1.size() ], 2, FINGERPRINT );
+		writeTables( baseURI, "tables", 0, ids( p0 ), values( p0, false ), COLUMNS );
+		writeTables( baseURI, "tables", 1, ids( p1 ), values( p1, false ), COLUMNS );
+		InterestPointArrays.createArray( baseURI, LABEL, 0, "pending", COLUMNS, meta( FINGERPRINT ) );
+		InterestPointArrays.writeSetup( baseURI, LABEL, 0, "pending", 0, ids( p0 ), values( p0, false ), COLUMNS );
+
+		// nothing to remove: no such array, no rows for the view
+		assertTrue( InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, "nothing", List.of( 0 ) ).isEmpty() );
+		assertTrue( InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, NAME, List.of( 5 ) ).isEmpty() );
+		assertFalse( InterestPointArrays.hasStaged( baseURI ) );
+
+		assertEquals( Set.of( 0 ), InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, NAME, List.of( 0, 5 ) ) );
+		assertEquals( Set.of( 0 ), InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, "tables", List.of( 0 ) ) );
+		assertEquals( Set.of( 0 ), InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, "pending", List.of( 0 ) ) );
+
+		// gone for the readers, in these arrays only; the store is as it was
+		assertTrue( InterestPointArrays.hasStaged( baseURI ) );
+		assertNull( InterestPointArrays.read( baseURI, LABEL, 0, 0, NAME ) );
+		assertNull( InterestPointArrays.read( baseURI, LABEL, 0, 0, "tables" ) );
+		assertNull( InterestPointArrays.read( baseURI, LABEL, 0, 0, "pending" ) );
+		assertEquals( p1.size(), InterestPointArrays.read( baseURI, LABEL, 0, 1, NAME ).size() );
+		assertEquals( p1.size(), InterestPointArrays.read( baseURI, LABEL, 0, 1, "tables" ).size() );
+		assertEquals( p0.size(), InterestPointArrays.read( baseURI, LABEL, 0, 0, "another" ).size() );
+		assertEquals( Map.of( 1, (long) p1.size() ), InterestPointArrays.rows( baseURI, InterestPointArrays.attributes( baseURI, LABEL, 0, NAME ) ) );
+		assertTrue( InterestPointArrays.rows( baseURI, InterestPointArrays.attributes( baseURI, LABEL, 0, "pending" ) ).isEmpty() );
+		assertEquals( 2, InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME ).size() );
+		assertEquals( 2, InterestPointArrays.rowsInStore( baseURI, LABEL, 0, "tables" ).size() );
+		assertEquals( 1, stagingFiles( baseURI ) );
+
+		commit( InterestPointsZarrStore.get( baseURI ) );
+
+		assertFalse( InterestPointArrays.hasStaged( baseURI ) );
+		assertEquals( Map.of( 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, NAME ) );
+		assertEquals( Map.of( 0, (long) p0.size(), 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, "another" ) );
+		assertEquals( Map.of( 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, "tables" ) );
+		assertFalse( new File( arrayDirectory( baseURI, "tables" ), InterestPointArrays.SETUP_PREFIX + 0 ).exists() );
+		assertTrue( new File( arrayDirectory( baseURI, "tables" ), InterestPointArrays.SETUP_PREFIX + 1 ).isDirectory() );
+		assertFalse( arrayDirectory( baseURI, "pending" ).exists() ); // its only rows went
+		assertEquals( 0, stagingFiles( baseURI ) );
+		assertNull( InterestPointArrays.read( baseURI, LABEL, 0, 0, NAME ) );
+		checkVectors( baseURI, 1, 0 );
+		assertEquals( 3, InterestPointArrays.list( baseURI, LABEL, 0 ).size() );
+
+		// the last view with rows: the array is still there until the commit, which removes it
+		assertEquals( Set.of( 1 ), InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, NAME, List.of( 0, 1 ) ) );
+		assertTrue( InterestPointArrays.rows( baseURI, InterestPointArrays.attributes( baseURI, LABEL, 0, NAME ) ).isEmpty() );
+		assertTrue( arrayDirectory( baseURI, NAME ).isDirectory() );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		assertFalse( arrayDirectory( baseURI, NAME ).exists() );
+		assertEquals( 2, InterestPointArrays.list( baseURI, LABEL, 0 ).size() );
+
+		// rows computed after a removal are the rows of the view
+		final float[] again = new float[ 2 * p1.size() ];
+		Arrays.fill( again, 3f );
+		assertEquals( Set.of( 0, 1 ), InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, "another", List.of( 0, 1 ) ) );
+		InterestPointArrays.stageSetup( baseURI, LABEL, 0, "another", 1, ids( p1 ), again, 2 );
+		assertNull( InterestPointArrays.read( baseURI, LABEL, 0, 0, "another" ) );
+		assertArrayEquals( again, InterestPointArrays.read( baseURI, LABEL, 0, 1, "another" ).values() );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		assertEquals( Map.of( 1, (long) p1.size() ), InterestPointArrays.rowsInStore( baseURI, LABEL, 0, "another" ) );
+		assertArrayEquals( again, InterestPointArrays.read( baseURI, LABEL, 0, 1, "another" ).values() );
+
+		// rows that were only held in memory: nothing of them reaches the store
+		InterestPointArrays.stageArray( baseURI, LABEL, 0, "memory", COLUMNS, meta( FINGERPRINT ), false );
+		InterestPointArrays.stageSetup( baseURI, LABEL, 0, "memory", 0, ids( p0 ), values( p0, false ), COLUMNS );
+		assertEquals( Set.of( 0 ), InterestPointArrays.stageRemoveRows( baseURI, LABEL, 0, "memory", List.of( 0, 1 ) ) );
+		assertNull( InterestPointArrays.read( baseURI, LABEL, 0, 0, "memory" ) );
+		commit( InterestPointsZarrStore.get( baseURI ) );
+		assertFalse( arrayDirectory( baseURI, "memory" ).exists() );
+		assertEquals( 2, InterestPointArrays.list( baseURI, LABEL, 0 ).size() );
 	}
 }

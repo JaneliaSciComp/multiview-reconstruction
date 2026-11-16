@@ -131,6 +131,30 @@ public class ActionHistory
 		return before - records.size();
 	}
 
+	/** action id of "Compute Interest Point Embeddings" ({@code Embed_Interest_Points.ACTION_ID} is this constant). */
+	public static final String EMBED_INTERESTPOINTS = "embed-interestpoints";
+
+	/**
+	 * Data-tied removal for embeddings: the per-point array {@code arrayName} no longer holds rows for any view of the
+	 * dataset (the Interest Point Explorer's "Remove embeddings" took the last ones), so the {@code embed-interestpoints}
+	 * entries that computed it for one of the labels describe nothing that exists and go. While any view still has its
+	 * rows the entries stay as they are: unlike a registration's, the views of an embedding entry are not kept in the XML
+	 * (an entry that was loaded lists none), so an entry cannot be narrowed to the views that are left.
+	 *
+	 * @param labels the labels whose embeddings the array held: the label the rows were stored under and the filtered labels of it
+	 * @param arrayName the name of the array
+	 * @return number of records removed
+	 */
+	public int removeEmbeddings( final Collection<String> labels, final String arrayName )
+	{
+		if ( labels == null || arrayName == null )
+			return 0;
+
+		final int before = records.size();
+		records.removeIf( r -> EMBED_INTERESTPOINTS.equals( r.getActionId() ) && arrayName.equals( r.getParams().get( "arrayName" ) ) && labels.contains( r.getParams().get( "label" ) ) );
+		return before - records.size();
+	}
+
 	/**
 	 * Remove the given records by identity (reference equality), not by value.
 	 * Used by the Action History window to delete user-selected entries.

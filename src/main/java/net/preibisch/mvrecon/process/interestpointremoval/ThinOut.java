@@ -33,6 +33,7 @@ import net.imglib2.KDTree;
 import net.imglib2.RealPoint;
 import net.imglib2.neighborsearch.KNearestNeighborSearchOnKDTree;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DetectionOrigin;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -112,10 +113,9 @@ public class ThinOut
 			newIpl.setInterestPoints( newIPs );
 			newIpl.setCorrespondingInterestPoints( new ArrayList<>() );
 
-			if ( keepRange )
-				newIpl.setParameters( "thinned-out '" + top.getLabel() + "', kept range from " + minDistance + " to " + maxDistance );
-			else
-				newIpl.setParameters( "thinned-out '" + top.getLabel() + "', removed range from " + minDistance + " to " + maxDistance );
+			// what was done, and the detection the points were found with (the label is then independent of what happens to the one it was thinned out from)
+			newIpl.setParameters( DetectionOrigin.derivedParameters( vipl, top.getLabel(),
+					"thinned-out '" + top.getLabel() + "', " + ( keepRange ? "kept" : "removed" ) + " range from " + minDistance + " to " + maxDistance ) );
 
 			vipl.addInterestPointList( top.getNewLabel(), newIpl );
 

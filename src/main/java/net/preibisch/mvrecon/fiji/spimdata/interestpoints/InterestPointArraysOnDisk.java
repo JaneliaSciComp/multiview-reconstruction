@@ -90,7 +90,8 @@ import util.URITools;
  * ({@link StagedInterestPointArrays}) and the rows of the staging files; the array's {@code generation} is flipped
  * under its lock file after re-reading it (a commit that another process overtook is refused, nothing is overwritten,
  * what is held stays held), then {@code gK} and the staging files are deleted. Rows of views whose points were replaced
- * or removed are not copied, and an array left without rows is removed.
+ * or removed, and rows that were removed from the array for some views, are not copied, and an array left without rows
+ * is removed.
  *
  * <b>Reading</b> a setup: its latest staging file, else its tables {@code setup<S>} (another writer's rows, or rows from
  * before this layout), else its entry of the generation. Tables per setup are never written here and are only deleted
@@ -736,8 +737,15 @@ final class InterestPointArraysOnDisk
 				{
 					for ( final ArrayKey key : targets )
 					{
-						final Set< Integer > stale = staged.removedSetups.get( key.group() );
-						commitArray( zarr, key, staged.arrays.get( key ), stale == null ? Set.of() : stale, filesOf.getOrDefault( key, List.of() ), summary );
+						// the setups whose rows go: their points were replaced or removed (every array of the group), or the rows were removed from this array
+						final StagedArray held = staged.arrays.get( key );
+						final TreeSet< Integer > stale = new TreeSet<>();
+						if ( staged.removedSetups.containsKey( key.group() ) )
+							stale.addAll( staged.removedSetups.get( key.group() ) );
+						if ( held != null )
+							stale.addAll( held.removedSetups );
+
+						commitArray( zarr, key, held, stale, filesOf.getOrDefault( key, List.of() ), summary );
 					}
 				}
 			}
@@ -746,7 +754,7 @@ final class InterestPointArraysOnDisk
 
 			if ( summary.arraysWritten > 0 || summary.setupsDropped > 0 || summary.arraysRemoved > 0 )
 				IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Embeddings: wrote " + summary.rowsWritten + " rows of " + summary.setupsWritten + " view(s) into " + summary.arraysWritten + " array(s); dropped the rows of " + summary.setupsDropped
-						+ " view(s) whose points were replaced or removed; removed " + summary.arraysRemoved + " array(s), in " + ( System.currentTimeMillis() - startTime ) + " ms" );
+						+ " view(s) (removed, or their points were replaced or removed); removed " + summary.arraysRemoved + " array(s), in " + ( System.currentTimeMillis() - startTime ) + " ms" );
 		}
 	}
 

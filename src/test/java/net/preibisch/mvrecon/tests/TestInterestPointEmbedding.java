@@ -32,11 +32,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
+import java.awt.Component;
 import java.awt.GraphicsEnvironment;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -48,25 +52,37 @@ import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import javax.swing.JMenu;
+import javax.swing.JMenuItem;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import ij.Macro;
+import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.type.numeric.real.FloatType;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.plugin.Embed_Interest_Points;
 import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DetectionOrigin;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.StoredDetectionParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.EmbeddingsGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.pairwise.RGLDMGUI;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionRecord;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.popup.ExplorerWindowSetable;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorer;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorerPanel;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointExplorerPanel;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointTableModel;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
@@ -84,6 +100,8 @@ import net.preibisch.mvrecon.process.interestpointembedding.InterestPointEmbeddi
 import net.preibisch.mvrecon.process.interestpointembedding.InterestPointEmbedding.Result;
 import net.preibisch.mvrecon.process.interestpointembedding.PatchExtractor;
 import net.preibisch.mvrecon.process.interestpointembedding.PatchExtractor.Pyramid;
+import net.preibisch.mvrecon.process.interestpointremoval.ThinOut;
+import net.preibisch.mvrecon.process.interestpointremoval.ThinOutParameters;
 
 /**
  * The embedding of interest points in Java: the detection scale of a label's parameters string, the sampling of the
@@ -618,6 +636,276 @@ public class TestInterestPointEmbedding
 		assertTrue( InterestPointArrays.list( baseDir, LABEL, tp ).isEmpty() );
 	}
 
+	/** the records of the action history that computed an embedding (array) */
+	static List< ActionRecord > embedRecords( final SpimData2 data, final String arrayName )
+	{
+		final List< ActionRecord > records = new ArrayList<>();
+		for ( final ActionRecord r : data.getActionHistory().getRecords() )
+			if ( ActionHistory.EMBED_INTERESTPOINTS.equals( r.getActionId() ) && arrayName.equals( r.getParams().get( "arrayName" ) ) )
+				records.add( r );
+		return records;
+	}
+
+	static File arrayDirectory( final URI baseDir, final int tp, final String arrayName )
+	{
+		return new File( new File( baseDir ), InterestPointsZarrStore.ZARR_CONTAINER + "/" + LABEL + "/tp" + tp + "/" + InterestPointArrays.ARRAYS + "/" + arrayName );
+	}
+
+	/**
+	 * Embeddings are removed for the views that are given (the Interest Point Explorer's "Remove embeddings"; Stephan,
+	 * 2026-11-16): one array or all, in memory at once and in the store with the save; the other views and the other
+	 * arrays keep their rows, an array without rows left goes as a whole; a filtered label has its base's embeddings, so
+	 * they are removed there; the records of the action history that computed an embedding go once no view has it any more
+	 * (also the records of a dataset that was loaded, which do not list their views).
+	 */
+	@Test
+	public void embeddingsAreRemovedForTheGivenViews() throws Exception
+	{
+		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
+		final SpimData2 data = beads( xml );
+		final List< ViewId > views = viewsWith( data, LABEL );
+		assertTrue( views.size() >= 2 );
+		final URI baseDir = data.getBasePathURI();
+		final int tp = views.get( 0 ).getTimePointId();
+		final ViewId first = views.get( 0 );
+		final List< ViewId > others = views.subList( 1, views.size() );
+		final Path onnx = tempDir.resolve( "tiny.onnx" );
+		TestOnnxModels.write( onnx, new double[] { 3, 6 }, 4, 3, 5, 21 );
+
+		// two embeddings of all views, saved; a filtered label in the first view
+		assertTrue( Embed_Interest_Points.embed( data, views, LABEL, onnx, "embedding", 50 ) );
+		assertTrue( Embed_Interest_Points.embed( data, views, LABEL, onnx, "second", 50 ) );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		final String filtered = filteredLabelInFirstView( data, views );
+		data.getViewInterestPoints().getViewInterestPointLists( views.get( 0 ) ).getInterestPointList( filtered ).setParameters( "filtered '" + LABEL + "'" ); // the XML is saved with it
+
+		assertEquals( Map.of( "embedding", views, "second", views ), InterestPointArrays.viewsWithRows( data.getViewInterestPoints(), views, LABEL ) );
+		assertEquals( Map.of( "embedding", List.of( first ), "second", List.of( first ) ), InterestPointArrays.viewsWithRows( data.getViewInterestPoints(), views, filtered ) );
+		assertTrue( InterestPointArrays.viewsWithRows( data.getViewInterestPoints(), others, filtered ).isEmpty() );
+		assertTrue( InterestPointArrays.viewsWithRows( data.getViewInterestPoints(), views, "no such label" ).isEmpty() );
+		assertEquals( 1, embedRecords( data, "embedding" ).size() );
+		assertEquals( 1, embedRecords( data, "second" ).size() );
+
+		// one embedding removed on the row of the filtered label, which only the first view has: the base label's rows of that view
+		assertEquals( Map.of( "embedding", List.of( first ) ), InterestPointTools.removeEmbeddings( data, views, filtered, List.of( "embedding" ) ) );
+
+		assertTrue( InterestPointArrays.hasStaged( baseDir ) );
+		assertNull( InterestPointArrays.read( baseDir, LABEL, tp, first.getViewSetupId(), "embedding" ) );
+		assertNotNull( InterestPointArrays.read( baseDir, LABEL, tp, first.getViewSetupId(), "second" ) );
+		assertEquals( Map.of( "embedding", others, "second", views ), InterestPointArrays.viewsWithRows( data.getViewInterestPoints(), views, LABEL ) );
+		assertEquals( Map.of( "second", List.of( first ) ), InterestPointArrays.viewsWithRows( data.getViewInterestPoints(), views, filtered ) );
+		assertEquals( Set.of( "embedding", "second" ), InterestPointArrays.namesByLabel( data.getViewInterestPoints(), views ).get( LABEL ) );
+		assertEquals( "resp, int, sigma + embedding 5-D (" + others.size() + "/" + views.size() + " views), embedding 'second' 5-D", InterestPointTableModel.computeAttributes( data.getViewInterestPoints(), views, LABEL ).text );
+		// the other views still have the embedding: its record stays
+		assertEquals( 1, embedRecords( data, "embedding" ).size() );
+		assertEquals( 1, embedRecords( data, "second" ).size() );
+
+		// the store has everything until the dataset is saved
+		assertTrue( stored( baseDir, tp, first ) );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		assertFalse( InterestPointArrays.hasStaged( baseDir ) );
+		assertFalse( stored( baseDir, tp, first ) );
+		for ( final ViewId v : others )
+			assertTrue( stored( baseDir, tp, v ) );
+		assertEquals( views.size(), InterestPointArrays.rowsInStore( baseDir, LABEL, tp, "second" ).size() );
+
+		// nothing of that name left for the view
+		assertTrue( InterestPointTools.removeEmbeddings( data, List.of( first ), LABEL, List.of( "embedding" ) ).isEmpty() );
+		assertFalse( InterestPointArrays.hasStaged( baseDir ) );
+
+		// the dataset as it is loaded (its records of the history list no views): all embeddings of all views removed, no embedding
+		// is left for any reader, the arrays go with the save, the history has no record of them
+		final SpimData2 loaded = new XmlIoSpimData2().load( xml.toURI() );
+		assertEquals( 1, embedRecords( loaded, "embedding" ).size() );
+		assertEquals( 1, embedRecords( loaded, "second" ).size() );
+		assertTrue( embedRecords( loaded, "embedding" ).get( 0 ).getAffectedViews().isEmpty() );
+
+		// the last views of one embedding, through the filtered label and the label: its record goes, the other one stays
+		assertEquals( Map.of( "second", List.of( first ) ), InterestPointTools.removeEmbeddings( loaded, views, filtered, List.of( "second" ) ) );
+		assertEquals( 1, embedRecords( loaded, "second" ).size() );
+		assertEquals( Map.of( "second", others ), InterestPointTools.removeEmbeddings( loaded, views, LABEL, List.of( "second" ) ) );
+		assertTrue( embedRecords( loaded, "second" ).isEmpty() );
+		assertEquals( 1, embedRecords( loaded, "embedding" ).size() );
+
+		assertEquals( Map.of( "embedding", others ), InterestPointTools.removeEmbeddings( loaded, views, LABEL, null ) );
+		assertTrue( InterestPointArrays.viewsWithRows( loaded.getViewInterestPoints(), views, LABEL ).isEmpty() );
+		assertTrue( InterestPointArrays.namesByLabel( loaded.getViewInterestPoints(), views ).get( LABEL ).isEmpty() );
+		assertEquals( "resp, int, sigma", InterestPointTableModel.computeAttributes( loaded.getViewInterestPoints(), views, LABEL ).text );
+		assertFalse( EmbeddingsGUI.hasEmbeddings( loaded, views ) );
+		assertTrue( embedRecords( loaded, "embedding" ).isEmpty() );
+		assertTrue( arrayDirectory( baseDir, tp, "embedding" ).isDirectory() );
+		assertTrue( arrayDirectory( baseDir, tp, "second" ).isDirectory() );
+		new XmlIoSpimData2().save( loaded, xml.toURI() );
+		assertFalse( arrayDirectory( baseDir, tp, "embedding" ).exists() );
+		assertFalse( arrayDirectory( baseDir, tp, "second" ).exists() );
+		assertTrue( InterestPointArrays.list( baseDir, LABEL, tp ).isEmpty() );
+
+		// the points are untouched by all of this, and the saved history has no embedding
+		final SpimData2 again = new XmlIoSpimData2().load( xml.toURI() );
+		for ( final ViewId v : views )
+			assertEquals( data.getViewInterestPoints().getViewInterestPointLists( v ).getInterestPointList( LABEL ).getInterestPointsCopy().size(),
+					again.getViewInterestPoints().getViewInterestPointLists( v ).getInterestPointList( LABEL ).getInterestPointsCopy().size() );
+		assertTrue( embedRecords( again, "embedding" ).isEmpty() );
+		assertTrue( embedRecords( again, "second" ).isEmpty() );
+
+		// embeddings that were computed and not saved: removed, nothing of them reaches the store
+		assertTrue( Embed_Interest_Points.embed( again, views, LABEL, onnx, "embedding", 50 ) );
+		assertEquals( 1, embedRecords( again, "embedding" ).size() );
+		assertEquals( Map.of( "embedding", views ), InterestPointTools.removeEmbeddings( again, views, LABEL, null ) );
+		assertTrue( embedRecords( again, "embedding" ).isEmpty() );
+		new XmlIoSpimData2().save( again, xml.toURI() );
+		assertFalse( arrayDirectory( baseDir, tp, "embedding" ).exists() );
+	}
+
+	/** the texts of the entries of a menu, without separators */
+	static List< String > entries( final JMenu menu )
+	{
+		final List< String > texts = new ArrayList<>();
+		for ( final Component c : menu.getMenuComponents() )
+			if ( c instanceof JMenuItem )
+				texts.add( ( (JMenuItem) c ).getText() );
+		return texts;
+	}
+
+	/** chooses an entry of a menu: what its action listeners do */
+	static void choose( final JMenu menu, final String text )
+	{
+		for ( final Component c : menu.getMenuComponents() )
+			if ( c instanceof JMenuItem && ( (JMenuItem) c ).getText().equals( text ) )
+			{
+				for ( final ActionListener l : ( (JMenuItem) c ).getActionListeners() )
+					l.actionPerformed( new ActionEvent( c, ActionEvent.ACTION_PERFORMED, text ) );
+				return;
+			}
+
+		throw new IllegalStateException( "the menu has no entry '" + text + "': " + entries( menu ) );
+	}
+
+	/**
+	 * The Interest Point Explorer's right-click > "Remove embeddings" (its panel without a window): the submenu lists the
+	 * embeddings of the selected rows in the selected views and "ALL" when there are several, is gray when there are none,
+	 * and an entry removes the embedding for the selected views; the table shows it at once, the store has it until the save.
+	 */
+	@Test
+	public void removeEmbeddingsMenuOfTheExplorer() throws Exception
+	{
+		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
+		final SpimData2 data = beads( xml );
+		final List< ViewId > views = viewsWith( data, LABEL );
+		assertTrue( views.size() >= 2 );
+		final URI baseDir = data.getBasePathURI();
+		final int tp = views.get( 0 ).getTimePointId();
+		final ViewId first = views.get( 0 );
+		final Path onnx = tempDir.resolve( "tiny.onnx" );
+		TestOnnxModels.write( onnx, new double[] { 3, 6 }, 4, 3, 5, 21 );
+
+		assertTrue( Embed_Interest_Points.embed( data, views, LABEL, onnx, "embedding", 50 ) );
+		assertTrue( Embed_Interest_Points.embed( data, views, LABEL, onnx, "second", 50 ) );
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		final String filtered = filteredLabelInFirstView( data, views );
+		data.getViewInterestPoints().getViewInterestPointLists( views.get( 0 ) ).getInterestPointList( filtered ).setParameters( "filtered '" + LABEL + "'" ); // the XML is saved with it
+
+		// a label without embeddings
+		final HashMap< ViewId, List< InterestPoint > > plain = new HashMap<>();
+		for ( final ViewId v : views )
+			plain.put( v, TestInterestPointStorage.points( 5, v.getViewSetupId() ) );
+		InterestPointTools.addInterestPoints( data, "plain", plain, "manual" );
+
+		// the explorer's window is not needed, only what the panel asks it for (the dataset, no BigDataViewer); the class of
+		// the main panel redirects the log and remembers its last instance, which is put back
+		final boolean printIJLog = IOFunctions.printIJLog;
+		final FilteredAndGroupedExplorerPanel< ? > currentInstance = FilteredAndGroupedExplorerPanel.currentInstance;
+
+		try
+		{
+			final FilteredAndGroupedExplorer< SpimData2 > explorer = new FilteredAndGroupedExplorer< SpimData2 >()
+			{
+				final FilteredAndGroupedExplorerPanel< SpimData2 > main = new FilteredAndGroupedExplorerPanel< SpimData2 >( this, data, xml.toURI(), new XmlIoSpimData2() )
+				{
+					private static final long serialVersionUID = 1L;
+
+					@Override public void initComponent() {}
+					@Override protected void clearGroupingCheckboxes() {}
+					@Override protected String getHelpHtml() { return ""; }
+					@Override public ArrayList< ExplorerWindowSetable > initPopups() { return new ArrayList<>(); }
+					@Override public boolean tilesGrouped() { return false; }
+					@Override public boolean illumsGrouped() { return false; }
+					@Override public boolean channelsGrouped() { return false; }
+					@Override public Collection< List< BasicViewDescription< ? > > > selectedRowsGroups() { return new ArrayList<>(); }
+					@Override public List< List< ViewId > > selectedRowsViewIdGroups() { return new ArrayList<>(); }
+				};
+
+				@Override public SpimData2 getSpimData() { return data; }
+				@Override public FilteredAndGroupedExplorerPanel< SpimData2 > getPanel() { return main; }
+			};
+
+			final InterestPointExplorerPanel panel = new InterestPointExplorerPanel( data.getViewInterestPoints(), explorer );
+			final List< BasicViewDescription< ? > > all = new ArrayList<>();
+			for ( final ViewId v : views )
+				all.add( data.getSequenceDescription().getViewDescription( v ) );
+
+			// all views selected: the rows are the labels in the order of the table
+			panel.updateViewDescription( all );
+			final List< String > labels = InterestPointTools.sortLabels( InterestPointTools.getAllInterestPointMap( data.getViewInterestPoints(), all ).keySet() );
+			final int row = labels.indexOf( LABEL ), filteredRow = labels.indexOf( filtered ), plainRow = labels.indexOf( "plain" );
+			assertEquals( labels.size(), panel.getTable().getRowCount() );
+
+			// a label without embeddings: the submenu is gray
+			panel.getTable().setRowSelectionInterval( plainRow, plainRow );
+			assertFalse( panel.fillRemoveEmbeddings().isEnabled() );
+			assertTrue( entries( panel.fillRemoveEmbeddings() ).isEmpty() );
+
+			// the label with two embeddings: both and ALL
+			panel.getTable().setRowSelectionInterval( row, row );
+			JMenu menu = panel.fillRemoveEmbeddings();
+			assertEquals( InterestPointExplorerPanel.REMOVE_EMBEDDINGS, menu.getText() );
+			assertTrue( menu.isEnabled() );
+			assertEquals( List.of( "embedding", "second", InterestPointExplorerPanel.ALL_EMBEDDINGS ), entries( menu ) );
+			assertEquals( "resp, int, sigma + embedding 5-D, embedding 'second' 5-D", panel.getTableModel().getValueAt( row, InterestPointTableModel.ATTRIBUTES_COLUMN ) );
+
+			// one of them removed for all views: gone from the table and for the readers at once, the row stays selected, the store has it until the save
+			choose( menu, "second" );
+			assertEquals( "resp, int, sigma + embedding 5-D", panel.getTableModel().getValueAt( row, InterestPointTableModel.ATTRIBUTES_COLUMN ) );
+			assertEquals( row, panel.getTable().getSelectedRow() );
+			assertEquals( Set.of( "embedding" ), InterestPointArrays.namesByLabel( data.getViewInterestPoints(), views ).get( LABEL ) );
+			assertEquals( views.size(), InterestPointArrays.rowsInStore( baseDir, LABEL, tp, "second" ).size() );
+			assertEquals( List.of( "embedding" ), entries( panel.fillRemoveEmbeddings() ) ); // one embedding: no ALL
+
+			// only the first view selected, the rows of the label and of its filtered label: the embedding goes for that view alone
+			panel.updateViewDescription( all.subList( 0, 1 ) );
+			panel.getTable().setRowSelectionInterval( Math.min( row, filteredRow ), Math.max( row, filteredRow ) );
+			menu = panel.fillRemoveEmbeddings();
+			assertEquals( List.of( "embedding" ), entries( menu ) );
+			choose( menu, "embedding" );
+			assertFalse( panel.fillRemoveEmbeddings().isEnabled() );
+			// the other views still have the embedding, so the table names it as one that this view lacks; there is nothing to remove here
+			assertEquals( "resp, int, sigma + embedding 5-D (0/1 views)", panel.getTableModel().getValueAt( row, InterestPointTableModel.ATTRIBUTES_COLUMN ) );
+			assertNull( InterestPointArrays.read( baseDir, LABEL, tp, first.getViewSetupId(), "embedding" ) );
+			assertEquals( views.size() - 1, InterestPointArrays.rows( baseDir, InterestPointArrays.attributes( baseDir, LABEL, tp, "embedding" ) ).size() );
+
+			// all views again: the embedding is incomplete, and can be removed for the rest
+			panel.updateViewDescription( all );
+			panel.getTable().setRowSelectionInterval( row, row );
+			assertEquals( "resp, int, sigma + embedding 5-D (" + ( views.size() - 1 ) + "/" + views.size() + " views)", panel.getTableModel().getValueAt( row, InterestPointTableModel.ATTRIBUTES_COLUMN ) );
+			assertTrue( stored( baseDir, tp, first ) );
+
+			new XmlIoSpimData2().save( data, xml.toURI() );
+			assertFalse( stored( baseDir, tp, first ) );
+			assertTrue( stored( baseDir, tp, views.get( 1 ) ) );
+			assertFalse( arrayDirectory( baseDir, tp, "second" ).exists() );
+
+			choose( panel.fillRemoveEmbeddings(), "embedding" );
+			assertFalse( panel.fillRemoveEmbeddings().isEnabled() );
+			new XmlIoSpimData2().save( data, xml.toURI() );
+			assertFalse( arrayDirectory( baseDir, tp, "embedding" ).exists() );
+		}
+		finally
+		{
+			IOFunctions.printIJLog = printIJLog;
+			FilteredAndGroupedExplorerPanel.currentInstance = currentInstance;
+		}
+	}
+
 	/** @return whether the store holds rows of the array "embedding" for a view (whatever this JVM holds for the next save) */
 	static boolean stored( final URI baseDir, final int tp, final ViewId view )
 	{
@@ -827,6 +1115,259 @@ public class TestInterestPointEmbedding
 		lists.getInterestPointList( LABEL ).setParameters( "manually placed" );
 		final IllegalArgumentException e = assertThrows( IllegalArgumentException.class, () -> InterestPointEmbedding.embedView( data, view, filtered, new MeanModel( contract ), 16, null ) );
 		assertTrue( e.getMessage().contains( "no DoG detection parameters" ), e.getMessage() );
+	}
+
+	/** the vectors of a view's label by the position of the point, for labels that hold the same points under other ids */
+	static Map< String, float[] > vectorsByPosition( final ViewInterestPointLists lists, final Result result )
+	{
+		final Map< Integer, InterestPoint > points = lists.getInterestPointList( result.baseLabel() ).getInterestPointsCopy();
+		final Map< String, float[] > vectors = new HashMap<>();
+		for ( int i = 0; i < result.size(); ++i )
+			vectors.put( java.util.Arrays.toString( points.get( result.ids()[ i ] ).getL() ), java.util.Arrays.copyOfRange( result.values(), i * result.columns(), ( i + 1 ) * result.columns() ) );
+		assertEquals( result.size(), vectors.size() );
+		return vectors;
+	}
+
+	/** thins out a label with the tool, keeping every point (under new ids) */
+	static void thinOut( final SpimData2 data, final List< ViewId > views, final String label, final String newLabel )
+	{
+		final ThinOutParameters thinOut = new ThinOutParameters();
+		thinOut.label = label;
+		thinOut.newLabel = newLabel;
+		thinOut.lowerThreshold = 0;
+		thinOut.upperThreshold = Double.MAX_VALUE;
+		thinOut.keep = true;
+		assertTrue( ThinOut.thinOut( data, views, thinOut ) );
+	}
+
+	static final String THINNED_ALL = "', kept range from 0.0 to " + Double.MAX_VALUE;
+
+	/** a label as the tools made it before 2026-11-16: copies of the points of another label (those that pass the filter, if one is given) under new ids, and parameters that only name that label */
+	static void oldStyle( final SpimData2 data, final List< ViewId > views, final String source, final String label, final String parameters, final InterestPointFilter filter )
+	{
+		final HashMap< ViewId, List< InterestPoint > > points = new HashMap<>();
+		for ( final ViewId v : views )
+		{
+			final Collection< InterestPoint > all = data.getViewInterestPoints().getViewInterestPointLists( v ).getInterestPointList( source ).getInterestPointsCopy().values();
+			final List< InterestPoint > copies = new ArrayList<>();
+			int id = 0;
+			for ( final InterestPoint p : filter == null ? all : filter.filter( all ) )
+				copies.add( p.derive( id++, p.getL().clone() ) );
+			points.put( v, copies );
+		}
+		InterestPointTools.addInterestPoints( data, label, points, parameters );
+	}
+
+	/** embeds a label of a view and checks that every point has the vector it has as a point of the detected label */
+	static void assertVectorsOfTheDetection( final SpimData2 data, final ViewId view, final String label, final String rowsUnder, final EmbeddingModel model, final DetectionScale scale, final Map< String, float[] > byPosition )
+	{
+		final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( view );
+		assertEquals( scale, InterestPointEmbedding.prepare( data, view, label, model ).extractor().getDetection(), label );
+
+		final Result result = InterestPointEmbedding.embedView( data, view, label, model, 16, null );
+		assertEquals( rowsUnder, result.baseLabel() );
+		assertEquals( lists.getInterestPointList( rowsUnder ).getInterestPointsCopy().size(), result.size() );
+		assertTrue( result.size() > 0, label );
+
+		for ( final Map.Entry< String, float[] > e : vectorsByPosition( lists, result ).entrySet() )
+			assertArrayEquals( byPosition.get( e.getKey() ), e.getValue(), label + " at " + e.getKey() );
+	}
+
+	/**
+	 * A label that was made from the points of another one (thinned out, the points with correspondences, cleaned manually,
+	 * a copy of filtered points) is embedded at the scale of the detection its points were found with (Stephan, 2026-11-16:
+	 * "why can't it infer the necessary parameters recursively from its parent(s)?"), so that a point has the vector it has
+	 * as a point of the detected label. The tools record the detection of the points in the parameters of the label they
+	 * make, which then does not depend on what happens to the label it was made from. A label made before that only names
+	 * that label: it is followed by name, through any number of such labels and filtered labels, which only counts while
+	 * its points are still points of the label the detection is taken from: a label that was detected again since holds
+	 * other points, found with other parameters, and nothing is embedded at a scale that may be wrong. A chain that leads
+	 * to a label the view no longer has, to a label that was not detected, or in a circle, fails and says why.
+	 */
+	@Test
+	public void derivedLabelsUseTheDetectionOfTheirPoints() throws Exception
+	{
+		final File xml = tempDir.resolve( "dataset.xml" ).toFile();
+		final SpimData2 data = beads( xml );
+		final List< ViewId > views = viewsWith( data, LABEL );
+		final ViewId view = views.get( 0 ), second = views.get( 1 );
+		final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( view ), secondLists = data.getViewInterestPoints().getViewInterestPointLists( second );
+		final String detected = lists.getInterestPointList( LABEL ).getParameters();
+		final InterestPointFilter filter = InterestPointFilter.fromString( "intensity=500.." ), filter2 = InterestPointFilter.fromString( "intensity=600.." );
+		final Contract contract = contract( new double[] { 3, 6 }, 4, 3, "model-d", "detection" );
+		final MeanModel model = new MeanModel( contract );
+		final Path onnx = tempDir.resolve( "tiny.onnx" );
+		TestOnnxModels.write( onnx, new double[] { 3, 6 }, 4, 3, 5, 21 );
+
+		// what the parameters of a derived label say: the label it was made from, and (since 2026-11-16) the detection of its points
+		assertEquals( "nuclei", DetectionOrigin.sourceLabel( "thinned-out 'nuclei', kept range from 0.0 to 25.0" ) );
+		assertEquals( "nuclei", DetectionOrigin.sourceLabel( "thinned-out 'nuclei', removed range from 0.0 to 25.0" ) );
+		assertEquals( "it's, mine", DetectionOrigin.sourceLabel( "thinned-out 'it's, mine', kept range from 1.0 to 2.0" ) );
+		assertEquals( "a b", DetectionOrigin.sourceLabel( "manually removed detections from 'a b'" ) );
+		assertEquals( LABEL, DetectionOrigin.sourceLabel( "correspondences from '" + LABEL + "'" ) );
+		assertEquals( LABEL, DetectionOrigin.sourceLabel( filter.describe( LABEL ) ) );
+		assertEquals( LABEL, DetectionOrigin.sourceLabel( filter.describe( LABEL ) + " (copied)" ) );
+		assertNull( DetectionOrigin.sourceLabel( detected ) );
+		assertNull( DetectionOrigin.sourceLabel( "manually placed" ) );
+		assertNull( DetectionOrigin.sourceLabel( "" ) );
+		assertNull( DetectionOrigin.sourceLabel( null ) );
+
+		final String recording = "manually removed detections from 'a b'" + DetectionOrigin.DETECTION + detected;
+		assertEquals( "manually removed detections from 'a b' | detection: " + detected, recording );
+		assertEquals( "a b", DetectionOrigin.sourceLabel( recording ) );
+		assertEquals( "manually removed detections from 'a b'", DetectionOrigin.description( recording ) );
+		assertEquals( detected, DetectionOrigin.recordedDetection( recording ) );
+		assertNull( DetectionOrigin.recordedDetection( "manually removed detections from 'a b'" ) );
+		assertEquals( detected, DetectionOrigin.description( detected ) );
+		assertTrue( DetectionOrigin.isDetection( detected ) && DetectionOrigin.isDetection( "LEARNED sigma=4.0 downsampleXY=2" ) );
+		assertFalse( DetectionOrigin.isDetection( recording ) || DetectionOrigin.isDetection( "manually placed" ) || DetectionOrigin.isDetection( null ) );
+
+		// a derived label is no detection for the rest of the software (e.g. it is not offered to be detected again)
+		assertNull( StoredDetectionParameters.parse( recording ) );
+
+		// the points as they were detected, in two views
+		final Map< String, float[] > byPosition = vectorsByPosition( lists, InterestPointEmbedding.embedView( data, view, LABEL, model, 16, null ) );
+		final Map< String, float[] > byPosition2 = vectorsByPosition( secondLists, InterestPointEmbedding.embedView( data, second, LABEL, model, 16, null ) );
+		final DetectionScale scale = InterestPointEmbedding.prepare( data, view, LABEL, model ).extractor().getDetection();
+		final int all = lists.getInterestPointList( LABEL ).getInterestPointsCopy().size();
+
+		// --- labels as the tools make them now: thinned out, a copy of the points of that label that pass a filter, a filtered label of the copy ---
+		thinOut( data, views, LABEL, "thinned" );
+		assertTrue( InterestPointTools.addFilteredInterestPointsCopy( data, "copy", "thinned", filter, views ) );
+		assertTrue( InterestPointTools.addFilteredInterestPoints( data, "virtual", "copy", filter2, views ) );
+
+		// they record the detection of their points: the one of the label they were made from, or the one that label recorded
+		assertEquals( "thinned-out '" + LABEL + THINNED_ALL + " | detection: " + detected, lists.getInterestPointList( "thinned" ).getParameters() );
+		assertEquals( filter.describe( "thinned" ) + " (copied) | detection: " + detected, lists.getInterestPointList( "copy" ).getParameters() );
+		assertEquals( filter2.describe( "copy" ), lists.getInterestPointList( "virtual" ).getParameters() ); // a filtered label follows its base as it is
+		assertEquals( all, lists.getInterestPointList( "thinned" ).getInterestPointsCopy().size() );
+		final int copied = lists.getInterestPointList( "copy" ).getInterestPointsCopy().size(), filtered = lists.getInterestPointList( "virtual" ).getInterestPointsCopy().size();
+		assertTrue( filtered > 0 && filtered < copied && copied < all, filtered + " < " + copied + " < " + all );
+
+		DetectionOrigin origin = DetectionOrigin.of( lists, "virtual" );
+		assertEquals( "copy", origin.label() );
+		assertEquals( detected, origin.parameters() );
+		assertEquals( List.of( "virtual" ), origin.derived() );
+		assertFalse( origin.byName() );
+		assertEquals( new DetectionOrigin( LABEL, detected, List.of(), false ), DetectionOrigin.of( lists, LABEL ) );
+		assertEquals( detected, DetectionOrigin.detection( lists, "virtual" ) );
+
+		assertVectorsOfTheDetection( data, view, "thinned", "thinned", model, scale, byPosition );
+		assertVectorsOfTheDetection( data, view, "copy", "copy", model, scale, byPosition );
+		assertVectorsOfTheDetection( data, view, "virtual", "copy", model, scale, byPosition );
+
+		// what the explorer runs: the plugin on the thinned-out label of all views
+		assertTrue( Embed_Interest_Points.embed( data, views, "thinned", onnx, "embedding", 50 ) );
+		for ( final ViewId v : views )
+		{
+			final ViewInterestPointLists l = data.getViewInterestPoints().getViewInterestPointLists( v );
+			final Vectors vectors = InterestPointArrays.vectors( l, "thinned", "embedding" );
+			assertEquals( l.getInterestPointList( "thinned" ).getInterestPointsCopy().size(), vectors.size() + vectors.missing() );
+		}
+
+		// --- labels as the tools made them before: they only name the label they were made from ---
+		oldStyle( data, views, LABEL, "oldThinned", "thinned-out '" + LABEL + "', kept range from 0.0 to 25.0", null );
+		oldStyle( data, views, "oldThinned", "oldCopy", filter.describe( "oldThinned" ) + " (copied)", filter );
+		assertTrue( InterestPointTools.addFilteredInterestPoints( data, "oldVirtual", "oldCopy", filter2, views ) );
+		oldStyle( data, views, "oldVirtual", "oldCorr", "correspondences from 'oldVirtual'", null );
+
+		// followed by name to the label that was detected
+		origin = DetectionOrigin.of( lists, "oldCorr" );
+		assertEquals( LABEL, origin.label() );
+		assertEquals( detected, origin.parameters() );
+		assertEquals( List.of( "oldCorr", "oldVirtual", "oldCopy", "oldThinned" ), origin.derived() );
+		assertTrue( origin.byName() );
+		assertEquals( "'oldCorr' <- 'oldVirtual' <- 'oldCopy' <- 'oldThinned' <- '" + LABEL + "'", origin.chain() );
+		assertEquals( detected, DetectionOrigin.detection( lists, "oldCorr" ) );
+
+		assertVectorsOfTheDetection( data, view, "oldThinned", "oldThinned", model, scale, byPosition );
+		assertVectorsOfTheDetection( data, view, "oldCopy", "oldCopy", model, scale, byPosition );
+		assertVectorsOfTheDetection( data, view, "oldVirtual", "oldCopy", model, scale, byPosition );
+		assertVectorsOfTheDetection( data, view, "oldCorr", "oldCorr", model, scale, byPosition );
+
+		// a label of before that names one of now is followed to the detection that one records
+		oldStyle( data, views, "virtual", "mixed", "manually removed detections from 'virtual'", null );
+		origin = DetectionOrigin.of( lists, "mixed" );
+		assertEquals( new DetectionOrigin( "copy", detected, List.of( "mixed", "virtual" ), true ), origin );
+		assertVectorsOfTheDetection( data, view, "mixed", "mixed", model, scale, byPosition );
+
+		// a tool that is run on a label of before records the detection that the names lead to
+		thinOut( data, views, "oldCorr", "fromOld" );
+		assertEquals( "thinned-out 'oldCorr" + THINNED_ALL + " | detection: " + detected, lists.getInterestPointList( "fromOld" ).getParameters() );
+
+		// --- the detected label is detected again in the second view, with other points ---
+		assertVectorsOfTheDetection( data, second, "thinned", "thinned", model, scale, byPosition2 );
+		assertVectorsOfTheDetection( data, second, "oldThinned", "oldThinned", model, scale, byPosition2 );
+
+		final HashMap< ViewId, List< InterestPoint > > redetected = new HashMap<>();
+		redetected.put( second, TestInterestPointStorage.points( 11, 4 ) );
+		InterestPointTools.removeReferences( data, LABEL, List.of( second ) );
+		InterestPointTools.addInterestPoints( data, LABEL, redetected, "DOG s=3.3 t=0.5 min=false max=true downsampleX=1 downsampleY=1 downsampleZ=1 anisotropy=1.0" );
+		assertEquals( 11, InterestPointEmbedding.embedView( data, second, LABEL, model, 16, null ).size() );
+
+		// the labels that recorded the detection of their points are what they were: the same vectors, at the scale of the first detection
+		assertVectorsOfTheDetection( data, second, "thinned", "thinned", model, scale, byPosition2 );
+		assertVectorsOfTheDetection( data, second, "copy", "copy", model, scale, byPosition2 );
+		assertVectorsOfTheDetection( data, second, "virtual", "copy", model, scale, byPosition2 );
+		assertVectorsOfTheDetection( data, second, "mixed", "mixed", model, scale, byPosition2 );
+		assertVectorsOfTheDetection( data, second, "fromOld", "fromOld", model, scale, byPosition2 );
+		assertTrue( Embed_Interest_Points.embed( data, views, "thinned", onnx, "embedding", 50 ) );
+
+		// also when the label they were made from is gone altogether
+		thinOut( data, views, "thinned", "thinnedTwice" );
+		secondLists.getHashMap().remove( "thinned" );
+		assertEquals( "thinned-out 'thinned" + THINNED_ALL + " | detection: " + detected, secondLists.getInterestPointList( "thinnedTwice" ).getParameters() );
+		assertVectorsOfTheDetection( data, second, "thinnedTwice", "thinnedTwice", model, scale, byPosition2 );
+
+		// the labels that only name it have the points of a detection whose parameters are recorded nowhere any more: its new
+		// parameters are not theirs, and nothing is embedded at a scale that may be wrong (in the other views it goes on working)
+		final int old = secondLists.getInterestPointList( "oldThinned" ).getInterestPointsCopy().size();
+		IllegalArgumentException e = assertThrows( IllegalArgumentException.class, () -> InterestPointEmbedding.embedView( data, second, "oldThinned", model, 16, null ) );
+		assertTrue( e.getMessage().contains( "only 0 of its " + old + " points are points of '" + LABEL + "' now (which has 11)" ) && e.getMessage().contains( "detected again" ), e.getMessage() );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointEmbedding.embedView( data, second, "oldCorr", model, 16, null ) );
+		assertNull( DetectionOrigin.detection( secondLists, "oldThinned" ) );
+		assertEquals( detected, DetectionOrigin.detection( lists, "oldThinned" ) );
+		assertVectorsOfTheDetection( data, view, "oldThinned", "oldThinned", model, scale, byPosition );
+
+		// the plugin fails as a whole and leaves no array behind
+		assertThrows( IllegalArgumentException.class, () -> Embed_Interest_Points.embed( data, views, "oldThinned", onnx, "other", 50 ) );
+		assertFalse( InterestPointArrays.namesByLabel( data.getViewInterestPoints(), views ).get( "oldThinned" ).contains( "other" ) );
+
+		// and a tool that is run on such a label records no detection where it is not known: the new label is as the old one
+		thinOut( data, views, "oldThinned", "fromStale" );
+		assertEquals( "thinned-out 'oldThinned" + THINNED_ALL, secondLists.getInterestPointList( "fromStale" ).getParameters() );
+		assertEquals( "thinned-out 'oldThinned" + THINNED_ALL + " | detection: " + detected, lists.getInterestPointList( "fromStale" ).getParameters() );
+		assertThrows( IllegalArgumentException.class, () -> InterestPointEmbedding.embedView( data, second, "fromStale", model, 16, null ) );
+
+		// --- chains that lead nowhere ---
+		// the label it was thinned out from is not in the view any more
+		final HashMap< ViewId, List< InterestPoint > > some = new HashMap<>();
+		for ( final ViewId v : views )
+			some.put( v, TestInterestPointStorage.points( 5, 3 ) );
+		InterestPointTools.addInterestPoints( data, "orphan", some, "thinned-out 'gone', kept range from 0.0 to 1.0" );
+		e = assertThrows( IllegalArgumentException.class, () -> InterestPointEmbedding.embedView( data, view, "orphan", model, 16, null ) );
+		assertTrue( e.getMessage().contains( "were derived from 'gone'" ) && e.getMessage().contains( "has no interest points 'gone'" ), e.getMessage() );
+		assertNull( DetectionOrigin.detection( lists, "orphan" ) );
+
+		// it leads to a label that was not detected; a tool records nothing for such points
+		InterestPointTools.addInterestPoints( data, "placed", some, "manually placed" );
+		InterestPointTools.addInterestPoints( data, "fromPlaced", some, "manually removed detections from 'placed'" );
+		e = assertThrows( IllegalArgumentException.class, () -> InterestPointEmbedding.embedView( data, view, "fromPlaced", model, 16, null ) );
+		assertTrue( e.getMessage().contains( "'fromPlaced' <- 'placed'" ) && e.getMessage().contains( "none of which was detected" ) && e.getMessage().contains( "no DoG detection parameters" ), e.getMessage() );
+		thinOut( data, views, "placed", "thinnedPlaced" );
+		assertEquals( "thinned-out 'placed" + THINNED_ALL, lists.getInterestPointList( "thinnedPlaced" ).getParameters() );
+
+		// labels that name each other
+		InterestPointTools.addInterestPoints( data, "one", some, "thinned-out 'other', kept range from 0.0 to 1.0" );
+		InterestPointTools.addInterestPoints( data, "other", some, "correspondences from 'one'" );
+		e = assertThrows( IllegalArgumentException.class, () -> InterestPointEmbedding.embedView( data, view, "one", model, 16, null ) );
+		assertTrue( e.getMessage().contains( "in a circle" ), e.getMessage() );
+
+		// the dataset is saved and loaded with these parameters
+		new XmlIoSpimData2().save( data, xml.toURI() );
+		final SpimData2 loaded = new XmlIoSpimData2().load( xml.toURI() );
+		assertEquals( "thinned-out '" + LABEL + THINNED_ALL + " | detection: " + detected, loaded.getViewInterestPoints().getViewInterestPointLists( view ).getInterestPointList( "thinned" ).getParameters() );
+		assertVectorsOfTheDetection( loaded, view, "thinned", "thinned", model, scale, byPosition );
 	}
 
 	@Test

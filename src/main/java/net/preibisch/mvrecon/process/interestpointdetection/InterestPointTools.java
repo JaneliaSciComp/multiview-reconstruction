@@ -25,6 +25,9 @@ package net.preibisch.mvrecon.process.interestpointdetection;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.Collection;
 import java.util.Collections;
@@ -48,6 +51,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DetectionOrigin;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
 import mpicbg.spim.data.sequence.ViewDescription;
 import net.preibisch.mvrecon.Threads;
@@ -340,25 +344,40 @@ public class InterestPointTools
 
 	/**
 	 * Adds a plain label to every view that holds copies of the points of the base label that pass the filter (with the
-	 * ids of the base label), e.g. for readers that do not know filtered labels. Nothing is saved.
+	 * ids of the base label), e.g. for readers that do not know filtered labels. Nothing is saved. Its parameters say
+	 * what it was filtered from and, behind that, which detection its points were found with (DetectionOrigin.derivedParameters:
+	 * a copy does not follow its base label as a filtered label does, so it records where its points come from).
 	 *
 	 * @throws IllegalArgumentException if a view lacks the base label
 	 */
 	public static boolean addFilteredInterestPointsCopy( final SpimData2 data, final String label, final String baseLabel, final InterestPointFilter filter, final Collection< ? extends ViewId > views )
 	{
 		final HashMap< ViewId, List< InterestPoint > > points = new HashMap<>();
+		final HashMap< ViewId, String > parameters = new HashMap<>();
+		final String description = filter.describe( baseLabel ) + " (copied)";
 
 		for ( final ViewId viewId : views )
 		{
-			final InterestPoints base = data.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( baseLabel );
+			final ViewInterestPointLists lists = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+			final InterestPoints base = lists.getInterestPointList( baseLabel );
 
 			if ( base == null )
 				throw new IllegalArgumentException( "Cannot create the label '" + label + "': its base label '" + baseLabel + "' does not exist for view " + Group.pvid( viewId ) + "." );
 
 			points.put( viewId, filter.filter( base.getInterestPointsCopy().values() ) );
+
+			// looked up before the label is added: it may replace its base
+			parameters.put( viewId, DetectionOrigin.derivedParameters( lists, baseLabel, description ) );
 		}
 
-		return addInterestPoints( data, label, points, filter.describe( baseLabel ) + " (copied)" );
+		if ( !addInterestPoints( data, label, points, description ) )
+			return false;
+
+		// the detection of the points can differ between the views (a label detected again for some of them)
+		for ( final ViewId viewId : views )
+			data.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ).setParameters( parameters.get( viewId ) );
+
+		return true;
 	}
 
 	/**
@@ -495,6 +514,131 @@ public class InterestPointTools
 
 		if ( data.getActionHistory() != null )
 			data.getActionHistory().removeByResultRef( "interestpoints:" + label );
+	}
+
+	/**
+	 * Removes embeddings of a label for the given views (the Interest Point Explorer's right-click "Remove embeddings";
+	 * Stephan, 2026-11-16): the rows of these views go from the named per-point arrays, in memory at once (the explorer,
+	 * the registration dialog and the matcher no longer see them) and in the store when the dataset is saved
+	 * (InterestPointArrays.stageRemoveRows per array). The views that are not given keep their rows; an array that no view
+	 * has rows in any more is removed by the save. A filtered label has the embeddings of its base label, so they are
+	 * removed there. The action history follows once an embedding is gone for every view of the dataset: the
+	 * embed-interestpoints records that computed it are dropped (ActionHistory.removeEmbeddings; while views are left with
+	 * it the records stay, they do not list views that could be taken off). Embeddings that were computed and not saved
+	 * yet are gone.
+	 *
+	 * @param names the names of the arrays, null = all the label has in these views
+	 * @return per array (by name) the views whose rows were removed; empty if there was nothing to remove
+	 * @throws IllegalStateException if the chain of a filtered label is broken or an array cannot be read
+	 */
+	public static SortedMap< String, List< ViewId > > removeEmbeddings( final SpimData2 data, final Collection< ? extends ViewId > views, final String label, final Collection< String > names )
+	{
+		final ViewInterestPoints vip = data.getViewInterestPoints();
+		final TreeMap< String, List< ViewId > > removed = new TreeMap<>();
+		final TreeSet< String > bases = new TreeSet<>(), gone = new TreeSet<>();
+		int records = 0;
+
+		for ( final Map.Entry< String, List< ViewId > > e : InterestPointArrays.viewsWithRows( vip, views, label ).entrySet() )
+		{
+			final String name = e.getKey();
+
+			if ( names != null && !names.contains( name ) )
+				continue;
+
+			// the views by where their rows are: the dataset directory, the label they are stored under, the timepoint
+			final HashMap< List< Object >, List< ViewId > > groups = new HashMap<>();
+			final TreeSet< String > basesOfArray = new TreeSet<>();
+
+			for ( final ViewId viewId : e.getValue() )
+			{
+				final ViewInterestPointLists lists = vip.getViewInterestPointLists( viewId );
+				final String base = InterestPointArrays.baseLabel( lists, label );
+
+				groups.computeIfAbsent( Arrays.asList( lists.getInterestPointList( label ).getBasePath(), base, viewId.getTimePointId() ), k -> new ArrayList<>() ).add( viewId );
+				basesOfArray.add( base );
+			}
+
+			final ArrayList< ViewId > removedViews = new ArrayList<>();
+
+			for ( final Map.Entry< List< Object >, List< ViewId > > group : groups.entrySet() )
+			{
+				final URI baseDir = (URI) group.getKey().get( 0 );
+				final String base = (String) group.getKey().get( 1 );
+				final int timepoint = (Integer) group.getKey().get( 2 );
+
+				final TreeSet< Integer > setups = new TreeSet<>();
+				for ( final ViewId viewId : group.getValue() )
+					setups.add( viewId.getViewSetupId() );
+
+				final Collection< Integer > done = InterestPointArrays.stageRemoveRows( baseDir, base, timepoint, name, setups );
+
+				for ( final ViewId viewId : group.getValue() )
+					if ( done.contains( viewId.getViewSetupId() ) )
+						removedViews.add( viewId );
+
+				// no view of the timepoint is left with rows: the save removes the array
+				final InterestPointArrays.Attributes array = InterestPointArrays.attributes( baseDir, base, timepoint, name );
+				if ( !done.isEmpty() && ( array == null || InterestPointArrays.rows( baseDir, array ).isEmpty() ) )
+					gone.add( "'" + name + "' (timepoint " + timepoint + ")" );
+			}
+
+			if ( removedViews.isEmpty() )
+				continue;
+
+			removed.put( name, removedViews );
+			bases.addAll( basesOfArray );
+
+			// the history follows the data: an embedding that no view of the dataset has any more was not computed
+			if ( data.getActionHistory() != null )
+				for ( final String base : basesOfArray )
+					if ( !InterestPointArrays.viewsWithRows( vip, vip.getViewInterestPoints().keySet(), base ).containsKey( name ) )
+						records += data.getActionHistory().removeEmbeddings( labelsWithBase( vip, base ), name );
+		}
+
+		if ( removed.isEmpty() )
+		{
+			IOFunctions.println( "The " + views.size() + " view(s) have no embeddings " + ( names == null ? "" : names + " " ) + "of '" + label + "', nothing removed." );
+			return removed;
+		}
+
+		for ( final Map.Entry< String, List< ViewId > > e : removed.entrySet() )
+			IOFunctions.println( "Removed the embeddings '" + e.getKey() + "' of '" + label + "' for " + e.getValue().size() + " view(s)." );
+
+		if ( !( bases.size() == 1 && bases.contains( label ) ) )
+			IOFunctions.println( "'" + label + "' is a filtered label, these are the embeddings of its base label " + bases + ": they are removed there, for all labels that filter it." );
+
+		if ( !gone.isEmpty() )
+			IOFunctions.println( "No view is left with " + String.join( ", ", gone ) + ": removed as a whole by the save." );
+
+		if ( records > 0 )
+			IOFunctions.println( "Removed " + records + " record(s) of the action history that computed them (no view of the dataset has them any more)." );
+
+		IOFunctions.println( "Removed in memory: the store (interestpoints.zarr) is changed when the dataset is saved." );
+
+		return removed;
+	}
+
+	/** @return the labels of the dataset whose per-point arrays are those of the given label: the label itself and, in any view, the filtered labels of it */
+	private static TreeSet< String > labelsWithBase( final ViewInterestPoints vip, final String base )
+	{
+		final TreeSet< String > labels = new TreeSet<>();
+		labels.add( base );
+
+		for ( final ViewInterestPointLists lists : vip.getViewInterestPoints().values() )
+			for ( final String other : lists.getHashMap().keySet() )
+			{
+				if ( labels.contains( other ) )
+					continue;
+
+				try
+				{
+					if ( InterestPointArrays.baseLabel( lists, other ).equals( base ) )
+						labels.add( other );
+				}
+				catch ( final IllegalStateException broken ) {} // a filtered label whose chain is broken has no arrays
+			}
+
+		return labels;
 	}
 
 	/**
