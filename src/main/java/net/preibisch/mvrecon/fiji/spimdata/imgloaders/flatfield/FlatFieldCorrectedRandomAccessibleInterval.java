@@ -25,15 +25,13 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 import net.imglib2.AbstractInterval;
 import net.imglib2.Cursor;
 import net.imglib2.Interval;
-import net.imglib2.Point;
+import net.imglib2.Localizable;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.Sampler;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.RealSum;
 import net.imglib2.util.ValuePair;
-import net.imglib2.view.Views;
 
 /*
  * 
@@ -57,6 +55,9 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		this.brightImg = brightImg;
 		this.darkImg = darkImg;
 
+		if (brightImg.numDimensions() > sourceImg.numDimensions() || darkImg.numDimensions() > sourceImg.numDimensions())
+			throw new IllegalArgumentException("Bright-/darkfield images have more dimensions than source image!");
+
 		meanBrightCorrected = getMeanCorrected( brightImg, darkImg );
 		type = outputType;
 	}
@@ -79,68 +80,223 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		return type;
 	}
 
-	private class FlatFieldCorrectedRandomAccess extends Point implements RandomAccess< O >
+	private class FlatFieldCorrectedRandomAccess implements RandomAccess<O>
 	{
-		/*
-		 * TODO: manually implement move methods
-		 */
-		
-		private final RandomAccess< T > sourceRA;
-		private final RandomAccess< S > brightRA;
-		private final RandomAccess< R > darkRA;
+		private final RandomAccess<T> sourceRA;
+		private final RandomAccess<S> brightRA;
+		private final RandomAccess<R> darkRA;
 		private final O value;
 
+		private final int nDimSource;
 		private final int nDimBright;
 		private final int nDimDark;
 
+		// Cached min/max values to avoid virtual method calls in get()
+		private final double minValue;
+		private final double maxValue;
+
 		public FlatFieldCorrectedRandomAccess()
 		{
-			super( sourceImg.numDimensions() );
 			sourceRA = sourceImg.randomAccess();
 			brightRA = brightImg.randomAccess();
 			darkRA = darkImg.randomAccess();
 			value = type.createVariable();
+			nDimSource = sourceImg.numDimensions();
 			nDimBright = brightImg.numDimensions();
 			nDimDark = darkImg.numDimensions();
+			minValue = value.getMinValue();
+			maxValue = value.getMaxValue();
 		}
 
 		@Override
 		public O get()
 		{
-			// NB: the flat field images seem to be 3D with 1 z slice
-			// if they were truly 2D, we would use position.length - 1
-			final long[] positionBright = new long[ nDimBright ];
-			final long[] positionDark = new long[ nDimDark ];
-			// only copy position of n-1 dimensions
-			System.arraycopy( position, 0, positionBright, 0, nDimBright );
-			System.arraycopy( position, 0, positionDark, 0, nDimDark );
-
-			sourceRA.setPosition( position );
-			brightRA.setPosition( positionBright );
-			darkRA.setPosition( positionDark );
-
-			final double corrBright = brightRA.get().getRealDouble() - darkRA.get().getRealDouble();
-			final double corrImg = sourceRA.get().getRealDouble() - darkRA.get().getRealDouble();
+			final double darkValue = darkRA.get().getRealDouble();
+			final double corrBright = brightRA.get().getRealDouble() - darkValue;
+			final double corrImg = sourceRA.get().getRealDouble() - darkValue;
 
 			if (corrBright == 0)
-				value.setReal( 0.0 );
+				value.setReal(0.0);
 			else
 			{
-				final double corr = Math.min( Math.max( corrImg * meanBrightCorrected / corrBright, value.getMinValue() ), value.getMaxValue() );
-				value.setReal( corr );
+				final double corr = Math.min(Math.max(corrImg * meanBrightCorrected / corrBright, minValue), maxValue);
+				value.setReal(corr);
 			}
 
 			return value;
 		}
 
 		@Override
-		public RandomAccess< O > copy()
+		public void fwd(int d)
 		{
-			final FlatFieldCorrectedRandomAccessibleInterval<O, T, S, R >.FlatFieldCorrectedRandomAccess copy = new FlatFieldCorrectedRandomAccess();
-			copy.setPosition( this );
+			sourceRA.fwd(d);
+			if (d < nDimBright) brightRA.fwd(d);
+			if (d < nDimDark) darkRA.fwd(d);
+		}
+
+		@Override
+		public void bck(int d)
+		{
+			sourceRA.bck(d);
+			if (d < nDimBright) brightRA.bck(d);
+			if (d < nDimDark) darkRA.bck(d);
+		}
+
+		@Override
+		public void move(int distance, int d)
+		{
+			sourceRA.move(distance, d);
+			if (d < nDimBright) brightRA.move(distance, d);
+			if (d < nDimDark) darkRA.move(distance, d);
+		}
+
+		@Override
+		public void move(long distance, int d)
+		{
+			sourceRA.move(distance, d);
+			if (d < nDimBright) brightRA.move(distance, d);
+			if (d < nDimDark) darkRA.move(distance, d);
+		}
+
+		@Override
+		public void move(Localizable distance)
+		{
+			sourceRA.move(distance);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.move(distance.getLongPosition(d), d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.move(distance.getLongPosition(d), d);
+		}
+
+		@Override
+		public void move(int[] distance)
+		{
+			sourceRA.move(distance);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.move(distance[d], d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.move(distance[d], d);
+		}
+
+		@Override
+		public void move(long[] distance)
+		{
+			sourceRA.move(distance);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.move(distance[d], d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.move(distance[d], d);
+		}
+
+		@Override
+		public void setPosition(Localizable position)
+		{
+			sourceRA.setPosition(position);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.setPosition(position.getLongPosition(d), d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.setPosition(position.getLongPosition(d), d);
+		}
+
+		@Override
+		public void setPosition(int[] position)
+		{
+			sourceRA.setPosition(position);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.setPosition(position[d], d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.setPosition(position[d], d);
+		}
+
+		@Override
+		public void setPosition(long[] position)
+		{
+			sourceRA.setPosition(position);
+			for (int d = 0; d < nDimBright; d++)
+				brightRA.setPosition(position[d], d);
+			for (int d = 0; d < nDimDark; d++)
+				darkRA.setPosition(position[d], d);
+		}
+
+		@Override
+		public void setPosition(int position, int d)
+		{
+			sourceRA.setPosition(position, d);
+			if (d < nDimBright) brightRA.setPosition(position, d);
+			if (d < nDimDark) darkRA.setPosition(position, d);
+		}
+
+		@Override
+		public void setPosition(long position, int d)
+		{
+			sourceRA.setPosition(position, d);
+			if (d < nDimBright) brightRA.setPosition(position, d);
+			if (d < nDimDark) darkRA.setPosition(position, d);
+		}
+
+		// Localizable - delegate to sourceRA
+
+		@Override
+		public int numDimensions()
+		{
+			return nDimSource;
+		}
+
+		@Override
+		public void localize(int[] position)
+		{
+			sourceRA.localize(position);
+		}
+
+		@Override
+		public void localize(long[] position)
+		{
+			sourceRA.localize(position);
+		}
+
+		@Override
+		public int getIntPosition(int d)
+		{
+			return sourceRA.getIntPosition(d);
+		}
+
+		@Override
+		public long getLongPosition(int d)
+		{
+			return sourceRA.getLongPosition(d);
+		}
+
+		@Override
+		public void localize(float[] position)
+		{
+			sourceRA.localize(position);
+		}
+
+		@Override
+		public void localize(double[] position)
+		{
+			sourceRA.localize(position);
+		}
+
+		@Override
+		public float getFloatPosition(int d)
+		{
+			return sourceRA.getFloatPosition(d);
+		}
+
+		@Override
+		public double getDoublePosition(int d)
+		{
+			return sourceRA.getDoublePosition(d);
+		}
+
+		@Override
+		public RandomAccess<O> copy()
+		{
+			final FlatFieldCorrectedRandomAccessibleInterval<O, T, S, R>.FlatFieldCorrectedRandomAccess copy = new FlatFieldCorrectedRandomAccess();
+			copy.setPosition(sourceRA);
 			return copy;
 		}
-		
 	}
 	
 	public static <P extends RealType< P >, Q extends RealType< Q >> double getMeanCorrected(RandomAccessibleInterval< P > brightImg, RandomAccessibleInterval< Q > darkImg)
@@ -148,7 +304,7 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		final RealSum sum = new RealSum();
 		long count = 0;
 		
-		final Cursor< P > brightCursor = Views.iterable( brightImg ).cursor();
+		final Cursor< P > brightCursor = brightImg.cursor();
 		final RandomAccess< Q > darkRA = darkImg.randomAccess();
 		
 		while (brightCursor.hasNext())
@@ -172,7 +328,7 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 		double min = Double.MAX_VALUE;
 		double max = - Double.MAX_VALUE;
 
-		for (final P pixel : Views.iterable( img ))
+		for (final P pixel : img)
 		{
 			double value = pixel.getRealDouble();
 			
@@ -183,7 +339,7 @@ public class FlatFieldCorrectedRandomAccessibleInterval <O extends RealType< O >
 				min = value;
 		}
 		
-		return new ValuePair< Double, Double >( min, max );
+		return new ValuePair<>( min, max );
 	}
 
 }

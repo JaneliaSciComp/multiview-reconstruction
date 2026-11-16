@@ -280,6 +280,7 @@ public class ViewSetupExplorerPanel< AS extends SpimData2 > extends FilteredAndG
 		addReCenterShortcut();
 		addViewSetupIdShortcut(); // 'v' or 'V'
 		addIntensityPreviewShortcut(); // 'i' or 'I'
+		addFlatfieldPreviewShortcut(); // 'f' or 'F'
 		addNeighboursShortcut(); // 'n' or 'N' to highlight correspondence-connected views
 		addOverlapShortcut();    // 'o' or 'O' to highlight geometrically-overlapping views
 		addMaxIntensityShortcut(); // '[' ']' adjust max intensity of visible sources; '{' '}' all sources

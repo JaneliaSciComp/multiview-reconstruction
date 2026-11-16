@@ -1,0 +1,506 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SpimData version="0.2">
+  <BasePath type="relative">.</BasePath>
+  <SequenceDescription>
+    <ImageLoader format="bdv.n5" version="1.1">
+      <n5 type="relative">dataset.n5/</n5>
+    </ImageLoader>
+    <ViewSetups>
+      <ViewSetup>
+        <id>0</id>
+        <name>0</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>187</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>1</id>
+        <name>1</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>188</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>2</id>
+        <name>2</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>189</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>3</id>
+        <name>3</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>200</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>4</id>
+        <name>4</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>201</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>5</id>
+        <name>5</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>202</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>6</id>
+        <name>6</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>213</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>7</id>
+        <name>7</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>214</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <ViewSetup>
+        <id>8</id>
+        <name>8</name>
+        <size>512 320 825</size>
+        <voxelSize>
+          <unit>pixels</unit>
+          <size>1.0 1.0 3.0</size>
+        </voxelSize>
+        <attributes>
+          <illumination>0</illumination>
+          <channel>0</channel>
+          <tile>215</tile>
+          <angle>0</angle>
+        </attributes>
+      </ViewSetup>
+      <Attributes name="illumination">
+        <Illumination>
+          <id>0</id>
+          <name>0</name>
+        </Illumination>
+      </Attributes>
+      <Attributes name="channel">
+        <Channel>
+          <id>0</id>
+          <name>0</name>
+        </Channel>
+      </Attributes>
+      <Attributes name="tile">
+        <Tile>
+          <id>187</id>
+          <name>187</name>
+        </Tile>
+        <Tile>
+          <id>188</id>
+          <name>188</name>
+        </Tile>
+        <Tile>
+          <id>189</id>
+          <name>189</name>
+        </Tile>
+        <Tile>
+          <id>200</id>
+          <name>200</name>
+        </Tile>
+        <Tile>
+          <id>201</id>
+          <name>201</name>
+        </Tile>
+        <Tile>
+          <id>202</id>
+          <name>202</name>
+        </Tile>
+        <Tile>
+          <id>213</id>
+          <name>213</name>
+        </Tile>
+        <Tile>
+          <id>214</id>
+          <name>214</name>
+        </Tile>
+        <Tile>
+          <id>215</id>
+          <name>215</name>
+        </Tile>
+      </Attributes>
+      <Attributes name="angle">
+        <Angle>
+          <id>0</id>
+          <name>0</name>
+        </Angle>
+      </Attributes>
+    </ViewSetups>
+    <Timepoints type="pattern">
+      <integerpattern>0</integerpattern>
+    </Timepoints>
+    <MissingViews />
+  </SequenceDescription>
+  <ViewRegistrations>
+    <ViewRegistration timepoint="0" setup="0">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0 0.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 0.4554158176323426 0.0 1.0 0.0 -0.13328548693164066 0.0 0.0 1.0 1.039028825990859</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 199.68 0.0 1.0 0.0 102.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="1">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9996881730582423 1.0178764373025146E-4 9.91613051380682E-5 0.296854107149204 -0.0014206520238486176 1.000352820575225 5.493263412035365E-5 0.4978096475705985 -4.038421786319725E-4 1.2989941922307108E-4 1.0000050536353644 0.012322662821996552</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0 0.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -256.0 0.0 1.0 0.0 102.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="2">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9999774841758134 -2.0323268523581142E-4 5.914840097558037E-5 0.41302203806414345 -6.595441757221898E-4 1.0005468325585005 1.0422412713430604E-4 0.86847428183128 -3.8743282755243446E-4 6.197381562939316E-4 0.9999038186675331 -0.1051593717912322</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.2804882451294475 0.0 1.0 0.0 0.15177465825263425 0.0 0.0 1.0 -0.8673431810167168</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -711.6800000000001 0.0 1.0 0.0 102.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="3">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9996509004376033 0.0011789057647756168 6.625470971101606E-5 -0.4380062409126003 -5.886838131605057E-6 0.9993980714516947 8.378533632140301E-4 0.21066285389381184 1.1914663433102846E-4 -0.0017577181435329034 0.9993905308006584 -0.10732512771106033</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.8442948117588571 0.0 1.0 0.0 7.4417831077170336 0.0 0.0 1.0 -8.789096260073075</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 199.68 0.0 1.0 0.0 -160.0 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="4">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9993691627809789 6.213286683890014E-4 9.303551548369867E-5 -0.5698358880199796 -0.0012153705700172891 0.9994415380582407 8.680618674785683E-4 0.916909696194346 -1.5083252038943456E-4 -0.0011408852434367028 0.9994660587646744 0.2820529225572497</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.9089191675130128 0.0 1.0 0.0 7.4256749717825095 0.0 0.0 1.0 -10.328335265676746</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -256.0 0.0 1.0 0.0 -160.0 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="5">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>0.9995958883424029 1.1960194298687558E-4 1.3045003320240472E-4 -0.5288425017288729 -4.5021629309568165E-4 0.9995801176422028 9.375713906809582E-4 1.7071573589623064 -2.5232116962087617E-4 -5.217759052761294E-4 0.9995631970154002 0.266678832277585</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -1.1369886493304193 0.0 1.0 0.0 7.212246076053502 0.0 0.0 1.0 -11.06907324837572</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -711.6800000000001 0.0 1.0 0.0 -160.0 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="6">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>1.001169864797628 0.00527491302811622 1.4584877195363756E-4 -0.15773640915627343 -0.004686469222584484 0.9996923176367982 -0.002087984887367355 1.2420606082221906 -6.295077531490363E-4 0.005598468303174577 1.0011602899054004 1.9104004620529875</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.2626855827553527 0.0 1.0 0.0 -6.7600081391679225 0.0 0.0 1.0 12.896136661870298</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 199.68 0.0 1.0 0.0 -422.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="7">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>1.0009007956899272 0.0053216640997549155 1.371415077664928E-4 0.31426019006657296 -0.005800996293005373 0.9993339550765709 -0.0019903541975732236 0.5557333216408067 -4.823233633192067E-4 0.003500523337610362 1.0009341748352047 1.2744275908022205</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -0.7700626936842326 0.0 1.0 0.0 -7.432744962459225 0.0 0.0 1.0 11.579421273826847</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -256.0 0.0 1.0 0.0 -422.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+    <ViewRegistration timepoint="0" setup="8">
+      <ViewTransform type="affine">
+        <Name>AffineModel3D regularized with an RigidModel3D, lambda = 0.1</Name>
+        <affine>1.0012387020759832 0.005337931651988534 5.916593012930141E-5 0.6833023552548335 -0.0048548568558627265 0.9989044018136208 -0.0019280609543394106 -0.26569722464665557 -3.915489271687177E-4 0.0016823628452441262 1.0009459560649534 0.679636329046033</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Stitching Transform</Name>
+        <affine>1.0 0.0 0.0 -1.2414564955437868 0.0 1.0 0.0 -8.130736624699523 0.0 0.0 1.0 10.981609779561097</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>Translation to Regular Grid</Name>
+        <affine>1.0 0.0 0.0 -711.6800000000001 0.0 1.0 0.0 -422.40000000000003 0.0 0.0 1.0 -1236.0</affine>
+      </ViewTransform>
+      <ViewTransform type="affine">
+        <Name>calibration</Name>
+        <affine>1.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 3.0 0.0</affine>
+      </ViewTransform>
+    </ViewRegistration>
+  </ViewRegistrations>
+  <ViewInterestPoints>
+    <ViewInterestPointsFile timepoint="0" setup="0" label="beads" params="DOG s=1.7999999523162842 t=0.00800000037997961 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleXYIndex=0 downsampleZ=1 minIntensity=193.0 maxIntensity=1923.0">tpId_0_viewSetupId_0/beads</ViewInterestPointsFile>
+    <ViewInterestPointsFile timepoint="0" setup="1" label="beads" params="DOG s=1.7999999523162842 t=0.00800000037997961 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleXYIndex=0 downsampleZ=1 minIntensity=193.0 maxIntensity=1923.0">tpId_0_viewSetupId_1/beads</ViewInterestPointsFile>
+    <ViewInterestPointsFile timepoint="0" setup="2" label="beads" params="DOG s=1.7999999523162842 t=0.00800000037997961 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleXYIndex=0 downsampleZ=1 minIntensity=193.0 maxIntensity=1923.0">tpId_0_viewSetupId_2/beads</ViewInterestPointsFile>
+    <ViewInterestPointsFile timepoint="0" setup="3" label="beads" params="DOG s=1.7999999523162842 t=0.00800000037997961 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleXYIndex=0 downsampleZ=1 minIntensity=193.0 maxIntensity=1923.0">tpId_0_viewSetupId_3/beads</ViewInterestPointsFile>
+    <ViewInterestPointsFile timepoint="0" setup="4" label="beads" params="DOG s=1.7999999523162842 t=0.00800000037997961 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleXYIndex=0 downsampleZ=1 minIntensity=193.0 maxIntensity=1923.0">tpId_0_viewSetupId_4/beads</ViewInterestPointsFile>
+    <ViewInterestPointsFile timepoint="0" setup="5" label="beads" params="DOG s=1.7999999523162842 t=0.00800000037997961 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleXYIndex=0 downsampleZ=1 minIntensity=193.0 maxIntensity=1923.0">tpId_0_viewSetupId_5/beads</ViewInterestPointsFile>
+    <ViewInterestPointsFile timepoint="0" setup="6" label="beads" params="DOG s=1.7999999523162842 t=0.00800000037997961 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleXYIndex=0 downsampleZ=1 minIntensity=193.0 maxIntensity=1923.0">tpId_0_viewSetupId_6/beads</ViewInterestPointsFile>
+    <ViewInterestPointsFile timepoint="0" setup="7" label="beads" params="DOG s=1.7999999523162842 t=0.00800000037997961 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleXYIndex=0 downsampleZ=1 minIntensity=193.0 maxIntensity=1923.0">tpId_0_viewSetupId_7/beads</ViewInterestPointsFile>
+    <ViewInterestPointsFile timepoint="0" setup="8" label="beads" params="DOG s=1.7999999523162842 t=0.00800000037997961 min=false max=true imageSigmaX=0.5 imageSigmaY=0.5 imageSigmaZ=0.5 downsampleXYIndex=0 downsampleZ=1 minIntensity=193.0 maxIntensity=1923.0">tpId_0_viewSetupId_8/beads</ViewInterestPointsFile>
+  </ViewInterestPoints>
+  <BoundingBoxes />
+  <PointSpreadFunctions />
+  <StitchingResults>
+    <PairwiseResult view_setup_a="2" view_setup_b="1" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 0.32830997041742194 0.0 1.0 0.0 -0.2780143304040763 0.0 0.0 1.0 0.8627255545425214</shift>
+      <correlation>0.9872797935430719</correlation>
+      <hash>-19840.08</hash>
+      <overlap_boundingbox>-256.0 102.0 -1236.0 -200.0 422.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="1" view_setup_b="0" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 0.31408745860667864 0.0 1.0 0.0 -0.21794513304740804 0.0 0.0 1.0 1.0669536191755924</shift>
+      <correlation>0.9890595837012269</correlation>
+      <hash>-13460.56</hash>
+      <overlap_boundingbox>199.0 102.0 -1236.0 255.0 422.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="5" view_setup_b="4" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 0.3219589445005795 0.0 1.0 0.0 -0.2912676156699092 0.0 0.0 1.0 0.7868782074069713</shift>
+      <correlation>0.989534384651222</correlation>
+      <hash>-23513.68</hash>
+      <overlap_boundingbox>-256.0 -160.0 -1236.0 -200.0 159.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="4" view_setup_b="3" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 0.32849982720156845 0.0 1.0 0.0 -0.299139087662013 0.0 0.0 1.0 1.1721464806346376</shift>
+      <correlation>0.9875872479386237</correlation>
+      <hash>-17134.16</hash>
+      <overlap_boundingbox>199.0 -160.0 -1236.0 255.0 159.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="8" view_setup_b="7" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 0.2950324994815787 0.0 1.0 0.0 1.3873944732041537 0.0 0.0 1.0 0.8156317724537985</shift>
+      <correlation>0.9350710728845969</correlation>
+      <hash>-27187.28</hash>
+      <overlap_boundingbox>-256.0 -423.0 -1236.0 -200.0 -103.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="7" view_setup_b="6" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 0.28614119325933984 0.0 1.0 0.0 1.3775777622511782 0.0 0.0 1.0 1.3157733733060013</shift>
+      <correlation>0.9339835065140643</correlation>
+      <hash>-20807.760000000002</hash>
+      <overlap_boundingbox>199.0 -423.0 -1236.0 255.0 -103.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="2" view_setup_b="4" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -0.022274627811640357 0.0 1.0 0.0 7.064784613790181 0.0 0.0 1.0 -9.66095411700826</shift>
+      <correlation>0.9267757024498638</correlation>
+      <hash>-23251.28</hash>
+      <overlap_boundingbox>-256.0 102.0 -1236.0 -200.0 159.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="1" view_setup_b="3" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -0.09643953149634399 0.0 1.0 0.0 7.007672103883749 0.0 0.0 1.0 -9.036354555841172</shift>
+      <correlation>0.9321167659568985</correlation>
+      <hash>-16871.76</hash>
+      <overlap_boundingbox>199.0 102.0 -1236.0 255.0 159.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="5" view_setup_b="7" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 0.31868072554544824 0.0 1.0 0.0 -14.060647711779382 0.0 0.0 1.0 22.925437346686294</shift>
+      <correlation>0.9354709581463394</correlation>
+      <hash>-26924.88</hash>
+      <overlap_boundingbox>-256.0 -160.0 -1236.0 -200.0 -103.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="4" view_setup_b="6" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 0.42744418243105997 0.0 1.0 0.0 -14.049728759960828 0.0 0.0 1.0 23.294215724982678</shift>
+      <correlation>0.9410862556623087</correlation>
+      <hash>-20545.36</hash>
+      <overlap_boundingbox>199.0 -160.0 -1236.0 255.0 -103.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="2" view_setup_b="5" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -1.5104784240610343 0.0 1.0 0.0 7.395826789692137 0.0 0.0 1.0 -9.997150408536527</shift>
+      <correlation>0.9162468747756625</correlation>
+      <hash>-29175.120000000003</hash>
+      <overlap_boundingbox>-712.0 102.0 -1236.0 -200.0 159.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="1" view_setup_b="4" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -1.9429844985963882 0.0 1.0 0.0 7.478610381875683 0.0 0.0 1.0 -9.992593031616707</shift>
+      <correlation>0.9304678530064963</correlation>
+      <hash>-22795.6</hash>
+      <overlap_boundingbox>-256.0 102.0 -1236.0 255.0 159.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="0" view_setup_b="3" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -2.0782351526913487 0.0 1.0 0.0 7.41086456502083 0.0 0.0 1.0 -9.69656279859555</shift>
+      <correlation>0.9357936880330161</correlation>
+      <hash>-16416.08</hash>
+      <overlap_boundingbox>199.0 102.0 -1236.0 711.0 159.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="5" view_setup_b="8" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -0.3287299635215959 0.0 1.0 0.0 -14.747678576491978 0.0 0.0 1.0 21.81115327961561</shift>
+      <correlation>0.9138108463084885</correlation>
+      <hash>-32848.72</hash>
+      <overlap_boundingbox>-712.0 -160.0 -1236.0 -200.0 -103.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="4" view_setup_b="7" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 0.34904618022437717 0.0 1.0 0.0 -15.354558165871083 0.0 0.0 1.0 21.82603817266454</shift>
+      <correlation>0.8990291118916934</correlation>
+      <hash>-26469.2</hash>
+      <overlap_boundingbox>-256.0 -160.0 -1236.0 255.0 -103.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="3" view_setup_b="6" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 1.0216345489996854 0.0 1.0 0.0 -15.042586536834278 0.0 0.0 1.0 21.61643113924515</shift>
+      <correlation>0.8887321660239942</correlation>
+      <hash>-20089.68</hash>
+      <overlap_boundingbox>199.0 -160.0 -1236.0 711.0 -103.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="1" view_setup_b="5" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -0.6616285141958542 0.0 1.0 0.0 7.55184164375774 0.0 0.0 1.0 -11.190099606327976</shift>
+      <correlation>0.9526419402381631</correlation>
+      <hash>-28719.440000000002</hash>
+      <overlap_boundingbox>-256.0 102.0 -1236.0 -200.0 159.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="0" view_setup_b="4" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -0.7271388208706355 0.0 1.0 0.0 7.638504842226183 0.0 0.0 1.0 -11.471001585951399</shift>
+      <correlation>0.9439136410878279</correlation>
+      <hash>-22339.92</hash>
+      <overlap_boundingbox>199.0 102.0 -1236.0 255.0 159.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="4" view_setup_b="8" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -0.284636513100736 0.0 1.0 0.0 -15.462312909779143 0.0 0.0 1.0 21.767295071746958</shift>
+      <correlation>0.9233340706532531</correlation>
+      <hash>-32393.04</hash>
+      <overlap_boundingbox>-256.0 -160.0 -1236.0 -200.0 -103.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+    <PairwiseResult view_setup_a="3" view_setup_b="7" tp_a="0" tp_b="0">
+      <shift>1.0 0.0 0.0 -0.13258697351179194 0.0 1.0 0.0 -14.947295037284562 0.0 0.0 1.0 19.954530783329574</shift>
+      <correlation>0.9243536847543689</correlation>
+      <hash>-26013.52</hash>
+      <overlap_boundingbox>199.0 -160.0 -1236.0 255.0 -103.0 1236.0</overlap_boundingbox>
+    </PairwiseResult>
+  </StitchingResults>
+  <IntensityAdjustments />
+</SpimData>

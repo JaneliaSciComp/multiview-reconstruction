@@ -63,7 +63,7 @@ public class IntensityThresholds
 
 	/**
 	 * Percentile of the background a view's background level is taken at. Low rather than the median because
-	 * tissue only ever pulls the estimate up (spotlight's emptiness stage uses the same).
+	 * tissue only ever pulls the estimate up.
 	 */
 	public static final double BACKGROUND_PERCENTILE = 5;
 
@@ -189,7 +189,7 @@ public class IntensityThresholds
 		long n = 0;
 		for ( final T t : Views.iterable( img ) )
 		{
-			++counts[ ( int ) Math.max( 0, Math.min( 65535, Math.round( t.getRealDouble() ) ) ) ];
+			++counts[ Math.clamp( Math.round( t.getRealDouble() ), 0, 65535 ) ];
 			++n;
 		}
 		final long rank = ( long ) Math.ceil( percentile / 100.0 * n );

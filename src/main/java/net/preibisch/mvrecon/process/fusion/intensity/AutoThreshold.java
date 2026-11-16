@@ -34,7 +34,7 @@ import net.imglib2.view.Views;
 /**
  * Per-image foreground threshold from a {@value #NUM_BINS}-bin histogram over the image's [min, max] range, in double
  * precision (no count limit): Li by the iteration of scikit-image's {@code threshold_li}, Otsu by maximal
- * between-class variance, as the reference Python pipeline (spotlight) computes them.
+ * between-class variance.
  */
 public class AutoThreshold
 {

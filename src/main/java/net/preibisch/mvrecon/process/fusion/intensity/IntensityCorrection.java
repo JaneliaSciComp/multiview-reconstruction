@@ -405,8 +405,7 @@ public class IntensityCorrection {
 
     /**
      * Match {@code viewId1} and {@code viewId2} by the ratio of the medians of the voxels both see above
-     * {@code minIntensity}, a pure gain per pair of coefficient regions (spotlight's "intersection" estimator); for a
-     * SCALE solve.
+     * {@code minIntensity}, a pure gain per pair of coefficient regions; for a SCALE solve.
      */
     public static ViewPairCoefficientMatches matchMedians(
             final AbstractSpimData<?> spimData,
