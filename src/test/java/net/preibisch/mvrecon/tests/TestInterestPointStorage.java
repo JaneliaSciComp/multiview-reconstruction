@@ -1546,7 +1546,8 @@ public class TestInterestPointStorage
 	}
 
 	/**
-	 * A plain copy of the points that pass a filter keeps the ids and the attributes
+	 * A plain copy of the points that pass a filter keeps the ids and the attributes, and records the detection its points
+	 * were found with behind what it was filtered from (it does not follow its base label as a filtered label does)
 	 */
 	@Test
 	public void testFilteredLabelCopy()
@@ -1570,7 +1571,7 @@ public class TestInterestPointStorage
 			final InterestPoints copy = spimData.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( "bright" );
 
 			assertFalse( copy instanceof VirtualFilteredInterestPoints );
-			assertEquals( byIntensity.describe( "beads" ) + " (copied)", copy.getParameters() );
+			assertEquals( byIntensity.describe( "beads" ) + " (copied) | detection: DOG s=1.8 t=0.001", copy.getParameters() );
 
 			final Map< Integer, InterestPoint > points = copy.getInterestPointsCopy();
 			assertEquals( idsPassing( map.get( viewId ), byIntensity ), new TreeSet<>( points.keySet() ) );

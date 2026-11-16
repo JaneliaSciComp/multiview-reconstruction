@@ -46,6 +46,7 @@ import net.preibisch.mvrecon.fiji.plugin.queryXML.LoadParseQueryXML;
 import net.preibisch.mvrecon.fiji.plugin.util.GUIHelper;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistory;
 import net.preibisch.mvrecon.fiji.spimdata.actionhistory.ActionHistoryRecorder;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.Attributes;
@@ -93,7 +94,7 @@ public class Embed_Interest_Points implements PlugIn
 	public static final String WRITER = "BigStitcher embed (Java ONNX evaluator)";
 
 	/** the action id of the history records (ActionToSparkCli renders them as {@code embed-interestpoints}) */
-	public static final String ACTION_ID = "embed-interestpoints";
+	public static final String ACTION_ID = ActionHistory.EMBED_INTERESTPOINTS;
 
 	/** the entries of "Compute Interest Point Embeddings": the hub's models of one kind, or a local file; each remembers its own array name and hub model */
 	public enum Source

@@ -167,7 +167,8 @@ the detections from the XML or to detect them again with the recorded parameters
   two failed attempts of 2026-11-14 left empty `rotation-invariant` arrays that counted as "[1 embedding]"), and the Interest Point
   Explorer's `withArrays` skips them as well (it had shown `thinned-out` with "embedding 'rotation-invariant' 64-D (0/7 views)" while
   the registration dialog showed no embeddings, Stephan 2026-11-14: one rule for both, an array without rows is no embedding).
-  `thinned-out` itself cannot be embedded: its string "thinned-out 'nuclei', kept range ..." is no detection, there is no sigma.
+  `thinned-out` itself could not be embedded then: its string "thinned-out 'nuclei', kept range ..." is no detection (since
+  2026-11-16 the detection of a derived label's points is looked up, see "Embedding a label that was derived from another one").
 - The store's commit does not remove a group directory that only holds `arrays/` (no generation): the arrays may belong to points
   that are still in the N5, so the leftover `beads/tp0/arrays` of such a dataset stays.
 - Tests `TestMissingInterestPoints` (XML copied without its store; one view's entry removed from the store; the table model without
@@ -249,6 +250,81 @@ staging/<millis>_<nanos>_<rnd>.rows             the rows of one setup written di
 - Tests `TestInterestPointArrays` (`writeArray` = `createArray` + `writeSetup` + commit with 4 rows per chunk;
   `rowsWrittenDirectlyAreCommitted`, `keptRowsAreCopied`, `tablesPerSetupAreReadAndReplaced`, `rowsOfReplacedPointsGoWithTheCommit`),
   `TestInterestPointEmbedding.embeddingsAreSavedWithTheDataset` (`InterestPointArrays.rowsInStore` = what the store holds).
+
+**Embedding a label that was derived from another one (`DetectionOrigin`, 2026-11-16).** Stephan embedded `thinned-out` and
+got "has no DoG detection parameters ... A filtered label is embedded through its base label": "why can't it infer the
+necessary parameters recursively from its parent(s)?" A thinned-out label is no filtered label (`VirtualFilteredInterestPoints`,
+followed to its base since the beginning) but a plain label with copies of the points (positions and attributes kept,
+`InterestPoint.derive`); only its parameters string says where they came from. `fiji.plugin.interestpointdetection.DetectionOrigin`
+finds the detection of such points, from two sources:
+- **Recorded in the label (Stephan agreed, 2026-11-16).** The tools that make a label from the points of another one write
+  the detection of the points behind what they say: `thinned-out 'nuclei', kept range from 0.0 to 25.0 | detection: DOG s=...`
+  (`DetectionOrigin.DETECTION` = " | detection: ", `derivedParameters( lists, sourceLabel, description )`, called before the
+  new label is added to the view): `ThinOut`, `RelativeThinOut`, `InteractiveProjections` ("manually removed detections from
+  'X'"), `CreateInterestPointsFromCorrespondences` ("correspondences from 'X'"), `InterestPointTools.addFilteredInterestPointsCopy`
+  ("filtered from 'X': ... (copied)", set per view after `addInterestPoints`). The label then does not depend on what
+  happens to its source (detected again, removed). What is recorded is `detection( lists, source )`: the source's own
+  recorded detection, its detection string, or what its chain leads to if that verifies (below); nothing if the points
+  were not detected or their detection is not known, the string is then as before. A filtered label records nothing, it
+  follows its base as it is. `description( s )` / `recordedDetection( s )` split such a string.
+- **By name, for labels made before.** `sourceLabel( parameters )` is the label the description names; `of( lists, label )`
+  follows a label within its view (a filtered label to its base; a label that records a detection ends the chain; one that
+  names a label leads there, `byName`) to a label that does neither: `DetectionOrigin( label, parameters, derived, byName )`,
+  `chain()` = "'thinned-out' <- 'nuclei'"; it throws for a label on the way that the view lacks and for a circle. A name is
+  not a detection, so parameters found `byName` only count while every point of the label is a point of the label the
+  chain ends in (`pointsAmong`, positions as float32, whatever happened to the labels in between): `detection()` gives null
+  otherwise, `InterestPointEmbedding.checkDerived` refuses with the counts and both sigmas. Needed at once: `thinned-out`
+  of `SparkTest/IP` (6,039 points, sigma attribute 3.869 px) was thinned out on 2026-11-01 from a `nuclei` detected with
+  s=1.93 at downsampling 2, and `nuclei` was detected again on 2026-11-14 with s=1.36 at downsampling 4 (4,905 points,
+  5.458 px): none of its points is a point of `nuclei` now, and following the name alone sampled the cubes at 5.458 px
+  without a word (the first version did). That label stays refused: the parameters of its detection are recorded nowhere.
+- `InterestPointEmbedding.prepare` takes the `DetectionScale` from `DetectionOrigin.of( lists, base ).parameters()` and checks
+  only if `byName`. The label is embedded itself (its points, rows under its name), so a point gets the vector it has as a
+  point of the detected label: verified on a copy of `SparkTest/IP` with a label thinned out from today's `nuclei` (4,665
+  points, vectors identical to the stored ones of `nuclei`, max difference 0.0).
+- A derived label is no detection for the rest: `StoredDetectionParameters.parse` is null for it (first token), so it is not
+  offered by "Re-detect interest points with attributes" and "Set detection parameters as defaults" still says it has none
+  (it follows filtered labels only; could use `recordedDetection` now, not done). One side effect: `Filter_Detections.thresholdOf`
+  (the threshold ramp's preset) finds the `t=` of the recorded detection in such a label, where it found none before.
+- BigStitcher-Spark's `embed-interestpoints` gets it through `InterestPointEmbedding.embedView` once built against this; it
+  has no deriving tools of its own.
+- Test `TestInterestPointEmbedding.derivedLabelsUseTheDetectionOfTheirPoints` (the real `ThinOut` and filtered copy, labels
+  as made before, a mix, the source detected again / removed, tools run on stale or undetected labels, gone, a circle, save
+  and load), `TestInterestPointStorage.testFilteredLabelCopy`.
+
+**Remove embeddings (Interest Point Explorer, 2026-11-16).** Stephan: right-click > "Remove embeddings" > the ones that exist
+and ALL, deleted from disk only when Save is clicked. It acts on the selected views, as "Delete" in the same menu (Stephan
+approved the plan that said so): the rows of these views go from the chosen array, the other views keep theirs (all views
+selected then read "(4/7 views)"; only the views without rows selected read "(0/1 views)" and the submenu is gray), and an
+array no view has rows for is removed by the save.
+- Staging: `StagedArray.removedSetups` (per array; the group's `removedSetups` are every array's, for replaced points),
+  `StagedInterestPointArrays.removeRows( label, tp, name, setups )`, `storeRowsCount` is false for them, the commit passes
+  the union of both sets to `commitArray` as `stale`. `InterestPointArrays.stageRemoveRows( baseDir, label, tp, name, setups )`
+  returns the setups that had rows; `viewsWithRows( vip, views, label )` = array name → the views with rows (what the
+  submenu lists; a filtered label has its base's; a stale array counts).
+- `InterestPointTools.removeEmbeddings( data, views, label, names )` (null = all) is the operation, GUI-free: per (store,
+  base label, timepoint), the log, and the history: once no view of the dataset has rows of the array for the base label
+  (`viewsWithRows` over all views), `ActionHistory.removeEmbeddings( labels, arrayName )` drops the `embed-interestpoints`
+  records of that array (label = the base or a label that filters it; `ActionHistory.EMBED_INTERESTPOINTS`, which
+  `Embed_Interest_Points.ACTION_ID` now is). All or nothing, not per view as `removeRegistrationsForViews`: only
+  `register-interestpoints` records get their views back when the XML is loaded (`XmlIoActionHistory.actionFromXml`), an
+  embedding record that was loaded lists none, so it cannot be narrowed (first written per view, which passed the tests
+  on records made in the session and did nothing on the copy of `SparkTest/IP`). A record whose views partly lost the
+  embedding therefore still names all of them.
+- GUI: `InterestPointExplorerPanel.fillRemoveEmbeddings()` / `removeEmbeddings( names )`, for all selected rows; ALL only
+  when there are several (as "Resave as ZARR store"); no confirmation (Delete has none). The submenu is filled by
+  `invokeLater` from `popupMenuWillBecomeVisible`: the look and feel shows a component popup from an AWT event listener,
+  i.e. before the table's own mouse listener has selected the row under the mouse (`selectRowForPopup`), so anything in
+  the popup that depends on the selected row cannot be computed in `popupMenuWillBecomeVisible` itself.
+- Tests: `TestInterestPointArrays.rowsOfOneArrayAreRemovedWithTheCommit`, `TestInterestPointEmbedding.embeddingsAreRemovedForTheGivenViews`
+  and `.removeEmbeddingsMenuOfTheExplorer`, which builds the real `InterestPointExplorerPanel` without a window: a stub
+  `FilteredAndGroupedExplorer` + `FilteredAndGroupedExplorerPanel` (nine empty methods; the class sets `IOFunctions.printIJLog`
+  and `currentInstance`, the test puts both back) and calls the listeners of the menu entries. A filtered label that is
+  saved needs `setParameters` (the XML writer refuses a null attribute, and the XML of the save that failed there could
+  not be parsed afterwards: "Premature end of file").
+- Copy of `SparkTest/IP` (2026-11-16): `local-embedding` removed for two views + Save: their two tables per setup go
+  (243.9 -> 209.8 MB), the other five stay as tables; ALL for all views + Save: both arrays gone, 5.3 MB, the 4,905 points
+  untouched, the `rotation-invariant` record gone from the history.
 
 **Per-point arrays and matching on them (embeddings, 2026-10-29).** A writer may keep rows about the store's points next to the
 generations, keyed by point id: `<label>/tp<T>/arrays/<name>/zarr.json` (`columns` D, `dtype` float32, the writer's `meta` with

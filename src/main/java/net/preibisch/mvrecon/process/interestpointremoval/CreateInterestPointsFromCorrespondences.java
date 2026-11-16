@@ -31,6 +31,7 @@ import java.util.Map;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DetectionOrigin;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -85,7 +86,7 @@ public class CreateInterestPointsFromCorrespondences
 
 			newIpl.setInterestPoints( newIPs );
 			newIpl.setCorrespondingInterestPoints( new ArrayList<>() );
-			newIpl.setParameters( "correspondences from '" + params.getCorrespondingLabel() + "'" );
+			newIpl.setParameters( DetectionOrigin.derivedParameters( vipl, params.getCorrespondingLabel(), "correspondences from '" + params.getCorrespondingLabel() + "'" ) );
 
 			vipl.addInterestPointList( params.getNewLabel(), newIpl );
 

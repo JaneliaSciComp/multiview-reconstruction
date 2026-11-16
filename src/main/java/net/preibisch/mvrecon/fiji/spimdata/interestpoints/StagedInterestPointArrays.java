@@ -44,7 +44,8 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStor
  * <ul>
  * <li>an array defined here (created, kept for the same model, or replacing another model's array of that name) with the
  * rows computed for some setups;</li>
- * <li>an array removed as a whole;</li>
+ * <li>an array removed as a whole, or the rows of some setups removed from it (the Interest Point Explorer's "Remove
+ * embeddings", which acts on the selected views);</li>
  * <li>per (label, timepoint) the setups whose rows go from every array of the group: the points of these views were
  * replaced (a detection that overwrites the label) or removed, so the rows describe points that no longer exist. Rows
  * computed afterwards for such a setup are kept.</li>
@@ -87,6 +88,9 @@ final class StagedInterestPointArrays
 		/** the rows computed here, by setup */
 		final TreeMap< Integer, int[] > ids = new TreeMap<>();
 		final TreeMap< Integer, float[] > values = new TreeMap<>();
+
+		/** the setups whose rows were removed from this array: what the store holds for them goes with the save */
+		final TreeSet< Integer > removedSetups = new TreeSet<>();
 	}
 
 	final TreeMap< ArrayKey, StagedArray > arrays = new TreeMap<>();
@@ -122,12 +126,13 @@ final class StagedInterestPointArrays
 		return array == null || !( array.removed || array.replace );
 	}
 
-	/** @return whether the rows the store holds for a setup are still its rows: the array counts and the points of the view were not replaced */
+	/** @return whether the rows the store holds for a setup are still its rows: the array counts, the rows of the view were not removed from it and the points of the view were not replaced */
 	synchronized boolean storeRowsCount( final String label, final int timepoint, final String name, final int setup )
 	{
 		final TreeSet< Integer > removed = removedSetups.get( new Group( label, timepoint ) );
+		final StagedArray array = arrays.get( new ArrayKey( label, timepoint, name ) );
 
-		return storeArrayCounts( label, timepoint, name ) && ( removed == null || !removed.contains( setup ) );
+		return storeArrayCounts( label, timepoint, name ) && ( removed == null || !removed.contains( setup ) ) && ( array == null || !array.removedSetups.contains( setup ) );
 	}
 
 	/** @return the arrays of (label, timepoint) as they will be after the save: those of the store without the removed ones, those defined here with their attributes; by name */
@@ -210,6 +215,7 @@ final class StagedInterestPointArrays
 			array.replace = true;
 			array.ids.clear();
 			array.values.clear();
+			array.removedSetups.clear(); // the array of the store goes as a whole
 		}
 
 		array.removed = false;
@@ -249,6 +255,33 @@ final class StagedInterestPointArrays
 		array.meta = null;
 		array.ids.clear();
 		array.values.clear();
+		array.removedSetups.clear();
+	}
+
+	/**
+	 * Removes the rows of setups from one array: those held here at once, those of the store with the save (the array's
+	 * table, tables per setup, rows written directly). The other arrays of the (label, timepoint) keep theirs; rows computed
+	 * afterwards for such a setup are kept. The array has to be defined here or exist in the store (the caller checks).
+	 */
+	synchronized void removeRows( final String label, final int timepoint, final String name, final Collection< Integer > setups )
+	{
+		if ( setups.isEmpty() )
+			return;
+
+		final StagedArray array = arrays.computeIfAbsent( new ArrayKey( label, timepoint, name ), k -> new StagedArray() );
+
+		if ( array.removed )
+			return; // everything goes anyway
+
+		for ( final Integer setup : setups )
+		{
+			array.ids.remove( setup );
+			array.values.remove( setup );
+		}
+
+		// what the store holds under the name goes as a whole if the array replaces another model's
+		if ( !array.replace )
+			array.removedSetups.addAll( setups );
 	}
 
 	/** Forgets everything held here for an array: it is again as the store has it. */

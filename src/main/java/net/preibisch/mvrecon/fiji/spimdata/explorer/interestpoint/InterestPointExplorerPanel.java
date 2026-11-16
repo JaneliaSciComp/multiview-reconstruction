@@ -38,12 +38,16 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
 import javax.swing.JLabel;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -71,6 +75,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.FilteredAndGroupedExplorer;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.interestpoint.InterestPointTableModel.LabelAttributes;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.StoredDetectionParameters;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
@@ -97,6 +102,14 @@ public class InterestPointExplorerPanel extends JPanel
 
 	/** the popup menu entry that asks what to do about interest points the dataset lists without data ({@link #repair}) */
 	public static final String FIX_MISSING = "Fix missing interest points ...";
+
+	/** the popup menu's submenu that removes embeddings of the selected label(s) for the selected views ({@link #removeEmbeddings}) */
+	public static final String REMOVE_EMBEDDINGS = "Remove embeddings";
+
+	/** the entry of that submenu that removes all of them (shown when there are several) */
+	public static final String ALL_EMBEDDINGS = "ALL";
+
+	protected final JMenu removeEmbeddingsMenu = new JMenu( REMOVE_EMBEDDINGS );
 
 	/** the labels without data that this window asked about: once each by itself, the popup menu asks again */
 	private final HashSet< String > repairOffered = new HashSet<>();
@@ -677,6 +690,129 @@ public class InterestPointExplorerPanel extends JPanel
 		}
 	}
 
+	/** @return the labels of the selected rows of the table, in the order of the rows */
+	protected List< String > selectedLabels()
+	{
+		final ArrayList< String > selected = new ArrayList<>();
+		final List< BasicViewDescription< ? > > vds = tableModel.getCurrentViewDescriptions();
+
+		if ( vds == null || vds.isEmpty() )
+			return selected;
+
+		final HashMap< String, Integer > labels = InterestPointTools.getAllInterestPointMap( tableModel.getViewInterestPoints(), vds );
+
+		for ( final int row : table.getSelectedRows() )
+		{
+			final String label = InterestPointTableModel.label( labels, row );
+
+			if ( label != null )
+				selected.add( label );
+		}
+
+		return selected;
+	}
+
+	/**
+	 * @return the embeddings (the names of the per-point arrays, {@link InterestPointArrays#viewsWithRows}) that the labels
+	 *         of the selected rows have in the selected views; a filtered label has those of its base label
+	 */
+	protected SortedSet< String > selectedEmbeddings()
+	{
+		final TreeSet< String > names = new TreeSet<>();
+
+		for ( final String label : selectedLabels() )
+		{
+			try
+			{
+				names.addAll( InterestPointArrays.viewsWithRows( tableModel.getViewInterestPoints(), tableModel.getCurrentViewDescriptions(), label ).keySet() );
+			}
+			catch ( final RuntimeException e )
+			{
+				// the embeddings of this label cannot be looked up (e.g. a filtered label whose base is gone): none to offer, its cells say what is wrong
+			}
+		}
+
+		return names;
+	}
+
+	/**
+	 * Fills the submenu "Remove embeddings" for the selected rows and views: one entry per embedding they have, and "ALL"
+	 * when there are several; gray when there are none (as "Resave as ZARR store" of the ViewSetup Explorer).
+	 *
+	 * @return the submenu
+	 */
+	public JMenu fillRemoveEmbeddings()
+	{
+		removeEmbeddingsMenu.removeAll();
+
+		final SortedSet< String > names = selectedEmbeddings();
+
+		for ( final String name : names )
+		{
+			final JMenuItem item = new JMenuItem( name );
+			item.addActionListener( e -> removeEmbeddings( List.of( name ) ) );
+			removeEmbeddingsMenu.add( item );
+		}
+
+		if ( names.size() > 1 )
+		{
+			removeEmbeddingsMenu.addSeparator();
+
+			final JMenuItem all = new JMenuItem( ALL_EMBEDDINGS );
+			all.addActionListener( e -> removeEmbeddings( null ) );
+			removeEmbeddingsMenu.add( all );
+		}
+
+		removeEmbeddingsMenu.setEnabled( !names.isEmpty() );
+
+		return removeEmbeddingsMenu;
+	}
+
+	/**
+	 * Removes embeddings of the labels of the selected rows for the selected views ({@link InterestPointTools#removeEmbeddings}):
+	 * in memory, the table and every other reader no longer show them, the store is changed when the dataset is saved
+	 * (Stephan, 2026-11-16). As "Delete" it acts on the selected views only, the other views keep their embeddings.
+	 *
+	 * @param names the names of the embeddings, null = all of them
+	 */
+	protected void removeEmbeddings( final Collection< String > names )
+	{
+		final List< BasicViewDescription< ? > > vds = tableModel.getCurrentViewDescriptions();
+		final List< String > labels = selectedLabels();
+
+		if ( labels.isEmpty() )
+		{
+			JOptionPane.showMessageDialog( table, "Nothing selected." );
+			return;
+		}
+
+		final int[] rows = table.getSelectedRows();
+
+		for ( final String label : labels )
+		{
+			try
+			{
+				// a label without the chosen embedding (several rows selected), or one whose base label was selected as well and
+				// has lost them already, is not worth a line of the log
+				final Collection< String > has = InterestPointArrays.viewsWithRows( tableModel.getViewInterestPoints(), vds, label ).keySet();
+
+				if ( names == null ? !has.isEmpty() : has.stream().anyMatch( names::contains ) )
+					InterestPointTools.removeEmbeddings( viewSetupExplorer.getSpimData(), vds, label, names );
+			}
+			catch ( final RuntimeException e )
+			{
+				IOFunctions.println( "Could not remove the embeddings of '" + label + "': " + e );
+			}
+		}
+
+		// the attributes cells (which name the embeddings) are computed once per label and selection
+		tableModel.update( tableModel.getViewInterestPoints() );
+		tableModel.fireTableDataChanged();
+
+		if ( rows.length > 0 && rows[ rows.length - 1 ] < table.getRowCount() )
+			table.setRowSelectionInterval( rows[ 0 ], rows[ rows.length - 1 ] );
+	}
+
 	/**
 	 * A right-click selects the row under the mouse (if it is not selected yet), so that the popup menu acts on it
 	 */
@@ -881,11 +1017,22 @@ public class InterestPointExplorerPanel extends JPanel
 		defaultsItem.addActionListener( e -> setDetectionDefaults() );
 		fixItem.addActionListener( e -> repair( true ) );
 
-		// only when the table shows a label that the dataset lists without data
+		removeEmbeddingsMenu.setToolTipText( "<html>Removes embeddings of the selected label(s) for the selected views (the other views keep theirs).<br>"
+				+ "They are gone here at once; interestpoints.zarr is only changed when the dataset is saved.</html>" );
+		removeEmbeddingsMenu.setEnabled( false );
+
+		// "Fix missing ..." only when the table shows a label that the dataset lists without data
 		popupMenu.addPopupMenuListener( new PopupMenuListener()
 		{
 			@Override
-			public void popupMenuWillBecomeVisible( final PopupMenuEvent e ) { fixItem.setEnabled( !tableModel.missingEntries().isEmpty() ); }
+			public void popupMenuWillBecomeVisible( final PopupMenuEvent e )
+			{
+				fixItem.setEnabled( !tableModel.missingEntries().isEmpty() );
+
+				// the embeddings of the row under the mouse: the popup is shown (by the look and feel's listener) before the
+				// table's mouse listener has selected that row, so the submenu is filled once this mouse event is through
+				SwingUtilities.invokeLater( () -> fillRemoveEmbeddings() );
+			}
 
 			@Override
 			public void popupMenuWillBecomeInvisible( final PopupMenuEvent e ) {}
@@ -906,6 +1053,7 @@ public class InterestPointExplorerPanel extends JPanel
 
 		popupMenu.add( filterItem );
 		popupMenu.add( defaultsItem );
+		popupMenu.add( removeEmbeddingsMenu );
 		popupMenu.add( fixItem );
 		popupMenu.add( deleteItem );
 
