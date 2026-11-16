@@ -26,6 +26,7 @@ import java.io.File;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -61,7 +62,7 @@ public class FlatfieldImageLoader {
 	private static final Pair<FlatfieldImageInfo, FlatfieldImageInfo> NULL_PAIR = new ValuePair<>(null, null);
 
 	public FlatfieldImageLoader() {
-		raiMap = new HashMap<>();
+		raiMap = new ConcurrentHashMap<>();
 		infoMap = new HashMap<>();
 	}
 
@@ -110,8 +111,9 @@ public class FlatfieldImageLoader {
 	 * @param info the flatfield image info containing URI, format, and dataset path
 	 * @return the loaded image as FloatType
 	 */
-	public synchronized RandomAccessibleInterval<FloatType> loadImageIfNecessary(FlatfieldImageInfo info) {
-		if (!raiMap.containsKey(info)) {
+	public RandomAccessibleInterval<FloatType> loadImageIfNecessary(FlatfieldImageInfo info) {
+		// loaded once per image, also when several threads open views at the same time
+		return raiMap.computeIfAbsent(info, i -> {
 			RandomAccessibleInterval<FloatType> img;
 
 			if (info.isTif()) {
@@ -140,9 +142,8 @@ public class FlatfieldImageLoader {
 				img = RealTypeConverters.convert(Cast.unchecked(raw), new FloatType());
 			}
 
-			raiMap.put(info, img);
-		}
-		return raiMap.get(info);
+			return img;
+		});
 	}
 
 	/**

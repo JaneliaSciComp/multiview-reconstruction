@@ -23,9 +23,9 @@
 package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -88,7 +88,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		this.wrappedImgLoader = wrappedImgLoader;
 		this.active = true;
 		this.imageLoader = new FlatfieldImageLoader();
-		this.dsRaiMap = new HashMap<>();
+		this.dsRaiMap = new ConcurrentHashMap<>();
 	}
 
 	// ========== Configuration methods ==========
@@ -182,7 +182,7 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 	 * Generic method to get a downsampled image or do downsampling on the fly. The bright image
 	 * is stored in the A element of the pair, the dark image in B.
 	 */
-	private synchronized RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
+	private RandomAccessibleInterval<FloatType> getOrCreateDownsampledImg(
 			ViewId vId,
 			int[] downsamplingFactors,
 			Function<Pair<FlatfieldImageInfo, FlatfieldImageInfo>, FlatfieldImageInfo> infoSelector,
@@ -197,18 +197,12 @@ public class ViewerFlatfieldCorrectionWrappedImgLoader
 		List<Integer> dsFactorList = Arrays.stream(downsamplingFactors).boxed().collect(Collectors.toList());
 		final ValuePair<FlatfieldImageInfo, List<Integer>> key = new ValuePair<>(infoSelector.apply(infos), dsFactorList);
 
-		if (!dsRaiMap.containsKey(key)) {
+		// created once per field and level, also when several threads open views at the same time;
+		// a view without this field (null) is not cached
+		return dsRaiMap.computeIfAbsent(key, k -> {
 			final RandomAccessibleInterval<FloatType> img = imgGetter.apply(vId);
-
-			if (img == null)
-				return null;
-
-			final RandomAccessibleInterval<FloatType> downsampled =
-					MultiResolutionFlatfieldCorrectionWrappedImgLoader.downsampleHDF5(img, downsamplingFactors);
-			dsRaiMap.put(key, downsampled);
-		}
-
-		return dsRaiMap.get(key);
+			return img == null ? null : MultiResolutionFlatfieldCorrectionWrappedImgLoader.downsampleHDF5(img, downsamplingFactors);
+		});
 	}
 
 	// ========== Inner class: ViewerSetupImgLoader implementation ==========

@@ -24,9 +24,9 @@ package net.preibisch.mvrecon.fiji.spimdata.imgloaders.flatfield;
 
 import java.io.File;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -70,7 +70,7 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		this.wrappedImgLoader = wrappedImgLoader;
 		this.active = true;
 
-		dsRaiMap = new HashMap<>();
+		dsRaiMap = new ConcurrentHashMap<>();
 	}
 
 	public RandomAccessibleInterval< FloatType > getOrCreateBrightImgDownsampled(ViewId vId, int[] downsamplingFactors) {
@@ -100,17 +100,12 @@ public class MultiResolutionFlatfieldCorrectionWrappedImgLoader
 		List<Integer> dsFactorList = Arrays.stream(downsamplingFactors).boxed().collect(Collectors.toList());
 		final ValuePair<FlatfieldImageInfo, List<Integer>> key = new ValuePair<>(infoSelector.apply(infos), dsFactorList);
 
-		if (!dsRaiMap.containsKey(key)) {
+		// created once per field and level, also when several threads open views at the same time;
+		// a view without this field (null) is not cached
+		return dsRaiMap.computeIfAbsent(key, k -> {
 			final RandomAccessibleInterval<FloatType> img = imgGetter.apply(vId);
-
-			if (img == null)
-				return null;
-
-			final RandomAccessibleInterval<FloatType> downsampled = downsampleHDF5(img, downsamplingFactors);
-			dsRaiMap.put(key, downsampled);
-		}
-
-		return dsRaiMap.get(key);
+			return img == null ? null : downsampleHDF5(img, downsamplingFactors);
+		});
 	}
 
 	@Override
