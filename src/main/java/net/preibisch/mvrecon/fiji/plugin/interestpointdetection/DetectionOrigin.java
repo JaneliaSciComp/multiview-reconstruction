@@ -135,7 +135,7 @@ public record DetectionOrigin( String label, String parameters, List< String > d
 		return parameters != null && ( StoredDetectionParameters.parse( parameters ) != null || parameters.trim().split( "\\s+" )[ 0 ].equals( LEARNED ) );
 	}
 
-	/** @return the chain as text, e.g. "'thinned-out' <- 'nuclei'"; just the label if nothing was followed */
+	/** @return the chain as text, e.g. "'thinned-out' {@literal <-} 'nuclei'"; just the label if nothing was followed */
 	public String chain()
 	{
 		final StringBuilder sb = new StringBuilder();
