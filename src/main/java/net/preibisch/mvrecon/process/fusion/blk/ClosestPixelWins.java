@@ -23,6 +23,7 @@
 package net.preibisch.mvrecon.process.fusion.blk;
 
 import static net.imglib2.type.PrimitiveType.FLOAT;
+import static net.imglib2.type.PrimitiveType.INT;
 import static net.imglib2.util.Util.safeInt;
 
 import java.util.ArrayList;
@@ -64,6 +65,8 @@ class ClosestPixelWins
 		private final Overlap overlap;
 
 		private final TempArray< float[] >[] tempArrays;
+
+		private final TempArray< int[] > tempWinner = TempArray.forPrimitiveType( INT );
 
 		ClosestPixelWinsBlockSupplier(
 				final List< BlockSupplier< FloatType > > images,
@@ -109,18 +112,33 @@ class ClosestPixelWins
 			final long[] srcMax = new long[ srcPos.length ];
 			Arrays.setAll( srcMax, d -> srcPos[ d ] + size[ d ] - 1 );
 			final int[] overlapping = overlap.getOverlappingViewIndices( srcPos, srcMax );
+			// winner per pixel first (the first view wins ties), then read only the images of views that win a pixel
+			final int[] winner = tempWinner.get( len );
+			Arrays.fill( winner, 0, len, -1 );
 			for ( int i : overlapping )
 			{
-				images.get( i ).copy( interval, tmpI );
 				distances.get( i ).copy( interval, tmpD );
 				for ( int x = 0; x < len; ++x )
 				{
 					if ( tmpD[ x ] < minD[ x ] )
 					{
 						minD[ x ] = tmpD[ x ];
-						fdest[ x ] = tmpI[ x ];
+						winner[ x ] = i;
 					}
 				}
+			}
+
+			for ( int i : overlapping )
+			{
+				int x0 = 0;
+				while ( x0 < len && winner[ x0 ] != i )
+					++x0;
+				if ( x0 == len )
+					continue;
+				images.get( i ).copy( interval, tmpI );
+				for ( int x = x0; x < len; ++x )
+					if ( winner[ x ] == i )
+						fdest[ x ] = tmpI[ x ];
 			}
 		}
 
