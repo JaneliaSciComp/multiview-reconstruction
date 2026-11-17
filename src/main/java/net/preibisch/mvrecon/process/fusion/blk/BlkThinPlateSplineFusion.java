@@ -407,7 +407,7 @@ public class BlkThinPlateSplineFusion
 			final TpsPositionField positionField )
 	{
 		if ( positionField != null )
-			return positionField.weights( DistanceFunction3D.of( new DoubleType(), interval ) );
+			return positionField.distances( DistanceFunction3D.of( new DoubleType(), interval ) );
 		final AffineGet transformFromField = transformedDisplacementField.transformFromField();
 		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
 		return DisplacementFieldBlockSupplier.create( transformFromField, dfield,

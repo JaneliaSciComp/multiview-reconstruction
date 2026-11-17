@@ -128,12 +128,33 @@ public class TpsPositionField
 	}
 
 	/**
+	 * {@code function} applied to the positions; its {@link DistanceBlocks#range} bounds the distances of an interval
+	 * without computing the positions.
+	 */
+	public DistanceBlocks distances( final DistanceFunction3D< DoubleType, double[] > function )
+	{
+		return new DistanceBlocks( this, function );
+	}
+
+	/**
 	 * The positions of {@code interval}. Reused if the current thread asked for the same interval last time.
 	 */
 	private Positions positions( final Interval interval )
 	{
 		final Positions p = perThread.computeIfAbsent( Thread.currentThread(), t -> new Positions() );
 		p.update( interval );
+		p.computePositions();
+		return p;
+	}
+
+	/**
+	 * The displacements of {@code interval} with their {@link Positions#gridMin bounds}, positions not computed.
+	 */
+	private Positions bounds( final Interval interval )
+	{
+		final Positions p = perThread.computeIfAbsent( Thread.currentThread(), t -> new Positions() );
+		p.update( interval );
+		p.computeGridBounds();
 		return p;
 	}
 
@@ -160,6 +181,14 @@ public class TpsPositionField
 		private final long[] fieldMin = new long[ 4 ];
 
 		private final int[] fieldSize = new int[ 4 ];
+
+		/** the displacements block */
+		private double[] field;
+
+		private boolean hasPositions, hasGridBounds;
+
+		/** bounds of the positions of the block's grid points (without offset); every position is a blend of them */
+		final double[] gridMin = new double[ 3 ], gridMax = new double[ 3 ];
 
 		/** number of positions */
 		int length;
@@ -193,9 +222,36 @@ public class TpsPositionField
 				fieldSize[ d + 1 ] = ( int ) ( ( long ) Math.floor( bounds.realMax( d ) + 0.5 ) - fieldMin[ d + 1 ] ) + 2;
 				offset[ d ] = scale[ d ] * fieldMin[ d + 1 ] + translation[ d ];
 			}
-			final double[] field = tempDisplacements.get( safeInt( Intervals.numElements( fieldSize ) ) );
+			field = tempDisplacements.get( safeInt( Intervals.numElements( fieldSize ) ) );
 			threadDisplacements.copy( BlockInterval.wrap( fieldMin, fieldSize ), field );
+			hasPositions = hasGridBounds = false;
+		}
 
+		void computeGridBounds()
+		{
+			if ( hasGridBounds )
+				return;
+			hasGridBounds = true;
+			Arrays.fill( gridMin, Double.POSITIVE_INFINITY );
+			Arrays.fill( gridMax, Double.NEGATIVE_INFINITY );
+			final int[] g = new int[ 3 ];
+			int i = 0;
+			for ( g[ 2 ] = 0; g[ 2 ] < fieldSize[ 3 ]; ++g[ 2 ] )
+				for ( g[ 1 ] = 0; g[ 1 ] < fieldSize[ 2 ]; ++g[ 1 ] )
+					for ( g[ 0 ] = 0; g[ 0 ] < fieldSize[ 1 ]; ++g[ 0 ] )
+						for ( int d = 0; d < 3; ++d )
+						{
+							final double p = ( field[ i++ ] + g[ d ] ) * scale[ d ];
+							gridMin[ d ] = Math.min( gridMin[ d ], p );
+							gridMax[ d ] = Math.max( gridMax[ d ], p );
+						}
+		}
+
+		void computePositions()
+		{
+			if ( hasPositions )
+				return;
+			hasPositions = true;
 			length = safeInt( Intervals.numElements( targetSize ) );
 			positions = tempPositions.get( 3 * length );
 			computePositions( field );
@@ -408,11 +464,53 @@ public class TpsPositionField
 	}
 
 	/**
+	 * The distances of a view, with bounds per interval.
+	 */
+	public static class DistanceBlocks extends FunctionBlocks< FloatType >
+	{
+		/** more than the rounding of the positions */
+		private static final double margin = 1e-3;
+
+		private final DistanceFunction3D< DoubleType, double[] > distance;
+
+		private final double[] min = new double[ 3 ], max = new double[ 3 ];
+
+		DistanceBlocks( final TpsPositionField field, final DistanceFunction3D< DoubleType, double[] > distance )
+		{
+			super( field, distance );
+			this.distance = distance;
+		}
+
+		/**
+		 * Bounds of the distances of {@code interval}, from the grid points of its displacements only.
+		 *
+		 * @param minMax
+		 *            receives { min, max }, see {@link DistanceFunction3D#range}
+		 */
+		public void range( final Interval interval, final double[] minMax )
+		{
+			final Positions p = field.bounds( interval );
+			for ( int d = 0; d < 3; ++d )
+			{
+				min[ d ] = p.gridMin[ d ] + p.offset[ d ] - margin;
+				max[ d ] = p.gridMax[ d ] + p.offset[ d ] + margin;
+			}
+			distance.range( min, max, minMax );
+		}
+
+		@Override
+		public BlockSupplier< FloatType > independentCopy()
+		{
+			return new DistanceBlocks( field, distance );
+		}
+	}
+
+	/**
 	 * Applies a {@link PositionFieldFunction} to the positions.
 	 */
 	private static class FunctionBlocks< T extends NativeType< T > > extends AbstractBlockSupplier< T >
 	{
-		private final TpsPositionField field;
+		final TpsPositionField field;
 
 		private final PositionFieldFunction< DoubleType, T, double[], ? > function;
 

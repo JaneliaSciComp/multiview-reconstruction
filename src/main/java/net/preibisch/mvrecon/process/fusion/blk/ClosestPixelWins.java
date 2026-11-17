@@ -38,6 +38,7 @@ import net.imglib2.blocks.TempArray;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
+import net.preibisch.mvrecon.process.fusion.blk.tps.TpsPositionField.DistanceBlocks;
 
 class ClosestPixelWins
 {
@@ -111,7 +112,14 @@ class ClosestPixelWins
 
 			final long[] srcMax = new long[ srcPos.length ];
 			Arrays.setAll( srcMax, d -> srcPos[ d ] + size[ d ] - 1 );
-			final int[] overlapping = overlap.getOverlappingViewIndices( srcPos, srcMax );
+			final int[] overlapping = candidates( interval, overlap.getOverlappingViewIndices( srcPos, srcMax ) );
+
+			// a single candidate that covers the interval wins every pixel
+			if ( overlapping.length == 1 && singleMax < Double.POSITIVE_INFINITY )
+			{
+				images.get( overlapping[ 0 ] ).copy( interval, fdest );
+				return;
+			}
 			// winner per pixel first (the first view wins ties), then read only the images of views that win a pixel
 			final int[] winner = tempWinner.get( len );
 			Arrays.fill( winner, 0, len, -1 );
@@ -140,6 +148,43 @@ class ClosestPixelWins
 					if ( winner[ x ] == i )
 						fdest[ x ] = tmpI[ x ];
 			}
+		}
+
+		private final double[] range = new double[ 2 ];
+
+		/** if one candidate remains: the upper bound of its distances */
+		private double singleMax;
+
+		/**
+		 * The views that can win a pixel of {@code interval}: drops views outside of it and views whose distances
+		 * (bounded by {@link DistanceBlocks#range}) are all larger than all distances of another view.
+		 */
+		private int[] candidates( final Interval interval, final int[] overlapping )
+		{
+			final double[] min = new double[ overlapping.length ], max = new double[ overlapping.length ];
+			double best = Double.POSITIVE_INFINITY; // smallest max
+			for ( int k = 0; k < overlapping.length; ++k )
+			{
+				final BlockSupplier< FloatType > d = distances.get( overlapping[ k ] );
+				if ( d instanceof DistanceBlocks )
+				{
+					( ( DistanceBlocks ) d ).range( interval, range );
+					min[ k ] = range[ 0 ];
+					max[ k ] = range[ 1 ];
+				}
+				else
+					max[ k ] = Double.POSITIVE_INFINITY; // unknown: any distance
+				best = Math.min( best, max[ k ] );
+			}
+			best *= 1 + 1e-4; // more than the rounding of the float distances
+			int n = 0;
+			for ( int k = 0; k < overlapping.length; ++k )
+				if ( min[ k ] <= best && min[ k ] < Double.POSITIVE_INFINITY )
+				{
+					singleMax = max[ k ];
+					overlapping[ n++ ] = overlapping[ k ];
+				}
+			return n == overlapping.length ? overlapping : Arrays.copyOf( overlapping, n );
 		}
 
 		@Override
