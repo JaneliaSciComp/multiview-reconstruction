@@ -115,7 +115,7 @@ class ClosestPixelWins
 			final int[] overlapping = candidates( interval, overlap.getOverlappingViewIndices( srcPos, srcMax ) );
 
 			// a single candidate that covers the interval wins every pixel
-			if ( overlapping.length == 1 && singleMax < Double.POSITIVE_INFINITY )
+			if ( overlapping.length == 1 && covers( interval, overlapping[ 0 ] ) )
 			{
 				images.get( overlapping[ 0 ] ).copy( interval, fdest );
 				return;
@@ -152,8 +152,15 @@ class ClosestPixelWins
 
 		private final double[] range = new double[ 2 ];
 
-		/** if one candidate remains: the upper bound of its distances */
-		private double singleMax;
+		/** whether the view has a finite distance at every pixel of {@code interval}, i.e. contains it */
+		private boolean covers( final Interval interval, final int view )
+		{
+			final BlockSupplier< FloatType > d = distances.get( view );
+			if ( !( d instanceof DistanceBlocks ) )
+				return false;
+			( ( DistanceBlocks ) d ).range( interval, range );
+			return range[ 1 ] < Double.POSITIVE_INFINITY;
+		}
 
 		/**
 		 * The views that can win a pixel of {@code interval}: drops views outside of it and views whose distances
@@ -180,10 +187,7 @@ class ClosestPixelWins
 			int n = 0;
 			for ( int k = 0; k < overlapping.length; ++k )
 				if ( min[ k ] <= best && min[ k ] < Double.POSITIVE_INFINITY )
-				{
-					singleMax = max[ k ];
 					overlapping[ n++ ] = overlapping[ k ];
-				}
 			return n == overlapping.length ? overlapping : Arrays.copyOf( overlapping, n );
 		}
 

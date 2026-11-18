@@ -137,24 +137,14 @@ public class TpsPositionField
 	}
 
 	/**
-	 * The positions of {@code interval}. Reused if the current thread asked for the same interval last time.
+	 * The current thread's {@link Positions}, holding the displacements of {@code interval}: what it computed for
+	 * the interval is reused if the thread asked for the same interval last time. The caller computes what it needs
+	 * ({@link Positions#computePositions()}, {@link Positions#computeGridBounds()}).
 	 */
-	private Positions positions( final Interval interval )
+	private Positions get( final Interval interval )
 	{
 		final Positions p = perThread.computeIfAbsent( Thread.currentThread(), t -> new Positions() );
 		p.update( interval );
-		p.computePositions();
-		return p;
-	}
-
-	/**
-	 * The displacements of {@code interval} with their {@link Positions#gridMin bounds}, positions not computed.
-	 */
-	private Positions bounds( final Interval interval )
-	{
-		final Positions p = perThread.computeIfAbsent( Thread.currentThread(), t -> new Positions() );
-		p.update( interval );
-		p.computeGridBounds();
 		return p;
 	}
 
@@ -375,7 +365,8 @@ public class TpsPositionField
 		@Override
 		public void copy( final Interval interval, final Object dest )
 		{
-			final Positions p = field.positions( interval );
+			final Positions p = field.get( interval );
+			p.computePositions();
 			p.sourceBounds( interpolation, boundsMin, boundsSize );
 			final float[] src = tempInput.get( safeInt( Intervals.numElements( boundsSize ) ) );
 			input.copy( BlockInterval.wrap( boundsMin, boundsSize ), src );
@@ -491,7 +482,8 @@ public class TpsPositionField
 		 */
 		public void range( final Interval interval, final double[] minMax )
 		{
-			final Positions p = field.bounds( interval );
+			final Positions p = field.get( interval );
+			p.computeGridBounds();
 			for ( int d = 0; d < 3; ++d )
 			{
 				final double lo = p.gridMin[ d ] + p.offset[ d ], hi = p.gridMax[ d ] + p.offset[ d ];
@@ -535,7 +527,8 @@ public class TpsPositionField
 		@SuppressWarnings( { "unchecked", "rawtypes" } )
 		public void copy( final Interval interval, final Object dest )
 		{
-			final Positions p = field.positions( interval );
+			final Positions p = field.get( interval );
+			p.computePositions();
 			// as in imglib2-algorithm DisplacementFieldBlockSupplier, where the offset is (offset - boundsMin) + boundsMin;
 			// the same rounding keeps the results bit-identical
 			p.sourceBounds( NLINEAR, boundsMin, boundsSize );
