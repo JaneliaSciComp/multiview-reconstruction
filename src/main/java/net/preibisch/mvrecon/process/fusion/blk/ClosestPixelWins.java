@@ -138,16 +138,23 @@ class ClosestPixelWins
 
 			for ( int i : overlapping )
 			{
-				int x0 = 0;
-				while ( x0 < len && winner[ x0 ] != i )
-					++x0;
-				if ( x0 == len )
-					continue;
+				final int first = indexOf( winner, len, i );
+				if ( first < 0 )
+					continue; // the view wins no pixel: its image is not read
 				images.get( i ).copy( interval, tmpI );
-				for ( int x = x0; x < len; ++x )
+				for ( int x = first; x < len; ++x )
 					if ( winner[ x ] == i )
 						fdest[ x ] = tmpI[ x ];
 			}
+		}
+
+		/** the first index below {@code length} at which {@code values} holds {@code value}, -1 if there is none */
+		private static int indexOf( final int[] values, final int length, final int value )
+		{
+			for ( int x = 0; x < length; ++x )
+				if ( values[ x ] == value )
+					return x;
+			return -1;
 		}
 
 		private final double[] range = new double[ 2 ];
@@ -168,8 +175,9 @@ class ClosestPixelWins
 		 */
 		private int[] candidates( final Interval interval, final int[] overlapping )
 		{
-			final double[] min = new double[ overlapping.length ], max = new double[ overlapping.length ];
-			double best = Double.POSITIVE_INFINITY; // smallest max
+			final double[] min = new double[ overlapping.length ];
+			final double[] max = new double[ overlapping.length ];
+			double smallestMax = Double.POSITIVE_INFINITY;
 			for ( int k = 0; k < overlapping.length; ++k )
 			{
 				final BlockSupplier< FloatType > d = distances.get( overlapping[ k ] );
@@ -181,14 +189,24 @@ class ClosestPixelWins
 				}
 				else
 					max[ k ] = Double.POSITIVE_INFINITY; // unknown: any distance
-				best = Math.min( best, max[ k ] );
+				smallestMax = Math.min( smallestMax, max[ k ] );
 			}
-			best *= 1 + 1e-4; // more than the rounding of the float distances
-			int n = 0;
+
+			// a view whose closest pixel is farther than this cannot win; the factor is more than the rounding of the float distances
+			final double limit = smallestMax * ( 1 + 1e-4 );
+			int numCandidates = 0;
 			for ( int k = 0; k < overlapping.length; ++k )
-				if ( min[ k ] <= best && min[ k ] < Double.POSITIVE_INFINITY )
-					overlapping[ n++ ] = overlapping[ k ];
-			return n == overlapping.length ? overlapping : Arrays.copyOf( overlapping, n );
+			{
+				final boolean overlapsInterval = min[ k ] < Double.POSITIVE_INFINITY;
+				final boolean canWin = min[ k ] <= limit;
+				if ( overlapsInterval && canWin )
+				{
+					overlapping[ numCandidates ] = overlapping[ k ];
+					++numCandidates;
+				}
+			}
+			final boolean allRemain = numCandidates == overlapping.length;
+			return allRemain ? overlapping : Arrays.copyOf( overlapping, numCandidates );
 		}
 
 		@Override

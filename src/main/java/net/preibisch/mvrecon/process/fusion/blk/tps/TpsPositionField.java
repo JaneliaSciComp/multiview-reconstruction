@@ -76,10 +76,10 @@ public class TpsPositionField
 	 */
 	public static < D extends NativeType< D > & RealType< D > > TpsPositionField of( final TransformedDisplacementField< D > transformedField )
 	{
-        // toField: maps global to grid space
+		// toField: maps global to grid space
 		final AffineTransform3D toField = ( ( AffineTransform3D ) transformedField.transformFromField() ).inverse();
 
-        // can only take fast interpolation path when a step in X does not change grid Y / Z
+		// can only take fast interpolation path when a step in X does not change grid Y / Z
 		if ( toField.get( 1, 0 ) != 0 || toField.get( 2, 0 ) != 0 )
 			return null;
 
@@ -93,7 +93,10 @@ public class TpsPositionField
 	private final AffineTransform3D toField;
 
 	/** (grid coordinate + displacement) * scale + translation = source coordinate */
-	private final double[] scale, translation;
+	private final double[] scale;
+
+	/** see {@link #scale} */
+	private final double[] translation;
 
 	/** normalized displacements (in grid units), [3, x, y, z] */
 	private final BlockSupplier< DoubleType > displacements;
@@ -173,10 +176,17 @@ public class TpsPositionField
 		/** the displacements block */
 		private double[] field;
 
-		private boolean hasPositions, hasGridBounds;
+		/** whether {@link #positions} are those of the target interval */
+		private boolean hasPositions;
+
+		/** whether {@link #gridMin} and {@link #gridMax} are those of the target interval */
+		private boolean hasGridBounds;
 
 		/** bounds of the positions of the block's grid points (without offset); every position is a blend of them */
-		final double[] gridMin = new double[ 3 ], gridMax = new double[ 3 ];
+		final double[] gridMin = new double[ 3 ];
+
+		/** see {@link #gridMin} */
+		final double[] gridMax = new double[ 3 ];
 
 		/** number of positions */
 		int length;
@@ -188,19 +198,23 @@ public class TpsPositionField
 		final double[] offset = new double[ 3 ];
 
 		/** bounds of {@link #positions} (without offset) */
-		private final double[] positionsMin = new double[ 3 ], positionsMax = new double[ 3 ];
+		private final double[] positionsMin = new double[ 3 ];
+
+		/** see {@link #positionsMin} */
+		private final double[] positionsMax = new double[ 3 ];
 
 		void update( final Interval interval )
 		{
 			final BlockInterval target = BlockInterval.asBlockInterval( interval );
 
-            // no need to do anything if the thread already holds the positions for this corner
+			// no need to do anything if the thread already holds the positions for this corner
 			if ( Arrays.equals( targetMin, target.min() ) && Arrays.equals( targetSize, target.size() ) )
 				return;
 
 			// holds no interval until the displacements are read: a failed read must not leave the previous positions valid
 			targetSize[ 0 ] = -1;
-			hasPositions = hasGridBounds = false;
+			hasPositions = false;
+			hasGridBounds = false;
 
 			// as in imglib2-algorithm AbstractDispFieldAffineProcessor.setTargetInterval
 			final RealInterval bounds = toField.estimateBounds( interval );
@@ -220,20 +234,29 @@ public class TpsPositionField
 		{
 			if ( hasGridBounds )
 				return;
-			hasGridBounds = true;
 			Arrays.fill( gridMin, Double.POSITIVE_INFINITY );
 			Arrays.fill( gridMax, Double.NEGATIVE_INFINITY );
-			final int[] g = new int[ 3 ];
-			int i = 0;
-			for ( g[ 2 ] = 0; g[ 2 ] < fieldSize[ 3 ]; ++g[ 2 ] )
-				for ( g[ 1 ] = 0; g[ 1 ] < fieldSize[ 2 ]; ++g[ 1 ] )
-					for ( g[ 0 ] = 0; g[ 0 ] < fieldSize[ 1 ]; ++g[ 0 ] )
-						for ( int d = 0; d < 3; ++d )
-						{
-							final double p = ( field[ i++ ] + g[ d ] ) * scale[ d ];
-							gridMin[ d ] = Math.min( gridMin[ d ], p );
-							gridMax[ d ] = Math.max( gridMax[ d ], p );
-						}
+			int i = 0; // index of the grid point's displacement in field
+			for ( int z = 0; z < fieldSize[ 3 ]; ++z )
+			{
+				for ( int y = 0; y < fieldSize[ 2 ]; ++y )
+				{
+					for ( int x = 0; x < fieldSize[ 1 ]; ++x )
+					{
+						extendGridBounds( 0, ( field[ i ] + x ) * scale[ 0 ] );
+						extendGridBounds( 1, ( field[ i + 1 ] + y ) * scale[ 1 ] );
+						extendGridBounds( 2, ( field[ i + 2 ] + z ) * scale[ 2 ] );
+						i += 3;
+					}
+				}
+			}
+			hasGridBounds = true;
+		}
+
+		private void extendGridBounds( final int d, final double position )
+		{
+			gridMin[ d ] = Math.min( gridMin[ d ], position );
+			gridMax[ d ] = Math.max( gridMax[ d ], position );
 		}
 
 		void computePositions()
@@ -252,18 +275,25 @@ public class TpsPositionField
 		 */
 		private void computePositions( final double[] field )
 		{
-			final float step0 = ( float ) toField.get( 0, 0 ); // grid X step per target X step
+			final float gridStepX = ( float ) toField.get( 0, 0 ); // grid X step per target X step
 			final int lineLength = 3 * fieldSize[ 1 ]; // flat values of one grid line
 			final int planeLength = lineLength * fieldSize[ 2 ];
-			final double scale0 = scale[ 0 ], scale1 = scale[ 1 ], scale2 = scale[ 2 ];
+			final double scaleX = scale[ 0 ];
+			final double scaleY = scale[ 1 ];
+			final double scaleZ = scale[ 2 ];
 			final double[] columns = tempColumns.get( lineLength ); // displacements of the current line, interpolated in Y and Z
-			final double[] target = new double[ 3 ], grid = new double[ 3 ];
+			final double[] target = new double[ 3 ];
+			final double[] grid = new double[ 3 ];
 
-			double min0 = Double.POSITIVE_INFINITY, min1 = min0, min2 = min0;
-			double max0 = Double.NEGATIVE_INFINITY, max1 = max0, max2 = max0;
+			double minX = Double.POSITIVE_INFINITY;
+			double minY = Double.POSITIVE_INFINITY;
+			double minZ = Double.POSITIVE_INFINITY;
+			double maxX = Double.NEGATIVE_INFINITY;
+			double maxY = Double.NEGATIVE_INFINITY;
+			double maxZ = Double.NEGATIVE_INFINITY;
 
 			target[ 0 ] = targetMin[ 0 ];
-			int i = 0;
+			int i = 0; // index of the voxel's position in positions
 			for ( int z = 0; z < targetSize[ 2 ]; ++z )
 			{
 				target[ 2 ] = targetMin[ 2 ] + z;
@@ -271,44 +301,62 @@ public class TpsPositionField
 				{
 					target[ 1 ] = targetMin[ 1 ] + y;
 					toField.apply( target, grid );
+
 					// grid coordinates relative to the displacements block, in float as in imglib2-algorithm
-					float g0 = ( float ) ( grid[ 0 ] - fieldMin[ 1 ] );
-					final float g1 = ( float ) ( grid[ 1 ] - fieldMin[ 2 ] );
-					final float g2 = ( float ) ( grid[ 2 ] - fieldMin[ 3 ] );
-					final int i1 = ( int ) g1, i2 = ( int ) g2;
-					final float r1 = g1 - i1, r2 = g2 - i2;
+					float gridX = ( float ) ( grid[ 0 ] - fieldMin[ 1 ] );
+					final float gridY = ( float ) ( grid[ 1 ] - fieldMin[ 2 ] );
+					final float gridZ = ( float ) ( grid[ 2 ] - fieldMin[ 3 ] );
+
+					// the grid cell of this line in Y and Z, and how far into the cell the line is (0 to 1)
+					final int cellY = ( int ) gridY;
+					final int cellZ = ( int ) gridZ;
+					final float fractionY = gridY - cellY;
+					final float fractionZ = gridZ - cellZ;
 
 					// interpolate in Y and Z, once per grid column
-					for ( int c = 0, o = i2 * planeLength + i1 * lineLength; c < lineLength; ++c, ++o )
+					final int lineStart = cellZ * planeLength + cellY * lineLength;
+					for ( int c = 0; c < lineLength; ++c )
 					{
+						final int o = lineStart + c;
 						final double a00 = field[ o ];
 						final double a01 = field[ o + lineLength ];
 						final double a10 = field[ o + planeLength ];
 						final double a11 = field[ o + planeLength + lineLength ];
-						columns[ c ] = a00 + r1 * ( -a00 + a01 ) + r2 * ( ( -a00 + a10 ) + r1 * ( a00 - a01 - a10 + a11 ) );
+						columns[ c ] = a00 + fractionY * ( -a00 + a01 ) + fractionZ * ( ( -a00 + a10 ) + fractionY * ( a00 - a01 - a10 + a11 ) );
 					}
 
 					// interpolate in X, per voxel
 					for ( int x = 0; x < targetSize[ 0 ]; ++x )
 					{
-						final int i0 = ( int ) g0;
-						final float r0 = g0 - i0;
-						final int o = 3 * i0;
-						final double p0 = ( columns[ o ] + r0 * ( columns[ o + 3 ] - columns[ o ] ) + g0 ) * scale0;
-						final double p1 = ( columns[ o + 1 ] + r0 * ( columns[ o + 4 ] - columns[ o + 1 ] ) + g1 ) * scale1;
-						final double p2 = ( columns[ o + 2 ] + r0 * ( columns[ o + 5 ] - columns[ o + 2 ] ) + g2 ) * scale2;
-						positions[ i++ ] = p0;
-						positions[ i++ ] = p1;
-						positions[ i++ ] = p2;
-						min0 = Math.min( min0, p0 ); max0 = Math.max( max0, p0 );
-						min1 = Math.min( min1, p1 ); max1 = Math.max( max1, p1 );
-						min2 = Math.min( min2, p2 ); max2 = Math.max( max2, p2 );
-						g0 += step0;
+						final int cellX = ( int ) gridX;
+						final float fractionX = gridX - cellX;
+						final int o = 3 * cellX; // the cell's lower column; its upper column is 3 values further
+						final double displacementX = columns[ o ] + fractionX * ( columns[ o + 3 ] - columns[ o ] );
+						final double displacementY = columns[ o + 1 ] + fractionX * ( columns[ o + 4 ] - columns[ o + 1 ] );
+						final double displacementZ = columns[ o + 2 ] + fractionX * ( columns[ o + 5 ] - columns[ o + 2 ] );
+						final double positionX = ( displacementX + gridX ) * scaleX;
+						final double positionY = ( displacementY + gridY ) * scaleY;
+						final double positionZ = ( displacementZ + gridZ ) * scaleZ;
+						positions[ i ] = positionX;
+						positions[ i + 1 ] = positionY;
+						positions[ i + 2 ] = positionZ;
+						i += 3;
+						minX = Math.min( minX, positionX );
+						minY = Math.min( minY, positionY );
+						minZ = Math.min( minZ, positionZ );
+						maxX = Math.max( maxX, positionX );
+						maxY = Math.max( maxY, positionY );
+						maxZ = Math.max( maxZ, positionZ );
+						gridX += gridStepX;
 					}
 				}
 			}
-			positionsMin[ 0 ] = min0; positionsMin[ 1 ] = min1; positionsMin[ 2 ] = min2;
-			positionsMax[ 0 ] = max0; positionsMax[ 1 ] = max1; positionsMax[ 2 ] = max2;
+			positionsMin[ 0 ] = minX;
+			positionsMin[ 1 ] = minY;
+			positionsMin[ 2 ] = minZ;
+			positionsMax[ 0 ] = maxX;
+			positionsMax[ 1 ] = maxY;
+			positionsMax[ 2 ] = maxZ;
 		}
 
 		/**
@@ -461,7 +509,9 @@ public class TpsPositionField
 		/** more than the rounding of the positions in double; the rounding to float is added per coordinate */
 		private static final double margin = 1e-3;
 
-		private final double[] min = new double[ 3 ], max = new double[ 3 ];
+		private final double[] min = new double[ 3 ];
+
+		private final double[] max = new double[ 3 ];
 
 		DistanceBlocks( final TpsPositionField field, final DistanceFunction3D< DoubleType, double[] > distance )
 		{
@@ -480,11 +530,14 @@ public class TpsPositionField
 			p.computeGridBounds();
 			for ( int d = 0; d < 3; ++d )
 			{
-				final double lo = p.gridMin[ d ] + p.offset[ d ], hi = p.gridMax[ d ] + p.offset[ d ];
+				final double lowest = p.gridMin[ d ] + p.offset[ d ];
+				final double highest = p.gridMax[ d ] + p.offset[ d ];
 				// the distance function tests and measures positions as float
-				final double m = margin + Math.ulp( ( float ) Math.max( Math.abs( lo ), Math.abs( hi ) ) );
-				min[ d ] = lo - m;
-				max[ d ] = hi + m;
+				final double largest = Math.max( Math.abs( lowest ), Math.abs( highest ) );
+				final double floatRounding = Math.ulp( ( float ) largest );
+				final double tolerance = margin + floatRounding;
+				min[ d ] = lowest - tolerance;
+				max[ d ] = highest + tolerance;
 			}
 			function.range( min, max, minMax );
 		}
