@@ -210,8 +210,9 @@ public class TpsPositionField
 			if ( Arrays.equals( targetMin, target.min() ) && Arrays.equals( targetSize, target.size() ) )
 				return;
 
-			System.arraycopy( target.min(), 0, targetMin, 0, 3 );
-			System.arraycopy( target.size(), 0, targetSize, 0, 3 );
+			// holds no interval until the displacements are read: a failed read must not leave the previous positions valid
+			targetSize[ 0 ] = -1;
+			hasPositions = hasGridBounds = false;
 
 			// as in imglib2-algorithm AbstractDispFieldAffineProcessor.setTargetInterval
 			final RealInterval bounds = toField.estimateBounds( interval );
@@ -224,7 +225,8 @@ public class TpsPositionField
 			}
 			field = tempDisplacements.get( safeInt( Intervals.numElements( fieldSize ) ) );
 			threadDisplacements.copy( BlockInterval.wrap( fieldMin, fieldSize ), field );
-			hasPositions = hasGridBounds = false;
+			System.arraycopy( target.min(), 0, targetMin, 0, 3 );
+			System.arraycopy( target.size(), 0, targetSize, 0, 3 );
 		}
 
 		void computeGridBounds()
@@ -251,10 +253,10 @@ public class TpsPositionField
 		{
 			if ( hasPositions )
 				return;
-			hasPositions = true;
 			length = safeInt( Intervals.numElements( targetSize ) );
 			positions = tempPositions.get( 3 * length );
 			computePositions( field );
+			hasPositions = true;
 		}
 
 		/**
@@ -468,7 +470,7 @@ public class TpsPositionField
 	 */
 	public static class DistanceBlocks extends FunctionBlocks< FloatType >
 	{
-		/** more than the rounding of the positions */
+		/** more than the rounding of the positions in double; the rounding to float is added per coordinate */
 		private static final double margin = 1e-3;
 
 		private final DistanceFunction3D< DoubleType, double[] > distance;
@@ -492,8 +494,11 @@ public class TpsPositionField
 			final Positions p = field.bounds( interval );
 			for ( int d = 0; d < 3; ++d )
 			{
-				min[ d ] = p.gridMin[ d ] + p.offset[ d ] - margin;
-				max[ d ] = p.gridMax[ d ] + p.offset[ d ] + margin;
+				final double lo = p.gridMin[ d ] + p.offset[ d ], hi = p.gridMax[ d ] + p.offset[ d ];
+				// the distance function tests and measures positions as float
+				final double m = margin + Math.ulp( ( float ) Math.max( Math.abs( lo ), Math.abs( hi ) ) );
+				min[ d ] = lo - m;
+				max[ d ] = hi + m;
 			}
 			distance.range( min, max, minMax );
 		}
