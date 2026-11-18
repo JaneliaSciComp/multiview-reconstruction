@@ -84,10 +84,8 @@ public class TpsPositionField
 			return null;
 
 		final DisplacementField< D > field = transformedField.displacementField();
-		final BlockSupplier< DoubleType > displacements =
-				field.getType().getNativeTypeFactory().getPrimitiveType() == DOUBLE
-						? Cast.unchecked( field.displacements() )
-						: field.displacements().andThen( Convert.convert( new DoubleType() ) );
+		// the same supplier if the field is double already
+		final BlockSupplier< DoubleType > displacements = field.displacements().andThen( Convert.convert( new DoubleType() ) );
 		return new TpsPositionField( toField, field.scale(), field.translation(), displacements );
 	}
 
@@ -170,7 +168,7 @@ public class TpsPositionField
 		/** the block of displacements needed for the target interval, [3, x, y, z] */
 		private final long[] fieldMin = new long[ 4 ];
 
-		private final int[] fieldSize = new int[ 4 ];
+		private final int[] fieldSize = { 3, 0, 0, 0 };
 
 		/** the displacements block */
 		private double[] field;
@@ -206,7 +204,6 @@ public class TpsPositionField
 
 			// as in imglib2-algorithm AbstractDispFieldAffineProcessor.setTargetInterval
 			final RealInterval bounds = toField.estimateBounds( interval );
-			fieldSize[ 0 ] = 3;
 			for ( int d = 0; d < 3; ++d )
 			{
 				fieldMin[ d + 1 ] = ( long ) Math.floor( bounds.realMin( d ) - 0.5 );
@@ -459,19 +456,16 @@ public class TpsPositionField
 	/**
 	 * The distances of a view, with bounds per interval.
 	 */
-	public static class DistanceBlocks extends FunctionBlocks< FloatType >
+	public static class DistanceBlocks extends FunctionBlocks< FloatType, DistanceFunction3D< DoubleType, double[] > >
 	{
 		/** more than the rounding of the positions in double; the rounding to float is added per coordinate */
 		private static final double margin = 1e-3;
-
-		private final DistanceFunction3D< DoubleType, double[] > distance;
 
 		private final double[] min = new double[ 3 ], max = new double[ 3 ];
 
 		DistanceBlocks( final TpsPositionField field, final DistanceFunction3D< DoubleType, double[] > distance )
 		{
 			super( field, distance );
-			this.distance = distance;
 		}
 
 		/**
@@ -492,24 +486,24 @@ public class TpsPositionField
 				min[ d ] = lo - m;
 				max[ d ] = hi + m;
 			}
-			distance.range( min, max, minMax );
+			function.range( min, max, minMax );
 		}
 
 		@Override
 		public BlockSupplier< FloatType > independentCopy()
 		{
-			return new DistanceBlocks( field, distance );
+			return new DistanceBlocks( field, function );
 		}
 	}
 
 	/**
 	 * Applies a {@link PositionFieldFunction} to the positions.
 	 */
-	private static class FunctionBlocks< T extends NativeType< T > > extends AbstractBlockSupplier< T >
+	private static class FunctionBlocks< T extends NativeType< T >, P extends PositionFieldFunction< DoubleType, T, double[], ? > > extends AbstractBlockSupplier< T >
 	{
 		final TpsPositionField field;
 
-		private final PositionFieldFunction< DoubleType, T, double[], ? > function;
+		final P function;
 
 		private final long[] boundsMin = new long[ 3 ];
 
@@ -517,7 +511,7 @@ public class TpsPositionField
 
 		private final double[] offset = new double[ 3 ];
 
-		FunctionBlocks( final TpsPositionField field, final PositionFieldFunction< DoubleType, T, double[], ? > function )
+		FunctionBlocks( final TpsPositionField field, final P function )
 		{
 			this.field = field;
 			this.function = function;

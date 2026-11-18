@@ -107,9 +107,6 @@ class ClosestPixelWins
 			final float[] minD = tempArrays[ 2 ].get( len );
 			final float[] fdest = Cast.unchecked( dest );
 
-			Arrays.fill( fdest, 0 );
-			Arrays.fill( minD, Float.POSITIVE_INFINITY );
-
 			final long[] srcMax = new long[ srcPos.length ];
 			Arrays.setAll( srcMax, d -> srcPos[ d ] + size[ d ] - 1 );
 			final int[] overlapping = candidates( interval, overlap.getOverlappingViewIndices( srcPos, srcMax ) );
@@ -120,6 +117,9 @@ class ClosestPixelWins
 				images.get( overlapping[ 0 ] ).copy( interval, fdest );
 				return;
 			}
+			Arrays.fill( fdest, 0 );
+			Arrays.fill( minD, Float.POSITIVE_INFINITY );
+
 			// winner per pixel first (the first view wins ties), then read only the images of views that win a pixel
 			final int[] winner = tempWinner.get( len );
 			Arrays.fill( winner, 0, len, -1 );
