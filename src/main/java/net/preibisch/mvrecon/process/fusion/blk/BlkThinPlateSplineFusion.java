@@ -81,6 +81,7 @@ import net.preibisch.mvrecon.process.fusion.blk.tps.BlendingFunction3D;
 import net.preibisch.mvrecon.process.fusion.blk.tps.DistanceFunction3D;
 import net.preibisch.mvrecon.process.fusion.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.blk.tps.MaskingFunction3D;
+import net.preibisch.mvrecon.process.fusion.blk.tps.TpsPositionField;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.FastLinearIntensityMap;
 import net.preibisch.mvrecon.process.fusion.lazy.LazyFusionTools;
@@ -249,10 +250,13 @@ public class BlkThinPlateSplineFusion
 			final RandomAccessibleInterval inputImg =
 					imgLoader.getSetupImgLoader( viewId.getViewSetupId() ).getImage( viewId.getTimePointId() );
 
+			// one position field per view, shared by the image and its weights (null: imglib2-algorithm's operators)
+			final TpsPositionField positionField = TpsPositionField.of( dfield );
+
 			final BlockSupplier< FloatType > viewBlocks = transformedBlocks(
 					Cast.unchecked( inputImg ),
 					coefficients,
-					dfield, interpolation );
+					dfield, positionField, interpolation );
 			images.add( viewBlocks );
 
 			final float[] blending = Util.getArrayFromValue( FusionTools.defaultBlendingRange, 3 );
@@ -269,19 +273,19 @@ public class BlkThinPlateSplineFusion
 			switch ( fusionType )
 			{
 			case AVG:
-				weights.add( createMasking( inputImg, border, dfield, new FloatType() ) );
+				weights.add( createMasking( inputImg, border, dfield, positionField, new FloatType() ) );
 				break;
 			case MAX_INTENSITY:
 			case LOWEST_VIEWID_WINS:
 			case HIGHEST_VIEWID_WINS:
-				masks.add( createMasking( inputImg, border, dfield, new UnsignedByteType() ) );
+				masks.add( createMasking( inputImg, border, dfield, positionField, new UnsignedByteType() ) );
 				break;
 			case AVG_BLEND:
-				weights.add( createBlending( inputImg, border, blending, dfield ) );
+				weights.add( createBlending( inputImg, border, blending, dfield, positionField ) );
 				break;
 			case CLOSEST_PIXEL_WINS:
 				// squared distance to the view center; smallest distance wins
-				weights.add( createDistance( inputImg, dfield ) );
+				weights.add( createDistance( inputImg, dfield, positionField ) );
 				break;
 			case AVG_BLEND_CONTENT:
 			case AVG_CONTENT:
@@ -354,13 +358,16 @@ public class BlkThinPlateSplineFusion
 	private static < T extends NativeType< T > > BlockSupplier< FloatType > transformedBlocks(
 			final RandomAccessibleInterval< T > inputImg,
 			final Coefficients coefficients,
-			TransformedDisplacementField< ? > dfield,
+			final TransformedDisplacementField< ? > dfield,
+			final TpsPositionField positionField,
 			final Interpolation interpolation )
 	{
 		BlockSupplier< FloatType > blocks = BlockSupplier.of( extendInput( inputImg ) )
 				.andThen( Convert.convert( new FloatType() ) );
 		if ( coefficients != null )
 			blocks = blocks.andThen( FastLinearIntensityMap.linearIntensityMap( coefficients, inputImg ) );
+		if ( positionField != null )
+			return positionField.image( blocks, interpolation );
 		return blocks.andThen( displacementFieldAffine( dfield.transformFromField(), dfield.displacementField(), interpolation ) );
 	}
 
@@ -368,8 +375,11 @@ public class BlkThinPlateSplineFusion
 			final Interval interval,
 			final float[] border,
 			final TransformedDisplacementField< D > transformedDisplacementField,
+			final TpsPositionField positionField,
 			final T maskType )
 	{
+		if ( positionField != null )
+			return positionField.weights( MaskingFunction3D.of( new DoubleType(), maskType, interval, border ) );
 		final AffineGet transformFromField = transformedDisplacementField.transformFromField();
 		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
 		return DisplacementFieldBlockSupplier.create( transformFromField, dfield,
@@ -380,8 +390,11 @@ public class BlkThinPlateSplineFusion
 			final Interval interval,
 			final float[] border,
 			final float[] blending,
-			final TransformedDisplacementField< D > transformedDisplacementField )
+			final TransformedDisplacementField< D > transformedDisplacementField,
+			final TpsPositionField positionField )
 	{
+		if ( positionField != null )
+			return positionField.weights( BlendingFunction3D.of( new DoubleType(), interval, border, blending ) );
 		final AffineGet transformFromField = transformedDisplacementField.transformFromField();
 		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
 		return DisplacementFieldBlockSupplier.create( transformFromField, dfield,
@@ -390,8 +403,11 @@ public class BlkThinPlateSplineFusion
 
 	private static < D extends NativeType< D > & RealType< D > > BlockSupplier< FloatType > createDistance(
 			final Interval interval,
-			final TransformedDisplacementField< D > transformedDisplacementField )
+			final TransformedDisplacementField< D > transformedDisplacementField,
+			final TpsPositionField positionField )
 	{
+		if ( positionField != null )
+			return positionField.distances( DistanceFunction3D.of( new DoubleType(), interval ) );
 		final AffineGet transformFromField = transformedDisplacementField.transformFromField();
 		final DisplacementField< D > dfield = transformedDisplacementField.displacementField();
 		return DisplacementFieldBlockSupplier.create( transformFromField, dfield,

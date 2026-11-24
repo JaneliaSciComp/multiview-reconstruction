@@ -123,6 +123,43 @@ public abstract class DistanceFunction3D< D extends NativeType< D > & RealType< 
 		c2 = c[ 2 ];
 	}
 
+	/**
+	 * Bounds of {@link #compute} over all positions in the box {@code pmin, pmax}.
+	 *
+	 * @param minMax
+	 *            receives { min, max }; max is infinite unless the box is inside the view, both are if it is outside
+	 */
+	public void range( final double[] pmin, final double[] pmax, final double[] minMax )
+	{
+		final float[] b0 = { b0d0, b0d1, b0d2 };
+		final float[] b3 = { b3d0, b3d1, b3d2 };
+		final float[] c = { c0, c1, c2 };
+		boolean inside = true;
+		double min = 0;
+		double max = 0;
+		for ( int d = 0; d < 3; ++d )
+		{
+			final boolean outsideAlongD = pmax[ d ] < b0[ d ] || pmin[ d ] >= b3[ d ];
+			if ( outsideAlongD )
+			{
+				minMax[ 0 ] = Double.POSITIVE_INFINITY;
+				minMax[ 1 ] = Double.POSITIVE_INFINITY;
+				return;
+			}
+			final boolean insideAlongD = pmin[ d ] >= b0[ d ] && pmax[ d ] < b3[ d ];
+			inside = inside && insideAlongD;
+
+			// along d, the box's coordinate closest to the center (the center itself if the box contains it)
+			final double closest = Math.max( pmin[ d ], Math.min( pmax[ d ], c[ d ] ) );
+			final double near = closest - c[ d ];
+			final double far = Math.max( c[ d ] - pmin[ d ], pmax[ d ] - c[ d ] );
+			min += near * near;
+			max += far * far;
+		}
+		minMax[ 0 ] = min;
+		minMax[ 1 ] = inside ? max : Double.POSITIVE_INFINITY;
+	}
+
 	@Override
 	public PositionFieldFunction< D, FloatType, F, float[] > independentCopy()
 	{
