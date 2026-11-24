@@ -698,4 +698,26 @@ public class TestInterestPointsZarr
 		assertEquals( 0, InterestPointsZarr.toPoints( new ArrayList< InterestPoint >() ).size() );
 		assertEquals( InterestPointsZarrStore.COLUMNS * 2, InterestPointsZarr.toPoints( points( 0, "beads" ).subList( 0, 2 ) ).data().length );
 	}
+
+	/**
+	 * A list created after another JVM wrote a staging file reads that file, even when this JVM listed the staging directory
+	 * before and the group has a committed entry for the key: a dataset split again, whose phase 3 (BigStitcher-Spark) read
+	 * the previous split's points on executors that listed during phase 2 and filtered the correspondences against them.
+	 */
+	@Test
+	public void newListSeesStagingFileOfAnotherJvm()
+	{
+		final File base = tmp.resolve( "relist" ).toFile();
+		base.mkdirs();
+		final URI baseURI = base.toURI();
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( baseURI );
+
+		saveAll( store, baseURI, 1, "beads_split" ); // the previous split, committed
+		assertSamePoints( points( 0, "beads_split" ), list( baseURI, 0, "beads_split" ).getInterestPointsCopy() ); // this JVM listed the staging directory
+
+		final List< InterestPoint > split = points( 1, "beads_split" ); // the new split's points of the same view
+		new InterestPointsZarrStore( baseURI ).writeStagingFile( Map.of( new Key( 0, 0, "beads_split" ), InterestPointsZarr.toPoints( split ) ), Map.of() );
+
+		assertSamePoints( split, list( baseURI, 0, "beads_split" ).getInterestPointsCopy() );
+	}
 }

@@ -50,6 +50,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -334,7 +335,8 @@ public class InterestPointsZarrStore
 	private final Map< String, List< StagingEntry > > parsedStagingFiles = new HashMap<>(); // file name -> entry table, guarded by lock
 	private volatile Map< Key, StagingRef > stagingPoints = Map.of(); // key -> payload in a staging file, a later file wins
 	private volatile Map< Key, StagingRef > stagingCorrs = Map.of();
-	private volatile boolean stagingListed = false;
+	private final AtomicLong stagingVersion = new AtomicLong(); // increased whenever the listing of the staging directory may be stale
+	private volatile long stagingListedVersion = -1; // the version the current listing was started at
 	private volatile boolean batchOpen = false;
 
 	private final LinkedHashMap< String, Object > chunkCache = new LinkedHashMap<>( 64, 0.75f, true ); // guarded by itself
@@ -547,7 +549,8 @@ public class InterestPointsZarrStore
 	/** Lists the staging directory and reads the entry tables of files not seen before. */
 	private void listStagingFiles()
 	{
-		if ( stagingListed )
+		final long version = stagingVersion.get();
+		if ( stagingListedVersion == version )
 			return;
 
 		final String directory = path( STAGING );
@@ -586,8 +589,25 @@ public class InterestPointsZarrStore
 		{
 			parsedStagingFiles.putAll( parsed );
 			rebuildStagingMaps();
-			stagingListed = true;
+			stagingListedVersion = version; // stale again if the version was increased while listing
 		}
+	}
+
+	/**
+	 * Marks the listing of the staging directory of the store of this directory (if there is one in this JVM) as stale, so
+	 * that the next read lists it again. Called for every new list handle: a list created after a staging file was written
+	 * (by another JVM, e.g. the next stage of a Spark job) must see it. Without this, a JVM that listed the directory before
+	 * the file existed read the entry from the committed group whenever it had one, e.g. the previous split of a dataset
+	 * that is split again, and paired those old points with correspondences filtered against the new ones.
+	 */
+	static void stagingMayHaveChanged( final URI baseDir )
+	{
+		if ( baseDir == null )
+			return;
+
+		final InterestPointsZarrStore store = stores.get( storeKey( baseDir ) );
+		if ( store != null )
+			store.stagingVersion.incrementAndGet();
 	}
 
 	/** Rebuilds the key -> payload maps (under lock). Names sort chronologically, so a later file wins. */
@@ -610,7 +630,7 @@ public class InterestPointsZarrStore
 	/** Lists the staging directory again, so files that other JVMs wrote or deleted since are picked up. */
 	private void relistStagingFiles()
 	{
-		stagingListed = false;
+		stagingVersion.incrementAndGet();
 		listStagingFiles();
 	}
 
@@ -927,7 +947,7 @@ public class InterestPointsZarrStore
 			parsedStagingFiles.remove( file );
 			rebuildStagingMaps();
 		}
-		stagingListed = false;
+		stagingVersion.incrementAndGet();
 	}
 
 	private Points readStagedPoints( final StagingRef ref, final Key key )

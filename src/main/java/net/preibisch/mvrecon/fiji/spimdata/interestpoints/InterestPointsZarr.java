@@ -80,6 +80,8 @@ public class InterestPointsZarr extends InterestPoints
 
 		if ( key == null )
 			throw new IllegalArgumentException( "interest point path not of the form tpId_X_viewSetupId_Y/label: " + path );
+
+		InterestPointsZarrStore.stagingMayHaveChanged( basePath );
 	}
 
 	public InterestPointsZarr( final URI basePath, final ViewId viewId, final String label )
